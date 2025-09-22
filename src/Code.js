@@ -776,7 +776,7 @@ function onOpen(){
 }
 
 function notifyChat_(message){
-  const url = PropertiesService.getScriptProperties().getProperty('');
+  const url = (PropertiesService.getScriptProperties().getProperty('CHAT_WEBHOOK_URL') || '').trim();
   if (!url) { Logger.log('CHAT_WEBHOOK_URL 未設定'); return; }
   const payload = JSON.stringify({ text: message });
   UrlFetchApp.fetch(url, {

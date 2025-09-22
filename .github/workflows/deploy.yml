@@ -1,0 +1,16 @@
+name: Deploy to Google Apps Script
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: google/clasp-action@v1
+        with:
+          clasp_version: 2.4.2
+          creds: ${{ secrets.CLASP_CREDENTIALS }}
+          script_id: ${{ secrets.SCRIPT_ID }}

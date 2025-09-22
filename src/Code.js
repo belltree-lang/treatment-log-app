@@ -1,0 +1,1181 @@
+/***** ── 設定 ─────────────────────────────────*****/
+const APP = {
+  // Driveに保存するPDFの親フォルダID（空でも可：スプレッドシートと同じ階層に保存）
+  PARENT_FOLDER_ID: '1VAv9ZOLB7A__m8ErFDPhFHvhpO21OFPP',
+  // 正本スプレッドシート（患者情報のブック）。空なら「現在のスプレッドシート」を使う
+  SSID: '1ajnW9Fuvu0YzUUkfTmw0CrbhrM3lM5tt5OA1dK2_CoQ',
+  BASE_FEE_YEN: 4170,
+  // 社内ドメイン制限（空＝無効）
+  ALLOWED_DOMAIN: '',   // 例 'belltree1102.com'
+
+  // OpenAI（任意・未設定ならローカル整形へフォールバック）
+  OPENAI_ENDPOINT: 'https://api.openai.com/v1/chat/completions',
+  OPENAI_MODEL: 'gpt-4o-mini',
+};
+
+/***** 先頭行（見出し）の揺れに耐えるためのラベル候補群 *****/
+const LABELS = {
+  recNo:     ['施術録番号','施術録No','施術録NO','記録番号','カルテ番号','患者ID','患者番号'],
+  name:      ['名前','氏名','患者名','お名前'],
+  hospital:  ['病院名','医療機関','病院'],
+  doctor:    ['医師','主治医','担当医'],
+  furigana:  ['ﾌﾘｶﾞﾅ','ふりがな','フリガナ'],
+  birth:     ['生年月日','誕生日','生年','生年月'],
+  consent:   ['同意年月日','同意日','同意開始日','同意開始'],
+  share:     ['負担割合','負担','自己負担','負担率','負担割','負担%','負担％'],
+  phone:     ['電話','電話番号','TEL','Tel']
+};
+
+// 固定列のフォールバック（どうしても見出しが見つからない時はこれを使う）
+const PATIENT_COLS_FIXED = {
+  recNo:    3,   // 施術録番号
+  name:     4,   // 名前
+  hospital: 5,   // 病院名
+  furigana: 6,   // ﾌﾘｶﾞﾅ
+  birth:    7,   // 生年月日
+  doctor:  26,   // 医師
+  consent: 28,   // 同意年月日
+  phone:   32,   // 電話
+  share:   47    // 負担割合
+};
+
+/***** スプレッドシート参照ユーティリティ *****/
+
+/***** 権限制限（社内ドメインのみ） *****/
+function assertDomain_() {
+  if (!APP.ALLOWED_DOMAIN) return;
+  const email = (Session.getActiveUser() || {}).getEmail() || '';
+  if (!email.endsWith('@' + APP.ALLOWED_DOMAIN)) {
+    throw new Error('権限がありません（社内ドメインのみ）');
+  }
+}
+/***** 補助タブの用意（不足時に自動生成＋ヘッダ挿入） *****/
+function ensureAuxSheets_() {
+  const wb = ss();
+  const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード'];
+  need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
+
+  const ensureHeader = (name, header) => {
+    const s = wb.getSheetByName(name);
+    if (s.getLastRow() === 0) s.appendRow(header);
+  };
+
+  // 既存タブ
+  ensureHeader('施術録',   ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前']);
+  ensureHeader('News',     ['TS','患者ID','種別','メッセージ','cleared']);
+  ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
+  ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
+  ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
+  ensureHeader('定型文',   ['カテゴリ','ラベル','文章']);
+  ensureHeader('添付索引', ['TS','患者ID','月','ファイル名','FileId','種別','登録者']);
+
+  // 年次確認タブ（未作成時はヘッダだけ用意）
+  ensureHeader('年次確認', ['患者ID','年','確認日','担当者メール']);
+
+  // ダッシュボード（Index）タブ
+  ensureHeader('ダッシュボード', [
+    '患者ID','氏名','同意年月日','次回期限','期限ステータス',
+    '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
+  ]);
+}
+
+function init_(){ ensureAuxSheets_(); }
+
+/***** ログ・News *****/
+function log_(op,pid,detail){
+  sh('操作ログ').appendRow([new Date(), op, String(pid), detail||'', (Session.getActiveUser()||{}).getEmail()]);
+}
+function pushNews_(pid,type,msg){
+  sh('News').appendRow([new Date(), String(pid), type, msg, '']);
+}
+function getNews(pid){
+  const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return [];
+  const vals=s.getRange(2,1,lr-1,5).getDisplayValues();
+  return vals.filter(r=> String(r[1])===String(pid) && !String(r[4])).map(r=>({ when:r[0], type:r[2], message:r[3] }));
+}
+function clearConsentRelatedNews_(pid){
+  const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;
+  const vals=s.getRange(2,1,lr-1,5).getValues(); // [TS,pid,type,msg,cleared]
+  for (let i=0;i<vals.length;i++){
+    if(String(vals[i][1])===String(pid)){
+      const typ=String(vals[i][2]||'');
+      if(typ.indexOf('同意')>=0 || typ.indexOf('期限')>=0 || typ.indexOf('予定')>=0){
+        s.getRange(2+i,5).setValue('1');
+      }
+    }
+  }
+}
+
+/***** ステータス（休止/中止） *****/
+function getStatus_(pid){
+  const s=sh('フラグ'); const lr=s.getLastRow(); if (lr<2) return {status:'active', pauseUntil:''};
+  const vals=s.getRange(2,1,lr-1,3).getDisplayValues();
+  const row=vals.reverse().find(r=> String(r[0])===String(pid));
+  if (!row) return {status:'active', pauseUntil:''};
+  return { status: row[1]||'active', pauseUntil: row[2]||'' };
+}
+function markSuspend(pid){
+  ensureAuxSheets_();
+  const until = Utilities.formatDate(new Date(Date.now()+1000*60*60*24*30), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
+  sh('フラグ').appendRow([String(pid),'suspended',until]);
+  pushNews_((pid),'状態','休止に設定（ミュート '+until+' まで）');
+  log_('休止', pid, until);
+}
+function markStop(pid){
+  ensureAuxSheets_();
+  sh('フラグ').appendRow([String(pid),'stopped','']);
+  pushNews_(pid,'状態','中止に設定（以降のリマインド停止）');
+  log_('中止', pid, '');
+}
+
+/***** ヘッダ正規化ユーティリティ *****/
+function normalizeHeaderKey_(s){
+  if(!s) return '';
+  const z2h = String(s).normalize('NFKC');
+  const noSpace = z2h.replace(/\s+/g,'');
+  const noPunct = noSpace.replace(/[（）\(\)\[\]【】:：・\-＿_]/g,'');
+  return noPunct.toLowerCase();
+}
+function buildHeaderMap_(headersRow){
+  const map={};
+  headersRow.forEach((h,i)=>{
+    const k=normalizeHeaderKey_(h);
+    if(k && !map[k]) map[k]=i+1;
+  });
+  return map;
+}
+function resolveColByLabels_(headersRow, labelCandidates, fieldLabel, required=true){
+  const idx=buildHeaderMap_(headersRow);
+  for(const label of labelCandidates){
+    const k=normalizeHeaderKey_(label);
+    if(idx[k]) return idx[k];
+  }
+  if(required) throw new Error('患者情報に見出しが見つかりません: '+fieldLabel+'（候補: '+labelCandidates.join('/')+'）');
+  return null;
+}
+function getColFlexible_(headersRow, labelCandidates, fallback1Based, fieldLabel){
+  const c = resolveColByLabels_(headersRow, labelCandidates, fieldLabel, false);
+  return c || fallback1Based;
+}
+
+/***** ID正規化（"0007" ≒ "7" を同一視） *****/
+function normId_(x){
+  if (x == null) return '';
+  let s = String(x).normalize('NFKC').replace(/\s+/g,'');
+  s = s.replace(/^0+/, '');
+  return s;
+}
+
+/***** 患者行の安全取得（見出しの揺れに耐える） *****/
+function findPatientRow_(pid){
+  const pnorm = normId_(pid);
+  const s = sh('患者情報');
+  const lr = s.getLastRow(); if (lr < 2) return null;
+  const lc = s.getLastColumn();
+  const head = s.getRange(1,1,1,lc).getDisplayValues()[0];
+  const cRec = getColFlexible_(head, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
+  const vals = s.getRange(2,1,lr-1,lc).getValues();
+  for (let i=0; i<vals.length; i++){
+    const v = normId_(vals[i][cRec-1]);
+    if (v && v === pnorm){
+      return {
+        row: 2+i, lc, head,
+        rowValues: s.getRange(2+i, 1, 1, lc).getDisplayValues()[0]
+      };
+    }
+  }
+  return null;
+}
+
+/***** 負担割合 正規化 *****/
+function normalizeBurdenRatio_(text) {
+  if (!text) return null;
+  const t = String(text).replace(/\s/g,'').replace('％','%').replace('割','');
+  if (/^[123]$/.test(t)) return Number(t)/10;                 // 1,2,3
+  if (/^(10|20|30)%?$/.test(t)) return Number(RegExp.$1)/100; // 10/20/30 or 10%
+  return null;
+}
+function toBurdenDisp_(ratio) {
+  if (ratio === 0.1) return '1割';
+  if (ratio === 0.2) return '2割';
+  if (ratio === 0.3) return '3割';
+  return '';
+}
+/** 入力（1割/2/20% など）→ { num:1|2|3|null, disp:'1割|2割|3割|'' } */
+function parseShareToNumAndDisp_(text){
+  const r = normalizeBurdenRatio_(text); // 0.1 / 0.2 / 0.3 or null
+  if (r === 0.1) return { num: 1, disp: '1割' };
+  if (r === 0.2) return { num: 2, disp: '2割' };
+  if (r === 0.3) return { num: 3, disp: '3割' };
+  return { num: null, disp: '' };
+}
+/***** 日付パース（和暦・略号対応）＆ 同意期限 *****/
+function parseDateFlexible_(v) {
+  if (!v) return null;
+  if (v instanceof Date && !isNaN(v.getTime())) return v;
+  const raw = String(v).trim();
+  if (!raw) return null;
+
+  // 和暦（正式）
+  const era = raw.match(/(令和|平成|昭和)\s*(\d+)[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
+  if (era) {
+    const eraName = era[1], y = Number(era[2]), m = Number(era[3]), d = Number(era[4]);
+    const base = eraName === '令和' ? 2018 : eraName === '平成' ? 1988 : 1925; // R1=2019, H1=1989, S1=1926
+    return new Date(base + y, m - 1, d);
+  }
+  // 和暦（略号 R/H/S）
+  const eraShort = raw.match(/([RrHhSs])\s*(\d+)[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
+  if (eraShort) {
+    const ch = eraShort[1].toUpperCase(), y = Number(eraShort[2]), m = Number(eraShort[3]), d = Number(eraShort[4]);
+    const base = ch === 'R' ? 2018 : ch === 'H' ? 1988 : 1925;
+    return new Date(base + y, m - 1, d);
+  }
+  // 西暦
+  const m1 = raw.match(/(\d{4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
+  if (m1) return new Date(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]));
+  // yyyymmdd
+  const n = raw.replace(/\D/g,'');
+  if (n.length === 8) return new Date(Number(n.slice(0,4)), Number(n.slice(4,6))-1, Number(n.slice(6,8)));
+
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+function calcConsentExpiry_(consentVal) {
+  const d = parseDateFlexible_(consentVal);
+  if (!d) return '';
+  const day = d.getDate();
+  const base = new Date(d);
+  // 1〜15日 → +5か月の月末 / 16日〜 → +6か月の月末
+  if (day <= 15) base.setMonth(base.getMonth() + 5, 1);
+  else           base.setMonth(base.getMonth() + 6, 1);
+  const end = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  return Utilities.formatDate(end, Session.getScriptTimeZone() || 'Asia/Tokyo', 'yyyy-MM-dd');
+}
+
+/***** 月次・直近 *****/
+function getMonthlySummary_(pid) {
+  const s = sh('施術録'); const lr = s.getLastRow();
+  if (lr < 2) return { current:{count:0,est:0}, previous:{count:0,est:0} };
+  const vals = s.getRange(2,1,lr-1,6).getValues();
+  const now = new Date();
+  const first=(y,m)=>new Date(y,m,1);
+  const last=(y,m)=>new Date(y,m+1,0,23,59,59);
+  const y=now.getFullYear(), m=now.getMonth();
+  const curS=first(y,m), curE=last(y,m);
+  const prevS=first(y,m-1), prevE=last(y,m-1);
+  let c=0,p=0;
+  vals.forEach(r=>{
+    const ts=r[0], id=String(r[1]);
+    if (id!==String(pid)) return;
+    const d = ts instanceof Date ? ts : new Date(ts);
+    if (isNaN(d.getTime())) return;
+    if (d>=curS && d<=curE) c++; else if (d>=prevS && d<=prevE) p++;
+  });
+  const unit = APP.BASE_FEE_YEN || 4170;
+  return { current:{count:c, est: Math.round(c*unit*0.1)}, previous:{count:p, est: Math.round(p*unit*0.1)} };
+}
+function getRecentActivity_(pid) {
+  const s=sh('施術録'); const lr=s.getLastRow();
+  let lastTreat='';
+  if (lr>=2) {
+    const v=s.getRange(2,1,lr-1,6).getValues().filter(r=> String(r[1])===String(pid));
+    if (v.length) {
+      const d=v[v.length-1][0];
+      const dd = d instanceof Date ? d : new Date(d);
+      if (!isNaN(dd.getTime())) lastTreat = Utilities.formatDate(dd, Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
+    }
+  }
+  const sp=sh('患者情報'); const lc=sp.getLastColumn();
+  const head=sp.getRange(1,1,1,lc).getDisplayValues()[0];
+  const cRec = getColFlexible_(head, LABELS.recNo,  PATIENT_COLS_FIXED.recNo,  '施術録番号');
+  const cCons= getColFlexible_(head, LABELS.consent,PATIENT_COLS_FIXED.consent,'同意年月日');
+  let lastConsent='';
+  const vals=sp.getRange(2,1,sp.getLastRow()-1,lc).getDisplayValues();
+  const row=vals.find(r=> String(r[cRec-1])===String(pid));
+  lastConsent = row ? (row[cCons-1]||'') : '';
+  return { lastTreat, lastConsent, lastStaff: '' };
+}
+
+/***** 患者ヘッダ（画面表示用） *****/
+function getPatientHeader(pid){
+  ensureAuxSheets_();
+  const hit = findPatientRow_(pid);
+  if (!hit) return null;
+
+  const s = sh('患者情報'), head = hit.head, rowV = hit.rowValues;
+  const cName = getColFlexible_(head, LABELS.name,     PATIENT_COLS_FIXED.name,     '名前');
+  const cHos  = getColFlexible_(head, LABELS.hospital, PATIENT_COLS_FIXED.hospital, '病院名');
+  const cDoc  = getColFlexible_(head, LABELS.doctor,   PATIENT_COLS_FIXED.doctor,   '医師');
+  const cFuri = getColFlexible_(head, LABELS.furigana, PATIENT_COLS_FIXED.furigana, 'ﾌﾘｶﾞﾅ');
+  const cBirth= getColFlexible_(head, LABELS.birth,    PATIENT_COLS_FIXED.birth,    '生年月日');
+  const cCons = getColFlexible_(head, LABELS.consent,  PATIENT_COLS_FIXED.consent,  '同意年月日');
+  const cShare= getColFlexible_(head, LABELS.share,    PATIENT_COLS_FIXED.share,    '負担割合');
+  const cTel  = getColFlexible_(head, LABELS.phone,    PATIENT_COLS_FIXED.phone,    '電話');
+
+  // 年齢
+  const bd = parseDateFlexible_(rowV[cBirth-1]||'');
+  let age=null, ageClass='';
+  if (bd) {
+    const t=new Date();
+    age = t.getFullYear()-bd.getFullYear() - ((t.getMonth()<bd.getMonth() || (t.getMonth()===bd.getMonth() && t.getDate()<bd.getDate()))?1:0);
+    if (age>=75) ageClass='後期高齢'; else if (age>=65) ageClass='前期高齢';
+  }
+
+  // 同意期限
+  const consent = rowV[cCons-1]||'';
+  const expiry  = calcConsentExpiry_(consent) || '—';
+
+  // 負担割合
+  const shareRaw  = rowV[cShare-1]||'';
+  const shareNorm = normalizeBurdenRatio_(shareRaw);
+  const shareDisp = shareNorm ? toBurdenDisp_(shareNorm) : shareRaw;
+
+  const monthly = getMonthlySummary_(pid);
+  const recent  = getRecentActivity_(pid);
+  const stat    = getStatus_(pid);
+
+  return {
+    patientId:String(normId_(pid)),
+    name: rowV[cName-1]||'',
+    furigana: rowV[cFuri-1]||'',
+    hospital: rowV[cHos-1]||'',
+    doctor:   rowV[cDoc-1]||'',
+    phone:    rowV[cTel-1]||'',
+    birth:    rowV[cBirth-1]||'',
+    age, ageClass,
+    consentDate: consent || '',
+    consentExpiry: expiry,
+    burden: shareDisp || '',
+    monthly, recent,
+    status: stat.status,
+    pauseUntil: stat.pauseUntil
+  };
+}
+
+/***** ID候補 *****/
+function listPatientIds(){
+  const s=sh('患者情報'); const lr=s.getLastRow(); if(lr<2) return [];
+  const lc=s.getLastColumn(); const head=s.getRange(1,1,1,lc).getDisplayValues()[0];
+  const cRec = getColFlexible_(head, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
+  const vals=s.getRange(2,1,lr-1,lc).getValues();
+  return vals.map(r=> normId_(r[cRec-1])).filter(Boolean);
+}
+
+/***** バイタル・定型文 *****/
+function genVitals(){
+  const rnd=(min,max)=> Math.floor(Math.random()*(max-min+1))+min;
+  const sys=rnd(110,150), dia=rnd(70,90), bpm=rnd(60,90), spo=rnd(93,99);
+  const tmp=(Math.round((Math.random()*(36.9-35.8)+35.8)*10)/10).toFixed(1);
+  return `vital ${sys}/${dia}/${bpm}bpm / SpO2:${spo}%  ${tmp}℃`;
+}
+function getPresets(){
+  ensureAuxSheets_();
+  const s = sh('定型文'); const lr = s.getLastRow();
+  if (lr < 2) {
+    return [
+      {cat:'所見',label:'特記事項なし',text:'特記事項なし。経過良好。'},
+      {cat:'所見',label:'バイタル安定',text:'バイタル安定。生活指導継続。'},
+      {cat:'所見',label:'請求書・領収書受渡',text:'請求書・領収書を受け渡し済み。'},
+      {cat:'所見',label:'配布物受渡',text:'配布物（説明資料）を受け渡し済み。'},
+      {cat:'所見',label:'再同意書受渡',text:'再同意書を受け渡し済み。通院予定の確認をお願いします。'},
+      {cat:'所見',label:'再同意取得確認',text:'再同意の取得を確認。引き続き施術を継続。'}
+    ];
+  }
+  const vals = s.getRange(2,1,lr-1,3).getDisplayValues(); // [カテゴリ, ラベル, 文章]
+  return vals.map(r=>({cat:r[0],label:r[1],text:r[2]}));
+}
+
+/***** 施術保存 *****/
+function queueAfterTreatmentJob(job){
+  const p = PropertiesService.getScriptProperties();
+  const key = 'AFTER_JOBS';
+  const jobs = JSON.parse(p.getProperty(key) || '[]');
+  jobs.push(job);
+  p.setProperty(key, JSON.stringify(jobs));
+
+  // 1分後に afterTreatmentJob を実行
+  ScriptApp.newTrigger('afterTreatmentJob')
+    .timeBased().after(1000 * 60).create();
+}
+
+function afterTreatmentJob(){
+  const p = PropertiesService.getScriptProperties();
+  const key = 'AFTER_JOBS';
+  const jobs = JSON.parse(p.getProperty(key) || '[]');
+  p.deleteProperty(key);
+  if (!jobs.length) return;
+
+  jobs.forEach(job=>{
+    const pid = job.patientId;
+
+    // News / 同意日 / 負担割合 / 予定登録など重い処理をここでまとめて実行
+    if (job.presetLabel){
+      if (job.presetLabel.indexOf('再同意取得確認') >= 0){
+        const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
+        updateConsentDate(pid, today);
+      }
+      if (job.presetLabel.indexOf('再同意書受渡') >= 0){
+        pushNews_(pid,'再同意','再同意書を受け渡し');
+      }
+    }
+    if (job.burdenShare){
+      updateBurdenShare(pid, job.burdenShare);
+    }
+    if (job.visitPlanDate){
+      sh('予定').appendRow([pid,'通院', job.visitPlanDate, (Session.getActiveUser()||{}).getEmail()]);
+      pushNews_(pid,'予定','通院予定を登録：' + job.visitPlanDate);
+    }
+    log_('施術後処理', pid, JSON.stringify(job));
+  });
+}
+
+
+/***** 当月の施術一覧 取得・更新・削除 *****/
+function listTreatmentsForCurrentMonth(pid){
+  const s=sh('施術録'); const lr=s.getLastRow(); if(lr<2) return [];
+  const vals=s.getRange(2,1,lr-1,6).getValues(); // A..F
+  const tz=Session.getScriptTimeZone()||'Asia/Tokyo';
+  const now=new Date();
+  const start=new Date(now.getFullYear(), now.getMonth(), 1, 0,0,0);
+  const end  =new Date(now.getFullYear(), now.getMonth()+1, 0, 23,59,59);
+
+  const out=[];
+  for(let i=0;i<vals.length;i++){
+    const r=vals[i]; const ts=r[0]; const id=String(r[1]);
+    if(id!==String(pid)) continue;
+    const d = ts instanceof Date ? ts : new Date(ts);
+    if(isNaN(d.getTime())) continue;
+    out.push({
+      row: 2+i,
+      when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
+      note: String(r[2]||''),
+      email: String(r[3]||'')
+    });
+  }
+  return out.reverse();
+}
+function updateTreatmentRow(row, note) {
+  const s = sh('施術録');
+  if (row <= 1 || row > s.getLastRow()) throw new Error('行が不正です');
+
+  const newNote = String(note || '').trim();
+
+  // 直前の値を取得
+  const oldNote = String(s.getRange(row, 3).getValue() || '').trim();
+
+  // 🔒 二重編集チェック
+  if (oldNote === newNote) {
+    return { ok: false, skipped: true, msg: '変更内容が直前と同じのため編集をスキップしました' };
+  }
+
+  // 書き換え
+  s.getRange(row, 3).setValue(newNote);
+
+  // ログ
+  log_('施術修正', '(row:' + row + ')', newNote);
+
+  return { ok: true, updatedRow: row, newNote };
+}
+
+function deleteTreatmentRow(row){
+  const s=sh('施術録'); if(row<=1 || row>s.getLastRow()) throw new Error('行が不正です');
+  s.deleteRow(row);
+  log_('施術削除', '(row:'+row+')', '');
+  return true;
+}
+
+/***** 同意・負担割合 更新（findPatientRow_ベース） *****/
+function updateConsentDate(pid, dateStr){
+  const hit = findPatientRow_(pid);
+  if (!hit) throw new Error('患者が見つかりません');
+  const s=sh('患者情報'); const head=hit.head;
+  const cCons= getColFlexible_(head, LABELS.consent, PATIENT_COLS_FIXED.consent, '同意年月日');
+  s.getRange(hit.row, cCons).setValue(dateStr);
+  pushNews_(pid,'同意','再同意取得確認（同意日更新：'+dateStr+'）');
+  clearConsentRelatedNews_(pid);
+  log_('同意日更新', pid, dateStr);
+}
+function updateBurdenShare(pid, shareText){
+  const hit = findPatientRow_(pid);
+  if (!hit) throw new Error('患者が見つかりません');
+  const s=sh('患者情報'); const headers=hit.head;
+
+  // 書き込み先列（患者情報の「負担割合」列）
+  const cShare= getColFlexible_(headers, LABELS.share, PATIENT_COLS_FIXED.share, '負担割合');
+
+  // 1) 入力を正規化 → num(1/2/3) と disp('1割/2割/3割')
+  const parsed = parseShareToNumAndDisp_(shareText);
+
+  // 2) 患者情報には数値で保存（例：2）※ null の場合は元の文字列をそのまま保存
+  if (parsed.num != null) {
+    s.getRange(hit.row, cShare).setValue(parsed.num); // ← 数値 1|2|3 を保存
+  } else {
+    s.getRange(hit.row, cShare).setValue(shareText || '');
+  }
+
+  // 3) 代表へ通知＆News
+  const disp = parsed.disp || String(shareText||'');
+  pushNews_(pid,'通知','負担割合を更新：' + disp);
+  log_('負担割合更新', pid, disp);
+
+  // 4) 施術録にも記録を残す（監査・検索用）
+  const user = (Session.getActiveUser()||{}).getEmail();
+  sh('施術録').appendRow([new Date(), String(pid), '負担割合を更新：' + (disp || shareText || ''), user, '', '' ]);
+
+  return true;
+}
+
+
+/***** 請求集計（回数/負担） *****/
+function rebuildInvoiceForMonth_(year, month){
+  const ssb = ss();
+  const t = sh('施術録'); const p = sh('患者情報');
+  const outName = year + '年' + month + '月分';
+  let out = ssb.getSheetByName(outName); if(!out) out = ssb.insertSheet(outName); else out.clear();
+  out.getRange(1,1,1,4).setValues([['施術録番号','患者様氏名','合計施術回数','負担割合']]);
+
+  const plc = p.getLastColumn(), plr=p.getLastRow();
+  const ph = p.getRange(1,1,1,plc).getDisplayValues()[0];
+  const cRec = resolveColByLabels_(ph, LABELS.recNo, '施術録番号');
+  const cName= resolveColByLabels_(ph, LABELS.name,  '名前');
+  const cShare=resolveColByLabels_(ph, LABELS.share, '負担割合');
+  const pvals = plr>1 ? p.getRange(2,1,plr-1,plc).getDisplayValues() : [];
+  const pmap = {};
+  pvals.forEach(r=>{
+    const rec=String(r[cRec-1]||'').trim(); if(!rec) return;
+    pmap[rec]={ name:r[cName-1]||'', share:r[cShare-1]||'' };
+  });
+
+  const tlr=t.getLastRow(); if(tlr<2) return;
+  const tvals=t.getRange(2,1,tlr-1,6).getValues();
+  const start=new Date(year, month-1, 1, 0,0,0);
+  const end  =new Date(year, month, 0, 23,59,59);
+  const counts={};
+  tvals.forEach(r=>{
+    const ts=r[0], id=String(r[1]||'').trim(); if(!id) return;
+    const d = ts instanceof Date ? ts : new Date(ts); if(isNaN(d.getTime())) return;
+    if(d>=start && d<=end) counts[id]=(counts[id]||0)+1;
+  });
+
+  const rows=[];
+  Object.keys(counts).sort((a,b)=> (parseInt(a,10)||0)-(parseInt(b,10)||0)).forEach(rec=>{
+    const info=pmap[rec]||{name:'',share:''};
+    rows.push([rec, info.name, counts[rec], info.share]);
+  });
+  if(rows.length) out.getRange(2,1,rows.length,4).setValues(rows);
+}
+function rebuildInvoiceForCurrentMonth(){
+  const now=new Date(); rebuildInvoiceForMonth_(now.getFullYear(), now.getMonth()+1);
+}
+
+/***** PDF保存（Doc→PDFエクスポート方式：確実にPDF化） *****/
+function getParentFolder_(){
+  const id = (APP.PARENT_FOLDER_ID || PropertiesService.getScriptProperties().getProperty('PARENT_FOLDER_ID') || '').trim();
+  if (id) return DriveApp.getFolderById(id);
+  const file = DriveApp.getFileById(ss().getId());
+  const it = file.getParents();
+  if (it.hasNext()) return it.next();
+  return DriveApp.getRootFolder();
+}
+function getOrCreateFolderForPatientMonth_(pid, date){
+  const parent = getParentFolder_();
+  const ym = Utilities.formatDate(date, Session.getScriptTimeZone()||'Asia/Tokyo', 'yyyy年M月');
+  const it1 = parent.getFoldersByName(ym); const m = it1.hasNext()? it1.next() : parent.createFolder(ym);
+  const it2 = m.getFoldersByName(String(pid)); return it2.hasNext()? it2.next() : m.createFolder(String(pid));
+}
+function savePdf_(pid, title, body){
+  const folder = getOrCreateFolderForPatientMonth_(pid, new Date());
+
+  // 一時Doc作成
+  const doc = DocumentApp.create(title.replace(/\.pdf$/i,''));
+  const docId = doc.getId();
+  const dBody = doc.getBody();
+  dBody.clear();
+  body.split('\n').forEach(line => dBody.appendParagraph(line));
+  doc.saveAndClose();
+
+  // PDFにエクスポート
+  const url = 'https://www.googleapis.com/drive/v3/files/'+docId+'/export?mimeType=application%2Fpdf';
+  const token = ScriptApp.getOAuthToken();
+  const pdfBlob = UrlFetchApp.fetch(url, {
+    headers: { Authorization: 'Bearer ' + token },
+    muteHttpExceptions: true
+  }).getBlob().setName(title);
+
+  const file = folder.createFile(pdfBlob);
+
+  // 索引記録
+  sh('添付索引').appendRow([new Date(), String(pid),
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM'),
+    file.getName(), file.getId(), 'pdf', (Session.getActiveUser()||{}).getEmail()
+  ]);
+  pushNews_(pid,'PDF作成', file.getName()+' を作成しました');
+  log_('PDF作成', pid, title);
+
+  // 一時Doc削除（不要なら残してOK）
+  DriveApp.getFileById(docId).setTrashed(true);
+
+  return { ok:true, fileId:file.getId(), name:file.getName() };
+}
+
+/***** 文章整形（OpenAI → ローカルフォールバック） *****/
+function getOpenAiKey_(){
+  const key = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY');
+  return key ? key.trim() : '';
+}
+function composeViaOpenAI_(type, header, notes){
+  const key = getOpenAiKey_();
+  if (!key) return null;
+  const sys = [
+    'あなたは在宅リハ・鍼灸の文書作成を支援するアシスタントです。',
+    '与えられたメモ（バイタル/痛み/経過/注意点）を、指定された提出先に相応しい口調と見出しで1ページ相当の日本語文書に整形してください。',
+    '医療上の断定は避け、事実ベースで簡潔に。機微情報は含めません。'
+  ].join('\n');
+  const audience =
+    type==='care_manager' ? 'ケアマネジャー向け：生活・動作の観点を重視。依頼事項は箇条書きで簡潔に。' :
+    type==='family'       ? 'ご家族向け：専門用語は避け、分かりやすい表現。安心感のある文体。' :
+                            '同意医師向け：簡潔な臨床情報（バイタル/疼痛/機能/施術反応）を記載。依頼は明確に。';
+  const prompt =
+`【患者概要】
+氏名:${header.name||'-'}（ID:${header.patientId}）
+年齢:${header.age||'-'} / 同意日:${header.consentDate||'-'} / 次回期限:${header.consentExpiry||'-'}
+当月:${header.monthly.current.count}回 / 前月:${header.monthly.previous.count}回
+
+【メモ】
+- バイタル: ${notes?.vital||''}
+- 痛み・動作: ${notes?.pain||''}
+- 施術反応: ${notes?.response||''}
+- 注意点・依頼: ${notes?.note||''}
+
+【提出先】
+${audience}
+
+以上を踏まえ、提出先に合わせた1ページ相当の文書（見出し＋本文、丁寧語）に整形してください。`;
+
+  const payload = {
+    model: APP.OPENAI_MODEL,
+    messages: [
+      { role:'system', content: sys },
+      { role:'user',   content: prompt }
+    ],
+    temperature: 0.2,
+    max_tokens: 800
+  };
+  const res = UrlFetchApp.fetch(APP.OPENAI_ENDPOINT, {
+    method: 'post',
+    headers: { 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+  const code = res.getResponseCode();
+  if (code >= 300) throw new Error('文章整形APIエラー: ' + code + ' ' + res.getContentText());
+  const data = JSON.parse(res.getContentText());
+  const content = data?.choices?.[0]?.message?.content || '';
+  return content.trim();
+}
+function composeNarrativeLocal_(type, notes){
+  const v = (notes && notes.vital)    ? String(notes.vital).trim()    : '';
+  const p = (notes && notes.pain)     ? String(notes.pain).trim()     : '';
+  const r = (notes && notes.response) ? String(notes.response).trim() : '';
+  const n = (notes && notes.note)     ? String(notes.note).trim()     : '';
+  const squash = (t)=> t ? t.replace(/\n+/g,' / ').replace(/・/g,'').trim() : '';
+  const vital = squash(v), pain = squash(p), resp = squash(r), note = squash(n);
+  if (type === 'care_manager') {
+    return `【概況】${vital||'バイタルは概ね安定しています。'}\n【生活・動作】${pain||'疼痛や可動域の大きな変化は認めません。'}\n【施術経過】${resp||'施術反応は良好です。'}\n【連携のお願い】${note||'次回同意手続き・通院予定の調整につきご協力ください。'}`;
+  } else if (type === 'family') {
+    return `■ からだの様子：${vital||'体調はおおむね安定しています。'}\n■ 痛みや動き：${pain||'日常生活動作で大きな支障は見られません。'}\n■ 施術のようす：${resp||'施術後はすっきりされています。'}\n■ おねがい：${note||'通院の予定や書類の準備が必要な場合は、事前にお知らせいたします。'}`;
+  } else {
+    return `【バイタル/現症】${vital||'特記すべき変動はありません。'}\n【疼痛/機能】${pain||'疼痛の増悪なくADLは維持されています。'}\n【施術反応】${resp||'施術後の筋緊張の緩和を得ています。'}\n【所見/依頼】${note||'再同意取得のご検討と必要時のご指示をお願いします。'}`;
+  }
+}
+
+/***** レポートPDF（API→フォールバック） *****/
+function getPatientHeaderForReport_(pid){
+  const header = getPatientHeader(pid);
+  if (!header) throw new Error('患者が見つかりません');
+  return header;
+}
+function generateReportViaApi(pid, type, notes){
+  assertDomain_(); ensureAuxSheets_();
+  const header = getPatientHeaderForReport_(pid);
+
+  let narrative = null;
+  try { narrative = composeViaOpenAI_(type, header, notes); } catch(e){ narrative = null; }
+  if (!narrative) narrative = composeNarrativeLocal_(type, notes);
+
+  const tz = Session.getScriptTimeZone()||'Asia/Tokyo';
+  const title = `report_${type}_${Utilities.formatDate(new Date(), tz,'yyyyMM')}.pdf`;
+  const body =
+`[提出先:${type}]
+${header.name||''} 様  /  ID:${header.patientId}
+年齢:${header.age||'-'} (${header.ageClass||''})
+同意日:${header.consentDate||'-'} / 次回期限:${header.consentExpiry||'-'}
+当月:${header.monthly.current.count}回, 前月:${header.monthly.previous.count}回
+
+${narrative}
+`;
+  return savePdf_(pid, title, body);
+}
+
+/***** Webエントリ *****/
+/***** ── 追加：Intake用の下地だけ用意（既存 ensureIntakeSheets_ とは別名） ──*****/
+function ensureIntakeScaffolding_() {
+  const wb = ss();
+  // Intake_Staging が無ければ最低限のヘッダで作る（intakeGetValuesMap_ が読む前提）
+  if (!wb.getSheetByName('Intake_Staging')) {
+    const sh = wb.insertSheet('Intake_Staging');
+    sh.getRange(1,1,1,9).setValues([[
+      'leadId','ts','code','json','createdAt','updatedAt','author','mode','snapshot'
+    ]]);
+  }
+  // LeadStatus はあなたの ensureIntakeSheets_() が面倒を見ているので触らない
+}
+
+/***** ── 差し替え：doGet ──*****/
+/***** ── 差し替え：doGet ──*****/
+function doGet(e) {
+  e = e || {};
+  const view = e.parameter ? (e.parameter.view || 'welcome') : 'welcome';
+  let templateFile = '';
+
+  switch(view){
+    case 'intake':       templateFile = 'intake'; break;
+    case 'visit':        templateFile = 'intake'; break;
+    case 'intake_list':  templateFile = 'intake_list'; break;
+    case 'admin':        templateFile = 'admin'; break;
+    case 'vacancy':      templateFile = 'vacancy'; break;
+    case 'record':       templateFile = 'app'; break;   // ★ app.html を record として表示
+    default:             templateFile = 'welcome'; break;
+  }
+
+  const t = HtmlService.createTemplateFromFile(templateFile);
+
+  // ここでURLを渡す
+  t.baseUrl = ScriptApp.getService().getUrl();
+
+  // 患者ID（?id=XXXX）をテンプレートに渡す
+  if (e.parameter && e.parameter.id) {
+    t.patientId = e.parameter.id;
+  } else {
+    t.patientId = "";
+  }
+
+  if(e.parameter && e.parameter.lead) t.lead = e.parameter.lead;
+
+  return t.evaluate()
+           .setTitle('受付アプリ')
+           .addMetaTag('viewport','width=device-width, initial-scale=1.0');
+}
+
+/***** メニュー *****/
+function onOpen(){
+  SpreadsheetApp.getUi()
+    .createMenu('請求')
+    .addItem('今月の集計（回数+負担割合）','rebuildInvoiceForCurrentMonth')
+    .addToUi();
+}
+
+function notifyChat_(message){
+  const url = PropertiesService.getScriptProperties().getProperty('');
+  if (!url) { Logger.log('CHAT_WEBHOOK_URL 未設定'); return; }
+  const payload = JSON.stringify({ text: message });
+  UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: payload
+  });
+}
+/*** ── Index（ダッシュボード）再構築 ───────────────── **/
+function DashboardIndex_refreshAll(){
+  ensureAuxSheets_();
+  const idx = sh('ダッシュボード'); idx.clearContents();
+  idx.getRange(1,1,1,11).setValues([[
+    '患者ID','氏名','同意年月日','次回期限','期限ステータス',
+    '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
+  ]]);
+
+  // 患者情報を全件読み
+  const sp = sh('患者情報');
+  const plc = sp.getLastColumn(), plr = sp.getLastRow();
+  if (plr < 2) return;
+  const pHead = sp.getRange(1,1,1,plc).getDisplayValues()[0];
+  const pvals = sp.getRange(2,1,plr-1,plc).getValues();
+
+  // 施術録から直近60日 担当メール頻度 & 最終施術日
+  const rec = sh('施術録');
+  const rlr = rec.getLastRow();
+  const staffFreqById = new Map();
+  const lastVisitById = new Map();
+  if (rlr >= 2){
+    const rvals = rec.getRange(2,1,rlr-1,6).getValues(); // [TS,施術録番号,所見,メール,最終確認,名前]
+    const since = new Date(); since.setDate(since.getDate()-60);
+    rvals.forEach(r=>{
+      const ts = r[0], id = String(r[1]||'').trim(); if (!id) return;
+      const d = ts instanceof Date ? ts : new Date(ts);
+      if (isNaN(d.getTime())) return;
+      // 最終施術
+      const cur = lastVisitById.get(id);
+      if (!cur || d > cur) lastVisitById.set(id, d);
+      // 直近60日スタッフ頻度
+      if (d >= since){
+        const mail = String(r[3]||'').trim();
+        const m = staffFreqById.get(id) || new Map();
+        m.set(mail, (m.get(mail)||0)+1);
+        staffFreqById.set(id, m);
+      }
+    });
+  }
+  const topFreq = (m)=>{ let best='',n=-1; m&&m.forEach((v,k)=>{ if(v>n){n=v;best=k;} }); return best; };
+
+  // News用の年次要確認（7–8月のみtrue）
+  const isAnnualSeason = (()=>{ const mm=(new Date()).getMonth()+1; return (mm===7||mm===8); })();
+
+  // ヘッダ列解決
+  const cRec  = getColFlexible_(pHead, LABELS.recNo,  PATIENT_COLS_FIXED.recNo,  '施術録番号');
+  const cName = getColFlexible_(pHead, LABELS.name,   PATIENT_COLS_FIXED.name,   '名前');
+  const cCons = getColFlexible_(pHead, LABELS.consent,PATIENT_COLS_FIXED.consent,'同意年月日');
+  const cShare= getColFlexible_(pHead, LABELS.share,  PATIENT_COLS_FIXED.share,  '負担割合');
+
+  // フラグ（休止/中止/ミュート解除予定）
+  const statusOf = (pid)=> getStatus_(pid); // 既存関数を活用
+
+  // 出力行を構築
+  const out = pvals.map(r=>{
+    const pid   = normId_(r[cRec-1]);
+    if (!pid) return null;
+    const name  = r[cName-1] || '';
+    const cons  = r[cCons-1] || '';
+    const next  = calcConsentExpiry_(cons) || '';
+    // 期限ステ
+    let due = 'ok';
+    if (next){
+      const n = new Date(next), today = new Date();
+      const diff = Math.floor((n - today)/86400000);
+      if (diff < 0) due = 'overdue';
+      else if (diff <= 14) due = 'nearing';
+    }
+    const stat = statusOf(pid);
+    const staff60 = topFreq(staffFreqById.get(pid));
+    const lastV = lastVisitById.get(pid) ? Utilities.formatDate(lastVisitById.get(pid), Session.getScriptTimeZone()||'Asia/Tokyo', 'yyyy-MM-dd') : '';
+    const shareRaw = r[cShare-1];
+    const shareOk = (shareRaw===1 || shareRaw===2 || shareRaw===3);
+
+    return [pid, name, cons, next, due, staff60, lastV, !!isAnnualSeason, stat.status==='suspended', stat.pauseUntil||'', !!shareOk];
+  }).filter(Boolean);
+
+  if (out.length) idx.getRange(2,1,out.length,out[0].length).setValues(out);
+}
+
+/** 後で差分化するフック（まずは全件でOK） */
+function DashboardIndex_updatePatients(_patientIds){ DashboardIndex_refreshAll(); }
+/*** ── 読み取りAPI：getAdminDashboard ───────────── **/
+function getAdminDashboard(payload){
+  // 1) 権限（社内ドメイン＆管理者判定：ALLOWED_DOMAINが未設定ならスキップ）
+  assertDomain_();
+  // 代表admin判定は「通知設定.管理者=TRUE」を見る
+  if (!isAdminUser_()) throw new Error('管理者権限が必要です');
+
+  // 2) キャッシュ
+  const cache = CacheService.getScriptCache();
+  const key = 'admin:'+ Utilities.base64EncodeWebSafe(JSON.stringify(payload||{})).slice(0,64);
+  const hit = cache.get(key);
+  if (hit) return JSON.parse(hit);
+
+  // 3) Index（ダッシュボード）から読み出し
+  const idx = sh('ダッシュボード');
+  const lr = idx.getLastRow(); if (lr < 2) { DashboardIndex_refreshAll(); } // 初回空なら構築
+  const lr2 = idx.getLastRow(); if (lr2 < 2) return { kpi:{}, nearing:[], annual:[], paused:[], invalid:[], serverTime:new Date().toISOString() };
+
+  const vals = idx.getRange(2,1,lr2-1,11).getDisplayValues();
+  const head = idx.getRange(1,1,1,11).getDisplayValues()[0];
+  const col = Object.fromEntries(head.map((h,i)=>[h,i]));
+
+  // 4) フィルタ適用（段階導入：最初は期間/担当者/ステを無視してOK）
+  const nearing = vals.filter(r => String(r[col['期限ステータス']])==='nearing');
+  const overdue = vals.filter(r => String(r[col['期限ステータス']])==='overdue');
+  const annual  = vals.filter(r => String(r[col['年次要確認']])==='TRUE');
+  const paused  = vals.filter(r => String(r[col['休止']])==='TRUE');
+  const invalid = vals.filter(r => String(r[col['負担割合整合']])!=='TRUE');
+
+  const res = {
+    kpi: {
+      nearing: nearing.length,
+      overdue: overdue.length,
+      annual:  annual.length,
+      paused:  paused.length
+    },
+    nearing: nearing.concat(overdue), // 一覧は“期限接近/超過”をまとめて返す
+    annual, paused, invalid,
+    serverTime: new Date().toISOString()
+  };
+
+  cache.put(key, JSON.stringify(res), 90); // TTL 90s
+  return res;
+}
+
+function isAdminUser_(){
+  try{
+    const s = sh('通知設定'); const lr=s.getLastRow(); if(lr<2) return false;
+    const vals = s.getRange(2,1,lr-1,3).getDisplayValues(); // [スタッフメール,WebhookURL,管理者]
+    const me = (Session.getActiveUser()||{}).getEmail() || '';
+    return vals.some(r => (String(r[0]||'').toLowerCase()===me.toLowerCase()) && String(r[2]||'').toUpperCase()==='TRUE');
+  }catch(e){ return false; }
+}
+/*** ── 書き込みAPI：runBulkActions ───────────── **/
+function runBulkActions(actions){
+  assertDomain_();
+  if (!isAdminUser_()) throw new Error('管理者権限が必要です');
+  if (!Array.isArray(actions)||!actions.length) return { ok:true, updated:0 };
+
+  const lock = LockService.getScriptLock(); lock.tryLock(5000);
+  try{
+    const touched = new Set();
+    actions.forEach(a=>{
+      const pid = a.patientId; if(!pid) return;
+      switch(a.type){
+        case 'confirm':      // 同意日 = 今日
+          updateConsentDate(pid, Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd'));
+          touched.add(pid);
+          break;
+        case 'normalize':    // 負担割合 1/2/3
+          updateBurdenShare(pid, String(a.value)); touched.add(pid);
+          break;
+        case 'unpause':      // 休止解除（= active に）
+          // 既存は markSuspend/markStop なので解除ユーティリティを簡便実装
+          unpause_(pid); touched.add(pid);
+          break;
+        case 'annual_ok':    // 年次確認登録
+          sh('年次確認').appendRow([String(pid), (a.year||new Date().getFullYear()), new Date(), (Session.getActiveUser()||{}).getEmail() ]);
+          pushNews_(pid,'年次確認','年次確認を登録');
+          touched.add(pid);
+          break;
+        case 'schedule':     // 予定登録
+          if (a.date){
+            sh('予定').appendRow([String(pid),'通院', a.date, (Session.getActiveUser()||{}).getEmail()]);
+            pushNews_(pid,'予定','通院予定を登録：'+a.date);
+            touched.add(pid);
+          }
+          break;
+      }
+    });
+
+    // Index差分更新（v1は全件でOK）
+    if (touched.size) DashboardIndex_updatePatients(Array.from(touched));
+    // キャッシュは雑に全無効化（運用後にキー粒度を最適化）
+    CacheService.getScriptCache().removeAll();
+    return { ok:true, updated: actions.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 休止解除（簡易）
+function unpause_(pid){
+  const s=sh('フラグ'); s.appendRow([String(pid),'active','']);
+  pushNews_(pid,'状態','休止解除');
+  log_('休止解除', pid, '');
+}
+/*** ── 施術録：タイムスタンプ編集 ───────────────── **/
+function updateTreatmentTimestamp(row, newLocal){
+  assertDomain_(); ensureAuxSheets_();
+  const s = sh('施術録');
+  const lr = s.getLastRow();
+  if (row <= 1 || row > lr) throw new Error('行が不正です');
+  if (!newLocal) throw new Error('日時が空です');
+
+  // 現在の値を退避（監査ログ用）
+  const oldTs = s.getRange(row, 1).getValue();        // 列A: タイムスタンプ
+  const pid   = String(s.getRange(row, 2).getValue()); // 列B: 施術録番号（患者ID）
+
+  // 入力（例: "2025-09-04T14:30" / "2025-09-04 14:30" / "2025/9/4 14:30"）を Date に変換
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const d = parseDateTimeFlexible_(newLocal, tz);
+  if (!d || isNaN(d.getTime())) throw new Error('日時の形式が不正です');
+
+  // 書き換え
+  s.getRange(row, 1).setValue(d);
+
+  // 監査ログ
+  const toDisp = (v)=> v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd HH:mm') : String(v||'');
+  log_('施術TS修正', pid, `row=${row}  ${toDisp(oldTs)} -> ${toDisp(d)}`);
+  pushNews_(pid, '記録', `施術記録の日時を修正: ${toDisp(d)}`);
+
+  // ダッシュボードの最終施術日に影響するので Index を更新（v1は全件でOK）
+  DashboardIndex_updatePatients([pid]);
+
+  return true;
+}
+/** 文字列→Date（datetime-localや各種区切りに耐性） */
+function parseDateTimeFlexible_(input, tz){
+  if (input instanceof Date && !isNaN(input.getTime())) return input;
+  let s = String(input).trim();
+  if (!s) return null;
+
+  // "YYYY-MM-DDTHH:mm" → "YYYY-MM-DD HH:mm"
+  s = s.replace('T', ' ');
+
+  // 秒が無ければ付与
+  const m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+  if (m) {
+    const Y = Number(m[1]), Mo = Number(m[2]) - 1, D = Number(m[3]);
+    const h = Number(m[4]||'0'), mi = Number(m[5]||'0'), se = Number(m[6]||'0');
+    return new Date(Y, Mo, D, h, mi, se);
+  }
+
+  // 素直にDateに投げる（最後の手段）
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+function submitTreatment(payload) {
+  try {
+    ensureAuxSheets_();
+    const s = sh('施術録');
+    const pid = String(payload?.patientId || '').trim();
+    if (!pid) throw new Error('patientIdが空です');
+
+    const user = (Session.getActiveUser() || {}).getEmail() || '';
+
+    // タイムゾーンを日本時間に固定して文字列保存
+    const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+    const now = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss');
+
+    const vit = (payload?.overrideVitals || '').trim() || genVitals();
+    const note = String(payload?.notesParts?.note || '').trim();
+    const merged = note ? (note + '\n' + vit) : vit;
+
+    // 🔒 二重保存チェック（直近の1件と比較）
+    const lr = s.getLastRow();
+    if (lr >= 2) {
+      const last = s.getRange(lr, 1, 1, 4).getValues()[0]; // [TS, pid, 所見, user]
+      const lastPid = String(last[1] || '').trim();
+      const lastNote = String(last[2] || '').trim();
+      if (lastPid === pid && lastNote === merged) {
+        return { ok: false, skipped: true, msg: '直前と同じ内容のため保存をスキップしました' };
+      }
+    }
+
+    const row = [now, pid, merged, user, '', ''];
+    s.appendRow(row);
+
+    return { ok: true, vitals: vit, wroteTo: s.getName(), row };
+  } catch (e) {
+    throw e;
+  }
+}
+
+/***** 申し送り：内部ユーティリティ *****/
+// 申し送りタブを安全に取得（無ければ作成＋ヘッダ付与）
+function ensureHandoverSheet_(){
+  const wb = ss();                                  // ← 既存の ss() を使用
+  let s = wb.getSheetByName('申し送り');
+  if (!s) s = wb.insertSheet('申し送り');
+  if (s.getLastRow() === 0) {
+    s.getRange(1,1,1,5).setValues([['TS','患者ID','ユーザー','メモ','FileIds']]);
+  }
+  return s;
+}
+
+// 画像保存ルートフォルダを解決
+// 優先: ScriptProperty(HANDOVER_FOLDER_ID) → APP.PARENT_FOLDER_ID → スプレッドシートと同じ親フォルダ
+function getHandoverRootFolder_(){
+  const propId = (PropertiesService.getScriptProperties().getProperty('HANDOVER_FOLDER_ID') || '').trim();
+  try { if (propId) return DriveApp.getFolderById(propId); } catch(e){}
+  try { if (APP.PARENT_FOLDER_ID) return DriveApp.getFolderById(APP.PARENT_FOLDER_ID); } catch(e){}
+  return getParentFolder_();                        // ← 既存の親フォルダ解決関数を流用
+}
+
+/***** 申し送り：保存 *****/
+function saveHandover(payload) {
+  const s = ensureHandoverSheet_();
+
+  const pid = String(payload && payload.patientId || '').trim();
+  if (!pid) throw new Error('patientIdが空です');
+
+  const user = (Session.getActiveUser()||{}).getEmail() || '';
+  const tz   = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const now  = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss');
+
+  const files = Array.isArray(payload && payload.files) ? payload.files : [];
+  const fileIds = [];
+
+  if (files.length){
+    // ルート/申し送り/patientId の順にフォルダを用意
+    const root = getHandoverRootFolder_();
+    const itH = root.getFoldersByName('申し送り');
+    const handoverRoot = itH.hasNext() ? itH.next() : root.createFolder('申し送り');
+
+    const itP = handoverRoot.getFoldersByName(pid);
+    const patientFolder = itP.hasNext() ? itP.next() : handoverRoot.createFolder(pid);
+
+    files.forEach(f=>{
+      try{
+        // dataURL or base64 どちらでもOKにする
+        const raw = String(f.data || '');
+        const b64 = raw.indexOf(',') >= 0 ? raw.split(',')[1] : raw;
+        const name = (f.name || 'upload.jpg');
+        const blob = Utilities.newBlob(
+          Utilities.base64Decode(b64),
+          (f.type || 'application/octet-stream'),
+          name
+        );
+        const saved = patientFolder.createFile(blob)
+        .setName(now.replace(/[^\d]/g,'') + '_' + name);
+        saved.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        fileIds.push(saved.getId());
+
+      }catch(e){
+        Logger.log('[handover upload error] ' + e);
+      }
+    });
+  }
+
+  s.appendRow([ now, pid, user, String(payload && payload.note || ''), fileIds.join(',') ]);
+  return { ok:true, fileIds };
+}
+/***** 申し送り：一覧取得 *****/
+function listHandovers(pid) {
+  const s = ensureHandoverSheet_();
+  const lr = s.getLastRow();
+  if (lr < 2) return [];
+
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const vals = s.getRange(2, 1, lr - 1, 5).getValues(); // [TS, 患者ID, ユーザー, メモ, FileIds]
+
+  const out = [];
+  for (let i = 0; i < vals.length; i++) {
+    const row = i + 2; // 2行目から始まるので +2
+    const [ts, id, user, note, fileIdsStr] = vals[i];
+    if (String(id) !== String(pid)) continue;
+
+    const when = ts instanceof Date
+      ? Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm')
+      : String(ts || '');
+
+    const fileIds = String(fileIdsStr || '').split(',').filter(Boolean);
+    const files = fileIds.map(fid => {
+      try {
+        const f = DriveApp.getFileById(fid);
+        return "https://drive.google.com/thumbnail?id=" + f.getId() + "&sz=w300";
+      } catch (e) {
+        return null;
+     }
+    }).filter(Boolean);
+
+
+    out.push({ row, when, user, note, files });
+  }
+  return out.reverse(); // 新しい順
+}
+
+function updateHandover(row, newNote) {
+  const s = ensureHandoverSheet_();
+  if (row <= 1 || row > s.getLastRow()) throw new Error('行が不正です');
+  s.getRange(row, 4).setValue(newNote); // 4列目=メモ
+  return true;
+}
+function deleteHandover(row) {
+  const s = ensureHandoverSheet_();
+  if (row <= 1 || row > s.getLastRow()) throw new Error('行が不正です');
+  s.deleteRow(row);
+  return true;
+}

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ようこそ</title>
+<style>
+  body{ font-family: system-ui, sans-serif; background:#f9fafb; margin:0; display:flex; justify-content:center; align-items:center; height:100vh; }
+  .card{ background:white; padding:32px; border-radius:16px; box-shadow:0 4px 12px rgba(0,0,0,0.1); text-align:center; }
+  h1{ margin-bottom:20px; font-size:20px; }
+  .btn{ display:block; margin:10px auto; padding:12px 20px; border-radius:8px; background:#0a66ff; color:white; font-weight:600; text-decoration:none; width:220px; }
+  .btn:hover{ background:#094ecc; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>ようこそ</h1>
+    <a class="btn" href="javascript:void(0)" onclick="window.top.location.href='<?= baseUrl ?>?view=intake'">電話受付</a>
+    <a class="btn" href="javascript:void(0)" onclick="window.top.location.href='<?= baseUrl ?>?view=visit'">訪問受付</a>
+    <a class="btn" href="javascript:void(0)" onclick="window.top.location.href='<?= baseUrl ?>?view=intake_list'">受付一覧</a>
+    <a class="btn" href="javascript:void(0)" onclick="window.top.location.href='<?= baseUrl ?>?view=admin'">管理画面</a>
+  </div>
+</body>
+</html>

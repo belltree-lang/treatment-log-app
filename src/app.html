@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ワンストップ施術録→請求</title>
+<style>
+  :root{ --fg:#222; --bg:#f7f7f9; --card:#fff; --brand:#0a66ff; --muted:#6b7280; --ok:#10b981; --warn:#ef4444; }
+  body{ margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; }
+  .wrap{ max-width:1000px; margin:24px auto; padding:0 16px; }
+  /* 2カラムレイアウト（ヘッダは外で全幅） */
+  .grid2{ display:grid; grid-template-columns:1fr; gap:16px; }
+  @media (min-width: 1000px){
+    .wrap{ max-width:1200px; }
+    .grid2{ grid-template-columns:1fr 1fr; }
+  }
+
+  .card{ background:var(--card); border-radius:16px; padding:16px; box-shadow:0 6px 24px rgba(0,0,0,.06); margin-bottom:16px }
+  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start }
+  .row-obs{ display:grid; grid-template-columns:3fr 2fr; gap:12px; align-items:start }
+  input,select,textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-size:14px; box-sizing:border-box }
+  textarea{ min-height:120px; resize:vertical }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:8px 12px; background:var(--brand); color:#fff; cursor:pointer; font-weight:600; font-size:13px }
+  .btn.ghost{ background:#e5e7eb; color:#111 }
+  .btn.ok{ background:var(--ok) }
+  .btn.warn{ background:var(--warn) }
+  .muted{ color:var(--muted); font-size:.9rem }
+  .badge{ display:inline-block; padding:4px 10px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px }
+  .news-item{ border-left:4px solid #d1d5db; padding:6px 8px; margin:6px 0; background:#fafafa; border-radius:8px }
+  .section-title{ font-weight:700; margin:8px 0 }
+  .btnrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  table{ width:100%; border-collapse:collapse; font-size:14px }
+  th,td{ border-bottom:1px solid #eee; padding:8px 6px; text-align:left; vertical-align:top }
+  .actions button{ margin-right:6px }
+  .right{ text-align:right }
+
+  /* モーダル（通院予定） */
+  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999 }
+  .modal.open{ display:flex }
+  .dialog{ background:#fff; border-radius:12px; padding:16px; width:min(92vw, 420px); box-shadow:0 10px 35px rgba(0,0,0,.2) }
+
+  /* 外部向けレポートのタブ/ドロップダウン */
+  .dropdown{ position:relative; }
+  .dropdown-menu{ position:absolute; top:100%; left:0; background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.08); padding:8px; display:none; z-index:99; min-width:220px }
+  .dropdown.open .dropdown-menu{ display:block; }
+  .dropdown-menu button{ width:100%; text-align:left; }
+
+  /* 申し送り（画像プレビュー） */
+  .thumbs{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px }
+  .thumbs img{ max-width:120px; max-height:120px; border-radius:8px; border:1px solid #e5e7eb }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ===== ヘッダ（全幅） ===== -->
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>患者ID（施術録番号）</label>
+        <input id="pid" list="pidlist" placeholder="例: 5702" value="<?= patientId ?>"
+               onkeydown="if(event.key==='Enter'){ refresh(); }"
+               onchange="refresh()" onblur="refresh()" />
+        <datalist id="pidlist"></datalist>
+      </div>
+      <div>
+        <label>負担割合</label>
+        <select id="burden">
+          <option value="">変更なし</option>
+          <option value="1">1割</option>
+          <option value="2">2割</option>
+          <option value="3">3割</option>
+        </select>
+      </div>
+    </div>
+    <div id="hdr" style="margin-top:8px"></div>
+  </div>
+
+  <!-- ==== 2カラム（左：施術録関連／右：申し送り） ==== -->
+  <div class="grid2">
+
+    <!-- ===== 左カラム ===== -->
+    <div>
+
+      <!-- 施術録入力 -->
+      <div class="card">
+        <div class="section-title">施術録入力</div>
+        <div class="row-obs">
+          <div>
+            <label>所見（自由記載）</label>
+            <textarea id="obs"></textarea>
+          </div>
+          <div>
+            <label>バイタル（自動/上書き）</label>
+            <div class="muted" style="margin:4px 0">例) vital 126/79/72bpm / SpO2:97%  36.2℃</div>
+            <input id="vitals" placeholder="未入力なら自動付与" />
+            <div class="btnrow" style="margin-top:6px">
+              <button class="btn ghost" onclick="fillVitals()">バイタル自動生成</button>
+              <button class="btn ghost" onclick="startDictation()">🎙 音声入力</button>
+              <select id="preset" style="max-width:260px"></select>
+              <button class="btn ghost" onclick="insertPreset()">定型文を挿入</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 保存行＋外部向けレポート -->
+        <div class="btnrow" style="margin-top:8px">
+          <button class="btn ok" onclick="save()">保存（施術録）</button>
+
+          <div class="dropdown" id="reportTab">
+            <button class="btn ok" onclick="toggleReportMenu()">外部向けレポート ▾</button>
+            <div class="dropdown-menu">
+              <button class="btn ghost" onclick="chooseReport('care_manager')">ケアマネ向け</button>
+              <button class="btn ghost" onclick="chooseReport('family')">家族向け</button>
+              <button class="btn ghost" onclick="chooseReport('physician')">同意医師向け</button>
+            </div>
+          </div>
+
+          <div style="flex:1"></div>
+          <div class="btnrow">
+            <button class="btn warn" onclick="setSuspend()">施術 休止</button>
+            <button class="btn warn" onclick="setStop()">施術 中止</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- News -->
+      <div class="card">
+        <div class="section-title">News</div>
+        <div id="news"></div>
+      </div>
+
+      <!-- 当月の施術記録 -->
+      <div class="card">
+        <div class="section-title">当月の施術記録（この患者）</div>
+        <div id="list"></div>
+      </div>
+
+      <!-- レポート下書き（4問ガイド） -->
+      <div class="card" id="reportGuide" style="display:none">
+        <div class="section-title">外部向けレポート下書き（4問ガイド）</div>
+        <div class="muted" style="margin-bottom:8px">箇条書きでOK。提出先に合わせて自動整形されます（API/ローカル対応）。</div>
+        <div class="row">
+          <div><label>① バイタル（まとめ）</label><textarea id="g_vital"></textarea></div>
+          <div><label>② 痛み/動作の変化</label><textarea id="g_pain"></textarea></div>
+        </div>
+        <div class="row">
+          <div><label>③ 施術反応/経過</label><textarea id="g_response"></textarea></div>
+          <div><label>④ 注意点/連携依頼</label><textarea id="g_note"></textarea></div>
+        </div>
+        <div class="btnrow" style="margin-top:8px">
+          <button class="btn ok" onclick="submitReportPdf()">この内容でPDF作成</button>
+          <button class="btn ghost" onclick="skipReportPdf()">メモ無しでPDF作成</button>
+          <button class="btn ghost" onclick="cancelReport()">閉じる</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ===== 右カラム：申し送り ===== -->
+    <div>
+      <div class="card">
+        <div class="section-title">申し送り</div>
+        <div class="muted" style="margin-bottom:8px">
+          必要時に読み込み・保存してください
+        </div>
+
+        <div class="btnrow" style="margin-bottom:8px">
+          <button class="btn ghost" onclick="loadHandovers()">申し送りを表示</button>
+          <button class="btn ghost" onclick="clearHandoverForm()">入力クリア</button>
+        </div>
+
+        <div id="handoverList" style="margin-top:10px"></div>
+
+        <div style="margin-top:12px">
+          <label>新規申し送り</label>
+          <textarea id="handoverNote" placeholder="申し送り内容を入力"></textarea>
+
+          <div style="margin-top:8px">
+            <label>画像添付</label>
+            <input type="file" id="handoverFile" multiple accept="image/*" onchange="previewHandoverFiles()"/>
+            <div id="handoverPreview" class="thumbs"></div>
+          </div>
+
+          <div class="btnrow" style="margin-top:8px">
+            <button class="btn ok" onclick="saveHandoverUI()">申し送りを保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /grid2 -->
+</div><!-- /wrap -->
+
+<!-- 通院予定モーダル -->
+<div id="consentModal" class="modal" onclick="closeModal(event)">
+  <div class="dialog" onclick="event.stopPropagation()">
+    <div class="section-title" style="margin:0 0 8px">通院予定日の入力</div>
+    <div class="muted" style="margin-bottom:8px">日付を選ぶか、「未定」を選択してください。</div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
+      <input type="date" id="consentDate">
+      <label style="display:flex; gap:6px; align-items:center">
+        <input type="checkbox" id="consentUndecided"> 未定
+      </label>
+    </div>
+    <div class="btnrow">
+      <button class="btn ok" onclick="applyConsentHandout()">OK</button>
+      <button class="btn ghost" onclick="hideConsentModal()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function q(id){ return document.getElementById(id); }
+function val(id){ return q(id).value.trim(); }
+function setv(id,v){ q(id).value=v; }
+function pid(){ return val('pid'); }
+
+let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
+let _pendingVisitPlanDate = null;
+let _reportType = null;
+
+function resetFlags(){ _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false}; _pendingVisitPlanDate=null; }
+
+/* 候補/定型文 */
+function loadPidList(){
+  google.script.run.withSuccessHandler(list=>{
+    const dl=q('pidlist'); dl.innerHTML='';
+    list.forEach(x=>{ const o=document.createElement('option'); o.value=x; dl.appendChild(o); });
+  }).listPatientIds();
+}
+function loadPresets(){
+  google.script.run.withSuccessHandler(arr=>{
+    const sel=q('preset'); sel.innerHTML='';
+    const empty=document.createElement('option'); empty.value=''; empty.textContent='（定型文なし）'; sel.appendChild(empty);
+    const list=(arr&&arr.length)?arr:[{cat:'所見',label:'特記事項なし',text:'特記事項なし。経過良好。'}];
+    list.forEach(x=>{
+      const o=document.createElement('option'); o.value=x.text || x.label; o.dataset.label=(x.label||x.text);
+      o.textContent=x.label || x.text; sel.appendChild(o);
+    });
+  }).getPresets();
+}
+
+/* バイタル/音声 */
+function fillVitals(){ google.script.run.withSuccessHandler(v=> setv('vitals', v)).genVitals(); }
+function startDictation(){
+  const S = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!S){ alert('音声入力に未対応のブラウザです'); return; }
+  const rec = new S(); rec.lang='ja-JP'; rec.interimResults=false;
+  rec.onresult=(e)=>{ const t=e.results[0][0].transcript; setv('obs', (val('obs')+' '+t).trim()); };
+  rec.start();
+}
+
+/* 定型文挿入＋Flags */
+function insertPreset(){
+  const sel=q('preset');
+  const t = sel.value; const label = sel.options[sel.selectedIndex]?.dataset?.label || '';
+  if(!t){ alert('定型文を選択してください'); return; }
+  setv('obs', (val('obs')+'\n'+t).trim());
+
+  if(label.indexOf('請求書・領収書受渡')>=0) _flags.receipt=true;
+  if(label.indexOf('配布物受渡')>=0)         _flags.handout=true;
+  if(label.indexOf('再同意取得確認')>=0)      _flags.consentObtained=true;
+
+  if(label.indexOf('再同意書受渡')>=0){
+    _flags.consentHandout=true;
+    showConsentModal();
+  }
+    // ⭐ 挿入直後に自動保存したいならこれを追加
+  save();
+}
+
+/* 通院予定モーダル */
+function showConsentModal(){
+  q('consentDate').value='';
+  q('consentUndecided').checked=false;
+  q('consentModal').classList.add('open');
+}
+function hideConsentModal(){ q('consentModal').classList.remove('open'); }
+function closeModal(e){ hideConsentModal(); }
+function applyConsentHandout(){
+  const und = q('consentUndecided').checked;
+  const d   = q('consentDate').value;
+  if(!und && !d){ alert('日付を選ぶか、未定にチェックしてください'); return; }
+  if(und){ _pendingVisitPlanDate = null; setv('obs', (val('obs')+'\n通院予定：未定').trim()); }
+  else   { _pendingVisitPlanDate = d;    setv('obs', (val('obs')+`\\n通院予定：${d}`).trim()); }
+  hideConsentModal();
+}
+
+/* 保存 */
+function detectPresetLabelFromNote(){
+  const t = (val('obs')||'');
+  if(_flags.consentObtained) return '再同意取得確認';
+  if(_flags.consentHandout)  return '再同意書受渡';
+  if(_flags.receipt)         return '請求書・領収書受渡';
+  if(_flags.handout)         return '配布物受渡';
+  if(t.indexOf('請求書')>=0 && t.indexOf('受け渡し')>=0) return '請求書・領収書受渡';
+  if(t.indexOf('配布物')>=0 && t.indexOf('受け渡し')>=0) return '配布物受渡';
+  if(t.indexOf('再同意')>=0 && t.indexOf('取得')>=0)     return '再同意取得確認';
+  if(t.indexOf('再同意書')>=0 && t.indexOf('受け渡し')>=0) return '再同意書受渡';
+  return '';
+}
+function toast(msg){
+  try{
+    const el = document.createElement('div');
+    el.textContent = msg;
+    el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:20px;background:#111;color:#fff;padding:10px 14px;border-radius:999px;z-index:99999";
+    document.body.appendChild(el);
+    setTimeout(()=>el.remove(), 1800);
+  }catch(e){ alert(msg); }
+}
+
+function save(){
+  try{
+    console.log('[save] start');
+    const p = pid();
+    if(!p){ alert('患者IDを入力'); return; }
+
+    // 送信ペイロード
+    const payload={
+      patientId: p,
+      presetLabel: detectPresetLabelFromNote(),
+      overrideVitals: val('vitals'),
+      burdenShare: val('burden')||null,
+      notesParts:{ note: val('obs') },
+      actions:{}
+    };
+    if(_pendingVisitPlanDate){ payload.actions.visitPlanDate = _pendingVisitPlanDate; }
+
+    // ボタン連打防止
+    const btns = document.querySelectorAll('button');
+    btns.forEach(b=> b.disabled = true);
+
+    console.log('[save] payload', payload);
+
+    google.script.run
+      .withSuccessHandler(res=>{
+        console.log('[save] success', res);
+        if (res && res.row && Array.isArray(res.row)) {
+          alert('保存しました → 行: ' + res.row.join(' , '));
+        } else {
+          alert('保存しました');
+        }
+        if (res && res.vitals && !val('vitals')) setv('vitals', res.vitals);
+
+        resetFlags();
+        setv('obs','');
+        setv('vitals','');
+        q('preset').selectedIndex = 0;
+        refresh();
+
+        btns.forEach(b=> b.disabled = false);
+      })
+      .withFailureHandler(e=>{
+        console.error('[save] failure', e);
+        alert('保存に失敗: ' + (e && e.message ? e.message : e));
+        btns.forEach(b=> b.disabled = false);
+      })
+      .submitTreatment(payload);
+  }catch(err){
+    console.error('[save] exception', err);
+    alert('エラー: ' + (err && err.message ? err.message : err));
+  }
+}
+
+/* 休止/中止 */
+function setSuspend(){ const p=pid(); if(!p) return; if(!confirm('休止にします。続行？')) return;
+  google.script.run.withSuccessHandler(()=>{ alert('休止に設定'); refresh(); }).markSuspend(p); }
+function setStop(){ const p=pid(); if(!p) return; if(!confirm('中止にします。続行？')) return;
+  google.script.run.withSuccessHandler(()=>{ alert('中止に設定'); refresh(); }).markStop(p); }
+
+/* 外部向けレポート */
+function toggleReportMenu(){ q('reportTab').classList.toggle('open'); }
+function chooseReport(type){
+  _reportType = type;
+  q('reportGuide').style.display='block';
+  q('reportTab').classList.remove('open');
+  window.scrollTo({ top: q('reportGuide').offsetTop-20, behavior:'smooth'});
+}
+function submitReportPdf(){
+  const p=pid(); if(!p||!_reportType){ alert('患者IDと作成先を確認してください'); return; }
+  const notes={ vital:val('g_vital'), pain:val('g_pain'), response:val('g_response'), note:val('g_note') };
+  google.script.run
+    .withSuccessHandler(res=>{ alert('PDF作成: '+(res?.name||'')); })
+    .withFailureHandler(e=> alert(e.message||e))
+    .generateReportViaApi(p, _reportType, notes);
+}
+function skipReportPdf(){
+  const p=pid(); if(!p||!_reportType){ alert('患者IDと作成先を確認してください'); return; }
+  google.script.run
+    .withSuccessHandler(res=>{ alert('PDF作成: '+(res?.name||'')); })
+    .withFailureHandler(e=> alert(e.message||e))
+    .generateReportViaApi(p, _reportType, null);
+}
+function cancelReport(){ q('reportGuide').style.display='none'; }
+
+/* 画面更新 */
+function refresh(){ loadHeader(); loadNews(); loadThisMonth(); }
+function loadHeader(){
+  const p=pid(); if(!p) return;
+  google.script.run.withSuccessHandler(h=>{
+    if(!h){ q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>'; return; }
+    const status = h.status==='active'? '🟢稼働中' : h.status==='suspended'? '🟡休止' : '🔴中止';
+    const estCur = h.monthly.current.est? '約'+h.monthly.current.est.toLocaleString()+'円' : '—';
+    const estPrev = h.monthly.previous.est? '約'+h.monthly.previous.est.toLocaleString()+'円' : '—';
+    q('hdr').innerHTML = `
+      <div class="row">
+        <div>
+          <div class="badge">患者ID ${h.patientId}</div>
+          <div style="margin:6px 0 2px">氏名：${h.name||'—'}　（${h.age!=null? h.age+'歳':''} ${h.ageClass||''}）</div>
+          <div>病院名：${h.hospital||'—'}　医師：${h.doctor||'—'}</div>
+          <div>同意日：${h.consentDate||'—'}　次回期限：${h.consentExpiry||'—'}　負担割合：${h.burden||'—'}</div>
+        </div>
+        <div>
+          <div>${status} ${h.pauseUntil? '（ミュート:'+h.pauseUntil+'まで）':''}</div>
+          <div class="muted">当月: ${h.monthly.current.count}回 / ${estCur}　｜　前月: ${h.monthly.previous.count}回 / ${estPrev}</div>
+          <div class="muted">最終施術: ${h.recent.lastTreat||'—'}　最終同意: ${h.recent.lastConsent||'—'}　直近担当: ${h.recent.lastStaff||'—'}</div>
+        </div>
+      </div>`;
+  }).getPatientHeader(p);
+}
+function loadNews(){
+  const p=pid(); if(!p) return;
+  google.script.run.withSuccessHandler(list=>{
+    const el=q('news');
+    if(!list||!list.length){ el.innerHTML='<div class="muted">Newsはありません</div>'; return; }
+    el.innerHTML=list.map(n=>`<div class="news-item"><div class="muted">${n.when} ／ ${n.type}</div><div>${n.message}</div></div>`).join('');
+  }).getNews(p);
+}
+function loadThisMonth(){
+  const p=pid(); if(!p) return;
+  google.script.run.withSuccessHandler(rows=>{
+    const el=q('list');
+    if(!rows || !rows.length){ el.innerHTML='<div class="muted">今月の記録はありません</div>'; return; }
+    el.innerHTML = `<table>
+      <thead><tr><th style="width:150px">日時</th><th>所見</th><th style="width:140px">操作</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`
+          <tr>
+            <td>${r.when}</td>
+            <td>${escapeHtml(r.note).replace(/\n/g,'<br>')}</td>
+            <td class="actions">
+              <button class="btn ghost" onclick="editRow(${r.row}, ${JSON.stringify(r.note).replace(/"/g,'&quot;')})">編集</button>
+              <button class="btn ghost" onclick="editRowTime(${r.row}, '${r.when.replace(' ','T')}')">日時</button>
+              <button class="btn warn" onclick="delRow(${r.row})">削除</button>
+
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+  }).listTreatmentsForCurrentMonth(p);
+}
+function editRow(row, note){
+  const v = prompt('所見を編集', note||'');
+  if(v==null) return;
+  google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).updateTreatmentRow(row, v);
+}
+function delRow(row){
+  if(!confirm('この記録を削除します。よろしいですか？')) return;
+  google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).deleteTreatmentRow(row);
+}
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* 当月記録の日時編集 */
+function editRowTime(row, whenT){
+  const v = prompt('新しい日時を入力（例: 2025-09-04T14:30）', whenT || '');
+  if (v == null) return;
+  const curMonth = (new Date()).toISOString().slice(0,7);
+  const newMonth = (v||'').slice(0,7);
+  if (newMonth && newMonth !== curMonth) {
+    if (!confirm('当月以外の日付に変更すると、この一覧からは見えなくなることがあります。続行しますか？')) return;
+  }
+  google.script.run
+    .withSuccessHandler(()=>{ refresh(); })
+    .withFailureHandler(e=> alert(e.message||e))
+    .updateTreatmentTimestamp(row, v);
+}
+/* === 申し送り：UI側実装（Drive保存はGAS側） === */
+function clearHandoverForm(){
+  setv('handoverNote','');
+  q('handoverFile').value = '';
+  q('handoverPreview').innerHTML = '';
+}
+
+function previewHandoverFiles(){
+  const el = q('handoverFile'); const out = q('handoverPreview'); out.innerHTML='';
+  if(!el.files || !el.files.length) return;
+  Array.from(el.files).forEach(f=>{
+    const r = new FileReader();
+    r.onload = ()=> {
+      const img = document.createElement('img');
+      img.src = r.result;
+      out.appendChild(img);
+    };
+    r.readAsDataURL(f);
+  });
+}
+
+function loadHandovers(){
+  const p = pid();
+  if(!p){ alert("患者IDを入力してください"); return; }
+
+  const box = q('handoverList');
+  box.innerHTML = '<div class="muted">読み込み中…</div>';
+
+  google.script.run
+    .withSuccessHandler(list=>{
+      if(!list || !list.length){
+        box.innerHTML = '<div class="muted">申し送りはありません</div>';
+        return;
+      }
+      box.innerHTML = list.map(h => {
+  const imgs = (h.files || []).map(u =>
+    `<img src="${u}" style="max-width:120px;max-height:120px;border-radius:8px;margin:4px;border:1px solid #e5e7eb">`
+  ).join('');
+
+  return `<div class="news-item">
+    <div class="muted">${h.when} ／ ${escapeHtml(h.user||'')}</div>
+    <div>${escapeHtml(h.note||'').replace(/\n/g,'<br>')}</div>
+    <div style="margin-top:4px">${imgs}</div>
+    <div class="btnrow" style="margin-top:6px">
+      <button class="btn ghost" onclick="editHandover(${h.row}, \`${h.note||''}\`)">編集</button>
+      <button class="btn warn" onclick="deleteHandover(${h.row})">削除</button>
+    </div>
+  </div>`;
+}).join('');
+
+
+    })
+    .withFailureHandler(e=>{
+      const msg = (e && e.message) ? e.message : String(e);
+      console.error('[handover load error]', e);
+      box.innerHTML = `<div class="muted" style="color:#b91c1c">申し送りの取得に失敗しました：${escapeHtml(msg)}</div>`;
+      alert('申し送りの取得に失敗しました：' + msg);
+    })
+    .listHandovers(p);
+}
+function editHandover(row, note){
+  const v = prompt("申し送りを修正", note || "");
+  if(v == null) return;
+  google.script.run
+    .withSuccessHandler(()=> loadHandovers())
+    .withFailureHandler(e => alert(e.message||e))
+    .updateHandover(row, v);
+}
+function deleteHandover(row){
+  if(!confirm("この申し送りを削除します。よろしいですか？")) return;
+  google.script.run
+    .withSuccessHandler(()=> loadHandovers())
+    .withFailureHandler(e => alert(e.message||e))
+    .deleteHandover(row);
+}
+
+function saveHandoverUI(){
+  const p = pid();
+  if(!p){ alert("患者IDを入力してください"); return; }
+
+  const note = val("handoverNote");
+  const filesInput = q("handoverFile");
+
+  const finish = ()=>{
+    alert("申し送りを保存しました");
+    clearHandoverForm();
+    loadHandovers();
+  };
+
+  if(filesInput.files && filesInput.files.length){
+    const readerPromises = [];
+    for(const f of filesInput.files){
+      readerPromises.push(new Promise((resolve)=>{
+        const r = new FileReader();
+        r.onload = ()=> resolve({ name:f.name, type:f.type, data:r.result.split(',')[1] }); // base64部のみ
+        r.readAsDataURL(f);
+      }));
+    }
+    Promise.all(readerPromises).then(results=>{
+      google.script.run
+        .withSuccessHandler(finish)
+        .withFailureHandler(e=> alert(e.message||e))
+        .saveHandover({ patientId:p, note, files:results });
+    });
+  } else {
+    google.script.run
+      .withSuccessHandler(finish)
+      .withFailureHandler(e=> alert(e.message||e))
+      .saveHandover({ patientId:p, note, files:[] });
+  }
+}
+/* 起動時 */
+(function init(){
+  loadPidList();
+  loadPresets();
+  const p = "<?= patientId ?>";
+  if (p) refresh();
+  q('consentModal')?.classList.remove('open');
+})();
+
+google.script.run.withSuccessHandler(r=>console.log('[ping]', r))
+                 .withFailureHandler(e=>console.error('[ping fail]', e))
+                 .ping();
+</script>
+</body>
+</html>

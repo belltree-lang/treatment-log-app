@@ -1,0 +1,78 @@
+<!doctype html><meta charset="utf-8">
+<style>
+  body{font-family:system-ui,"Noto Sans JP",sans-serif;margin:16px}
+  .kpi{display:flex;gap:12px;margin-bottom:12px}
+  .card{padding:12px;border:1px solid #e5e7eb;border-radius:12px}
+  table{border-collapse:collapse;width:100%}
+  th,td{border:1px solid #eee;padding:6px 8px;font-size:13px;text-align:left}
+  .btn{appearance:none;border:0;border-radius:999px;padding:6px 10px;background:#0a66ff;color:#fff;cursor:pointer}
+  .btn.ghost{background:#e5e7eb;color:#111}
+</style>
+<h2>管理者ダッシュボード</h2>
+<div class="kpi" id="kpi"></div>
+<div class="card" style="margin:12px 0">
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+    <button class="btn" onclick="refresh()">再読み込み</button>
+    <button class="btn ghost" onclick="bulkConfirm()">選択を「取得確認」</button>
+    <button class="btn ghost" onclick="bulkNormalize(1)">負担 1割</button>
+    <button class="btn ghost" onclick="bulkNormalize(2)">負担 2割</button>
+    <button class="btn ghost" onclick="bulkNormalize(3)">負担 3割</button>
+    <div style="flex:1"></div>
+    <small id="time"></small>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+let rows = [];
+function renderKPI(k){
+  document.getElementById('kpi').innerHTML = `
+    <div class="card">14日以内: <b>${k.nearing||0}</b></div>
+    <div class="card">超過: <b>${k.overdue||0}</b></div>
+    <div class="card">年次要確認: <b>${k.annual||0}</b></div>
+    <div class="card">休止中: <b>${k.paused||0}</b></div>`;
+}
+function renderTable(rs){
+  const head = ['','患者ID','氏名','同意日','次回期限','期限','担当(60d)','最終施術','休止','ミュート解除','負担OK'];
+  const html = [
+    '<table><thead><tr>',
+    head.map(h=>`<th>${h}</th>`).join(''),
+    '</tr></thead><tbody>',
+    ...rs.slice(0,200).map(r=>`<tr>
+      <td><input type="checkbox" data-pid="${r[0]}"></td>
+      <td>${r[0]||''}</td><td>${r[1]||''}</td><td>${r[2]||''}</td>
+      <td>${r[3]||''}</td><td>${r[4]||''}</td>
+      <td>${r[5]||''}</td><td>${r[6]||''}</td>
+      <td>${r[8]||''}</td><td>${r[9]||''}</td>
+      <td>${r[10]||''}</td>
+    </tr>`),
+    '</tbody></table>'
+  ].join('');
+  document.getElementById('list').innerHTML = html;
+}
+function selectedIds(){
+  return Array.from(document.querySelectorAll('input[type=checkbox][data-pid]:checked'))
+    .map(x=>x.getAttribute('data-pid'));
+}
+function bulkConfirm(){
+  const ids = selectedIds(); if(!ids.length) return alert('行を選択してください');
+  const actions = ids.map(id=>({type:'confirm', patientId:id}));
+  google.script.run.withSuccessHandler(()=>refresh()).runBulkActions(actions);
+}
+function bulkNormalize(v){
+  const ids = selectedIds(); if(!ids.length) return alert('行を選択してください');
+  const actions = ids.map(id=>({type:'normalize', patientId:id, value:v}));
+  google.script.run.withSuccessHandler(()=>refresh()).runBulkActions(actions);
+}
+function refresh(){
+  google.script.run.withSuccessHandler(d=>{
+    renderKPI(d.kpi||{});
+    document.getElementById('time').textContent = new Date(d.serverTime||Date.now()).toLocaleString();
+    // 一覧は“期限接近/超過”を優先表示
+    rows = d.nearing||[];
+    renderTable(rows);
+  }).getAdminDashboard({period:'thisMonth'});
+}
+// 初期化
+refresh();
+</script>

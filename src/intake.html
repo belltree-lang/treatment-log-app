@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>初回受付（Intake）</title>
+<style>
+  :root{ --fg:#222; --bg:#f7f7f9; --card:#fff; --brand:#0a66ff; --muted:#6b7280; --ok:#10b981; --warn:#ef4444; }
+  body{ margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; }
+  .wrap{ max-width:900px; margin:24px auto; padding:0 16px; }
+  .card{ background:var(--card); border-radius:16px; padding:16px; box-shadow:0 6px 24px rgba(0,0,0,.06); margin-bottom:16px }
+  label{ font-weight:600; display:block; margin:8px 0 4px }
+  input,textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-size:14px; box-sizing:border-box }
+  textarea{ min-height:90px }
+  .muted{ color:var(--muted); font-size:.9rem }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:10px 14px; background:var(--brand); color:#fff; cursor:pointer; font-weight:700; font-size:14px }
+  .btn.ghost{ background:#e5e7eb; color:#111 }
+  .btn.ok{ background:var(--ok) }
+  .btn.warn{ background:var(--warn) }
+  .err{ color:var(--warn); font-size:.85rem; margin-top:4px; min-height:1em }
+  .chip{ display:inline-flex; align-items:center; gap:6px; background:#eef2ff; color:#3730a3; padding:6px 10px; border-radius:999px; font-size:12px; }
+  .toast{ position:fixed; left:50%; transform:translateX(-50%); bottom:20px; background:#111; color:#fff; padding:10px 14px; border-radius:999px; display:none }
+  .toast.show{ display:block }
+  .linkrow{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  table{ width:100%; border-collapse:collapse; font-size:14px }
+  th,td{ padding:6px 4px; border-bottom:1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:space-between">
+    <div class="chip" id="modeChip">モード: 電話</div>
+    <div class="muted">LeadID: <span id="leadDisp">（未発番）</span></div>
+    <div class="linkrow">
+      <a class="btn ghost" href="?view=intake_list" title="受付一覧">受付一覧</a>
+      <button class="btn ghost" id="copyBtn" title="URLコピー">URLコピー</button>
+      <button class="btn ghost" id="switchBtn" title="モード切替">訪問モードへ</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row2">
+      <div>
+        <label>お名前 <span class="muted">*</span></label>
+        <input id="name" placeholder="山田 太郎" />
+        <div class="err" id="e_name"></div>
+      </div>
+      <div>
+        <label>電話番号 <span class="muted">*</span></label>
+        <input id="phone" placeholder="090-1234-5678" />
+        <div class="err" id="e_phone"></div>
+      </div>
+    </div>
+
+    <div class="row2">
+      <div>
+        <label>フリガナ <span class="muted" id="req_furi">(訪問で必須)</span></label>
+        <input id="furigana" placeholder="ヤマダ タロウ" />
+        <div class="err" id="e_furigana"></div>
+      </div>
+      <div>
+        <label>住所 <span class="muted" id="req_addr">(訪問で必須)</span></label>
+        <input id="address" placeholder="東京都 ○○市（電話は市区町村まででも可）" />
+        <div class="err" id="e_address"></div>
+      </div>
+    </div>
+
+    <div>
+      <label>他サービス利用状況 <span class="muted" id="req_serv">(訪問で必須)</span></label>
+      <textarea id="services" placeholder="例）デイサービス 火・金 午前&#10;訪問介護 週2"></textarea>
+      <div class="err" id="e_services"></div>
+    </div>
+
+    <!-- スマート操作 -->
+    <div class="muted" style="margin:10px 0 6px">クイック操作：
+      <button class="btn ghost" type="button" onclick="toggleAll(false)">すべて解除</button>
+      <button class="btn ghost" type="button" onclick="toggleHalf('am', true)">午前（9-13）全部チェック</button>
+      <button class="btn ghost" type="button" onclick="toggleHalf('pm', true)">午後（13-18）全部チェック</button>
+    </div>
+
+    <!-- 曜日×時間帯マトリクス -->
+    <div>
+      <label>ご希望スケジュール（避けたい曜日/時間帯） <span class="muted">*</span></label>
+      <div class="muted" style="margin-bottom:6px">該当する「曜日 × 時間帯」をチェックしてください（行・列ヘッダクリックで一括ON/OFF）</div>
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left">曜日＼時間帯</th>
+            <th id="colhdr_9-11"  style="text-align:center">9-11</th>
+            <th id="colhdr_11-13" style="text-align:center">11-13</th>
+            <th id="colhdr_13-15" style="text-align:center">13-15</th>
+            <th id="colhdr_15-18" style="text-align:center">15-18</th>
+          </tr>
+        </thead>
+        <tbody id="slotGrid"></tbody>
+      </table>
+      <div class="err" id="e_schedulePref"></div>
+    </div>
+
+    <div style="margin-top:8px">
+      <label>初回体験希望日時</label>
+      <div style="display:flex; gap:8px; align-items:center">
+        <input id="trialDate" type="datetime-local" />
+        <label class="muted" style="display:flex; align-items:center; gap:6px">
+          <input type="checkbox" id="trialUndecided"> 未定（調整中）
+        </label>
+      </div>
+      <div class="err" id="e_trialDate"></div>
+    </div>
+
+    <div style="margin-top:8px">
+      <label>問診メモ（主訴／既往歴／現病歴／薬歴） <span class="muted" id="req_note">(訪問で必須)</span></label>
+      <div class="row2">
+        <div><textarea id="note_chief"   placeholder="主訴（例：右膝痛 立ち上がり時）"></textarea></div>
+        <div><textarea id="note_past"    placeholder="既往歴（例：変形性膝関節症）"></textarea></div>
+      </div>
+      <div class="row2">
+        <div><textarea id="note_present" placeholder="現病歴（例：半年ほど前から痛み増悪）"></textarea></div>
+        <div><textarea id="note_meds"    placeholder="薬歴（例：ロキソニン 頓用）"></textarea></div>
+      </div>
+      <div class="err" id="e_intakeNote"></div>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-top:12px">
+      <button class="btn ok" onclick="save()">下書き保存</button>
+      <button class="btn ghost" onclick="clearForm()">クリア</button>
+    </div>
+  </div>
+
+  <!-- 候補生成パネル -->
+  <div class="card" style="margin-top:12px">
+    <div style="display:flex; gap:8px; align-items:end; flex-wrap:wrap">
+      <div>
+        <label>候補の期間（開始）</label>
+        <input id="cand_from" type="date" />
+      </div>
+      <div>
+        <label>候補の期間（終了）</label>
+        <input id="cand_to" type="date" />
+      </div>
+      <div>
+        <label>担当スタッフ（メール）</label>
+        <input id="cand_staffs" placeholder="foo@domain, bar@domain" />
+      </div>
+      <div>
+        <label>　</label>
+        <button class="btn" onclick="suggest()">候補を生成</button>
+      </div>
+      <span class="chip" id="sourceBadge" title="候補の生成元" style="display:none">source: —</span>
+      <div style="margin-left:auto">
+        <span class="chip" id="statusChip">status: open</span>
+        <button class="btn ok" id="btnConfirm" style="display:none" onclick="confirmHold()">確定</button>
+      </div>
+    </div>
+
+    <div class="muted" style="margin-top:6px">※ 45分・平日のみ。スタッフの予定が空いている枠を表示します。</div>
+    <div id="cand_list" style="margin-top:8px"></div>
+  </div>const urlPhone
+
+  <div class="muted">※ 電話では任意項目は空でも保存可。訪問モードでは一部が必須になります。</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+function q(id){ return document.getElementById(id); }
+function showToast(msg){ const t=q('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2000); }
+function urlParam(k){ return new URLSearchParams(location.search).get(k)||''; }
+function copyUrl(){ navigator.clipboard?.writeText(location.href).then(()=>showToast('URLをコピーしました')); }
+
+const WEEKDAYS = ['月','火','水','木','金','土','日'];
+const TIMEBANDS = ['9-11','11-13','13-15','15-18'];
+let isVisit = false;
+
+function slotId(w, t){ return `slot_${w}_${t}`; }
+function renderChecks(){
+  const tb = q('slotGrid'); tb.innerHTML = '';
+  WEEKDAYS.forEach(w=>{
+    const cells = TIMEBANDS.map(t=>{
+      const id = slotId(w,t);
+      return `<td style="text-align:center; padding:6px 4px; border-bottom:1px solid #f2f2f2">
+                <input type="checkbox" id="${id}">
+              </td>`;
+    }).join('');
+    tb.insertAdjacentHTML('beforeend',
+      `<tr>
+        <td id="rowhdr_${w}" style="padding:6px 4px; border-bottom:1px solid #f2f2f2">${w}</td>
+        ${cells}
+      </tr>`);
+  });
+}
+function collectScheduleSlots(){
+  const avoidSlots = [];
+  WEEKDAYS.forEach(w=>{
+    TIMEBANDS.forEach(t=>{
+      const el = q(slotId(w,t));
+      if(el && el.checked) avoidSlots.push({ weekday:w, band:t });
+    });
+  });
+  return avoidSlots;
+}
+
+// クイック操作
+function setCell(w,t,checked){ const el=q(slotId(w,t)); if(el) el.checked=!!checked; }
+function toggleAll(checked){ WEEKDAYS.forEach(w=> TIMEBANDS.forEach(t=> setCell(w,t,checked))); }
+function toggleHalf(which, checked){
+  const AM = ['9-11','11-13'], PM=['13-15','15-18'];
+  const bands = (which==='am')? AM : PM;
+  WEEKDAYS.forEach(w=> bands.forEach(t=> setCell(w,t,checked)));
+}
+function attachRowColToggles(){
+  // 列ヘッダ
+  ['9-11','11-13','13-15','15-18'].forEach(b=>{
+    const th = document.getElementById('colhdr_'+b);
+    if(th){ th.style.cursor='pointer'; th.onclick = ()=> {
+      const first = q(slotId('月', b))?.checked;
+      WEEKDAYS.forEach(w=> setCell(w,b,!first));
+    };}
+  });
+  // 行ヘッダ
+  WEEKDAYS.forEach(w=>{
+    const td = document.getElementById('rowhdr_'+w);
+    if(td){ td.style.cursor='pointer'; td.onclick = ()=>{
+      const first = q(slotId(w, '9-11'))?.checked;
+      TIMEBANDS.forEach(b=> setCell(w,b,!first));
+    };}
+  });
+}
+
+// バリデーション
+function validateLocal(){
+  let ok=true;
+  ['e_name','e_phone','e_furigana','e_address','e_services','e_schedulePref','e_trialDate','e_intakeNote']
+    .forEach(id=> q(id).textContent='');
+
+  const name = q('name').value.trim();
+  const phone = q('phone').value.trim();
+  if(!name){ q('e_name').textContent='お名前は必須です'; ok=false; }
+  const digits = phone.replace(/\D/g,'');
+  if(!(digits.length===10 || digits.length===11)){ q('e_phone').textContent='電話番号の形式を確認してください'; ok=false; }
+
+  const slots = collectScheduleSlots();
+  if (slots.length === 0){
+    q('e_schedulePref').textContent='避けたい曜日×時間帯を1つ以上選択してください';
+    ok=false;
+  }
+
+  if (isVisit){
+    if(!q('furigana').value.trim()) { q('e_furigana').textContent='フリガナを入力してください'; ok=false; }
+    if(!q('address').value.trim())  { q('e_address').textContent='住所を入力してください'; ok=false; }
+    if(!q('services').value.trim()) { q('e_services').textContent='他サービスの状況を入力してください'; ok=false; }
+    const anyNote = q('note_chief').value.trim() || q('note_past').value.trim()
+                  || q('note_present').value.trim() || q('note_meds').value.trim();
+    if(!anyNote){ q('e_intakeNote').textContent='問診メモを1つ以上入力してください'; ok=false; }
+  }
+  return ok;
+}
+
+// 送信ペイロード
+function buildPayload(){
+  const leadId = urlParam('lead') || null;
+  const values = {
+    name: { text: q('name').value.trim() },
+    phone: { main: q('phone').value.trim() }
+  };
+  const slots = collectScheduleSlots();
+  if (slots.length) values.schedulePref2 = { avoidSlots: slots, notes: '' };
+
+  const dt = q('trialDate').value;
+  if (dt) values.trialDate = { at: dt };
+
+  const furi = q('furigana').value.trim();
+  if (furi) values.furigana = { text: furi };
+
+  const addr = q('address').value.trim();
+  if (addr) values.address = { full: addr, note: '' };
+
+  const servRaw = q('services').value;
+  if (servRaw.trim()) {
+    const lines = servRaw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    values.services = { lines };
+  }
+
+  const note = {
+    chiefComplaint: q('note_chief').value.trim(),
+    pastHistory: q('note_past').value.trim(),
+    presentIllness: q('note_present').value.trim(),
+    meds: q('note_meds').value.trim()
+  };
+  if (note.chiefComplaint || note.pastHistory || note.presentIllness || note.meds) {
+    values.intakeNote = note;
+  }
+
+  return {
+    leadId, patientId: null,
+    source: isVisit ? 'visit' : 'phone',
+    verified: 'self-reported',
+    updatedBy: '',
+    values
+  };
+}
+
+// 保存/クリア（★ Waitlist 直結）
+function save(){
+  if(!validateLocal()) return;
+  const payload = buildPayload();
+  google.script.run
+    .withSuccessHandler(res=>{
+      if(!res || !res.ok){ alert('保存に失敗しました'); return; }
+      if(res.leadId){
+        q('leadDisp').textContent = res.leadId;
+        const params = new URLSearchParams(location.search);
+        params.set('lead', res.leadId);
+        params.set('view', isVisit ? 'visit' : 'intake');
+        history.replaceState({},'',`?${params.toString()}`);
+      }
+      showToast('受付（Waitlist）に登録しました');
+    })
+    .withFailureHandler(e=> alert(e.message||e))
+    .intakeRegisterLead(payload); // ← ここが Waitlist 登録
+}
+function clearForm(){
+  ['name','phone','furigana','address','services','note_chief','note_past','note_present','note_meds']
+    .forEach(id=> q(id).value='');
+  WEEKDAYS.forEach(w=> TIMEBANDS.forEach(t=>{
+    const el = q(slotId(w,t)); if(el) el.checked = false;
+  }));
+  q('trialDate').value='';
+  const und = q('trialUndecided'); if (und) { und.checked=false; q('trialDate').disabled=false; }
+}
+
+// 復元
+function restoreFromDraft(values){
+  if(values.name?.text) q('name').value = values.name.text;
+  if(values.phone?.main) q('phone').value = values.phone.main;
+  if(values.furigana?.text) q('furigana').value = values.furigana.text;
+  if(values.address?.full) q('address').value = values.address.full;
+  if(values.services?.lines) q('services').value = values.services.lines.join('\n');
+
+  WEEKDAYS.forEach(w=> TIMEBANDS.forEach(t=> { const el=q(slotId(w,t)); if(el) el.checked=false; }));
+
+  if (values.schedulePref2 && Array.isArray(values.schedulePref2.avoidSlots)) {
+    values.schedulePref2.avoidSlots.forEach(s=>{
+      const el = q(slotId(s.weekday, s.band));
+      if (el) el.checked = true;
+    });
+  } else if (values.schedulePref) {
+    const W = values.schedulePref.avoidWeekday || [];
+    const T = values.schedulePref.avoidTimeBand || [];
+    W.forEach(w=> T.forEach(t=>{
+      const el = q(slotId(w,t));
+      if (el) el.checked = true;
+    }));
+  }
+
+  if(values.trialDate?.at){
+    const at = String(values.trialDate.at).replace(' ','T').slice(0,16);
+    q('trialDate').value = at;
+  }
+  if(values.intakeNote){
+    q('note_chief').value   = values.intakeNote.chiefComplaint||'';
+    q('note_past').value    = values.intakeNote.pastHistory||'';
+    q('note_present').value = values.intakeNote.presentIllness||'';
+    q('note_meds').value    = values.intakeNote.meds||'';
+  }
+}
+
+// 候補・仮押さえ・確定
+function showStatus(st){
+  q('statusChip').textContent = 'status: ' + (st?.status||'open');
+  const showConfirm = (st && st.status==='scheduling' && st.holdEventId);
+  q('btnConfirm').style.display = showConfirm ? 'inline-block' : 'none';
+}
+function suggest(){
+  const from = q('cand_from').value;
+  const to   = q('cand_to').value;
+  const staff = q('cand_staffs').value.split(',').map(s=>s.trim()).filter(Boolean);
+  if (!staff.length){ alert('担当スタッフのメールを入力してください'); return; }
+  const lead = urlParam('lead')||'';
+  if (!lead){ alert('先に下書きを保存して LeadID を発番してください'); return; }
+
+  const opts = { dateFrom:from, dateTo:to, durationMin:45, bufferMin:15, staffEmails: staff };
+  q('cand_list').innerHTML = '<div class="muted">候補を生成中…</div>';
+  google.script.run.withSuccessHandler(renderCandidates).withFailureHandler(e=>{
+    q('cand_list').innerHTML = '<div class="err">'+(e.message||e)+'</div>';
+  }).intakeSuggestSlots(lead, opts);
+}
+function renderCandidates(list){
+  if(!list || !list.length){
+    q('cand_list').innerHTML = '<div class="muted">条件に合う候補はありませんでした</div>';
+    return;
+  }
+  const rows = list.map(r=>`
+    <tr>
+      <td>${r.start}〜${r.end}</td>
+      <td>${r.weekday}／${r.band}</td>
+      <td>${r.staffEmail}</td>
+      <td><button class="btn" onclick="hold('${r.start}','${r.end}','${r.staffEmail}')">仮押さえ</button></td>
+    </tr>`).join('');
+  q('cand_list').innerHTML = `
+    <table style="width:100%; border-collapse:collapse">
+      <thead><tr><th>日時</th><th>曜日帯</th><th>担当</th><th>操作</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+function hold(start,end,staffEmail){
+  const lead = urlParam('lead')||'';
+  google.script.run.withSuccessHandler(res=>{
+    showToast('仮押さえしました');
+    showStatus(res.status);
+  }).withFailureHandler(e=> alert(e.message||e)).intakeHoldSlot(lead, start, end, staffEmail);
+}
+function confirmHold(){
+  const lead = urlParam('lead')||'';
+  google.script.run.withSuccessHandler(res=>{
+    showToast('確定しました');
+    showStatus(res.status);
+  }).withFailureHandler(e=> alert(e.message||e)).intakeConfirm(lead);
+}
+
+// 初期化
+(function init(){
+  renderChecks();
+  attachRowColToggles();
+
+  // モード切り替え
+  isVisit = (urlParam('view') === 'visit');
+  q('modeChip').textContent = 'モード: ' + (isVisit ? '訪問' : '電話');
+  q('switchBtn').textContent = isVisit ? '電話モードへ' : '訪問モードへ';
+  q('switchBtn').onclick = ()=>{
+    const params = new URLSearchParams(location.search);
+    params.set('view', isVisit ? 'intake' : 'visit');
+    if (q('leadDisp').textContent && q('leadDisp').textContent !== '（未発番）') {
+      params.set('lead', q('leadDisp').textContent);
+    }
+    location.search = '?' + params.toString();
+  };
+  q('copyBtn').onclick = copyUrl;
+
+  // 未定チェックで datetime を制御
+  const und = document.getElementById('trialUndecided');
+  if (und) und.addEventListener('change', ()=>{
+    const el = document.getElementById('trialDate');
+    if (und.checked){ el.value=''; el.disabled = true; } else { el.disabled = false; }
+  });
+
+  // 訪問モードでは必須強調
+  if (isVisit){
+    q('req_furi').textContent = '※必須';
+    q('req_addr').textContent = '※必須';
+    q('req_serv').textContent = '※必須';
+    q('req_note').textContent = '※必須';
+  }
+
+  // 候補期間の初期値：今日〜+14日
+  const today = new Date();
+  const pad = n=> String(n).padStart(2,'0');
+  const iso = d=> `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  q('cand_from').value = iso(today);
+  q('cand_to').value   = iso(new Date(today.getFullYear(), today.getMonth(), today.getDate()+14));
+
+  // 下書き復元＆ステータス取得（従来のドラフト復元は任意）
+  const lead = urlParam('lead');
+  if(lead){
+    q('leadDisp').textContent = lead;
+    if (google.script.run.intakeLoadDraft) {
+      google.script.run.withSuccessHandler(res=>{
+        if(res && res.values) restoreFromDraft(res.values);
+      }).withFailureHandler(e=>console.warn(e)).intakeLoadDraft(lead);
+    }
+    if (google.script.run.intakeGetStatus) {
+      google.script.run.withSuccessHandler(showStatus).intakeGetStatus(lead);
+    }
+  }
+})();
+
+</script>
+</body>
+</html>

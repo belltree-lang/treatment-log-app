@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>受付一覧</title>
+<style>
+  :root{ --fg:#222; --bg:#f7f7f9; --card:#fff; --brand:#0a66ff; --muted:#6b7280; --warn:#ef4444; }
+  body{ margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; }
+  .wrap{ max-width:1000px; margin:24px auto; padding:0 16px; }
+  .card{ background:var(--card); border-radius:16px; padding:16px; box-shadow:0 6px 24px rgba(0,0,0,.06); margin-bottom:16px }
+  table{ width:100%; border-collapse:collapse; font-size:14px }
+  th,td{ padding:8px 6px; border-bottom:1px solid #eee; text-align:left }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:8px 12px; background:var(--brand); color:#fff; cursor:pointer; font-weight:600; font-size:13px; text-decoration:none; display:inline-block }
+  .chip{ display:inline-block; background:#e5e7eb; border-radius:8px; padding:2px 6px; margin:2px; font-size:12px }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h2 style="margin:0 0 8px">初回受付一覧</h2>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+  const baseUrl = "<?!= baseUrl ?>";   // ★ここで受け取る
+  console.log("baseUrl:", baseUrl);
+
+  function q(id){ return document.getElementById(id); }
+  function esc(s){
+    return String(s||'').replace(/[&<>"']/g, m => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'
+    }[m]));
+  }
+  function jpBand(b){
+    if(b==='9-11') return '午前(9-11)';
+    if(b==='11-13') return '昼前(11-13)';
+    if(b==='13-15') return '午後前(13-15)';
+    if(b==='15-18') return '午後後(15-18)';
+    return b;
+  }
+  function jpWeekday(w){
+    const m = { 'Mon':'月','Tue':'火','Wed':'水','Thu':'木','Fri':'金','Sat':'土','Sun':'日',
+                '月':'月','火':'火','水':'水','木':'木','金':'金','土':'土','日':'日' };
+    return m[w] || w;
+  }
+  function chipsFromAvoid(jsonStr){
+    let arr=[]; try{ arr = JSON.parse(jsonStr||'[]'); }catch(e){}
+    const set = new Set(arr.map(a=>`${a.weekday}|${a.band}`));
+    return Array.from(set).map(k=>{
+      const [w,b] = k.split('|');
+      return `<span class="chip">${jpWeekday(w)}曜 ${jpBand(b)}</span>`;
+    }).join(' ');
+  }
+
+  function abandon(lead){
+    if(!confirm('この受付を中止扱いにします。よろしいですか？')) return;
+    google.script.run.withSuccessHandler(()=>location.reload())
+      .withFailureHandler(e=>alert(e.message||e)).intakeAbandon(lead, '一覧から中止');
+  }
+  function updateStatus(lead, status){
+    if(!confirm(`この受付を「${status}」に変更します。よろしいですか？`)) return;
+    google.script.run.withSuccessHandler(()=>location.reload())
+      .withFailureHandler(e=>alert(e.message||e))
+      .intakeUpdateStatus(lead, status);
+  }
+
+  function render(list){
+    console.log("受け取ったリスト:", list);
+    console.log("リスト描画データ:", list);
+    list.forEach(r => {
+      console.log("leadId=", r.leadId, " name=", r.name);
+    });
+
+    if(!Array.isArray(list) || !list.length){
+      q('list').innerHTML = '<div class="muted">受付データがありません</div>';
+      return;
+    }
+
+    const order = {confirmed:0, scheduling:1, open:2, abandoned:3};
+    list.sort((a,b)=>(order[a.status||'open']??9)-(order[b.status||'open']??9));
+
+    const rows = list.map(r=>{
+      const when = r.ts || '';
+      const urlPhone = baseUrl + "?view=intake&lead=" + encodeURIComponent(r.leadId);
+      const urlVisit = baseUrl + "?view=visit&lead=" + encodeURIComponent(r.leadId);
+      const avoidChips = r.avoidSlotsJson ? chipsFromAvoid(r.avoidSlotsJson) : '';
+      return `
+        <tr id="row_${esc(r.leadId)}">
+          <td>${esc(r.leadId)}</td>
+          <td>${esc(r.name)}</td>
+          <td>${esc(String(r.phone))}</td>
+          <td>${esc(r.address)}</td>
+          <td>${esc(r.complaint)}</td>
+          <td><span class="muted">${esc(when)}</span></td>
+          <td>${esc(r.status)}</td>
+          <td>${avoidChips}</td>
+          <td>
+            <a class="btn" href="${urlPhone}">電話</a>
+            <a class="btn" href="${urlVisit}" style="background:#6b7280">訪問</a>
+            <a class="btn" style="background:#0a66ff"
+              href="javascript:void(0)"
+              onclick="console.log('候補ボタン押下 leadId=', '${esc(r.leadId)}'); toggleCandidates('${esc(r.leadId)}')">
+              候補</a>
+            <a class="btn" style="background:#10b981"
+              href="javascript:void(0)" onclick="updateStatus('${esc(r.leadId)}','scheduling')">スケジューリング中</a>
+            <a class="btn" style="background:#2563eb"
+              href="javascript:void(0)" onclick="updateStatus('${esc(r.leadId)}','confirmed')">確定</a>
+            <a class="btn" style="background:#ef4444"
+              href="javascript:void(0)" onclick="updateStatus('${esc(r.leadId)}','abandoned')">中止</a>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    q('list').innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>LeadID</th>
+            <th>お名前</th>
+            <th>電話</th>
+            <th>住所</th>
+            <th>主訴・既往歴 等</th>
+            <th>更新</th>
+            <th>ステータス</th>
+            <th>避けたい枠</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+function toggleCandidates(leadId){
+  console.log("toggleCandidates 呼び出し leadId=", leadId);
+  const rowEl = document.getElementById("candRow_"+leadId);
+  if(rowEl){ rowEl.remove(); return; }
+  google.script.run.withSuccessHandler(list=>{
+    console.log("候補受信:", list);
+    const tr = document.createElement("tr");
+    tr.id = "candRow_"+leadId;
+    tr.innerHTML = `<td colspan="9">
+      ${list.length ? renderCandidateTable(list) : '<div class="muted">候補なし</div>'}
+    </td>`;
+    const targetRow = document.getElementById("row_"+leadId);
+    targetRow.after(tr);
+  }).withFailureHandler(e=>{
+    console.error("候補取得失敗", e);
+    alert("候補取得エラー: " + (e.message||e));
+  }).generateTrialOpportunities(leadId);
+}
+
+
+function renderCandidateTable(list){
+  return `<table style="width:100%; border:1px solid #ddd; margin-top:8px">
+    <thead><tr><th>スタッフ</th><th>エリア</th><th>開始</th><th>終了</th></tr></thead>
+    <tbody>
+        ${list.map(c=>`
+       <tr>
+         <td>${c.staff}</td>
+         <td>${c.area}</td>
+         <td>${c.start}</td>
+         <td>${c.end}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+
+  (function init(){
+    console.log("intake_list init開始");
+    google.script.run
+      .withSuccessHandler(render)
+      .withFailureHandler(e=>{
+        console.error("waitlistList失敗", e);
+        alert("waitlistListエラー: " + (e.message||e));
+      })
+      .waitlistList();
+  })();
+</script>
+</body>
+</html>

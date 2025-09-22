@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>空き状況</title>
+<style>
+  body{ font-family: system-ui,sans-serif; padding:20px; }
+  table{ border-collapse:collapse; width:100%; }
+  th,td{ border:1px solid #ddd; padding:6px; text-align:center; }
+  th{ background:#f3f4f6; }
+  .ok{ color:green; font-weight:bold; }
+  .ng{ color:#aaa; }
+</style>
+</head>
+<body>
+<h2 id="title">空き状況</h2>
+<div id="table"></div>
+
+<script>
+function q(id){ return document.getElementById(id); }
+function urlParam(k){ return new URLSearchParams(location.search).get(k)||''; }
+
+function renderTable(list){
+  if(!list.length){ q('table').innerHTML='<p>データなし</p>'; return; }
+  // 日付ごとにグルーピング
+  const byDate = {};
+  list.forEach(s=>{
+    if(!byDate[s.date]) byDate[s.date]=[];
+    byDate[s.date].push(s);
+  });
+  let html='';
+  for(const d in byDate){
+    html+=`<h3>${d}</h3><table><tr><th>時間</th><th>可否</th></tr>`;
+    byDate[d].forEach(s=>{
+      html+=`<tr><td>${s.time}</td><td class="${s.available==='○'?'ok':'ng'}">${s.available}</td></tr>`;
+    });
+    html+='</table>';
+  }
+  q('table').innerHTML=html;
+}
+
+(function init(){
+  const staff = urlParam('staff')||'丸山';
+  q('title').textContent = staff+'の空き状況';
+  google.script.run.withSuccessHandler(renderTable).vacancyList(staff);
+})();
+</script>
+</body>
+</html>

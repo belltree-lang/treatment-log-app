@@ -214,6 +214,7 @@
 function q(id){ return document.getElementById(id); }
 function val(id){ return q(id).value.trim(); }
 function setv(id,v){ q(id).value=v; }
+function jsString(s){ return JSON.stringify(String(s == null ? '' : s)); }
 function pid(){ return val('pid'); }
 
 let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
@@ -510,21 +511,22 @@ function loadHandovers(){
         return;
       }
       box.innerHTML = list.map(h => {
-  const imgs = (h.files || []).map(u =>
-    `<img src="${u}" style="max-width:120px;max-height:120px;border-radius:8px;margin:4px;border:1px solid #e5e7eb">`
-  ).join('');
+        const imgs = (h.files || []).map(u =>
+          `<img src="${u}" style="max-width:120px;max-height:120px;border-radius:8px;margin:4px;border:1px solid #e5e7eb">`
+        ).join('');
+        const noteArg = jsString(h.note || '');
 
-  return `<div class="news-item">
-    <div class="muted">${h.when} ／ ${escapeHtml(h.user||'')}</div>
-    <div>${escapeHtml(h.note||'').replace(/\n/g,'<br>')}</div>
-    <div style="margin-top:4px">${imgs}</div>
-    <div class="btnrow" style="margin-top:6px">
-      <button class="btn ghost" onclick="editHandover(${h.row}, \`${h.note||''}\`)">編集</button>
-      <button class="btn warn" onclick="deleteHandover(${h.row})">削除</button>
-    </div>
-  </div>`;
-}).join('');
-
+        return `
+        <div class="news-item">
+          <div class="muted">${h.when} ／ ${escapeHtml(h.user||'')}</div>
+          <div>${escapeHtml(h.note||'').replace(/\n/g,'<br>')}</div>
+          <div style="margin-top:4px">${imgs}</div>
+          <div class="btnrow" style="margin-top:6px">
+            <button class="btn ghost" onclick='editHandover(${h.row}, ${noteArg})'>編集</button>
+            <button class="btn warn" onclick="deleteHandover(${h.row})">削除</button>
+          </div>
+        </div>`;
+      }).join('');
 
     })
     .withFailureHandler(e=>{

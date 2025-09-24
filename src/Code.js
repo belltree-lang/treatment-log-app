@@ -13,6 +13,13 @@ const APP = {
   OPENAI_MODEL: 'gpt-4o-mini',
 };
 
+const CLINICAL_METRICS = [
+  { id: 'pain_vas',      label: '痛みVAS',           unit: '/10', min: 0,   max: 10,  step: 0.5, description: '主観的疼痛スケール（0=痛みなし, 10=最大）' },
+  { id: 'rom_knee_flex', label: '膝屈曲ROM',         unit: '°',   min: 0,   max: 150, step: 1,   description: '膝関節屈曲の可動域' },
+  { id: 'rom_knee_ext',  label: '膝伸展ROM',         unit: '°',   min: -20, max: 10,  step: 1,   description: '膝関節伸展の可動域（マイナスは屈曲拘縮）' },
+  { id: 'walk_distance', label: '歩行距離（6MWT）', unit: 'm',   min: 0,   max: 600, step: 5,   description: '6分間歩行距離などの歩行パフォーマンス' },
+];
+
 /***** 先頭行（見出し）の揺れに耐えるためのラベル候補群 *****/
 const LABELS = {
   recNo:     ['施術録番号','施術録No','施術録NO','記録番号','カルテ番号','患者ID','患者番号'],
@@ -52,7 +59,7 @@ function assertDomain_() {
 /***** 補助タブの用意（不足時に自動生成＋ヘッダ挿入） *****/
 function ensureAuxSheets_() {
   const wb = ss();
-  const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード'];
+  const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','臨床指標'];
   need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
   const ensureHeader = (name, header) => {
@@ -77,6 +84,29 @@ function ensureAuxSheets_() {
     '患者ID','氏名','同意年月日','次回期限','期限ステータス',
     '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
   ]);
+
+  ensureHeader('臨床指標', ['TS','患者ID','指標ID','値','メモ','登録者']);
+}
+
+function getClinicalMetricDefinitions(){
+  return CLINICAL_METRICS.map(m => ({
+    id: m.id,
+    label: m.label,
+    unit: m.unit || '',
+    min: m.min,
+    max: m.max,
+    step: m.step || 1,
+    description: m.description || ''
+  }));
+}
+
+function getClinicalMetricDef_(id){
+  return CLINICAL_METRICS.find(m => m.id === id) || null;
+}
+
+function ensureClinicalMetricSheet_(){
+  ensureAuxSheets_();
+  return sh('臨床指標');
 }
 
 function init_(){ ensureAuxSheets_(); }
@@ -398,6 +428,33 @@ function queueAfterTreatmentJob(job){
     .timeBased().after(1000 * 60).create();
 }
 
+function recordClinicalMetrics_(patientId, metrics, whenStr, user){
+  if (!Array.isArray(metrics) || !metrics.length) return;
+  const sheet = ensureClinicalMetricSheet_();
+  const rows = [];
+  const now = new Date();
+  metrics.forEach(item => {
+    if (!item) return;
+    const metricId = String(item.metricId || item.id || '').trim();
+    const def = getClinicalMetricDef_(metricId);
+    if (!def) return;
+    const rawVal = item.value != null ? Number(item.value) : NaN;
+    if (!isFinite(rawVal)) return;
+    const note = item.note ? String(item.note).trim() : '';
+    rows.push([
+      whenStr || now,
+      String(patientId),
+      metricId,
+      rawVal,
+      note,
+      user || ''
+    ]);
+  });
+  if (rows.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+  }
+}
+
 function afterTreatmentJob(){
   const p = PropertiesService.getScriptProperties();
   const key = 'AFTER_JOBS';
@@ -482,6 +539,102 @@ function deleteTreatmentRow(row){
   s.deleteRow(row);
   log_('施術削除', '(row:'+row+')', '');
   return true;
+}
+
+function parseClinicalMetricTimestamp_(value){
+  if (value instanceof Date && !isNaN(value.getTime())) return value;
+  const parsed = parseDateFlexible_(value);
+  return parsed || new Date(value);
+}
+
+function listClinicalMetricSeries(pid){
+  const sheet = ensureClinicalMetricSheet_();
+  const lr = sheet.getLastRow();
+  if (lr < 2) return { metrics: [] };
+
+  const vals = sheet.getRange(2, 1, lr - 1, 6).getValues();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const normalizedPid = String(normId_(pid));
+  const map = {};
+
+  vals.forEach(row => {
+    const ts = parseClinicalMetricTimestamp_(row[0]);
+    const rowPid = String(normId_(row[1]));
+    if (!normalizedPid || rowPid !== normalizedPid) return;
+    const metricId = String(row[2] || '').trim();
+    const def = getClinicalMetricDef_(metricId);
+    if (!def) return;
+    const value = Number(row[3]);
+    if (!isFinite(value)) return;
+    const note = row[4] || '';
+    const user = row[5] || '';
+    const dispDate = ts && ts instanceof Date
+      ? Utilities.formatDate(ts, tz, 'yyyy-MM-dd')
+      : String(row[0] || '');
+    if (!map[metricId]) map[metricId] = [];
+    map[metricId].push({ date: dispDate, value, note: note ? String(note) : '', user: String(user || '') });
+  });
+
+  const defs = getClinicalMetricDefinitions();
+  const metrics = defs
+    .map(def => ({
+      id: def.id,
+      label: def.label,
+      unit: def.unit || '',
+      min: def.min,
+      max: def.max,
+      step: def.step,
+      description: def.description || '',
+      points: (map[def.id] || []).sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0))
+    }))
+    .filter(m => m.points.length);
+
+  return { metrics };
+}
+
+function getLatestClinicalMetricSnapshot_(pid){
+  const series = listClinicalMetricSeries(pid).metrics;
+  const snapshot = {};
+  series.forEach(metric => {
+    const latest = metric.points[metric.points.length - 1];
+    if (latest) {
+      snapshot[metric.id] = {
+        label: metric.label,
+        unit: metric.unit,
+        value: latest.value,
+        date: latest.date
+      };
+    }
+  });
+  return snapshot;
+}
+
+function getRecentTreatmentNotes_(pid, limit){
+  const s = sh('施術録');
+  const lr = s.getLastRow();
+  if (lr < 2) return [];
+  const vals = s.getRange(2, 1, lr - 1, 4).getValues();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const target = String(normId_(pid));
+  const out = [];
+  for (let i = vals.length - 1; i >= 0; i--) {
+    const row = vals[i];
+    const rowPid = String(normId_(row[1]));
+    if (rowPid !== target) continue;
+    const ts = row[0] instanceof Date ? row[0] : parseDateFlexible_(row[0]);
+    const when = ts ? Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm') : String(row[0] || '');
+    const note = sanitizeTreatmentNoteForSummary_(String(row[2] || ''));
+    if (note) out.push({ when, note });
+    if (out.length >= (limit || 12)) break;
+  }
+  return out;
+}
+
+function sanitizeTreatmentNoteForSummary_(text){
+  if (!text) return '';
+  const lines = String(text).split(/\n+/).map(s => s.trim()).filter(Boolean);
+  const filtered = lines.filter(line => !/^vital\b/i.test(line));
+  return filtered.join(' ');
 }
 
 /***** 同意・負担割合 更新（findPatientRow_ベース） *****/
@@ -689,6 +842,136 @@ function composeNarrativeLocal_(type, notes){
   }
 }
 
+function composeIcfViaOpenAI_(header, recentNotes, metricSnapshot){
+  const key = getOpenAiKey_();
+  if (!key) return null;
+
+  const sys = [
+    'あなたは在宅リハビリテーションの専門家であり、国際生活機能分類（ICF）の観点で要約を作成します。',
+    '活動（Activity）、参加（Participation）、環境因子（Environmental factors）の3項目について、それぞれ2〜3文の日本語でまとめてください。',
+    '所見は事実ベースで簡潔に。推測や断定は避け、丁寧語で記述してください。'
+  ].join('\n');
+
+  const notesText = (recentNotes || []).map(n => `- ${n.when}: ${n.note}`).join('\n');
+  const metricsText = Object.keys(metricSnapshot || {}).map(id => {
+    const m = metricSnapshot[id];
+    return `- ${m.label}: ${m.value}${m.unit||''} (${m.date})`;
+  }).join('\n');
+
+  const prompt = [
+    `患者: ${header.name || '-'}（ID:${header.patientId}）`,
+    `年齢: ${header.age || '-'} / 同意日:${header.consentDate || '-'} / 最近の施術回数: 当月${header.monthly?.current?.count||0}回`,
+    '',
+    '【最近の施術メモ】',
+    notesText || '（メモ情報なし）',
+    '',
+    '【臨床指標】',
+    metricsText || '（定量指標の記録なし）',
+    '',
+    '上記を踏まえ、JSON形式で回答してください。キーは activity, participation, environment の3つです。',
+    '各キーの値は丁寧語の文章（2〜3文程度）。例: {"activity":"...","participation":"...","environment":"..."}',
+    '出力はJSONのみとし、他の文字列は含めないでください。'
+  ].join('\n');
+
+  const payload = {
+    model: APP.OPENAI_MODEL,
+    messages: [
+      { role:'system', content: sys },
+      { role:'user',   content: prompt }
+    ],
+    temperature: 0.2,
+    max_tokens: 600
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(APP.OPENAI_ENDPOINT, {
+      method: 'post',
+      headers: { 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    });
+    const code = res.getResponseCode();
+    if (code >= 300) throw new Error('ICFサマリAPIエラー: ' + code + ' ' + res.getContentText());
+    const data = JSON.parse(res.getContentText());
+    const content = data?.choices?.[0]?.message?.content || '';
+    if (!content) return null;
+    let parsed = null;
+    try {
+      parsed = JSON.parse(content);
+    } catch(e) {
+      parsed = null;
+    }
+    if (!parsed) return null;
+    return {
+      via: 'ai',
+      sections: [
+        { key: 'activity', title: '活動', body: String(parsed.activity || '').trim() },
+        { key: 'participation', title: '参加', body: String(parsed.participation || '').trim() },
+        { key: 'environment', title: '環境因子', body: String(parsed.environment || '').trim() },
+      ]
+    };
+  } catch (err) {
+    Logger.log('composeIcfViaOpenAI_ error: ' + err);
+    return null;
+  }
+}
+
+function composeIcfLocal_(recentNotes, metricSnapshot){
+  const pickLine = (keywords) => {
+    for (let i = 0; i < (recentNotes || []).length; i++) {
+      const note = recentNotes[i].note || '';
+      const parts = note.split(/\s+/);
+      for (let j = 0; j < parts.length; j++) {
+        const line = parts[j];
+        if (keywords.some(k => line.indexOf(k) >= 0)) {
+          return line;
+        }
+      }
+    }
+    return '';
+  };
+
+  const generic = {
+    activity: '日常生活動作は大きな変化なく、必要な支援量で対応しています。',
+    participation: '家族や支援者と連携しながら、社会参加の機会を維持できています。',
+    environment: '住環境や支援体制に大きな変更はなく、必要時にスタッフがフォローしています。'
+  };
+
+  const metricHints = [];
+  Object.keys(metricSnapshot || {}).forEach(id => {
+    const m = metricSnapshot[id];
+    if (m && m.label && m.value != null) {
+      metricHints.push(`${m.label}: ${m.value}${m.unit || ''} (${m.date})`);
+    }
+  });
+
+  const lines = {
+    activity: pickLine(['起居','移乗','歩行','立ち上がり','ADL','動作']),
+    participation: pickLine(['訪問','家族','参加','外出','社会','デイ','クラブ']),
+    environment: pickLine(['環境','住宅','手すり','支援','サービス','ケアマネ','連携'])
+  };
+
+  const sections = [
+    {
+      key: 'activity',
+      title: '活動',
+      body: (lines.activity || metricHints[0] || generic.activity)
+    },
+    {
+      key: 'participation',
+      title: '参加',
+      body: (lines.participation || metricHints[1] || generic.participation)
+    },
+    {
+      key: 'environment',
+      title: '環境因子',
+      body: (lines.environment || metricHints[2] || generic.environment)
+    }
+  ].map(sec => ({ key: sec.key, title: sec.title, body: String(sec.body || generic[sec.key]).trim() }));
+
+  return { via: 'local', sections };
+}
+
 /***** レポートPDF（API→フォールバック） *****/
 function getPatientHeaderForReport_(pid){
   const header = getPatientHeader(pid);
@@ -715,6 +998,34 @@ ${header.name||''} 様  /  ID:${header.patientId}
 ${narrative}
 `;
   return savePdf_(pid, title, body);
+}
+
+function generateIcfSummary(pid){
+  assertDomain_(); ensureAuxSheets_();
+  const header = getPatientHeader(pid);
+  if (!header) throw new Error('患者が見つかりません');
+
+  const notes = getRecentTreatmentNotes_(pid, 12);
+  const metrics = getLatestClinicalMetricSnapshot_(pid);
+
+  let composed = null;
+  try {
+    composed = composeIcfViaOpenAI_(header, notes, metrics);
+  } catch (err) {
+    composed = null;
+  }
+  if (!composed) {
+    composed = composeIcfLocal_(notes, metrics);
+  }
+
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  return {
+    ok: true,
+    usedAi: composed?.via === 'ai',
+    sections: composed?.sections || [],
+    noteCount: notes.length,
+    generatedAt: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm')
+  };
 }
 
 /***** Webエントリ *****/
@@ -1056,6 +1367,10 @@ function submitTreatment(payload) {
 
     const row = [now, pid, merged, user, '', ''];
     s.appendRow(row);
+
+    if (Array.isArray(payload?.clinicalMetrics) && payload.clinicalMetrics.length) {
+      recordClinicalMetrics_(pid, payload.clinicalMetrics, now, user);
+    }
 
     return { ok: true, vitals: vit, wroteTo: s.getName(), row };
   } catch (e) {

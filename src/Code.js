@@ -1096,6 +1096,197 @@ function notifyChat_(message){
     payload: payload
   });
 }
+
+function decodeWebhookEmailKey_(key){
+  const raw = String(key || '').trim();
+  if (!raw) return '';
+  if (raw.indexOf('@') >= 0) {
+    return raw.toLowerCase();
+  }
+  const upper = raw.toUpperCase();
+  const patterns = [
+    'CHAT_WEBHOOK_URL__',
+    'CHAT_WEBHOOK_URL_',
+    'CHAT_WEBHOOK__',
+    'CHAT_WEBHOOK_',
+    'WEBHOOK_URL__',
+    'WEBHOOK_URL_',
+    'WEBHOOK__',
+    'WEBHOOK_'
+  ];
+  for (let i = 0; i < patterns.length; i++) {
+    const prefix = patterns[i];
+    if (upper.startsWith(prefix)) {
+      const tail = raw.substring(prefix.length);
+      const decoded = tail
+        .replace(/(__AT__|_AT_|-AT-)/gi, '@')
+        .replace(/(__DOT__|_DOT_|-DOT-)/gi, '.')
+        .trim();
+      if (decoded.indexOf('@') >= 0) {
+        return decoded.toLowerCase();
+      }
+      if (tail.indexOf('@') >= 0) {
+        return tail.toLowerCase();
+      }
+    }
+  }
+  return '';
+}
+
+function getWebhookConfig_(){
+  const props = PropertiesService.getScriptProperties().getProperties() || {};
+  const map = new Map();
+  const defaultUrl = String((props.CHAT_WEBHOOK_URL_DEFAULT || props.CHAT_WEBHOOK_URL || '')).trim();
+  Object.keys(props).forEach(key => {
+    const value = String(props[key] || '').trim();
+    if (!value) return;
+    const email = decodeWebhookEmailKey_(key);
+    if (email) {
+      map.set(email, value);
+    }
+  });
+  return { map, defaultUrl };
+}
+
+function fetchPatientNamesMap_(idSet){
+  const result = new Map();
+  if (!idSet || !idSet.size) return result;
+  const infoSheet = sh('患者情報');
+  const lastRow = infoSheet.getLastRow();
+  if (lastRow < 2) return result;
+  const lastCol = infoSheet.getLastColumn();
+  const headers = infoSheet.getRange(1,1,1,lastCol).getDisplayValues()[0];
+  const colRec = getColFlexible_(headers, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
+  const colName = getColFlexible_(headers, LABELS.name, PATIENT_COLS_FIXED.name, '名前');
+  const rows = infoSheet.getRange(2,1,lastRow-1,lastCol).getDisplayValues();
+  const needed = new Set(Array.from(idSet).map(normId_).filter(Boolean));
+  rows.forEach(row => {
+    const pid = normId_(row[colRec-1]);
+    if (!pid || !needed.has(pid)) return;
+    if (!result.has(pid)) {
+      result.set(pid, row[colName-1] || '');
+    }
+  });
+  return result;
+}
+
+function sendDailySummaryToChat(targetDate){
+  ensureAuxSheets_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const base = targetDate ? new Date(targetDate) : new Date();
+  if (isNaN(base.getTime())) {
+    throw new Error('日付指定が不正です');
+  }
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const sheet = sh('施術録');
+  const lastRow = sheet.getLastRow();
+  const summary = {
+    date: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
+    staffProcessed: 0,
+    posted: 0,
+    skipped: 0,
+    totalTreatments: 0
+  };
+  if (lastRow < 2) {
+    Logger.log('[sendDailySummaryToChat] 施術録にデータがありません');
+    return summary;
+  }
+
+  const values = sheet.getRange(2,1,lastRow-1,6).getValues();
+  const byStaff = new Map();
+  const patientIds = new Set();
+
+  values.forEach(row => {
+    const ts = row[0];
+    const rawId = row[1];
+    const emailRaw = String(row[3] || '').trim();
+    if (!emailRaw) return;
+    const when = ts instanceof Date ? ts : new Date(ts);
+    if (isNaN(when.getTime()) || when < start || when >= end) return;
+
+    const key = emailRaw.toLowerCase();
+    const entry = byStaff.get(key) || { email: emailRaw, count: 0, patientIds: new Set(), recordNames: new Set(), extras: new Set() };
+    entry.count += 1;
+    summary.totalTreatments += 1;
+
+    const normalizedId = normId_(rawId);
+    if (normalizedId) {
+      entry.patientIds.add(normalizedId);
+      patientIds.add(normalizedId);
+    } else if (rawId) {
+      entry.extras.add('ID:' + String(rawId).trim());
+    }
+
+    const recordedName = String(row[5] || '').trim();
+    if (recordedName) {
+      entry.recordNames.add(recordedName);
+    }
+
+    byStaff.set(key, entry);
+  });
+
+  if (!byStaff.size) {
+    Logger.log('[sendDailySummaryToChat] 当日に該当する施術がありません');
+    return summary;
+  }
+
+  summary.staffProcessed = byStaff.size;
+
+  const nameMap = fetchPatientNamesMap_(patientIds);
+  const { map: webhookMap, defaultUrl } = getWebhookConfig_();
+  const dateDisp = Utilities.formatDate(start, tz, 'M月d日');
+
+  byStaff.forEach((entry, key) => {
+    const webhookUrl = webhookMap.get(key) || defaultUrl;
+    const names = new Set();
+
+    entry.patientIds.forEach(pid => {
+      const name = nameMap.get(pid);
+      if (name) {
+        names.add(name);
+      }
+    });
+
+    entry.recordNames.forEach(name => {
+      if (name) names.add(name);
+    });
+
+    if (!names.size) {
+      entry.patientIds.forEach(pid => names.add('ID:' + pid));
+    }
+
+    entry.extras.forEach(label => {
+      if (label) names.add(label);
+    });
+
+    if (!names.size) {
+      names.add('該当なし');
+    }
+
+    const message = `本日の施術確認\n${dateDisp} に ${entry.count}件の施術を記録しました。\n患者: ${Array.from(names).join(', ')}`;
+
+    if (!webhookUrl) {
+      Logger.log(`[sendDailySummaryToChat] Webhook未設定 staff=${entry.email}`);
+      summary.skipped += 1;
+      return;
+    }
+
+    try {
+      UrlFetchApp.fetch(webhookUrl, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ text: message })
+      });
+      summary.posted += 1;
+    } catch (err) {
+      Logger.log(`[sendDailySummaryToChat] 送信失敗 staff=${entry.email} err=${err}`);
+      summary.skipped += 1;
+    }
+  });
+
+  return summary;
+}
 /*** ── Index（ダッシュボード）再構築 ───────────────── **/
 function DashboardIndex_refreshAll(){
   ensureAuxSheets_();

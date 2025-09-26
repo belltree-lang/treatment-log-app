@@ -207,25 +207,6 @@
       </div>
 
       <div class="card">
-        <div class="section-title">AI報告書</div>
-        <div class="muted" style="margin-bottom:8px">申し送り・臨床指標をもとに各向け報告書を生成します。</div>
-        <label>対象期間</label>
-        <select id="aiReportRange" style="max-width:200px">
-          <option value="1m">直近1か月</option>
-          <option value="2m">直近2か月</option>
-          <option value="3m">直近3か月</option>
-          <option value="all">全期間</option>
-        </select>
-        <div class="btnrow" style="margin-top:8px">
-          <button class="btn" onclick="generateAiReport()">AI報告書生成</button>
-          <span id="aiReportStatus" class="muted"></span>
-        </div>
-        <div id="aiReportPreview" class="ai-report-preview">
-          <div class="muted">生成するとここに結果が表示されます。</div>
-        </div>
-      </div>
-
-      <div class="card">
         <div class="section-title">臨床・ケア連携（β）</div>
         <div class="muted" style="font-size:0.9rem">ICFサマリと臨床指標を申し送りと合わせて活用できます。</div>
 
@@ -237,18 +218,24 @@
           <button class="btn ghost" onclick="clearMetricRows()">指標クリア</button>
         </div>
 
-        <div class="btnrow" style="margin:12px 0 8px">
-          <select id="icfRange" onchange="changeIcfRange(this.value)" style="max-width:160px">
+        <div class="btnrow" style="margin:12px 0 8px; gap:8px; flex-wrap:wrap">
+          <label class="inline" style="display:flex; align-items:center; gap:6px">
+            <span>対象期間</span>
+            <select id="icfRange" onchange="changeIcfRange(this.value)" style="max-width:160px">
             <option value="1m">直近1か月</option>
             <option value="2m">直近2か月</option>
             <option value="3m">直近3か月</option>
             <option value="all">全期間</option>
-          </select>
-          <select id="icfAudience" onchange="changeIcfAudience(this.value)" style="max-width:200px">
+            </select>
+          </label>
+          <label class="inline" style="display:flex; align-items:center; gap:6px">
+            <span>対象</span>
+            <select id="icfAudience" onchange="changeIcfAudience(this.value)" style="max-width:200px">
             <option value="doctor">医師向け報告書</option>
             <option value="caremanager">ケアマネ向けサマリ</option>
             <option value="family">家族向けサマリ</option>
-          </select>
+            </select>
+          </label>
           <button class="btn ghost" onclick="generateIcfSummary()">報告書サマリを生成</button>
           <button class="btn ghost" onclick="loadClinicalTrends(true)">グラフを再読込</button>
         </div>
@@ -298,7 +285,6 @@ let _metricRowSeq = 0;
 let _clinicalCharts = {};
 let _icfRange = '1m';
 let _icfAudience = 'doctor';
-let _aiReportStatusText = '';
 
 function resetFlags(){ _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false}; _pendingVisitPlanDate=null; }
 
@@ -421,69 +407,15 @@ function clearMetricRows(){
   ensureMetricEmptyMessage();
 }
 
-function updateAiReportStatus(text){
-  _aiReportStatusText = text || '';
-  const el = q('aiReportStatus');
-  if (el) el.textContent = _aiReportStatusText;
-}
-
-function flashAiReportStatus(message){
-  const el = q('aiReportStatus');
-  if (!el) return;
-  const prev = _aiReportStatusText;
-  el.textContent = message || '';
-  setTimeout(()=>{ el.textContent = prev; }, 2000);
-}
-
-function renderAiReportPreview(report){
-  const box = q('aiReportPreview');
-  if (!box) return;
-  if (!report) {
-    box.innerHTML = '<div class="muted">生成結果がありません。</div>';
-    return;
-  }
-  const sections = [
-    { key:'family', title:'家族向け', text: report.family || '' },
-    { key:'caremanager', title:'ケアマネ向け', text: report.caremanager || '' },
-    { key:'doctor-status', title:'医師向け（患者の状態・経過）', text: (report.doctor && report.doctor.status) || '' }
-  ];
-  const parts = sections.map(sec => {
-    const raw = String(sec.text || '');
-    const body = raw
-      ? `<div class="ai-report-text">${escapeHtml(raw).replace(/\n/g,'<br>')}</div>`
-      : '<div class="muted">内容がありません</div>';
-    return `<div class="ai-report-block">
-      <div class="ai-report-heading">
-        <div class="ai-report-title">${sec.title}</div>
-        <button type="button" class="btn ghost" onclick="copyAiReport(${jsString(raw)})">コピー</button>
-      </div>
-      ${body}
-    </div>`;
-  });
-  const specialList = Array.isArray(report?.doctor?.special) ? report.doctor.special.filter(Boolean) : [];
-  const specialText = specialList.length ? specialList.join('\n') : '特記すべき事項はありません。';
-  const specialBody = specialList.length
-    ? `<ul>${specialList.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-    : '<div class="muted">特記すべき事項はありません。</div>';
-  parts.push(`<div class="ai-report-block ai-report-special">
-    <div class="ai-report-heading">
-      <div class="ai-report-title">医師向け（特記すべき事項）</div>
-      <button type="button" class="btn ghost" onclick="copyAiReport(${jsString(specialText)})">コピー</button>
-    </div>
-    ${specialBody}
-  </div>`);
-  box.innerHTML = parts.join('');
-}
-
 function copyAiReport(text){
   const str = String(text == null ? '' : text);
   if (!str) {
-    flashAiReportStatus('コピー対象がありません');
+    toast('コピー対象がありません');
     return;
   }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(str)
-      .then(()=> flashAiReportStatus('コピーしました'))
+      .then(()=> toast('コピーしました'))
       .catch(()=> copyAiReportFallback(str));
   } else {
     copyAiReportFallback(str);
@@ -500,7 +432,7 @@ function copyAiReportFallback(text){
   ta.select();
   try {
     if (document.execCommand('copy')) {
-      flashAiReportStatus('コピーしました');
+      toast('コピーしました');
     } else {
       throw new Error('copy command failed');
     }
@@ -510,45 +442,6 @@ function copyAiReportFallback(text){
   } finally {
     document.body.removeChild(ta);
   }
-}
-
-function generateAiReport(){
-  const p = pid();
-  if (!p){
-    alert('患者IDを入力してください');
-    return;
-  }
-  const range = q('aiReportRange')?.value || '1m';
-  const box = q('aiReportPreview');
-  if (box) {
-    box.innerHTML = '<div class="muted">AIが報告書を生成しています…</div>';
-  }
-  updateAiReportStatus('生成中…');
-  google.script.run
-    .withSuccessHandler(res => {
-      if (!res || !res.ok) {
-        updateAiReportStatus('生成に失敗しました');
-        if (box) {
-          box.innerHTML = '<div class="muted" style="color:#b91c1c">生成に失敗しました。</div>';
-        }
-        return;
-      }
-      const meta = [];
-      if (res.rangeLabel) meta.push(res.rangeLabel);
-      if (res.generatedAt) meta.push(res.generatedAt);
-      meta.push(res.usedAi ? 'AI生成' : 'ローカル生成');
-      updateAiReportStatus(meta.join(' ／ '));
-      renderAiReportPreview(res.report || {});
-    })
-    .withFailureHandler(err => {
-      const msg = err && err.message ? err.message : String(err);
-      updateAiReportStatus('生成に失敗しました');
-      if (box) {
-        box.innerHTML = `<div class="muted" style="color:#b91c1c">${escapeHtml(msg)}</div>`;
-      }
-      alert('AI報告書の生成に失敗しました：' + msg);
-    })
-    .generateAiReport({ patientId: p, range });
 }
 
 function collectMetricInputs(){
@@ -688,23 +581,30 @@ function renderIcfSummary(res){
     return;
   }
 
+  const report = res.report || {};
+  const statusText = String(report.status || '').trim();
+  const specialList = Array.isArray(report.special) ? report.special.filter(Boolean) : [];
+  const specialText = specialList.length ? specialList.join('\n') : '特記すべき事項はありません。';
+
   const metaInfo = [];
-  if (res.meta && res.meta.generatedAt) metaInfo.push(res.meta.generatedAt);
-  const rangeLabel = res.meta && res.meta.rangeLabel ? res.meta.rangeLabel : '全期間';
-  const handoverCount = res.meta && typeof res.meta.handoverCount === 'number' ? res.meta.handoverCount : 0;
-  const metricCount = res.meta && typeof res.meta.metricCount === 'number' ? res.meta.metricCount : 0;
-  metaInfo.push(`期間:${rangeLabel}`);
-  metaInfo.push(`申し送り:${handoverCount}件`);
-  metaInfo.push(`臨床指標:${metricCount}件`);
-  if (res.meta && res.meta.frequencyLabel) metaInfo.push(`施術頻度:${res.meta.frequencyLabel}`);
-  metaInfo.push(`方式:${res.usedAi ? 'AI整形' : 'ローカル整形'}`);
+  if (res.rangeLabel) metaInfo.push(res.rangeLabel);
+  if (res.generatedAt) metaInfo.push(res.generatedAt);
+  metaInfo.push(res.usedAi ? 'AI生成' : 'ローカル生成');
+  if (res.meta) {
+    if (typeof res.meta.handoverCount === 'number') metaInfo.push(`申し送り:${res.meta.handoverCount}件`);
+    if (typeof res.meta.metricCount === 'number') metaInfo.push(`臨床指標:${res.meta.metricCount}件`);
+    if (typeof res.meta.treatmentCount === 'number') metaInfo.push(`施術記録:${res.meta.treatmentCount}件`);
+    if (res.meta.frequencyLabel) metaInfo.push(`施術頻度:${res.meta.frequencyLabel}`);
+  }
 
   box.innerHTML = '';
 
-  const meta = document.createElement('div');
-  meta.className = 'icf-meta';
-  meta.textContent = metaInfo.join('  /  ');
-  box.appendChild(meta);
+  if (metaInfo.length){
+    const meta = document.createElement('div');
+    meta.className = 'icf-meta';
+    meta.textContent = metaInfo.join(' ／ ');
+    box.appendChild(meta);
+  }
 
   if (res.meta && res.meta.patientFound === false) {
     const warn = document.createElement('div');
@@ -714,16 +614,34 @@ function renderIcfSummary(res){
     box.appendChild(warn);
   }
 
-  const wrap = document.createElement('div');
-  wrap.className = 'icf-section';
-  const title = document.createElement('div');
-  title.className = 'icf-section-title';
-  title.textContent = res.audienceLabel || 'サマリ';
-  wrap.appendChild(title);
-  const body = document.createElement('div');
-  body.innerHTML = escapeHtml(res.text || '').replace(/\n/g,'<br>');
-  wrap.appendChild(body);
-  box.appendChild(wrap);
+  const preview = document.createElement('div');
+  preview.className = 'ai-report-preview';
+
+  const statusBlock = document.createElement('div');
+  statusBlock.className = 'ai-report-block';
+  statusBlock.innerHTML = `
+    <div class="ai-report-heading">
+      <div class="ai-report-title">${escapeHtml(res.audienceLabel || '報告書サマリ')}</div>
+      <button type="button" class="btn ghost" onclick="copyAiReport(${jsString(statusText)})">コピー</button>
+    </div>
+    ${statusText ? `<div class="ai-report-text">${escapeHtml(statusText).replace(/\n/g,'<br>')}</div>` : '<div class="muted">内容がありません</div>'}
+  `;
+  preview.appendChild(statusBlock);
+
+  const specialBlock = document.createElement('div');
+  specialBlock.className = 'ai-report-block ai-report-special';
+  specialBlock.innerHTML = `
+    <div class="ai-report-heading">
+      <div class="ai-report-title">${escapeHtml(res.specialLabel || '共有したい特記事項')}</div>
+      <button type="button" class="btn ghost" onclick="copyAiReport(${jsString(specialText)})">コピー</button>
+    </div>
+    ${specialList.length
+      ? `<ul>${specialList.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+      : '<div class="muted">特記すべき事項はありません。</div>'}
+  `;
+  preview.appendChild(specialBlock);
+
+  box.appendChild(preview);
 }
 
 function generateIcfSummary(){
@@ -737,7 +655,7 @@ function generateIcfSummary(){
       const msg = (e && e.message) ? e.message : String(e);
       if (box) box.innerHTML = `<div class="muted" style="color:#b91c1c">報告書サマリ生成に失敗しました：${escapeHtml(msg)}</div>`;
     })
-    .generateSummaryForAudience(p, _icfRange, _icfAudience);
+    .generateAiReport({ patientId: p, range: _icfRange, reportType: _icfAudience });
 }
 /* 候補/定型文 */
 function loadPidList(){
@@ -1130,9 +1048,6 @@ function saveHandoverUI(){
   clearIcfSummary();
   const rangeSelect = q('icfRange');
   if (rangeSelect) rangeSelect.value = _icfRange;
-  const aiRange = q('aiReportRange');
-  if (aiRange) aiRange.value = '1m';
-  updateAiReportStatus('');
   const p = "<?= patientId ?>";
   if (p) {
     refresh();

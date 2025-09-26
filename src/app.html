@@ -513,6 +513,13 @@ function renderIcfSummary(res){
   meta.textContent = `${res.generatedAt || ''}  /  メモ件数:${res.noteCount || 0}  /  方式:${res.usedAi ? 'AI整形' : 'ローカル整形'}`;
   box.innerHTML = '';
   box.appendChild(meta);
+  if (res && res.patientFound === false) {
+    const warn = document.createElement('div');
+    warn.className = 'icf-meta';
+    warn.style.color = '#b91c1c';
+    warn.textContent = '患者情報が見つからなかったため、ID未指定としてサマリを作成しました。';
+    box.appendChild(warn);
+  }
   res.sections.forEach(sec => {
     const wrap = document.createElement('div');
     wrap.className = 'icf-section';

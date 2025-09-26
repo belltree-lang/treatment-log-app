@@ -464,9 +464,16 @@ function normalizeClinicalMetricTimestamp_(value){
 }
 
 function recordClinicalMetrics_(patientId, metrics, whenStr, user){
-  if (!Array.isArray(metrics) || !metrics.length) return;
   const pid = String(patientId || '').trim();
-  if (!pid) return;
+  if (!pid) {
+    Logger.log('臨床指標は未入力です（保存はスキップしました） [pid=]');
+    return;
+  }
+
+  if (!Array.isArray(metrics) || !metrics.length) {
+    Logger.log(`臨床指標は未入力です（保存はスキップしました） [pid=${pid}]`);
+    return;
+  }
 
   const sheet = ensureClinicalMetricSheet_();
   const rows = [];
@@ -491,10 +498,13 @@ function recordClinicalMetrics_(patientId, metrics, whenStr, user){
     ]);
   });
 
-  if (rows.length) {
-    const start = sheet.getLastRow() + 1;
-    sheet.getRange(start, 1, rows.length, 6).setValues(rows);
+  if (!rows.length) {
+    Logger.log(`臨床指標は未入力です（保存はスキップしました） [pid=${pid}]`);
+    return;
   }
+
+  const start = sheet.getLastRow() + 1;
+  sheet.getRange(start, 1, rows.length, 6).setValues(rows);
 }
 
 function afterTreatmentJob(){
@@ -589,7 +599,7 @@ function parseClinicalMetricTimestamp_(value){
   return parsed || new Date(value);
 }
 
-function listClinicalMetricSeries(pid){
+function listClinicalMetricSeries(pid, startDate, endDate){
   const sheet = ensureClinicalMetricSheet_();
   const lr = sheet.getLastRow();
   if (lr < 2) return { metrics: [] };
@@ -597,12 +607,18 @@ function listClinicalMetricSeries(pid){
   const vals = sheet.getRange(2, 1, lr - 1, 6).getValues();
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
   const normalizedPid = String(normId_(pid));
+  const startTs = startDate instanceof Date ? startDate.getTime() : null;
+  const endTs = endDate instanceof Date ? endDate.getTime() : null;
   const map = {};
 
   vals.forEach(row => {
     const ts = parseClinicalMetricTimestamp_(row[0]);
     const rowPid = String(normId_(row[1]));
     if (!normalizedPid || rowPid !== normalizedPid) return;
+    if (!(ts instanceof Date) || isNaN(ts.getTime())) return;
+    const ms = ts.getTime();
+    if (startTs != null && ms < startTs) return;
+    if (endTs != null && ms > endTs) return;
     const metricId = String(row[2] || '').trim();
     const def = getClinicalMetricDef_(metricId);
     if (!def) return;
@@ -610,9 +626,7 @@ function listClinicalMetricSeries(pid){
     if (!isFinite(value)) return;
     const note = row[4] || '';
     const user = row[5] || '';
-    const dispDate = ts && ts instanceof Date
-      ? Utilities.formatDate(ts, tz, 'yyyy-MM-dd')
-      : String(row[0] || '');
+    const dispDate = Utilities.formatDate(ts, tz, 'yyyy-MM-dd');
     if (!map[metricId]) map[metricId] = [];
     map[metricId].push({ date: dispDate, value, note: note ? String(note) : '', user: String(user || '') });
   });
@@ -634,49 +648,101 @@ function listClinicalMetricSeries(pid){
   return { metrics };
 }
 
-function getLatestClinicalMetricSnapshot_(pid){
-  const series = listClinicalMetricSeries(pid).metrics;
-  const snapshot = {};
-  series.forEach(metric => {
-    const latest = metric.points[metric.points.length - 1];
-    if (latest) {
-      snapshot[metric.id] = {
-        label: metric.label,
-        unit: metric.unit,
-        value: latest.value,
-        date: latest.date
-      };
-    }
-  });
-  return snapshot;
+function splitTreatmentNoteForSummary_(text){
+  const lines = String(text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
+  const vitals = lines.filter(line => /^vital\b/i.test(line));
+  const others = lines.filter(line => !/^vital\b/i.test(line));
+  return {
+    note: others.join(' '),
+    vitals: vitals.join(' '),
+    raw: lines.join(' ')
+  };
 }
 
-function getRecentTreatmentNotes_(pid, limit){
+function getTreatmentNotesInRange_(pid, startDate, endDate){
   const s = sh('施術録');
   const lr = s.getLastRow();
   if (lr < 2) return [];
   const vals = s.getRange(2, 1, lr - 1, 4).getValues();
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
   const target = String(normId_(pid));
+  const startTs = startDate instanceof Date ? startDate.getTime() : null;
+  const endTs = endDate instanceof Date ? endDate.getTime() : null;
   const out = [];
-  for (let i = vals.length - 1; i >= 0; i--) {
-    const row = vals[i];
+
+  vals.forEach(row => {
     const rowPid = String(normId_(row[1]));
-    if (rowPid !== target) continue;
-    const ts = row[0] instanceof Date ? row[0] : parseDateFlexible_(row[0]);
-    const when = ts ? Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm') : String(row[0] || '');
-    const note = sanitizeTreatmentNoteForSummary_(String(row[2] || ''));
-    if (note) out.push({ when, note });
-    if (out.length >= (limit || 12)) break;
-  }
-  return out;
+    if (rowPid !== target) return;
+    const ts = row[0] instanceof Date ? row[0] : parseDateTimeFlexible_(row[0], tz) || parseDateFlexible_(row[0]);
+    if (!(ts instanceof Date) || isNaN(ts.getTime())) return;
+    const ms = ts.getTime();
+    if (startTs != null && ms < startTs) return;
+    if (endTs != null && ms > endTs) return;
+    const when = Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm');
+    const parts = splitTreatmentNoteForSummary_(String(row[2] || ''));
+    out.push({ when, note: parts.note, vitals: parts.vitals, raw: parts.raw, timestamp: ms });
+  });
+
+  out.sort((a, b) => a.timestamp - b.timestamp);
+  return out.map(item => ({ when: item.when, note: item.note, vitals: item.vitals, raw: item.raw }));
 }
 
-function sanitizeTreatmentNoteForSummary_(text){
-  if (!text) return '';
-  const lines = String(text).split(/\n+/).map(s => s.trim()).filter(Boolean);
-  const filtered = lines.filter(line => !/^vital\b/i.test(line));
-  return filtered.join(' ');
+function getHandoversInRange_(pid, startDate, endDate){
+  const s = ensureHandoverSheet_();
+  const lr = s.getLastRow();
+  if (lr < 2) return [];
+  const vals = s.getRange(2, 1, lr - 1, 5).getValues();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const target = String(normId_(pid));
+  const startTs = startDate instanceof Date ? startDate.getTime() : null;
+  const endTs = endDate instanceof Date ? endDate.getTime() : null;
+  const out = [];
+
+  vals.forEach(row => {
+    const rowPid = String(normId_(row[1]));
+    if (rowPid !== target) return;
+    const ts = row[0] instanceof Date ? row[0] : parseDateTimeFlexible_(row[0], tz) || parseDateFlexible_(row[0]);
+    if (!(ts instanceof Date) || isNaN(ts.getTime())) return;
+    const ms = ts.getTime();
+    if (startTs != null && ms < startTs) return;
+    if (endTs != null && ms > endTs) return;
+    const when = Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm');
+    const note = String(row[3] || '').trim();
+    out.push({ when, note, timestamp: ms });
+  });
+
+  out.sort((a, b) => a.timestamp - b.timestamp);
+  return out.map(item => ({ when: item.when, note: item.note }));
+}
+
+function resolveIcfSummaryRange_(rangeKey){
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  let start = null;
+  let label = '全期間';
+
+  switch (rangeKey) {
+    case '1m':
+    case '2m':
+    case '3m': {
+      const months = Number(rangeKey.replace('m', ''));
+      label = `直近${months}か月`;
+      start = new Date(end.getTime());
+      start.setHours(0, 0, 0, 0);
+      start.setMonth(start.getMonth() - months);
+      break;
+    }
+    default:
+      label = '全期間';
+      start = null;
+      break;
+  }
+
+  if (start) {
+    start = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0);
+  }
+
+  return { startDate: start, endDate: end, label };
 }
 
 /***** 同意・負担割合 更新（findPatientRow_ベース） *****/
@@ -884,7 +950,7 @@ function composeNarrativeLocal_(type, notes){
   }
 }
 
-function composeIcfViaOpenAI_(header, recentNotes, metricSnapshot){
+function composeIcfViaOpenAI_(header, source){
   const key = getOpenAiKey_();
   if (!key) return null;
 
@@ -894,21 +960,38 @@ function composeIcfViaOpenAI_(header, recentNotes, metricSnapshot){
     '所見は事実ベースで簡潔に。推測や断定は避け、丁寧語で記述してください。'
   ].join('\n');
 
-  const notesText = (recentNotes || []).map(n => `- ${n.when}: ${n.note}`).join('\n');
-  const metricsText = Object.keys(metricSnapshot || {}).map(id => {
-    const m = metricSnapshot[id];
-    return `- ${m.label}: ${m.value}${m.unit||''} (${m.date})`;
-  }).join('\n');
+  const notesText = Array.isArray(source?.treatments) && source.treatments.length
+    ? source.treatments.map(n => {
+        const note = n.note ? `所見:${n.note}` : '所見:（記録なし）';
+        const vital = n.vitals ? `バイタル:${n.vitals}` : 'バイタル:（記録なし）';
+        return `- ${n.when}: ${note} / ${vital}`;
+      }).join('\n')
+    : '（施術録情報なし）';
+
+  const metricsText = Array.isArray(source?.metrics) && source.metrics.length
+    ? source.metrics.map(metric => {
+        const entries = metric.points.map(p => `${p.date}: ${p.value}${metric.unit || ''}${p.note ? `（${p.note}）` : ''}`);
+        return `- ${metric.label}: ${entries.join(', ') || '（記録なし）'}`;
+      }).join('\n')
+    : '（臨床指標の記録なし）';
+
+  const handoverText = Array.isArray(source?.handovers) && source.handovers.length
+    ? source.handovers.map(h => `- ${h.when}: ${h.note || '（内容なし）'}`).join('\n')
+    : '（申し送り情報なし）';
 
   const prompt = [
     `患者: ${header.name || '-'}（ID:${header.patientId}）`,
     `年齢: ${header.age || '-'} / 同意日:${header.consentDate || '-'} / 最近の施術回数: 当月${header.monthly?.current?.count||0}回`,
+    `対象期間: ${source?.rangeLabel || '全期間'}`,
     '',
     '【最近の施術メモ】',
     notesText || '（メモ情報なし）',
     '',
     '【臨床指標】',
     metricsText || '（定量指標の記録なし）',
+    '',
+    '【申し送り】',
+    handoverText || '（申し送り情報なし）',
     '',
     '上記を踏まえ、JSON形式で回答してください。キーは activity, participation, environment の3つです。',
     '各キーの値は丁寧語の文章（2〜3文程度）。例: {"activity":"...","participation":"...","environment":"..."}',
@@ -958,56 +1041,38 @@ function composeIcfViaOpenAI_(header, recentNotes, metricSnapshot){
   }
 }
 
-function composeIcfLocal_(recentNotes, metricSnapshot){
-  const pickLine = (keywords) => {
-    for (let i = 0; i < (recentNotes || []).length; i++) {
-      const note = recentNotes[i].note || '';
-      const parts = note.split(/\s+/);
-      for (let j = 0; j < parts.length; j++) {
-        const line = parts[j];
-        if (keywords.some(k => line.indexOf(k) >= 0)) {
-          return line;
-        }
-      }
-    }
-    return '';
-  };
-
+function composeIcfLocal_(source){
   const generic = {
     activity: '日常生活動作は大きな変化なく、必要な支援量で対応しています。',
     participation: '家族や支援者と連携しながら、社会参加の機会を維持できています。',
     environment: '住環境や支援体制に大きな変更はなく、必要時にスタッフがフォローしています。'
   };
 
-  const metricHints = [];
-  Object.keys(metricSnapshot || {}).forEach(id => {
-    const m = metricSnapshot[id];
-    if (m && m.label && m.value != null) {
-      metricHints.push(`${m.label}: ${m.value}${m.unit || ''} (${m.date})`);
-    }
-  });
-
-  const lines = {
-    activity: pickLine(['起居','移乗','歩行','立ち上がり','ADL','動作']),
-    participation: pickLine(['訪問','家族','参加','外出','社会','デイ','クラブ']),
-    environment: pickLine(['環境','住宅','手すり','支援','サービス','ケアマネ','連携'])
-  };
+  const treatmentSummary = Array.isArray(source?.treatments) && source.treatments.length
+    ? source.treatments.map(n => `${n.when}: ${n.note || n.raw || '所見なし'}`).join(' / ')
+    : '';
+  const handoverSummary = Array.isArray(source?.handovers) && source.handovers.length
+    ? source.handovers.map(h => `${h.when}: ${h.note || '内容なし'}`).join(' / ')
+    : '';
+  const metricSummary = Array.isArray(source?.metrics) && source.metrics.length
+    ? source.metrics.map(m => `${m.label}: ${m.points.map(p => `${p.date} ${p.value}${m.unit || ''}`).join(', ')}`).join(' / ')
+    : '';
 
   const sections = [
     {
       key: 'activity',
       title: '活動',
-      body: (lines.activity || metricHints[0] || generic.activity)
+      body: treatmentSummary || metricSummary || generic.activity
     },
     {
       key: 'participation',
       title: '参加',
-      body: (lines.participation || metricHints[1] || generic.participation)
+      body: handoverSummary || treatmentSummary || generic.participation
     },
     {
       key: 'environment',
       title: '環境因子',
-      body: (lines.environment || metricHints[2] || generic.environment)
+      body: metricSummary || handoverSummary || generic.environment
     }
   ].map(sec => ({ key: sec.key, title: sec.title, body: String(sec.body || generic[sec.key]).trim() }));
 
@@ -1062,23 +1127,33 @@ function buildPlaceholderHeader_(pid){
   };
 }
 
-function generateIcfSummary(pid){
+function generateIcfSummary(pid, rangeKey){
   assertDomain_(); ensureAuxSheets_();
   const header = getPatientHeader(pid);
   const patientFound = !!header;
   const headerForSummary = header || buildPlaceholderHeader_(pid);
 
-  const notes = getRecentTreatmentNotes_(pid, 12);
-  const metrics = getLatestClinicalMetricSnapshot_(pid);
+  const range = resolveIcfSummaryRange_(rangeKey);
+  const treatments = getTreatmentNotesInRange_(pid, range.startDate, range.endDate);
+  const handovers = getHandoversInRange_(pid, range.startDate, range.endDate);
+  const metricSeries = listClinicalMetricSeries(pid, range.startDate, range.endDate).metrics;
+  const metricCount = metricSeries.reduce((sum, metric) => sum + metric.points.length, 0);
+
+  const source = {
+    treatments,
+    handovers,
+    metrics: metricSeries,
+    rangeLabel: range.label
+  };
 
   let composed = null;
   try {
-    composed = composeIcfViaOpenAI_(headerForSummary, notes, metrics);
+    composed = composeIcfViaOpenAI_(headerForSummary, source);
   } catch (err) {
     composed = null;
   }
   if (!composed) {
-    composed = composeIcfLocal_(notes, metrics);
+    composed = composeIcfLocal_(source);
   }
 
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
@@ -1086,7 +1161,10 @@ function generateIcfSummary(pid){
     ok: true,
     usedAi: composed?.via === 'ai',
     sections: composed?.sections || [],
-    noteCount: notes.length,
+    noteCount: treatments.length,
+    handoverCount: handovers.length,
+    metricCount,
+    rangeLabel: range.label,
     generatedAt: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'),
     patientFound
   };
@@ -1758,6 +1836,15 @@ function saveHandover(payload) {
   }
 
   s.appendRow([ now, pid, user, String(payload && payload.note || ''), fileIds.join(',') ]);
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, 'clinicalMetrics')) {
+    try {
+      recordClinicalMetrics_(pid, payload.clinicalMetrics, now, user);
+    } catch (err) {
+      Logger.log('[saveHandover] 臨床指標保存エラー: ' + err);
+    }
+  }
+
   return { ok:true, fileIds };
 }
 /***** 申し送り：一覧取得 *****/

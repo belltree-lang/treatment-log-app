@@ -75,7 +75,7 @@ function ensureAuxSheets_() {
   ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
   ensureHeader('定型文',   ['カテゴリ','ラベル','文章']);
   ensureHeader('添付索引', ['TS','患者ID','月','ファイル名','FileId','種別','登録者']);
-  ensureHeader('AI報告書', ['TS','患者ID','範囲','家族向け','ケアマネ向け','医師向け_status','医師向け_special']);
+  ensureHeader('AI報告書', ['TS','患者ID','範囲','対象','status','special']);
 
   // 年次確認タブ（未作成時はヘッダだけ用意）
   ensureHeader('年次確認', ['患者ID','年','確認日','担当者メール']);
@@ -143,7 +143,7 @@ function ensureAiReportSheet_(){
     sheet = wb.insertSheet('AI報告書');
   }
   if (sheet.getLastRow() === 0) {
-    sheet.appendRow(['TS','患者ID','範囲','家族向け','ケアマネ向け','医師向け_status','医師向け_special']);
+    sheet.appendRow(['TS','患者ID','範囲','対象','status','special']);
   }
   return sheet;
 }
@@ -1471,7 +1471,38 @@ function composeSummaryForAudienceViaOpenAI_(audience, header, context){
   }
 }
 
-function composeAiReportViaOpenAI_(header, context){
+function resolveReportTypeMeta_(reportType){
+  const key = String(reportType || '').toLowerCase();
+  const map = {
+    family: {
+      key: 'family',
+      label: '家族向けサマリ',
+      promptLabel: '家族',
+      statusInstruction: '家族が安心できるように穏やかな丁寧語で最近の様子と今後の見守り方針をまとめてください。',
+      specialInstruction: 'ご家庭で共有したい配慮点や生活上の注意をICFの視点で整理してください。',
+      specialLabel: '家族と共有したいポイント'
+    },
+    caremanager: {
+      key: 'caremanager',
+      label: 'ケアマネ向けサマリ',
+      promptLabel: 'ケアマネジャー',
+      statusInstruction: '活動・参加・環境因子の視点で経過を整理し、ケアプランに役立つ提案があれば触れてください。',
+      specialInstruction: '多職種連携で共有したい着眼点や支援上の留意事項を列挙してください。',
+      specialLabel: 'ケアマネ連携ポイント'
+    },
+    doctor: {
+      key: 'doctor',
+      label: '医師向け報告書',
+      promptLabel: '医師',
+      statusInstruction: '臨床経過と現在の評価、今後の施術方針や必要な連携事項を2〜3段落でまとめてください。',
+      specialInstruction: '医師に共有したい特記や検討事項があれば箇条書きで示してください。',
+      specialLabel: '医師向け特記すべき事項'
+    }
+  };
+  return map[key] || map.doctor;
+}
+
+function composeAiReportViaOpenAI_(header, context, reportType){
   const key = getOpenAiKey_();
   if (!key) return null;
 
@@ -1536,6 +1567,7 @@ function composeAiReportViaOpenAI_(header, context){
 
   const consentText = String(context?.consentText || '').trim() || '情報不足';
   const frequency = String(context?.frequencyLabel || '').trim() || '情報不足';
+  const meta = resolveReportTypeMeta_(reportType);
 
   const sys = [
     'あなたは訪問鍼灸マッサージチームの一員として、関係者向けの報告文を日本語で作成するアシスタントです。',
@@ -1544,7 +1576,8 @@ function composeAiReportViaOpenAI_(header, context){
   ].join('\n');
 
   const prompt = [
-    '以下のデータを基に、家族・ケアマネジャー・医師向けの報告文を作成してください。',
+    `以下の参考情報を要約して、${meta.promptLabel}向けに報告書を作成してください。`,
+    '参考情報はそのまま羅列せず、要点を整理して文章化してください。',
     '',
     '【患者基本情報】',
     `- 氏名: ${header?.name || '-'}`,
@@ -1556,29 +1589,25 @@ function composeAiReportViaOpenAI_(header, context){
     `- 施術頻度: ${frequency}`,
     `- 対象期間: ${context?.rangeLabel || '全期間'}（${rangeStart}〜${rangeEnd}）`,
     '',
-    '【申し送り】',
+    '【申し送り（参考情報）】',
     handoverLines.join('\n'),
     '',
-    '【施術録抜粋】',
+    '【施術録抜粋（参考情報）】',
     treatmentLines.join('\n'),
     '',
-    '【臨床指標】',
+    '【臨床指標（参考情報）】',
     metricLines.join('\n'),
     '',
     '要件:',
-    '1. family: 家族向けに、安心感のあるやさしい文章で最近の様子と健康状態、家族へのお願いがあれば丁寧に伝えてください。',
-    '2. caremanager: ICFの視点（活動・参加・環境因子）で整理し、ケアプランに活用しやすい専門職向けの文面にしてください。',
-    '3. doctor.status: 医師向けの定型書式に沿う形で2〜3段落の報告文を作成し、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。へりくだった丁寧語を用います。',
-    '   doctor.special: 医師に共有したいICF的な着眼点や特記事項を配列で列挙してください。該当がない場合は配列に「特記すべき事項はありません。」のみを入れてください。',
+    `- status は2〜3段落で丁寧語（へりくだり口調）を用いて最新の経過と今後の見通しをまとめ、必ず「同意内容に沿った施術を継続しております。」を含めてください。`,
+    `- ${meta.statusInstruction}`,
+    `- special は共有したい観察事項やICF的な視点を配列で列挙し、該当がない場合は「特記すべき事項はありません。」のみを含めてください。`,
+    `- ${meta.specialInstruction}`,
     '',
     '出力形式（JSONのみ）:',
     '{',
-    '  "family": "...",',
-    '  "caremanager": "...",',
-    '  "doctor": {',
-    '    "status": "...",',
-    '    "special": ["..."]',
-    '  }',
+    '  "status": "...",',
+    '  "special": ["..."]',
     '}',
     '',
     'JSON以外の文章や説明は出力しないでください。'
@@ -1617,11 +1646,8 @@ function composeAiReportViaOpenAI_(header, context){
     }
     if (!parsed) return null;
 
-    const family = String(parsed.family || '').trim();
-    const care = String(parsed.caremanager || '').trim();
-    const doctorRaw = parsed.doctor && typeof parsed.doctor === 'object' ? parsed.doctor : {};
-    let status = String(doctorRaw.status || '').trim();
-    let specialRaw = doctorRaw.special;
+    let status = String(parsed.status || '').trim();
+    let specialRaw = parsed.special;
     let special = [];
     if (Array.isArray(specialRaw)) {
       special = specialRaw;
@@ -1651,12 +1677,8 @@ function composeAiReportViaOpenAI_(header, context){
     }
     return {
       via: 'ai',
-      family,
-      caremanager: care,
-      doctor: {
-        status,
-        special
-      }
+      status,
+      special
     };
   } catch (err) {
     Logger.log('composeAiReportViaOpenAI_ error: ' + err);
@@ -1664,7 +1686,8 @@ function composeAiReportViaOpenAI_(header, context){
   }
 }
 
-function composeAiReportLocal_(header, context){
+function composeAiReportLocal_(header, context, reportType){
+  const meta = resolveReportTypeMeta_(reportType);
   const name = header?.name || `ID:${header?.patientId || ''}`;
   const rangeLabel = context?.rangeLabel || '直近の期間';
   const handovers = Array.isArray(context?.handovers) ? context.handovers : [];
@@ -1676,43 +1699,66 @@ function composeAiReportLocal_(header, context){
   const metricDigest = buildMetricDigestForSummary_(metrics) || '';
   const handoverDigestFamily = buildHandoverDigestForSummary_(handovers, 'family') || '';
   const handoverDigestCare = buildHandoverDigestForSummary_(handovers, 'caremanager') || '';
-
-  const familyParts = [
-    `${name}様の${rangeLabel}のご様子についてご報告いたします。`,
-    latestHandover
-      ? `最近は「${latestHandover.note}」という報告があり、穏やかに過ごされています。`
-      : '大きな変化は確認されておらず、落ち着いた状態で日々を過ごされています。'
-  ];
-  if (metricDigest) familyParts.push(`数値の記録では、${metricDigest}。`);
-  familyParts.push('今後も無理のない範囲で見守りを続けてまいりますので、気になる点があれば遠慮なくお知らせください。');
-  const family = familyParts.filter(Boolean).join('\n\n');
-
-  const careParts = [];
-  if (handoverDigestCare) careParts.push(`活動・参加: ${handoverDigestCare.replace(/。$/,'。')}`);
-  else careParts.push('活動・参加: 活動面で大きな変化は見られず、現状維持で経過しています。');
-  if (metricDigest) careParts.push(`臨床指標: ${metricDigest}。`);
-  else careParts.push('臨床指標: 直近の数値記録は確認されませんでした。');
-  careParts.push(`環境因子: ${consentText || '既存の支援体制を継続しています。'}`);
-  careParts.push(`施術頻度: ${freqLabel || '情報不足（直近の件数が不足）'}`);
-  const caremanager = careParts.filter(Boolean).join('\n');
-
   const doctorDigest = buildHandoverDigestForSummary_(handovers, 'doctor') || '';
-  const doctorStatusParts = [];
-  if (doctorDigest) {
-    doctorStatusParts.push(doctorDigest.replace(/最近の申し送りでは、/, '最近の申し送りでは').replace(/。$/, '。'));
+
+  const statusParagraphs = [];
+  if (meta.key === 'family') {
+    statusParagraphs.push(`${name}様の${rangeLabel}のご様子についてご報告申し上げます。`);
+    if (handoverDigestFamily) {
+      statusParagraphs.push(handoverDigestFamily.replace(/最近のようす：/, '最近のようすでは').replace(/。$/, '。'));
+    } else if (latestHandover) {
+      statusParagraphs.push(`最近は「${latestHandover.note}」との申し送りがあり、落ち着いた経過で推移されています。`);
+    } else {
+      statusParagraphs.push('大きな変化は確認されておらず、落ち着いた状態で過ごされています。');
+    }
+    const third = [];
+    if (metricDigest) {
+      third.push(`臨床指標では ${metricDigest} が確認されています。`);
+    }
+    third.push('今後も生活のリズムを崩さないよう見守りながら施術を進めてまいります。');
+    statusParagraphs.push(third.join(' '));
+  } else if (meta.key === 'caremanager') {
+    statusParagraphs.push(`${rangeLabel}の状況をICFの視点でご報告いたします。`);
+    statusParagraphs.push(handoverDigestCare || '活動・参加面では大きな変化は見られず、現状維持で経過しています。');
+    const envParts = [];
+    if (metricDigest) {
+      envParts.push(`臨床指標: ${metricDigest}。`);
+    } else {
+      envParts.push('臨床指標: 直近の数値記録は確認されませんでした。');
+    }
+    envParts.push(`環境因子: ${consentText || '既存の支援体制を継続しています。'}`);
+    envParts.push(`施術頻度: ${freqLabel || '情報不足（直近の件数が不足）'}`);
+    statusParagraphs.push(envParts.join(' '));
   } else {
-    doctorStatusParts.push('申し送りの記録からは急激な変化は確認されておりません。');
+    if (doctorDigest) {
+      statusParagraphs.push(doctorDigest.replace(/最近の申し送りでは、/, '最近の申し送りでは').replace(/。$/, '。'));
+    } else {
+      statusParagraphs.push('申し送りの記録からは急激な変化は確認されておりません。');
+    }
+    const secondParagraph = [];
+    if (freqLabel) secondParagraph.push(`直近1か月の施術頻度は${freqLabel}です。`);
+    if (metricDigest) secondParagraph.push(`臨床指標では ${metricDigest} が確認されています。`);
+    secondParagraph.push('今後も必要に応じて評価を続けてまいります。');
+    statusParagraphs.push(secondParagraph.join(' '));
   }
-  const secondParagraph = [];
-  if (freqLabel) secondParagraph.push(`直近1か月の施術頻度は${freqLabel}です。`);
-  if (metricDigest) secondParagraph.push(`臨床指標では ${metricDigest} が確認されています。`);
-  secondParagraph.push('同意内容に沿った施術を継続しております。');
-  doctorStatusParts.push(secondParagraph.join(' '));
-  const doctorStatus = doctorStatusParts.join('\n\n');
+
+  if (statusParagraphs.length) {
+    const lastIndex = statusParagraphs.length - 1;
+    if (statusParagraphs[lastIndex].indexOf('同意内容に沿った施術を継続しております。') < 0) {
+      statusParagraphs[lastIndex] += (statusParagraphs[lastIndex].endsWith('。') ? '' : '。') + '同意内容に沿った施術を継続しております。';
+    }
+  } else {
+    statusParagraphs.push('同意内容に沿った施術を継続しております。');
+  }
+
+  const status = statusParagraphs.filter(Boolean).join('\n\n');
 
   let special = extractSpecialPointsFallback_(handovers) || [];
   if (!special.length && metricDigest) {
     special = [metricDigest];
+  }
+  if (!special.length && freqLabel) {
+    special = [`施術頻度: ${freqLabel}`];
   }
   if (!special.length) {
     special = ['特記すべき事項はありません。'];
@@ -1720,16 +1766,12 @@ function composeAiReportLocal_(header, context){
 
   return {
     via: 'local',
-    family,
-    caremanager,
-    doctor: {
-      status: doctorStatus,
-      special
-    }
+    status,
+    special
   };
 }
 
-function normalizeAiDoctorSpecial_(special){
+function normalizeReportSpecial_(special){
   const arr = Array.isArray(special) ? special : [];
   const normalized = arr.map(item => String(item || '').trim()).filter(Boolean);
   return normalized.length ? normalized : ['特記すべき事項はありません。'];
@@ -1743,6 +1785,8 @@ function generateAiReport(payload){
   if (!pid) throw new Error('患者IDを指定してください');
 
   const rangeKey = payload && typeof payload === 'object' && payload.range ? String(payload.range) : '1m';
+  const reportTypeRaw = payload && typeof payload === 'object' && payload.reportType ? String(payload.reportType) : '';
+  const reportMeta = resolveReportTypeMeta_(reportTypeRaw);
   const range = resolveIcfSummaryRange_(rangeKey);
   const header = getPatientHeader(pid);
   if (!header) throw new Error('患者が見つかりません');
@@ -1753,6 +1797,7 @@ function generateAiReport(payload){
   const consentText = getConsentContentForPatient_(pid);
   const treatmentCount = countTreatmentsInRecentMonth_(pid, range.endDate);
   const frequencyLabel = determineTreatmentFrequencyLabel_(treatmentCount);
+  const metricCount = metrics.reduce((sum, metric) => sum + (Array.isArray(metric.points) ? metric.points.length : 0), 0);
 
   const context = {
     rangeKey,
@@ -1767,20 +1812,16 @@ function generateAiReport(payload){
     treatmentCount
   };
 
-  let report = composeAiReportViaOpenAI_(header, context);
+  let report = composeAiReportViaOpenAI_(header, context, reportMeta.key);
   if (!report) {
-    report = composeAiReportLocal_(header, context);
+    report = composeAiReportLocal_(header, context, reportMeta.key);
   }
-  if (!report || !report.doctor || !report.doctor.status) {
+  if (!report || !report.status) {
     throw new Error('AI報告書を生成できませんでした');
   }
 
-  if (report.doctor.status.indexOf('同意内容に沿った施術を継続しております。') < 0) {
-    report.doctor.status += (report.doctor.status.endsWith('。') ? '' : '。') + '同意内容に沿った施術を継続しております。';
-  }
-
-  const specialNormalized = normalizeAiDoctorSpecial_(report.doctor.special);
-  report.doctor.special = specialNormalized;
+  const specialNormalized = normalizeReportSpecial_(report.special);
+  report.special = specialNormalized;
 
   const sheet = ensureAiReportSheet_();
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
@@ -1789,13 +1830,12 @@ function generateAiReport(payload){
     now,
     header.patientId,
     range.label,
-    report.family || '',
-    report.caremanager || '',
-    report.doctor.status || '',
+    reportMeta.label,
+    report.status || '',
     JSON.stringify(specialNormalized)
   ]);
 
-  log_('AI報告書生成', header.patientId, range.label);
+  log_('AI報告書生成', header.patientId, `${range.label}/${reportMeta.label}`);
 
   const generatedAt = Utilities.formatDate(now, tz, 'yyyy-MM-dd HH:mm');
   return {
@@ -1804,13 +1844,19 @@ function generateAiReport(payload){
     rangeKey,
     rangeLabel: range.label,
     generatedAt,
+    reportType: reportMeta.key,
+    audienceLabel: reportMeta.label,
+    specialLabel: reportMeta.specialLabel,
+    meta: {
+      handoverCount: handovers.length,
+      metricCount,
+      treatmentCount,
+      frequencyLabel,
+      patientFound: true
+    },
     report: {
-      family: report.family || '',
-      caremanager: report.caremanager || '',
-      doctor: {
-        status: report.doctor.status || '',
-        special: specialNormalized
-      }
+      status: report.status || '',
+      special: specialNormalized
     }
   };
 }

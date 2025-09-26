@@ -1145,8 +1145,8 @@ function resolveSummaryAudienceMeta_(audience){
         formatInstruction: [
           'JSONのみを出力してください。',
           'キーは "status" と "special" の2つです。',
-          '"status" には患者の状態・経過を2〜3文で丁寧語かつへりくだり口調で記載してください。',
-          '"special" にはICFの視点を含む特記すべき事項を1〜2文で記載してください。該当がなければ「特記すべき事項はありません。」としてください。'
+          '"status" には患者の状態・経過を2〜3段落で丁寧語かつへりくだり口調で記載し、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。列挙形式は避け、段落の間は空行で区切ってください。',
+          '"special" にはICF（活動・参加・環境因子など）の視点で特記すべき事項を表す文字列の配列を設定してください。該当がなければ空配列を返してください。'
         ].join('\n')
       };
     case 'caremanager':
@@ -1176,26 +1176,62 @@ function resolveSummaryAudienceMeta_(audience){
   }
 }
 
-function buildDoctorReportTemplate_(header, context, statusText, specialText){
+function buildDoctorReportTemplate_(header, context, statusText, specialItems){
   const hospital = header?.hospital ? String(header.hospital).trim() : '';
   const doctor = header?.doctor ? String(header.doctor).trim() : '';
   const name = header?.name ? String(header.name).trim() : `ID:${header?.patientId || ''}`;
-  const birth = header?.birth ? String(header.birth).trim() : '—';
+  const birth = header?.birth ? String(header.birth).trim() : '';
   const consent = context?.consentText ? String(context.consentText).trim() : '情報不足';
   const frequency = context?.frequencyLabel ? String(context.frequencyLabel).trim() : '情報不足';
   const status = statusText ? String(statusText).trim() : '（情報不足のため生成できません）';
-  const special = specialText ? String(specialText).trim() : '特記すべき事項はありません。';
+  let specialLines = [];
+  if (Array.isArray(specialItems)) {
+    specialLines = specialItems.map(s => String(s || '').trim()).filter(Boolean);
+  } else {
+    const raw = String(specialItems || '').trim();
+    if (raw) {
+      let parsed = null;
+      if (/^\[.*\]$/.test(raw)) {
+        try {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) parsed = arr;
+        } catch (e) {
+          parsed = null;
+        }
+      }
+      if (Array.isArray(parsed)) {
+        specialLines = parsed.map(s => String(s || '').trim()).filter(Boolean);
+      } else {
+        specialLines = raw
+          .split(/\n+/)
+          .map(s => String(s || '').trim())
+          .filter(Boolean);
+      }
+    }
+  }
+  specialLines = specialLines.filter(line => line && line !== '[]').slice(0, 3);
+  const special = specialLines.length
+    ? specialLines.map(line => `・${line}`).join('\n')
+    : '施術前にバイタル値を確認し、リスク管理を徹底しております。';
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const createdAt = Utilities.formatDate(new Date(), tz, 'yyyy年M月d日');
   return [
-    `【病院名】${hospital || '—'}`,
-    `【担当医名】${doctor || '—'}`,
+    `【病院名】${hospital || '不明'}`,
+    `【担当医名】${doctor || '不明'}`,
     `【患者氏名】${name || '—'}`,
-    `【生年月日】${birth}`,
+    `【生年月日】${birth || '不明'}`,
     `【同意内容】${consent}`,
     `【施術頻度】${frequency}`,
     '【患者の状態・経過】',
     status,
     '【特記すべき事項】',
-    special || '特記すべき事項はありません。'
+    special,
+    '',
+    `作成日：${createdAt}`,
+    'べるつりー鍼灸マッサージ院',
+    '東京都八王子市下柚木３－７－２－４０１',
+    '042-682-2839',
+    'mail:belltree@belltree1102.com'
   ].join('\n');
 }
 
@@ -1228,21 +1264,58 @@ function buildMetricDigestForSummary_(metrics){
   return lines.join(' / ');
 }
 
+function extractSpecialPointsFallback_(handovers){
+  const latest = Array.isArray(handovers)
+    ? handovers
+        .filter(h => String(h?.note || '').trim())
+        .slice(-5)
+        .reverse()
+    : [];
+  if (!latest.length) return [];
+  const keywords = ['嚥下','水分','食事','服薬','服用','検査','家族','介護','活動','参加','歩行','転倒','ストレス','睡眠','排泄','栄養','痛み','バイタル','血圧','SpO2','脈拍','体温','ADL','IADL'];
+  const picked = [];
+  latest.forEach(entry => {
+    const sentences = String(entry.note)
+      .split(/[。\n]/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    sentences.forEach(sentence => {
+      if (picked.length >= 3) return;
+      if (keywords.some(k => sentence.indexOf(k) >= 0)) {
+        if (!picked.includes(sentence)) picked.push(sentence);
+      }
+    });
+  });
+  return picked;
+}
+
 function composeSummaryForAudienceLocal_(audience, header, context){
-  const digest = buildHandoverDigestForSummary_(context?.handovers || [], audience);
+  const handovers = context?.handovers || [];
+  const digest = buildHandoverDigestForSummary_(handovers, audience);
   const metricDigest = buildMetricDigestForSummary_(context?.metrics || []);
   const hasData = Boolean(digest || metricDigest);
 
-  if (!hasData) {
-    if (audience === 'doctor') {
-      return { via: 'none', text: '（情報不足のため生成できません）' };
-    }
-    return { via: 'none', text: '（情報不足のため生成できません）' };
-  }
-
   if (audience === 'doctor') {
-    const status = digest || '申し送りの記録が確認できませんでした。';
-    const special = metricDigest ? `臨床指標では ${metricDigest} が確認されています。` : '特記すべき事項はありません。';
+    const statusParagraphs = [];
+    if (digest) {
+      statusParagraphs.push(digest.replace(/\s+$/g, ''));
+    } else {
+      statusParagraphs.push('申し送りの記録が確認できませんでしたが、重篤な変化の報告は受けておりません。');
+    }
+
+    const freqLabel = context?.frequencyLabel ? String(context.frequencyLabel).trim() : '情報不足';
+    const secondParts = [];
+    if (freqLabel) {
+      secondParts.push(`直近1か月の施術頻度は${freqLabel}です。`);
+    }
+    if (metricDigest) {
+      secondParts.push(`臨床指標では ${metricDigest} が確認されています。`);
+    }
+    secondParts.push('同意内容に沿った施術を継続しております。');
+    statusParagraphs.push(secondParts.join(' '));
+
+    const status = statusParagraphs.join('\n\n');
+    const special = extractSpecialPointsFallback_(handovers);
     return {
       via: 'local',
       text: buildDoctorReportTemplate_(header, context, status, special)
@@ -1250,11 +1323,13 @@ function composeSummaryForAudienceLocal_(audience, header, context){
   }
 
   if (audience === 'caremanager') {
+    if (!hasData) return { via: 'none', text: '（情報不足のため生成できません）' };
     let summary = digest || '';
     if (metricDigest) summary += (summary ? '\n' : '') + `臨床指標: ${metricDigest}`;
     return { via: 'local', text: summary };
   }
 
+  if (!hasData) return { via: 'none', text: '（情報不足のため生成できません）' };
   let summary = digest || '';
   if (metricDigest) summary += (summary ? '\n' : '') + `数値の記録: ${metricDigest}`;
   return { via: 'local', text: summary };
@@ -1331,12 +1406,45 @@ function composeSummaryForAudienceViaOpenAI_(audience, header, context){
 
     if (meta.key === 'doctor') {
       const status = String(parsed.status || '').trim();
-      const specialRaw = String(parsed.special || '').trim();
-      const special = specialRaw || '特記すべき事項はありません。';
-      if (!status && !special) return null;
+      const specialValue = parsed.special;
+      let special = [];
+      if (Array.isArray(specialValue)) {
+        special = specialValue;
+      } else {
+        const rawSpecial = String(specialValue || '').trim();
+        if (rawSpecial) {
+          if (/^\[.*\]$/.test(rawSpecial)) {
+            try {
+              const parsed = JSON.parse(rawSpecial);
+              if (Array.isArray(parsed)) {
+                special = parsed;
+              }
+            } catch (e) {
+              special = [];
+            }
+          }
+          if (!Array.isArray(special) || !special.length) {
+            if (rawSpecial === '[]') {
+              special = [];
+            } else {
+            special = rawSpecial
+              .split(/\n+/)
+              .map(s => s.trim())
+              .filter(Boolean);
+            }
+          }
+        }
+      }
+      special = Array.isArray(special) ? special.filter(Boolean) : [];
+      if (!status && (!special || !special.length)) return null;
       return {
         via: 'ai',
-        text: buildDoctorReportTemplate_(header, context, status || '（情報不足のため生成できません）', special)
+        text: buildDoctorReportTemplate_(
+          header,
+          context,
+          status || '（情報不足のため生成できません）',
+          special
+        )
       };
     }
 

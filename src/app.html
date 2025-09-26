@@ -212,6 +212,12 @@
         </div>
 
         <div class="btnrow" style="margin:12px 0 8px">
+          <select id="icfRange" onchange="changeIcfRange(this.value)" style="max-width:160px">
+            <option value="1m">直近1か月</option>
+            <option value="2m">直近2か月</option>
+            <option value="3m">直近3か月</option>
+            <option value="all">全期間</option>
+          </select>
           <button class="btn ghost" onclick="generateIcfSummary()">ICFサマリを生成</button>
           <button class="btn ghost" onclick="loadClinicalTrends(true)">グラフを再読込</button>
         </div>
@@ -259,6 +265,7 @@ let METRIC_DEFS = [];
 let METRIC_DEF_MAP = {};
 let _metricRowSeq = 0;
 let _clinicalCharts = {};
+let _icfRange = '1m';
 
 function resetFlags(){ _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false}; _pendingVisitPlanDate=null; }
 
@@ -501,6 +508,10 @@ function clearIcfSummary(){
   }
 }
 
+function changeIcfRange(v){
+  _icfRange = v || 'all';
+}
+
 function renderIcfSummary(res){
   const box = q('icfSummaryBox');
   if (!box) return;
@@ -510,7 +521,10 @@ function renderIcfSummary(res){
   }
   const meta = document.createElement('div');
   meta.className = 'icf-meta';
-  meta.textContent = `${res.generatedAt || ''}  /  メモ件数:${res.noteCount || 0}  /  方式:${res.usedAi ? 'AI整形' : 'ローカル整形'}`;
+  const noteCount = typeof res.noteCount === 'number' ? res.noteCount : 0;
+  const handoverCount = typeof res.handoverCount === 'number' ? res.handoverCount : 0;
+  const metricCount = typeof res.metricCount === 'number' ? res.metricCount : 0;
+  meta.textContent = `${res.generatedAt || ''}  /  期間:${res.rangeLabel || '全期間'}  /  施術録:${noteCount}件  /  申し送り:${handoverCount}件  /  臨床指標:${metricCount}件  /  方式:${res.usedAi ? 'AI整形' : 'ローカル整形'}`;
   box.innerHTML = '';
   box.appendChild(meta);
   if (res && res.patientFound === false) {
@@ -545,7 +559,7 @@ function generateIcfSummary(){
       const msg = (e && e.message) ? e.message : String(e);
       if (box) box.innerHTML = `<div class="muted" style="color:#b91c1c">ICFサマリ生成に失敗しました：${escapeHtml(msg)}</div>`;
     })
-    .generateIcfSummary(p);
+    .generateIcfSummary(p, _icfRange);
 }
 /* 候補/定型文 */
 function loadPidList(){
@@ -894,10 +908,14 @@ function saveHandoverUI(){
 
   const note = val("handoverNote");
   const filesInput = q("handoverFile");
+  const metrics = collectMetricInputs();
+  const payloadBase = { patientId:p, note, files:[], clinicalMetrics: metrics };
 
   const finish = ()=>{
     alert("申し送りを保存しました");
     clearHandoverForm();
+    if (metrics.length) clearMetricRows();
+    loadClinicalTrends();
     loadHandovers();
   };
 
@@ -911,16 +929,18 @@ function saveHandoverUI(){
       }));
     }
     Promise.all(readerPromises).then(results=>{
+      const payload = Object.assign({}, payloadBase, { files: results });
       google.script.run
         .withSuccessHandler(finish)
         .withFailureHandler(e=> alert(e.message||e))
-        .saveHandover({ patientId:p, note, files:results });
+        .saveHandover(payload);
     });
   } else {
+    const payload = Object.assign({}, payloadBase);
     google.script.run
       .withSuccessHandler(finish)
       .withFailureHandler(e=> alert(e.message||e))
-      .saveHandover({ patientId:p, note, files:[] });
+      .saveHandover(payload);
   }
 }
 /* 起動時 */
@@ -930,6 +950,8 @@ function saveHandoverUI(){
   loadMetricDefinitions();
   ensureMetricEmptyMessage();
   clearIcfSummary();
+  const rangeSelect = q('icfRange');
+  if (rangeSelect) rangeSelect.value = _icfRange;
   const p = "<?= patientId ?>";
   if (p) {
     refresh();

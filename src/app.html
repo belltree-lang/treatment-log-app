@@ -218,11 +218,16 @@
             <option value="3m">直近3か月</option>
             <option value="all">全期間</option>
           </select>
-          <button class="btn ghost" onclick="generateIcfSummary()">ICFサマリを生成</button>
+          <select id="icfAudience" onchange="changeIcfAudience(this.value)" style="max-width:200px">
+            <option value="doctor">医師向け報告書</option>
+            <option value="caremanager">ケアマネ向けサマリ</option>
+            <option value="family">家族向けサマリ</option>
+          </select>
+          <button class="btn ghost" onclick="generateIcfSummary()">報告書サマリを生成</button>
           <button class="btn ghost" onclick="loadClinicalTrends(true)">グラフを再読込</button>
         </div>
         <div id="icfSummaryBox" class="icf-summary">
-          <div class="muted">ICFサマリを生成するとここに表示されます。</div>
+          <div class="muted">報告書サマリを生成するとここに表示されます。</div>
         </div>
         <div id="clinicalTrendBox" class="trend-container">
           <div class="muted">臨床指標の記録がまだありません。</div>
@@ -266,6 +271,7 @@ let METRIC_DEF_MAP = {};
 let _metricRowSeq = 0;
 let _clinicalCharts = {};
 let _icfRange = '1m';
+let _icfAudience = 'doctor';
 
 function resetFlags(){ _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false}; _pendingVisitPlanDate=null; }
 
@@ -504,7 +510,7 @@ function renderClinicalCharts(metrics){
 function clearIcfSummary(){
   const box = q('icfSummaryBox');
   if (box){
-    box.innerHTML = '<div class="muted">ICFサマリを生成するとここに表示されます。</div>';
+    box.innerHTML = '<div class="muted">報告書サマリを生成するとここに表示されます。</div>';
   }
 }
 
@@ -512,54 +518,69 @@ function changeIcfRange(v){
   _icfRange = v || 'all';
 }
 
+function changeIcfAudience(v){
+  _icfAudience = v || 'doctor';
+}
+
 function renderIcfSummary(res){
   const box = q('icfSummaryBox');
   if (!box) return;
-  if (!res || !Array.isArray(res.sections) || !res.sections.length){
-    box.innerHTML = '<div class="muted" style="color:#b91c1c">ICFサマリの生成に失敗しました。</div>';
+  if (!res || !res.ok){
+    const msg = res && res.message ? res.message : '報告書サマリの生成に失敗しました。';
+    box.innerHTML = `<div class="muted" style="color:#b91c1c">${escapeHtml(msg)}</div>`;
     return;
   }
+
+  const metaInfo = [];
+  if (res.meta && res.meta.generatedAt) metaInfo.push(res.meta.generatedAt);
+  const rangeLabel = res.meta && res.meta.rangeLabel ? res.meta.rangeLabel : '全期間';
+  const handoverCount = res.meta && typeof res.meta.handoverCount === 'number' ? res.meta.handoverCount : 0;
+  const metricCount = res.meta && typeof res.meta.metricCount === 'number' ? res.meta.metricCount : 0;
+  metaInfo.push(`期間:${rangeLabel}`);
+  metaInfo.push(`申し送り:${handoverCount}件`);
+  metaInfo.push(`臨床指標:${metricCount}件`);
+  if (res.meta && res.meta.frequencyLabel) metaInfo.push(`施術頻度:${res.meta.frequencyLabel}`);
+  metaInfo.push(`方式:${res.usedAi ? 'AI整形' : 'ローカル整形'}`);
+
+  box.innerHTML = '';
+
   const meta = document.createElement('div');
   meta.className = 'icf-meta';
-  const noteCount = typeof res.noteCount === 'number' ? res.noteCount : 0;
-  const handoverCount = typeof res.handoverCount === 'number' ? res.handoverCount : 0;
-  const metricCount = typeof res.metricCount === 'number' ? res.metricCount : 0;
-  meta.textContent = `${res.generatedAt || ''}  /  期間:${res.rangeLabel || '全期間'}  /  施術録:${noteCount}件  /  申し送り:${handoverCount}件  /  臨床指標:${metricCount}件  /  方式:${res.usedAi ? 'AI整形' : 'ローカル整形'}`;
-  box.innerHTML = '';
+  meta.textContent = metaInfo.join('  /  ');
   box.appendChild(meta);
-  if (res && res.patientFound === false) {
+
+  if (res.meta && res.meta.patientFound === false) {
     const warn = document.createElement('div');
     warn.className = 'icf-meta';
     warn.style.color = '#b91c1c';
     warn.textContent = '患者情報が見つからなかったため、ID未指定としてサマリを作成しました。';
     box.appendChild(warn);
   }
-  res.sections.forEach(sec => {
-    const wrap = document.createElement('div');
-    wrap.className = 'icf-section';
-    const title = document.createElement('div');
-    title.className = 'icf-section-title';
-    title.textContent = sec.title || '';
-    wrap.appendChild(title);
-    const body = document.createElement('div');
-    body.innerHTML = escapeHtml(sec.body || '').replace(/\n/g,'<br>');
-    wrap.appendChild(body);
-    box.appendChild(wrap);
-  });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'icf-section';
+  const title = document.createElement('div');
+  title.className = 'icf-section-title';
+  title.textContent = res.audienceLabel || 'サマリ';
+  wrap.appendChild(title);
+  const body = document.createElement('div');
+  body.innerHTML = escapeHtml(res.text || '').replace(/\n/g,'<br>');
+  wrap.appendChild(body);
+  box.appendChild(wrap);
 }
 
 function generateIcfSummary(){
   const p = pid();
   if (!p){ alert('患者IDを入力してください'); return; }
   const box = q('icfSummaryBox');
-  if (box) box.innerHTML = '<div class="muted">ICFサマリを生成中です…</div>';
+  if (box) box.innerHTML = '<div class="muted">報告書サマリを生成中です…</div>';
   google.script.run
     .withSuccessHandler(res => renderIcfSummary(res))
     .withFailureHandler(e => {
       const msg = (e && e.message) ? e.message : String(e);
-      if (box) box.innerHTML = `<div class="muted" style="color:#b91c1c">ICFサマリ生成に失敗しました：${escapeHtml(msg)}</div>`;
+      if (box) box.innerHTML = `<div class="muted" style="color:#b91c1c">報告書サマリ生成に失敗しました：${escapeHtml(msg)}</div>`;
     })
-    .generateIcfSummary(p, _icfRange);
+    .generateSummaryForAudience(p, _icfRange, _icfAudience);
 }
 /* 候補/定型文 */
 function loadPidList(){

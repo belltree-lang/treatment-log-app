@@ -1079,6 +1079,276 @@ function composeIcfLocal_(source){
   return { via: 'local', sections };
 }
 
+function countTreatmentsInRecentMonth_(pid, untilDate){
+  const end = untilDate instanceof Date ? new Date(untilDate.getTime()) : new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end.getTime());
+  start.setMonth(start.getMonth() - 1);
+  start.setHours(0, 0, 0, 0);
+  const notes = getTreatmentNotesInRange_(pid, start, end);
+  return Array.isArray(notes) ? notes.length : 0;
+}
+
+function determineTreatmentFrequencyLabel_(count){
+  const n = isFinite(count) ? Math.max(0, Math.round(count)) : 0;
+  let label = '情報不足';
+  if (n > 0 && n < 4) label = '週1回';
+  else if (n >= 4 && n < 8) label = '週2回';
+  else if (n >= 8 && n < 15) label = '週3回';
+  else if (n >= 15) label = '週4回以上';
+  return `${label}（直近1か月 ${n}回）`;
+}
+
+function getConsentContentForPatient_(pid){
+  try {
+    const wb = ss();
+    const sheet = wb.getSheetByName('同意書');
+    if (!sheet) return '';
+    const lr = sheet.getLastRow();
+    if (lr < 2) return '';
+    const lc = sheet.getLastColumn();
+    const headers = sheet.getRange(1, 1, 1, lc).getDisplayValues()[0].map(h => String(h || '').trim());
+
+    const findCol = (predicate) => {
+      for (let i = 0; i < headers.length; i++) {
+        if (predicate(headers[i])) return i + 1;
+      }
+      return null;
+    };
+
+    const pidCol = findCol(h => /患者|施術録|ID|番号/.test(h));
+    const contentCol = findCol(h => h.indexOf('同意') >= 0 && (h.indexOf('内容') >= 0 || h.indexOf('事項') >= 0 || h.indexOf('概要') >= 0 || h.indexOf('文') >= 0));
+    if (!pidCol || !contentCol) return '';
+
+    const vals = sheet.getRange(2, 1, lr - 1, lc).getDisplayValues();
+    const target = String(normId_(pid));
+    for (let i = 0; i < vals.length; i++) {
+      const row = vals[i];
+      if (String(normId_(row[pidCol - 1])) === target) {
+        return String(row[contentCol - 1] || '').trim();
+      }
+    }
+    return '';
+  } catch (err) {
+    Logger.log('getConsentContentForPatient_ error: ' + err);
+    return '';
+  }
+}
+
+function resolveSummaryAudienceMeta_(audience){
+  switch (String(audience || '').trim()) {
+    case 'doctor':
+      return {
+        key: 'doctor',
+        label: '医師向け報告書',
+        systemTone: 'あなたは在宅リハに携わる医療専門職です。主治医向けの連絡書を丁寧語で作成します。西洋医学的な視点で経過を記述し、事実のみを端的に伝えてください。',
+        formatInstruction: [
+          'JSONのみを出力してください。',
+          'キーは "status" と "special" の2つです。',
+          '"status" には患者の状態・経過を2〜3文で丁寧語かつへりくだり口調で記載してください。',
+          '"special" にはICFの視点を含む特記すべき事項を1〜2文で記載してください。該当がなければ「特記すべき事項はありません。」としてください。'
+        ].join('\n')
+      };
+    case 'caremanager':
+      return {
+        key: 'caremanager',
+        label: 'ケアマネ向けサマリ',
+        systemTone: 'あなたは在宅ケアの専門職です。ケアマネジャーがケアプランに反映しやすいよう、客観的で事務的な口調でまとめてください。',
+        formatInstruction: [
+          'JSONのみを出力してください。',
+          'キーは "summary" です。',
+          'ケアプランに役立つ視点で3〜5文の丁寧語で記載してください。'
+        ].join('\n')
+      };
+    case 'family':
+      return {
+        key: 'family',
+        label: '家族向けサマリ',
+        systemTone: 'あなたは在宅ケアスタッフです。ご家族に安心感を与える、やさしく分かりやすい日本語でまとめてください。専門用語は避けます。',
+        formatInstruction: [
+          'JSONのみを出力してください。',
+          'キーは "summary" です。',
+          '2〜4文でやさしく説明し、安心できる表現を心がけてください。'
+        ].join('\n')
+      };
+    default:
+      return null;
+  }
+}
+
+function buildDoctorReportTemplate_(header, context, statusText, specialText){
+  const hospital = header?.hospital ? String(header.hospital).trim() : '';
+  const doctor = header?.doctor ? String(header.doctor).trim() : '';
+  const name = header?.name ? String(header.name).trim() : `ID:${header?.patientId || ''}`;
+  const birth = header?.birth ? String(header.birth).trim() : '—';
+  const consent = context?.consentText ? String(context.consentText).trim() : '情報不足';
+  const frequency = context?.frequencyLabel ? String(context.frequencyLabel).trim() : '情報不足';
+  const status = statusText ? String(statusText).trim() : '（情報不足のため生成できません）';
+  const special = specialText ? String(specialText).trim() : '特記すべき事項はありません。';
+  return [
+    `【病院名】${hospital || '—'}`,
+    `【担当医名】${doctor || '—'}`,
+    `【患者氏名】${name || '—'}`,
+    `【生年月日】${birth}`,
+    `【同意内容】${consent}`,
+    `【施術頻度】${frequency}`,
+    '【患者の状態・経過】',
+    status,
+    '【特記すべき事項】',
+    special || '特記すべき事項はありません。'
+  ].join('\n');
+}
+
+function buildHandoverDigestForSummary_(handovers, audience){
+  if (!Array.isArray(handovers) || !handovers.length) return '';
+  const latest = handovers.filter(h => String(h?.note || '').trim()).slice(-3);
+  if (!latest.length) return '';
+  const entries = latest.map(h => `${h.when || ''} ${String(h.note).trim()}`.trim());
+  if (!entries.length) return '';
+  const joined = entries.join(' / ');
+  if (audience === 'doctor') {
+    return `最近の申し送りでは、${joined}。`;
+  }
+  if (audience === 'caremanager') {
+    return `申し送りの要点：${joined}。`;
+  }
+  return `最近のようす：${joined}。`;
+}
+
+function buildMetricDigestForSummary_(metrics){
+  if (!Array.isArray(metrics) || !metrics.length) return '';
+  const lines = [];
+  metrics.forEach(metric => {
+    const pts = Array.isArray(metric?.points) ? metric.points : [];
+    if (!pts.length) return;
+    const last = pts[pts.length - 1];
+    const val = last ? `${last.date || ''} ${last.value}${metric.unit || ''}` : '';
+    if (val) lines.push(`${metric.label}: 最新 ${val}`);
+  });
+  return lines.join(' / ');
+}
+
+function composeSummaryForAudienceLocal_(audience, header, context){
+  const digest = buildHandoverDigestForSummary_(context?.handovers || [], audience);
+  const metricDigest = buildMetricDigestForSummary_(context?.metrics || []);
+  const hasData = Boolean(digest || metricDigest);
+
+  if (!hasData) {
+    if (audience === 'doctor') {
+      return { via: 'none', text: '（情報不足のため生成できません）' };
+    }
+    return { via: 'none', text: '（情報不足のため生成できません）' };
+  }
+
+  if (audience === 'doctor') {
+    const status = digest || '申し送りの記録が確認できませんでした。';
+    const special = metricDigest ? `臨床指標では ${metricDigest} が確認されています。` : '特記すべき事項はありません。';
+    return {
+      via: 'local',
+      text: buildDoctorReportTemplate_(header, context, status, special)
+    };
+  }
+
+  if (audience === 'caremanager') {
+    let summary = digest || '';
+    if (metricDigest) summary += (summary ? '\n' : '') + `臨床指標: ${metricDigest}`;
+    return { via: 'local', text: summary };
+  }
+
+  let summary = digest || '';
+  if (metricDigest) summary += (summary ? '\n' : '') + `数値の記録: ${metricDigest}`;
+  return { via: 'local', text: summary };
+}
+
+function composeSummaryForAudienceViaOpenAI_(audience, header, context){
+  const meta = resolveSummaryAudienceMeta_(audience);
+  if (!meta) throw new Error('不明なaudienceです: ' + audience);
+  const key = getOpenAiKey_();
+  if (!key) return null;
+
+  const handoverLines = Array.isArray(context?.handovers)
+    ? context.handovers
+        .filter(h => String(h?.note || '').trim())
+        .map(h => `- ${h.when || ''}: ${String(h.note).trim()}`)
+    : [];
+  if (!handoverLines.length) return null;
+
+  const metricsLines = Array.isArray(context?.metrics)
+    ? context.metrics
+        .filter(metric => Array.isArray(metric?.points) && metric.points.length)
+        .map(metric => {
+          const entries = metric.points.map(p => `${p.date}: ${p.value}${metric.unit || ''}${p.note ? `（${p.note}）` : ''}`);
+          return entries.length ? `- ${metric.label}: ${entries.join(', ')}` : '';
+        })
+        .filter(Boolean)
+    : [];
+
+  const sys = [
+    'あなたは在宅ケアチームの文書作成を支援するアシスタントです。',
+    meta.systemTone,
+    '事実ベースで簡潔にまとめ、過度な推測や断定は避けてください。'
+  ].join('\n');
+
+  const prompt = [
+    `患者: ${header?.name || '-'}（ID:${header?.patientId || ''}）`,
+    `生年月日: ${header?.birth || '-'} / 同意内容: ${context?.consentText || '情報不足'}`,
+    `施術頻度: ${context?.frequencyLabel || '情報不足'}`,
+    `対象期間: ${context?.rangeLabel || '全期間'}`,
+    '',
+    '申し送り:',
+    handoverLines.join('\n') || '（申し送り情報なし）'
+  ];
+  if (metricsLines.length) {
+    prompt.push('', '臨床指標:', metricsLines.join('\n'));
+  }
+  prompt.push('', meta.formatInstruction, '出力はJSONのみとし、余分な文字列は含めないでください。');
+
+  const payload = {
+    model: APP.OPENAI_MODEL,
+    messages: [
+      { role: 'system', content: sys },
+      { role: 'user', content: prompt.join('\n') }
+    ],
+    temperature: 0.2,
+    max_tokens: 600
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(APP.OPENAI_ENDPOINT, {
+      method: 'post',
+      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code >= 300) throw new Error('報告書サマリAPIエラー: ' + code + ' ' + res.getContentText());
+    const data = JSON.parse(res.getContentText());
+    const content = data?.choices?.[0]?.message?.content || '';
+    if (!content) return null;
+    let parsed = null;
+    try { parsed = JSON.parse(content); } catch (e) { parsed = null; }
+    if (!parsed) return null;
+
+    if (meta.key === 'doctor') {
+      const status = String(parsed.status || '').trim();
+      const specialRaw = String(parsed.special || '').trim();
+      const special = specialRaw || '特記すべき事項はありません。';
+      if (!status && !special) return null;
+      return {
+        via: 'ai',
+        text: buildDoctorReportTemplate_(header, context, status || '（情報不足のため生成できません）', special)
+      };
+    }
+
+    const summary = String(parsed.summary || '').trim();
+    if (!summary) return null;
+    return { via: 'ai', text: summary };
+  } catch (err) {
+    Logger.log('composeSummaryForAudienceViaOpenAI_ error: ' + err);
+    return null;
+  }
+}
+
 /***** レポートPDF（API→フォールバック） *****/
 function getPatientHeaderForReport_(pid){
   const header = getPatientHeader(pid);
@@ -1127,46 +1397,79 @@ function buildPlaceholderHeader_(pid){
   };
 }
 
-function generateIcfSummary(pid, rangeKey){
+function generateSummaryForAudience(pid, rangeKey, audience){
   assertDomain_(); ensureAuxSheets_();
+
   const header = getPatientHeader(pid);
   const patientFound = !!header;
   const headerForSummary = header || buildPlaceholderHeader_(pid);
 
   const range = resolveIcfSummaryRange_(rangeKey);
-  const treatments = getTreatmentNotesInRange_(pid, range.startDate, range.endDate);
   const handovers = getHandoversInRange_(pid, range.startDate, range.endDate);
-  const metricSeries = listClinicalMetricSeries(pid, range.startDate, range.endDate).metrics;
-  const metricCount = metricSeries.reduce((sum, metric) => sum + metric.points.length, 0);
+  const metrics = listClinicalMetricSeries(pid, range.startDate, range.endDate).metrics;
+  const metricCount = metrics.reduce((sum, metric) => sum + (Array.isArray(metric.points) ? metric.points.length : 0), 0);
+  const treatmentCount = countTreatmentsInRecentMonth_(pid, range.endDate);
+  const frequencyLabel = determineTreatmentFrequencyLabel_(treatmentCount);
+  const consentText = getConsentContentForPatient_(pid);
 
-  const source = {
-    treatments,
+  const context = {
     handovers,
-    metrics: metricSeries,
-    rangeLabel: range.label
+    metrics,
+    rangeLabel: range.label,
+    consentText,
+    frequencyLabel,
+    treatmentCount
   };
 
+  const hasHandover = Array.isArray(handovers) && handovers.some(h => String(h?.note || '').trim());
   let composed = null;
-  try {
-    composed = composeIcfViaOpenAI_(headerForSummary, source);
-  } catch (err) {
-    composed = null;
+  if (hasHandover) {
+    composed = composeSummaryForAudienceViaOpenAI_(audience, headerForSummary, context);
   }
   if (!composed) {
-    composed = composeIcfLocal_(source);
+    composed = composeSummaryForAudienceLocal_(audience, headerForSummary, context);
   }
 
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const meta = {
+    generatedAt: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'),
+    rangeLabel: range.label,
+    handoverCount: handovers.length,
+    metricCount,
+    frequencyLabel,
+    treatmentCount,
+    patientFound,
+    consentPresent: !!consentText
+  };
+  if (consentText) meta.consentText = consentText;
+
+  const audienceMeta = resolveSummaryAudienceMeta_(audience);
+  const text = composed && composed.text ? String(composed.text).trim() : '（情報不足のため生成できません）';
+
   return {
     ok: true,
     usedAi: composed?.via === 'ai',
-    sections: composed?.sections || [],
-    noteCount: treatments.length,
-    handoverCount: handovers.length,
-    metricCount,
-    rangeLabel: range.label,
-    generatedAt: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'),
-    patientFound
+    audience: audienceMeta ? audienceMeta.key : String(audience || ''),
+    audienceLabel: audienceMeta ? audienceMeta.label : '',
+    text,
+    meta
+  };
+}
+
+function generateIcfSummary(pid, rangeKey){
+  const res = generateSummaryForAudience(pid, rangeKey, 'doctor');
+  return {
+    ok: res.ok,
+    usedAi: res.usedAi,
+    sections: [
+      { key: 'doctor', title: res.audienceLabel || '医師向け報告書', body: res.text }
+    ],
+    noteCount: res.meta?.treatmentCount || 0,
+    handoverCount: res.meta?.handoverCount || 0,
+    metricCount: res.meta?.metricCount || 0,
+    rangeLabel: res.meta?.rangeLabel || '',
+    generatedAt: res.meta?.generatedAt || '',
+    patientFound: res.meta?.patientFound
   };
 }
 

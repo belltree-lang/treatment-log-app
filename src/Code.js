@@ -106,7 +106,32 @@ function getClinicalMetricDef_(id){
 
 function ensureClinicalMetricSheet_(){
   ensureAuxSheets_();
-  return sh('臨床指標');
+  const wb = ss();
+  let sheet = wb.getSheetByName('臨床指標');
+  if (!sheet) {
+    const conflict = wb.getSheets().find(s => /^臨床指標[_\-]?conflict/i.test(s.getName()));
+    if (conflict) {
+      conflict.setName('臨床指標');
+      sheet = conflict;
+    } else {
+      sheet = wb.insertSheet('臨床指標');
+    }
+  }
+
+  wb.getSheets()
+    .filter(s => s !== sheet && /^臨床指標[_\-]?conflict/i.test(s.getName()))
+    .forEach(s => {
+      if (s.getLastRow() <= 1) {
+        wb.deleteSheet(s);
+      } else {
+        Logger.log(`[ensureClinicalMetricSheet_] 競合シートを検出: ${s.getName()}`);
+      }
+    });
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['TS','患者ID','指標ID','値','メモ','登録者']);
+  }
+  return sheet;
 }
 
 function init_(){ ensureAuxSheets_(); }
@@ -428,11 +453,26 @@ function queueAfterTreatmentJob(job){
     .timeBased().after(1000 * 60).create();
 }
 
+function normalizeClinicalMetricTimestamp_(value){
+  if (value instanceof Date && !isNaN(value.getTime())) return value;
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  if (value) {
+    const parsed = parseDateTimeFlexible_(value, tz) || parseDateFlexible_(value);
+    if (parsed && !isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
+}
+
 function recordClinicalMetrics_(patientId, metrics, whenStr, user){
   if (!Array.isArray(metrics) || !metrics.length) return;
+  const pid = String(patientId || '').trim();
+  if (!pid) return;
+
   const sheet = ensureClinicalMetricSheet_();
   const rows = [];
-  const now = new Date();
+  const timestamp = normalizeClinicalMetricTimestamp_(whenStr);
+  const owner = user ? String(user).trim() : '';
+
   metrics.forEach(item => {
     if (!item) return;
     const metricId = String(item.metricId || item.id || '').trim();
@@ -442,16 +482,18 @@ function recordClinicalMetrics_(patientId, metrics, whenStr, user){
     if (!isFinite(rawVal)) return;
     const note = item.note ? String(item.note).trim() : '';
     rows.push([
-      whenStr || now,
-      String(patientId),
+      timestamp,
+      pid,
       metricId,
       rawVal,
       note,
-      user || ''
+      owner
     ]);
   });
+
   if (rows.length) {
-    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+    const start = sheet.getLastRow() + 1;
+    sheet.getRange(start, 1, rows.length, 6).setValues(rows);
   }
 }
 
@@ -1000,17 +1042,38 @@ ${narrative}
   return savePdf_(pid, title, body);
 }
 
+function buildPlaceholderHeader_(pid){
+  const patientId = String(pid || '').trim() || '未指定';
+  return {
+    patientId,
+    name: '未指定',
+    hospital: '',
+    doctor: '',
+    age: null,
+    ageClass: '',
+    consentDate: '',
+    consentExpiry: '',
+    burden: '',
+    phone: '',
+    status: 'unknown',
+    pauseUntil: '',
+    monthly: { current: { count: 0, est: 0 }, previous: { count: 0, est: 0 } },
+    recent: { lastTreat: '', lastConsent: '', lastStaff: '' }
+  };
+}
+
 function generateIcfSummary(pid){
   assertDomain_(); ensureAuxSheets_();
   const header = getPatientHeader(pid);
-  if (!header) throw new Error('患者が見つかりません');
+  const patientFound = !!header;
+  const headerForSummary = header || buildPlaceholderHeader_(pid);
 
   const notes = getRecentTreatmentNotes_(pid, 12);
   const metrics = getLatestClinicalMetricSnapshot_(pid);
 
   let composed = null;
   try {
-    composed = composeIcfViaOpenAI_(header, notes, metrics);
+    composed = composeIcfViaOpenAI_(headerForSummary, notes, metrics);
   } catch (err) {
     composed = null;
   }
@@ -1024,7 +1087,8 @@ function generateIcfSummary(pid){
     usedAi: composed?.via === 'ai',
     sections: composed?.sections || [],
     noteCount: notes.length,
-    generatedAt: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm')
+    generatedAt: Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'),
+    patientFound
   };
 }
 
@@ -1100,7 +1164,7 @@ function notifyChat_(message){
 function decodeWebhookEmailKey_(key){
   const raw = String(key || '').trim();
   if (!raw) return '';
-  if (raw.indexOf('@') >= 0) {
+  if (looksLikeEmail_(raw)) {
     return raw.toLowerCase();
   }
   const upper = raw.toUpperCase();
@@ -1133,6 +1197,10 @@ function decodeWebhookEmailKey_(key){
   return '';
 }
 
+function looksLikeEmail_(text){
+  return /@/.test(text || '') && /\./.test(text || '');
+}
+
 function getWebhookConfig_(){
   const props = PropertiesService.getScriptProperties().getProperties() || {};
   const map = new Map();
@@ -1140,7 +1208,14 @@ function getWebhookConfig_(){
   Object.keys(props).forEach(key => {
     const value = String(props[key] || '').trim();
     if (!value) return;
-    const email = decodeWebhookEmailKey_(key);
+    if (key === 'CHAT_WEBHOOK_URL_DEFAULT' || key === 'CHAT_WEBHOOK_URL') return;
+
+    let email = '';
+    if (looksLikeEmail_(key)) {
+      email = key.toLowerCase();
+    } else {
+      email = decodeWebhookEmailKey_(key);
+    }
     if (email) {
       map.set(email, value);
     }
@@ -1264,7 +1339,15 @@ function sendDailySummaryToChat(targetDate){
       names.add('該当なし');
     }
 
-    const message = `本日の施術確認\n${dateDisp} に ${entry.count}件の施術を記録しました。\n患者: ${Array.from(names).join(', ')}`;
+    const nameList = Array.from(names)
+      .map(label => {
+        const text = String(label || '').trim();
+        if (!text) return '';
+        if (text.startsWith('ID:') || text.endsWith('様') || text === '該当なし') return text;
+        return `${text} 様`;
+      })
+      .filter(Boolean);
+    const message = `本日の施術確認\n${dateDisp} に ${entry.count}件の施術を記録しました。\n患者:\n${nameList.join('\n')}`;
 
     if (!webhookUrl) {
       Logger.log(`[sendDailySummaryToChat] Webhook未設定 staff=${entry.email}`);
@@ -1286,6 +1369,45 @@ function sendDailySummaryToChat(targetDate){
   });
 
   return summary;
+}
+
+function runDailySummaryJob(){
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    Logger.log('[runDailySummaryJob] ロック取得に失敗しました');
+    return null;
+  }
+  try {
+    const summary = sendDailySummaryToChat();
+    Logger.log(`[runDailySummaryJob] summary=${JSON.stringify(summary)}`);
+    return summary;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function ensureDailySummaryTrigger(){
+  const handler = 'runDailySummaryJob';
+  const triggers = ScriptApp.getProjectTriggers();
+  let hasClockTrigger = false;
+  triggers.forEach(tr => {
+    if (tr.getHandlerFunction() === handler) {
+      if (tr.getEventType() === ScriptApp.EventType.CLOCK) {
+        hasClockTrigger = true;
+      } else {
+        ScriptApp.deleteTrigger(tr);
+      }
+    }
+  });
+  if (!hasClockTrigger) {
+    ScriptApp.newTrigger(handler)
+      .timeBased()
+      .everyDays(1)
+      .atHour(19)
+      .create();
+    Logger.log('[ensureDailySummaryTrigger] 新規トリガーを作成しました (19:00 JST)');
+  }
+  return true;
 }
 /*** ── Index（ダッシュボード）再構築 ───────────────── **/
 function DashboardIndex_refreshAll(){

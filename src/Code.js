@@ -1268,7 +1268,12 @@ function resolveReportTypeMeta_(reportType){
   const baseFormatInstruction = [
     'JSONのみを出力してください。',
     'キーは "status" と "special" の2つのみです。',
+    '"status" は文字列で、"special" は文字列の配列で返してください。',
     '余分な文字列や注釈は含めないでください。'
+  ].join('\n');
+  const baseSpecialInstruction = [
+    '共有したい特記事項が複数ある場合は配列の各要素として整理してください。',
+    '該当事項がない場合でも空配列にはせず、["特記すべき事項はありません。"] を返してください。'
   ].join('\n');
 
   const map = {
@@ -1277,7 +1282,10 @@ function resolveReportTypeMeta_(reportType){
       label: '家族向け報告書',
       systemTone: 'あなたは在宅ケアスタッフです。ご家族に安心感を与える、やさしく分かりやすい丁寧語で状況を説明してください。専門用語は避け、落ち着いた口調で伝えます。',
       statusInstruction: '家族が安心できるように穏やかな丁寧語で最近の様子と今後の見守り方針をまとめ、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。',
-      specialInstruction: 'ご家庭で共有したい配慮点や生活上の注意をICFの視点で整理してください。該当事項がなければ空配列を返してください。',
+      specialInstruction: [
+        'ご家庭で共有したい配慮点や生活上の注意をICFの視点で整理してください。',
+        baseSpecialInstruction
+      ].join('\n'),
       specialLabel: '家族と共有したいポイント',
       formatInstruction: baseFormatInstruction
     },
@@ -1286,7 +1294,10 @@ function resolveReportTypeMeta_(reportType){
       label: 'ケアマネ向け報告書',
       systemTone: 'あなたは在宅ケアの専門職です。ケアマネジャーがケアプランに反映しやすいよう、客観的で事務的な口調で報告します。',
       statusInstruction: '活動・参加・環境因子の視点で経過を整理し、丁寧語で2〜3段落にまとめ、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。',
-      specialInstruction: '多職種連携で共有したい着眼点や支援上の留意事項を列挙してください。該当事項がなければ空配列を返してください。',
+      specialInstruction: [
+        '多職種連携で共有したい着眼点や支援上の留意事項を列挙してください。',
+        baseSpecialInstruction
+      ].join('\n'),
       specialLabel: 'ケアマネ連携ポイント',
       formatInstruction: baseFormatInstruction
     },
@@ -1295,7 +1306,10 @@ function resolveReportTypeMeta_(reportType){
       label: '医師向け報告書',
       systemTone: 'あなたは在宅リハに携わる医療専門職です。医学的な視点で経過を整理し、事実ベースの丁寧語で主治医に報告してください。',
       statusInstruction: '臨床経過と現在の評価、今後の施術方針や必要な連携事項を2〜3段落の丁寧語でまとめ、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。',
-      specialInstruction: '医師に共有したい特記や臨床的注意点があれば箇条書きで示してください。該当事項がなければ空配列を返してください。',
+      specialInstruction: [
+        '医師に共有したい特記や臨床的注意点があれば箇条書きで示してください。',
+        baseSpecialInstruction
+      ].join('\n'),
       specialLabel: '医師向け特記すべき事項',
       formatInstruction: baseFormatInstruction
     }
@@ -1473,6 +1487,7 @@ function composeAiReportViaOpenAI_(header, context, reportType){
     if (status.indexOf('同意内容に沿った施術を継続しております。') < 0) {
       status += (status.endsWith('。') ? '' : '。') + '同意内容に沿った施術を継続しております。';
     }
+    status = status.trim();
 
     let specialRaw = parsed.special;
     let special = [];
@@ -1580,7 +1595,7 @@ function composeAiReportLocal_(header, context, reportType){
     statusParagraphs.push('同意内容に沿った施術を継続しております。');
   }
 
-  const status = statusParagraphs.filter(Boolean).join('\n\n');
+  const status = statusParagraphs.filter(Boolean).join('\n\n').trim();
 
   let special = extractSpecialPointsFallback_(handovers) || [];
   if (!special.length && metricDigest) {

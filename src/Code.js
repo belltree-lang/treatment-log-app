@@ -1149,46 +1149,6 @@ function getConsentContentForPatient_(pid){
   }
 }
 
-function resolveSummaryAudienceMeta_(audience){
-  switch (String(audience || '').trim()) {
-    case 'doctor':
-      return {
-        key: 'doctor',
-        label: '医師向け報告書',
-        systemTone: 'あなたは在宅リハに携わる医療専門職です。主治医向けの連絡書を丁寧語で作成します。西洋医学的な視点で経過を記述し、事実のみを端的に伝えてください。',
-        formatInstruction: [
-          'JSONのみを出力してください。',
-          'キーは "status" と "special" の2つです。',
-          '"status" には患者の状態・経過を2〜3段落で丁寧語かつへりくだり口調で記載し、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。列挙形式は避け、段落の間は空行で区切ってください。',
-          '"special" にはICF（活動・参加・環境因子など）の視点で特記すべき事項を表す文字列の配列を設定してください。該当がなければ空配列を返してください。'
-        ].join('\n')
-      };
-    case 'caremanager':
-      return {
-        key: 'caremanager',
-        label: 'ケアマネ向けサマリ',
-        systemTone: 'あなたは在宅ケアの専門職です。ケアマネジャーがケアプランに反映しやすいよう、客観的で事務的な口調でまとめてください。',
-        formatInstruction: [
-          'JSONのみを出力してください。',
-          'キーは "summary" です。',
-          'ケアプランに役立つ視点で3〜5文の丁寧語で記載してください。'
-        ].join('\n')
-      };
-    case 'family':
-      return {
-        key: 'family',
-        label: '家族向けサマリ',
-        systemTone: 'あなたは在宅ケアスタッフです。ご家族に安心感を与える、やさしく分かりやすい日本語でまとめてください。専門用語は避けます。',
-        formatInstruction: [
-          'JSONのみを出力してください。',
-          'キーは "summary" です。',
-          '2〜4文でやさしく説明し、安心できる表現を心がけてください。'
-        ].join('\n')
-      };
-    default:
-      return null;
-  }
-}
 
 function buildDoctorReportTemplate_(header, context, statusText, specialItems){
   const hospital = header?.hospital ? String(header.hospital).trim() : '';
@@ -1350,7 +1310,7 @@ function composeSummaryForAudienceLocal_(audience, header, context){
 }
 
 function composeSummaryForAudienceViaOpenAI_(audience, header, context){
-  const meta = resolveSummaryAudienceMeta_(audience);
+  const meta = resolveReportTypeMeta_(audience);
   if (!meta) throw new Error('不明なaudienceです: ' + audience);
   const key = getOpenAiKey_();
   if (!key) return null;
@@ -1390,7 +1350,7 @@ function composeSummaryForAudienceViaOpenAI_(audience, header, context){
   if (metricsLines.length) {
     prompt.push('', '臨床指標:', metricsLines.join('\n'));
   }
-  prompt.push('', meta.formatInstruction, '出力はJSONのみとし、余分な文字列は含めないでください。');
+  prompt.push('', meta.summaryFormatInstruction, '出力はJSONのみとし、余分な文字列は含めないでください。');
 
   const payload = {
     model: APP.OPENAI_MODEL,
@@ -1473,30 +1433,54 @@ function composeSummaryForAudienceViaOpenAI_(audience, header, context){
 
 function resolveReportTypeMeta_(reportType){
   const key = String(reportType || '').toLowerCase();
+  const baseFormatInstruction = [
+    'JSONのみを出力してください。',
+    'キーは "status" と "special" の2つのみです。',
+    '余分な文字列や注釈は含めないでください。'
+  ].join('\n');
+
   const map = {
     family: {
       key: 'family',
-      label: '家族向けサマリ',
-      promptLabel: '家族',
-      statusInstruction: '家族が安心できるように穏やかな丁寧語で最近の様子と今後の見守り方針をまとめてください。',
-      specialInstruction: 'ご家庭で共有したい配慮点や生活上の注意をICFの視点で整理してください。',
-      specialLabel: '家族と共有したいポイント'
+      label: '家族向け報告書',
+      systemTone: 'あなたは在宅ケアスタッフです。ご家族に安心感を与える、やさしく分かりやすい丁寧語で状況を説明してください。専門用語は避け、落ち着いた口調で伝えます。',
+      statusInstruction: '家族が安心できるように穏やかな丁寧語で最近の様子と今後の見守り方針をまとめ、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。',
+      specialInstruction: 'ご家庭で共有したい配慮点や生活上の注意をICFの視点で整理してください。該当事項がなければ空配列を返してください。',
+      specialLabel: '家族と共有したいポイント',
+      formatInstruction: baseFormatInstruction,
+      summaryFormatInstruction: [
+        'JSONのみを出力してください。',
+        'キーは "summary" です。',
+        '2〜4文でやさしく説明し、安心できる表現を心がけてください。'
+      ].join('\n')
     },
     caremanager: {
       key: 'caremanager',
-      label: 'ケアマネ向けサマリ',
-      promptLabel: 'ケアマネジャー',
-      statusInstruction: '活動・参加・環境因子の視点で経過を整理し、ケアプランに役立つ提案があれば触れてください。',
-      specialInstruction: '多職種連携で共有したい着眼点や支援上の留意事項を列挙してください。',
-      specialLabel: 'ケアマネ連携ポイント'
+      label: 'ケアマネ向け報告書',
+      systemTone: 'あなたは在宅ケアの専門職です。ケアマネジャーがケアプランに反映しやすいよう、客観的で事務的な口調で報告します。',
+      statusInstruction: '活動・参加・環境因子の視点で経過を整理し、丁寧語で2〜3段落にまとめ、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。',
+      specialInstruction: '多職種連携で共有したい着眼点や支援上の留意事項を列挙してください。該当事項がなければ空配列を返してください。',
+      specialLabel: 'ケアマネ連携ポイント',
+      formatInstruction: baseFormatInstruction,
+      summaryFormatInstruction: [
+        'JSONのみを出力してください。',
+        'キーは "summary" です。',
+        'ケアプランに役立つ視点で3〜5文の丁寧語で記載してください。'
+      ].join('\n')
     },
     doctor: {
       key: 'doctor',
       label: '医師向け報告書',
-      promptLabel: '医師',
-      statusInstruction: '臨床経過と現在の評価、今後の施術方針や必要な連携事項を2〜3段落でまとめてください。',
-      specialInstruction: '医師に共有したい特記や検討事項があれば箇条書きで示してください。',
-      specialLabel: '医師向け特記すべき事項'
+      systemTone: 'あなたは在宅リハに携わる医療専門職です。医学的な視点で経過を整理し、事実ベースの丁寧語で主治医に報告してください。',
+      statusInstruction: '臨床経過と現在の評価、今後の施術方針や必要な連携事項を2〜3段落の丁寧語でまとめ、「同意内容に沿った施術を継続しております。」という一文を必ず含めてください。',
+      specialInstruction: '医師に共有したい特記や検討事項があれば箇条書きで示してください。該当事項がなければ空配列を返してください。',
+      specialLabel: '医師向け特記すべき事項',
+      formatInstruction: baseFormatInstruction,
+      summaryFormatInstruction: [
+        'JSONのみを出力してください。',
+        'キーは "summary" です。',
+        '臨床的な視点で2〜3段落の丁寧語にまとめてください。'
+      ].join('\n')
     }
   };
   return map[key] || map.doctor;
@@ -1570,9 +1554,9 @@ function composeAiReportViaOpenAI_(header, context, reportType){
   const meta = resolveReportTypeMeta_(reportType);
 
   const sys = [
-    'あなたは訪問鍼灸マッサージチームの一員として、関係者向けの報告文を日本語で作成するアシスタントです。',
+    meta.systemTone,
     '提供されたデータのみを根拠に、事実ベースで丁寧語（へりくだり口調）でまとめてください。',
-    '必ず status と special の2ブロックのみを出力してください。'
+    '回答はJSONのみとし、"status" と "special" の2キー以外は含めないでください。'
   ].join('\n');
 
   const rawData = [
@@ -1596,77 +1580,26 @@ function composeAiReportViaOpenAI_(header, context, reportType){
     metricLines.join('\n')
   ].join('\n');
 
-  const metaFamily = resolveReportTypeMeta_('family');
-  const metaCare = resolveReportTypeMeta_('caremanager');
-  const metaDoctor = resolveReportTypeMeta_('doctor');
+  const instructionLines = [
+    meta.formatInstruction,
+    `- "status": ${meta.statusInstruction}`,
+    `- "special": ${meta.specialInstruction}`
+  ].join('\n');
 
-  const prompts = {
-    family: [
-      'あなたは医療・介護現場で患者様のご家族に安心感を与える文章を作成する専門家です。',
-      '以下のデータはあくまで参考情報です。そのまま羅列せず、要点だけを取り出し、',
-      '2〜3段落のやさしい丁寧語・へりくだり口調でまとめてください。',
-      '必ず文中に「同意内容に沿った施術を継続しております。」を含めてください。',
-      '',
-      '出力は必ず以下の形式にしてください：',
-      '',
-      'status:',
-      '（ここに患者様の状態・経過をまとめる）',
-      '',
-      'special:',
-      '（ここにICF視点の特記。なければ「特記すべき事項はありません。」）',
-      '',
-      '補足要件:',
-      metaFamily.statusInstruction,
-      metaFamily.specialInstruction,
-      '',
-      '参考情報：',
-      rawData
-    ].join('\n'),
-    caremanager: [
-      'あなたはケアマネジャーに提出する報告書を作成する専門家です。',
-      '以下のデータは参考情報です。そのまま羅列せず、要点を簡潔に抽出し、',
-      '2〜3段落の丁寧語・へりくだり口調でまとめてください。',
-      '必ず「同意内容に沿った施術を継続しております。」を含めてください。',
-      '',
-      '出力は必ず以下の形式にしてください：',
-      '',
-      'status:',
-      '（患者様の状態・経過）',
-      '',
-      'special:',
-      '（ADL/IADLに関連する変化や介護連携上の特記。なければ「特記すべき事項はありません。」）',
-      '',
-      '補足要件:',
-      metaCare.statusInstruction,
-      metaCare.specialInstruction,
-      '',
-      '参考情報：',
-      rawData
-    ].join('\n'),
-    doctor: [
-      'あなたは主治医に提出する医師向け報告書を作成する専門家です。',
-      '以下のデータは参考情報です。そのまま羅列せず、医学的視点を意識して要点を整理し、',
-      '2〜3段落の丁寧語・へりくだり口調でまとめてください。',
-      '必ず「同意内容に沿った施術を継続しております。」を含めてください。',
-      '',
-      '出力は必ず以下の形式にしてください：',
-      '',
-      'status:',
-      '（患者の状態・経過を医学的視点で要約）',
-      '',
-      'special:',
-      '（疾患・症状・既往歴に関する注意点。なければ「特記すべき事項はありません。」）',
-      '',
-      '補足要件:',
-      metaDoctor.statusInstruction,
-      metaDoctor.specialInstruction,
-      '',
-      '参考情報：',
-      rawData
-    ].join('\n')
-  };
-
-  const prompt = prompts[meta.key] || prompts.doctor;
+  const prompt = [
+    '以下の要件に従ってAI報告書をJSONで出力してください。',
+    '',
+    instructionLines,
+    '',
+    '出力例:',
+    '{',
+    '  "status": "ここに本文",',
+    '  "special": ["ここに特記事項1", "ここに特記事項2"]',
+    '}',
+    '',
+    '参考情報:',
+    rawData
+  ].join('\n');
 
   try {
     const res = UrlFetchApp.fetch(APP.OPENAI_ENDPOINT, {
@@ -1690,34 +1623,63 @@ function composeAiReportViaOpenAI_(header, context, reportType){
     const content = (JSON.parse(res.getContentText())?.choices?.[0]?.message?.content || '').trim();
     if (!content) return null;
 
-    let plain = content;
+    let plain = content.trim();
+    if (!plain) return null;
+
     if (/^```/.test(plain)) {
       plain = plain.replace(/^```[^\n]*\n?/, '');
     }
     if (/```$/.test(plain)) {
       plain = plain.replace(/```$/, '');
     }
-    plain = plain.trim();
-    if (!plain) return null;
 
-    const statusMatch = plain.match(/status:\s*([\s\S]*?)(?=\n\s*special:)/i);
-    const specialMatch = plain.match(/special:\s*([\s\S]*)$/i);
-    if (!statusMatch || !specialMatch) return null;
+    const firstBrace = plain.indexOf('{');
+    const lastBrace = plain.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace >= firstBrace) {
+      plain = plain.slice(firstBrace, lastBrace + 1);
+    }
 
-    let status = statusMatch[1].trim();
-    let specialText = specialMatch[1].trim();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(plain);
+    } catch (err) {
+      Logger.log('composeAiReportViaOpenAI_ JSON parse error: ' + err);
+      return null;
+    }
+    if (!parsed || typeof parsed !== 'object') return null;
 
+    let status = String(parsed.status || '').trim();
     if (!status) return null;
     if (status.indexOf('同意内容に沿った施術を継続しております。') < 0) {
       status += (status.endsWith('。') ? '' : '。') + '同意内容に沿った施術を継続しております。';
     }
 
-    // specialブロックに「参考情報」など余計な行が混ざった場合は除去
-    specialText = specialText.replace(/参考情報：[\s\S]*$/i, '').trim();
-    const specialLines = specialText
-      ? specialText.split(/\n+/).map(line => line.replace(/^[-*・]\s*/, '').trim()).filter(Boolean)
-      : [];
-    const special = specialLines.length ? specialLines : [];
+    let specialRaw = parsed.special;
+    let special = [];
+    if (Array.isArray(specialRaw)) {
+      special = specialRaw;
+    } else if (specialRaw != null) {
+      if (typeof specialRaw === 'string') {
+        const trimmed = specialRaw.trim();
+        if (trimmed) {
+          if (/^\[.*\]$/.test(trimmed)) {
+            try {
+              const arr = JSON.parse(trimmed);
+              if (Array.isArray(arr)) special = arr;
+            } catch (e) {
+              special = [];
+            }
+          }
+          if (!special.length) {
+            special = trimmed
+              .split(/\n+/)
+              .map(s => s.replace(/^[-*・]\s*/, '').trim())
+              .filter(Boolean);
+          }
+        }
+      }
+    }
+    special = Array.isArray(special) ? special.map(item => String(item || '').trim()).filter(Boolean) : [];
 
     return {
       via: 'ai',
@@ -1999,7 +1961,7 @@ function generateSummaryForAudience(pid, rangeKey, audience){
   };
   if (consentText) meta.consentText = consentText;
 
-  const audienceMeta = resolveSummaryAudienceMeta_(audience);
+  const audienceMeta = resolveReportTypeMeta_(audience);
   const text = composed && composed.text ? String(composed.text).trim() : '（情報不足のため生成できません）';
 
   return {

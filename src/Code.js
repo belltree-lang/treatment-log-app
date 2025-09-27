@@ -1068,94 +1068,204 @@ function getConsentContentForPatient_(pid){
 }
 
 
-function buildDoctorReportTemplate_(header, context, statusSections, specialItems){
+function normalizeDoctorReportText_(text){
+  return String(text || '')
+    .replace(/\s*\n+\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function ensureDoctorSentenceWithFallback_(text, fallback){
+  const normalize = (value) => normalizeDoctorReportText_(value);
+  const ensurePeriod = (value) => {
+    const norm = normalize(value);
+    if (!norm) return '';
+    return /[。．！？!？]$/.test(norm) ? norm : norm + '。';
+  };
+  const primary = ensurePeriod(text);
+  if (primary) return primary;
+  return ensurePeriod(fallback);
+}
+
+function parseDoctorSpecialList_(value){
+  if (Array.isArray(value)) {
+    return value
+      .map(v => normalizeDoctorReportText_(v))
+      .filter(Boolean);
+  }
+  if (value && typeof value === 'object') {
+    if (Array.isArray(value.special)) {
+      return value.special
+        .map(v => normalizeDoctorReportText_(v))
+        .filter(Boolean);
+    }
+    return [];
+  }
+  const raw = normalizeDoctorReportText_(value);
+  if (!raw) return [];
+  if (/^\[.*\]$/.test(raw)) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map(v => normalizeDoctorReportText_(v))
+          .filter(Boolean);
+      }
+    } catch (e) {
+      return [];
+    }
+  }
+  return raw
+    .split(/[,、\n]+/)
+    .map(v => normalizeDoctorReportText_(v))
+    .filter(Boolean);
+}
+
+function normalizeDoctorSpecialList_(value){
+  const unique = Array.from(new Set(parseDoctorSpecialList_(value)));
+  return unique.length ? unique : ['特記すべき事項はありません。'];
+}
+
+function buildDoctorStatusFromSections_(sections){
+  const base = { body: '', activities: '', participation: '', environment: '', safety: '', special: [] };
+  const priority = { body: -Infinity, activities: -Infinity, participation: -Infinity, environment: -Infinity, safety: -Infinity, special: -Infinity };
+  const assignField = (key, value, score) => {
+    if (!Object.prototype.hasOwnProperty.call(base, key)) return;
+    const norm = normalizeDoctorReportText_(value);
+    if (!norm) return;
+    if (score < priority[key]) return;
+    if (score === priority[key] && base[key]) return;
+    base[key] = norm;
+    priority[key] = score;
+  };
+  const assignSpecial = (value, score) => {
+    const list = normalizeDoctorSpecialList_(value);
+    if (!list.length) return;
+    if (score < priority.special) return;
+    if (score === priority.special && base.special.length) return;
+    base.special = list;
+    priority.special = score;
+  };
+  const mergeObject = (obj, score = 0) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (obj.status && typeof obj.status === 'object') {
+      mergeObject(obj.status, score);
+    }
+    assignField('body', obj.body, score);
+    assignField('activities', obj.activities, score);
+    assignField('participation', obj.participation, score);
+    assignField('environment', obj.environment, score);
+    assignField('safety', obj.safety, score);
+    if (obj.special != null) assignSpecial(obj.special, score);
+    if (!obj.body && obj.general) assignField('body', obj.general, score - 1);
+  };
+
+  if (sections && typeof sections === 'object' && !Array.isArray(sections)) {
+    mergeObject(sections, 0);
+  }
+
+  if (Array.isArray(sections)) {
+    sections.forEach(section => {
+      const key = String(section && section.key ? section.key : '').toLowerCase();
+      const data = section && typeof section.data === 'object' ? section.data : null;
+      if (data) {
+        mergeObject(data, 5);
+      }
+      if (!key) return;
+      if (key === 'doctor_json' || key === 'doctor_status' || key === 'doctor_status_json') {
+        const raw = section && section.json != null ? section.json : section && section.value != null ? section.value : section && section.text;
+        if (raw && typeof raw === 'string') {
+          try {
+            const parsed = JSON.parse(raw);
+            mergeObject(parsed, 10);
+          } catch (e) {
+            // ignore parse errors
+          }
+        } else if (raw && typeof raw === 'object') {
+          mergeObject(raw, 10);
+        }
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(base, key)) {
+        assignField(key, section && section.text != null ? section.text : section && section.value, 1);
+        return;
+      }
+      if (key === 'special') {
+        const rawSpecial = data && data.special != null ? data.special : section && section.value != null ? section.value : section && section.text;
+        assignSpecial(rawSpecial, 1);
+      }
+    });
+  }
+
+  if (!base.special.length) {
+    base.special = ['特記すべき事項はありません。'];
+  }
+
+  return base;
+}
+
+function buildDoctorReportTemplate_(header, context, statusSections){
   const hospital = header?.hospital ? String(header.hospital).trim() : '';
   const doctor = header?.doctor ? String(header.doctor).trim() : '';
   const name = header?.name ? String(header.name).trim() : `ID:${header?.patientId || ''}`;
   const birth = header?.birth ? String(header.birth).trim() : '';
   const consent = context?.consentText ? String(context.consentText).trim() : '情報不足';
   const frequency = context?.frequencyLabel ? String(context.frequencyLabel).trim() : '情報不足';
-  const normalize = (text) => String(text || '')
-    .replace(/\s*\n+\s*/g, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  const ensureSentence = (text, fallback) => {
-    const norm = normalize(text);
-    if (!norm) {
-      const fb = normalize(fallback);
-      if (!fb) return '';
-      return fb.endsWith('。') ? fb : fb + '。';
-    }
-    return norm.endsWith('。') ? norm : norm + '。';
-  };
-  const dropPeriod = (text) => normalize(text).replace(/[。]+$/, '');
-  const sections = (statusSections && typeof statusSections === 'object') ? statusSections : {};
-  const rangeLabel = normalize(context?.rangeLabel);
-  const body = ensureSentence(
-    sections.body,
+  const rangeLabel = normalizeDoctorReportText_(context?.rangeLabel);
+  const metricsDigest = normalizeDoctorReportText_(context?.metricsDigest);
+  const status = buildDoctorStatusFromSections_(statusSections);
+
+  const body = ensureDoctorSentenceWithFallback_(
+    status.body,
     rangeLabel
       ? `該当期間（${rangeLabel}）の記録では、心身機能の大きな変化は確認されていません。`
       : '心身機能の大きな変化は確認されていません。'
   );
-  const activities = ensureSentence(
-    sections.activities,
+
+  const activities = ensureDoctorSentenceWithFallback_(
+    status.activities,
     '日常生活動作は概ね維持されています。'
   );
-  const env = dropPeriod(sections.environment);
-  let participationRaw = dropPeriod(sections.participation);
+
+  const env = normalizeDoctorReportText_(status.environment);
+  let participationSource = normalizeDoctorReportText_(status.participation);
   if (env) {
-    participationRaw = [participationRaw, `環境・支援：${env}`].filter(Boolean).join(' / ');
+    participationSource = [participationSource, `環境・支援：${env}`].filter(Boolean).join(' / ');
   }
-  const participation = ensureSentence(
-    participationRaw,
+  const participation = ensureDoctorSentenceWithFallback_(
+    participationSource,
     '社会参加や外出状況に大きな変化はありません。'
   );
-  const metricsDigest = normalize(context?.metricsDigest);
-  let safetyRaw = dropPeriod(sections.safety);
+
+  let safetySource = normalizeDoctorReportText_(status.safety);
   if (metricsDigest) {
-    safetyRaw = [safetyRaw, `臨床指標：${metricsDigest}`].filter(Boolean).join(' / ');
+    safetySource = safetySource
+      ? `${safetySource} / 臨床指標：${metricsDigest}`
+      : `臨床指標：${metricsDigest}`;
   }
-  const safety = ensureSentence(
-    safetyRaw,
+  let safety = ensureDoctorSentenceWithFallback_(
+    safetySource,
     '重大なリスクはみられず、訪問ごとにバイタルを確認しています。'
   );
-  let specialLines = [];
-  if (Array.isArray(specialItems)) {
-    specialLines = specialItems.map(s => String(s || '').trim()).filter(Boolean);
-  } else {
-    const raw = String(specialItems || '').trim();
-    if (raw) {
-      let parsed = null;
-      if (/^\[.*\]$/.test(raw)) {
-        try {
-          const arr = JSON.parse(raw);
-          if (Array.isArray(arr)) parsed = arr;
-        } catch (e) {
-          parsed = null;
-        }
-      }
-      if (Array.isArray(parsed)) {
-        specialLines = parsed.map(s => String(s || '').trim()).filter(Boolean);
-      } else {
-        specialLines = raw
-          .split(/\n+/)
-          .map(s => String(s || '').trim())
-          .filter(Boolean);
-      }
-    }
+  const complianceSentence = '同意内容に沿った施術を継続しております。';
+  if (safety.indexOf(complianceSentence) < 0) {
+    const trimmed = safety.replace(/[。．]+$/, '');
+    safety = trimmed ? `${trimmed}。${complianceSentence}` : complianceSentence;
   }
-  specialLines = Array.from(new Set(specialLines.map(line => normalize(line)))).filter(line => line && line !== '[]').slice(0, 3);
-  const formatBullet = (text) => {
-    const norm = normalize(text);
-    if (!norm) return '';
-    const sentence = norm.endsWith('。') ? norm : norm + '。';
-    return `・${sentence}`;
-  };
-  const special = specialLines.length
-    ? specialLines.map(formatBullet).filter(Boolean).join('\n')
-    : '・特記すべき事項はありません。';
+
+  const specialList = normalizeDoctorSpecialList_(status.special).slice(0, 3);
+  const special = (specialList
+    .map(item => {
+      const sentence = ensureDoctorSentenceWithFallback_(item, '');
+      if (!sentence) return '';
+      return `・${sentence}`;
+    })
+    .filter(Boolean)
+    .join('\n')) || '・特記すべき事項はありません。';
+
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
   const createdAt = Utilities.formatDate(new Date(), tz, 'yyyy年M月d日');
+
   return [
     `【病院名】${hospital || '不明'}`,
     `【担当医名】${doctor || '不明'}`,
@@ -1208,31 +1318,6 @@ function buildMetricDigestForSummary_(metrics){
     if (val) lines.push(`${metric.label}: 最新 ${val}`);
   });
   return lines.join(' / ');
-}
-
-function extractSpecialPointsFallback_(handovers){
-  const latest = Array.isArray(handovers)
-    ? handovers
-        .filter(h => String(h?.note || '').trim())
-        .slice(-5)
-        .reverse()
-    : [];
-  if (!latest.length) return [];
-  const keywords = ['嚥下','水分','食事','服薬','服用','検査','家族','介護','活動','参加','歩行','転倒','ストレス','睡眠','排泄','栄養','痛み','バイタル','血圧','SpO2','脈拍','体温','ADL','IADL'];
-  const picked = [];
-  latest.forEach(entry => {
-    const sentences = String(entry.note)
-      .split(/[。\n]/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    sentences.forEach(sentence => {
-      if (picked.length >= 3) return;
-      if (keywords.some(k => sentence.indexOf(k) >= 0)) {
-        if (!picked.includes(sentence)) picked.push(sentence);
-      }
-    });
-  });
-  return picked;
 }
 
 function resolveReportTypeMeta_(reportType){
@@ -1311,29 +1396,9 @@ function buildAudienceNarrative_(audienceMeta, header, range, source, sections){
       consentText: getConsentContentForPatient_(header.patientId),
       frequencyLabel: determineTreatmentFrequencyLabel_(countTreatmentsInRecentMonth_(header.patientId, range.endDate)),
       rangeLabel,
-      metricsDigest,
-      handoverDigest
+      metricsDigest
     };
-    const sectionMap = {};
-    (Array.isArray(sections) ? sections : []).forEach(sec => {
-      const key = String(sec?.key || '').trim();
-      const text = String(sec?.text || '').trim();
-      if (!key || !text) return;
-      if (sectionMap[key]) {
-        sectionMap[key] = `${sectionMap[key]} ${text}`.trim();
-      } else {
-        sectionMap[key] = text;
-      }
-    });
-    const statusSections = {
-      body: sectionMap.body || sectionMap.general || '',
-      activities: sectionMap.activities || '',
-      participation: sectionMap.participation || '',
-      environment: sectionMap.environment || '',
-      safety: sectionMap.safety || ''
-    };
-    const specialItems = extractSpecialPointsFallback_(handovers);
-    return buildDoctorReportTemplate_(header, context, statusSections, specialItems);
+    return buildDoctorReportTemplate_(header, context, sections);
   }
 
   if (audienceKey === 'caremanager') {

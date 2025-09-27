@@ -60,6 +60,14 @@
   .icf-summary .icf-meta{ font-size:0.85rem; color:var(--muted); margin-bottom:6px }
   .icf-section{ margin-top:8px; }
   .icf-section-title{ font-weight:600; margin-bottom:4px }
+  .icf-controls{ display:flex; flex-direction:column; gap:10px; margin-bottom:12px }
+  .icf-range-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
+  .icf-range-row label{ font-weight:600; font-size:0.95rem }
+  .icf-range-row select{ max-width:220px }
+  .icf-actions{ display:flex; flex-wrap:wrap; gap:8px }
+  .icf-status-text{ margin-bottom:12px; white-space:pre-line }
+  .ai-report-actions{ display:flex; flex-wrap:wrap; gap:6px }
+  .ai-report-actions .btn{ padding:6px 12px; font-size:12px }
   .trend-container{ margin-top:12px; display:flex; flex-direction:column; gap:16px }
   .trend-item{ padding:12px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; }
   .trend-item h4{ margin:0 0 6px; font-size:15px }
@@ -191,11 +199,24 @@
         </div>
 
         <div class="btnrow" style="margin:12px 0 8px; gap:8px; flex-wrap:wrap">
-          <span class="muted" style="font-size:0.9rem">現在、報告書自動生成は停止中です。</span>
-          <button class="btn ghost" onclick="loadClinicalTrends(true)">グラフを再読込</button>
+          <button class="btn ghost" onclick="loadClinicalTrends(true)">臨床指標グラフを再読込</button>
         </div>
         <div id="icfSummaryBox" class="icf-summary">
-          <div class="muted">報告書自動生成は現在停止中です。</div>
+          <div class="muted" style="font-size:0.9rem">申し送りと臨床指標をもとにAIが用途別のサマリを生成します。</div>
+          <div class="icf-controls">
+            <div class="icf-range-row">
+              <label for="icfRange">対象期間</label>
+              <select id="icfRange" onchange="onIcfRangeChange(this)"></select>
+            </div>
+            <div class="icf-actions">
+              <button class="btn ghost" data-icf-audience="doctor" onclick="generateIcfSummary('doctor')">医師向け報告書</button>
+              <button class="btn ghost" data-icf-audience="caremanager" onclick="generateIcfSummary('caremanager')">ケアマネ向けサマリ</button>
+              <button class="btn ghost" data-icf-audience="family" onclick="generateIcfSummary('family')">家族向けサマリ</button>
+              <button class="btn ghost" id="icfGenerateAll" onclick="generateAllIcfSummaries()">3種類まとめて生成</button>
+            </div>
+          </div>
+          <div id="icfSummaryStatus" class="muted icf-status-text"></div>
+          <div id="icfSummaryResults" class="ai-report-preview"></div>
         </div>
         <div id="clinicalTrendBox" class="trend-container">
           <div class="muted">臨床指標の記録がまだありません。</div>
@@ -237,6 +258,18 @@ let METRIC_DEFS = [];
 let METRIC_DEF_MAP = {};
 let _metricRowSeq = 0;
 let _clinicalCharts = {};
+const ICF_RANGE_OPTIONS = [
+  { key: '1m', label: '直近1か月' },
+  { key: '2m', label: '直近2か月' },
+  { key: '3m', label: '直近3か月' },
+  { key: 'all', label: '全期間' }
+];
+const ICF_AUDIENCE_LABELS = {
+  doctor: '医師向け報告書',
+  caremanager: 'ケアマネ向けサマリ',
+  family: '家族向けサマリ'
+};
+let _icfSummaryState = { range: '1m', results: {} };
 
 function resetFlags(){ _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false}; _pendingVisitPlanDate=null; }
 
@@ -472,6 +505,256 @@ function renderClinicalCharts(metrics){
   });
 }
 
+function setupIcfSummaryUI(){
+  const select = q('icfRange');
+  if (select) {
+    select.innerHTML = '';
+    ICF_RANGE_OPTIONS.forEach(opt => {
+      const option = document.createElement('option');
+      option.value = opt.key;
+      option.textContent = opt.label;
+      select.appendChild(option);
+    });
+    const defaultKey = _icfSummaryState.range;
+    const hasDefault = ICF_RANGE_OPTIONS.some(opt => opt.key === defaultKey);
+    select.value = hasDefault ? defaultKey : ICF_RANGE_OPTIONS[0].key;
+    _icfSummaryState.range = select.value;
+  }
+  resetIcfSummaries();
+}
+
+function onIcfRangeChange(sel){
+  if (!sel) return;
+  const key = sel.value || 'all';
+  _icfSummaryState.range = key;
+  resetIcfSummaries('対象期間を変更しました。サマリを生成してください。');
+}
+
+function resetIcfSummaries(message){
+  _icfSummaryState.results = {};
+  renderIcfSummaryResults();
+  if (message) {
+    updateIcfSummaryStatus(message);
+    return;
+  }
+  if (pid()) {
+    updateIcfSummaryStatus('対象期間と対象を選んでサマリを生成できます。');
+  } else {
+    updateIcfSummaryStatus('患者IDを入力するとサマリを生成できます。');
+  }
+}
+
+function updateIcfSummaryStatus(message){
+  const el = q('icfSummaryStatus');
+  if (!el) return;
+  el.textContent = message || '';
+}
+
+function getIcfAudienceLabel(audience){
+  return ICF_AUDIENCE_LABELS[audience] || 'サマリ';
+}
+
+function buildIcfMetaText(data){
+  if (!data || typeof data !== 'object') return '';
+  const meta = data.meta || {};
+  const parts = [];
+  if (meta.rangeLabel) parts.push(meta.rangeLabel);
+  const counts = [];
+  if (meta.noteCount != null) counts.push(`施術録 ${meta.noteCount}件`);
+  if (meta.handoverCount != null) counts.push(`申し送り ${meta.handoverCount}件`);
+  if (meta.metricCount != null) counts.push(`臨床指標 ${meta.metricCount}件`);
+  if (counts.length) parts.push(counts.join('・'));
+  parts.push(data.usedAi ? 'AI整形' : 'ローカル整形');
+  return parts.filter(Boolean).join(' ｜ ');
+}
+
+function renderIcfSummaryResults(){
+  const box = q('icfSummaryResults');
+  if (!box) return;
+  const results = _icfSummaryState.results || {};
+  const order = ['doctor','caremanager','family'];
+  const keys = order.filter(key => results[key]);
+  Object.keys(results).forEach(key => {
+    if (!keys.includes(key)) keys.push(key);
+  });
+  if (!keys.length){
+    box.innerHTML = '<div class="muted">まだサマリを生成していません。</div>';
+    return;
+  }
+  box.innerHTML = '';
+  keys.forEach(key => {
+    const data = results[key];
+    if (!data) return;
+    const block = document.createElement('div');
+    block.className = 'ai-report-block';
+
+    const heading = document.createElement('div');
+    heading.className = 'ai-report-heading';
+    const title = document.createElement('div');
+    title.className = 'ai-report-title';
+    title.textContent = data.audienceLabel || getIcfAudienceLabel(key);
+    heading.appendChild(title);
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-report-actions';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'btn ghost';
+    copyBtn.textContent = 'コピー';
+    copyBtn.onclick = ()=> copyIcfSummary(data.text, data.audienceLabel || getIcfAudienceLabel(key));
+    actions.appendChild(copyBtn);
+
+    const regenBtn = document.createElement('button');
+    regenBtn.type = 'button';
+    regenBtn.className = 'btn ghost';
+    regenBtn.textContent = '再生成';
+    regenBtn.dataset.icfAudience = key;
+    regenBtn.onclick = ()=> generateIcfSummary(key);
+    actions.appendChild(regenBtn);
+
+    heading.appendChild(actions);
+    block.appendChild(heading);
+
+    const meta = document.createElement('div');
+    meta.className = 'icf-meta';
+    meta.textContent = buildIcfMetaText(data);
+    block.appendChild(meta);
+
+    const text = document.createElement('div');
+    text.className = 'ai-report-text';
+    const content = String(data.text || '').trim();
+    if (content){
+      text.textContent = data.text;
+    } else {
+      text.classList.add('muted');
+      text.textContent = '該当期間のサマリは生成されませんでした。';
+    }
+    block.appendChild(text);
+
+    box.appendChild(block);
+  });
+}
+
+function copyIcfSummary(text, label){
+  const content = String(text || '').trim();
+  if (!content){
+    alert('コピーできるサマリがありません。');
+    return;
+  }
+  const successMessage = `${label || 'サマリ'}をコピーしました。`;
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(content)
+      .then(()=> toast(successMessage))
+      .catch(()=> fallbackCopy(content, successMessage));
+  } else {
+    fallbackCopy(content, successMessage);
+  }
+}
+
+function fallbackCopy(text, successMessage){
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) {
+      toast(successMessage);
+    } else {
+      alert('コピーに失敗しました。');
+    }
+  } catch (err) {
+    console.error('[fallbackCopy]', err);
+    alert('コピーに失敗しました。');
+  }
+}
+
+function callGenerateSummary(pidValue, rangeKey, audience){
+  return new Promise((resolve, reject)=>{
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(err => reject(err))
+      .generateSummaryForAudience(pidValue, rangeKey, audience);
+  });
+}
+
+function handleIcfSummaryResponse(res, fallbackAudience){
+  const key = res && res.audience ? res.audience : fallbackAudience;
+  if (!res || !res.ok){
+    delete _icfSummaryState.results[key];
+    renderIcfSummaryResults();
+    const label = getIcfAudienceLabel(key);
+    const message = res && res.text ? res.text : '生成に失敗しました。';
+    alert(`${label}：${message}`);
+    updateIcfSummaryStatus(`${label}：${message}`);
+    return false;
+  }
+  _icfSummaryState.results[key] = res;
+  renderIcfSummaryResults();
+  return true;
+}
+
+function setIcfButtonsDisabled(disabled){
+  const buttons = document.querySelectorAll('[data-icf-audience], #icfGenerateAll');
+  buttons.forEach(btn => {
+    btn.disabled = !!disabled;
+  });
+}
+
+function generateIcfSummary(audience){
+  const p = pid();
+  if(!p){ alert('患者IDを入力してください'); return; }
+  const rangeKey = _icfSummaryState.range || 'all';
+  const label = getIcfAudienceLabel(audience);
+  setIcfButtonsDisabled(true);
+  updateIcfSummaryStatus(`${label}を生成しています…`);
+  const promise = callGenerateSummary(p, rangeKey, audience);
+  promise.then(res => {
+    const ok = handleIcfSummaryResponse(res, audience);
+    if (ok) updateIcfSummaryStatus(`${label}を更新しました。`);
+  }).catch(err => {
+    console.error('[generateIcfSummary]', err);
+    const msg = err && err.message ? err.message : String(err);
+    updateIcfSummaryStatus(`${label}の生成に失敗しました：${msg}`);
+  }).then(()=>{
+    setIcfButtonsDisabled(false);
+  });
+}
+
+async function generateAllIcfSummaries(){
+  const p = pid();
+  if(!p){ alert('患者IDを入力してください'); return; }
+  const rangeKey = _icfSummaryState.range || 'all';
+  const audiences = ['doctor','caremanager','family'];
+  let hadError = false;
+  setIcfButtonsDisabled(true);
+  updateIcfSummaryStatus('3種類のサマリを生成しています…');
+  try {
+    for (const audience of audiences){
+      try {
+        const res = await callGenerateSummary(p, rangeKey, audience);
+        const ok = handleIcfSummaryResponse(res, audience);
+        if (!ok) hadError = true;
+      } catch (err) {
+        hadError = true;
+        console.error('[generateAllIcfSummaries]', err);
+        const msg = err && err.message ? err.message : String(err);
+        const label = getIcfAudienceLabel(audience);
+        updateIcfSummaryStatus(`${label}の生成に失敗しました：${msg}`);
+      }
+    }
+    if (!hadError){
+      updateIcfSummaryStatus('3種類のサマリを更新しました。');
+    }
+  } finally {
+    setIcfButtonsDisabled(false);
+  }
+}
+
 /* 候補/定型文 */
 function loadPidList(){
   google.script.run.withSuccessHandler(list=>{
@@ -624,6 +907,7 @@ function setStop(){ const p=pid(); if(!p) return; if(!confirm('中止にしま�
 
 /* 画面更新 */
 function refresh(){
+  resetIcfSummaries();
   loadHeader();
   loadNews();
   loadThisMonth();
@@ -834,6 +1118,7 @@ function saveHandoverUI(){
   loadPresets();
   loadMetricDefinitions();
   ensureMetricEmptyMessage();
+  setupIcfSummaryUI();
   const p = "<?= patientId ?>";
   if (p) {
     refresh();

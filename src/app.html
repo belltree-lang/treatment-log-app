@@ -130,15 +130,6 @@
         <!-- 保存行＋外部向けレポート -->
         <div class="btnrow" style="margin-top:8px">
           <button class="btn ok" onclick="save()">保存（施術録）</button>
-
-          <div class="dropdown" id="reportTab">
-            <button class="btn ok" onclick="toggleReportMenu()">外部向けレポート ▾</button>
-            <div class="dropdown-menu">
-              <button class="btn ghost" onclick="chooseReport('care_manager')">ケアマネ向け</button>
-              <button class="btn ghost" onclick="chooseReport('family')">家族向け</button>
-              <button class="btn ghost" onclick="chooseReport('physician')">同意医師向け</button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -152,25 +143,6 @@
       <div class="card">
         <div class="section-title">当月の施術記録（この患者）</div>
         <div id="list"></div>
-      </div>
-
-      <!-- レポート下書き（4問ガイド） -->
-      <div class="card" id="reportGuide" style="display:none">
-        <div class="section-title">外部向けレポート下書き（4問ガイド）</div>
-        <div class="muted" style="margin-bottom:8px">箇条書きでOK。提出先に合わせて自動整形されます（API/ローカル対応）。</div>
-        <div class="row">
-          <div><label>① バイタル（まとめ）</label><textarea id="g_vital"></textarea></div>
-          <div><label>② 痛み/動作の変化</label><textarea id="g_pain"></textarea></div>
-        </div>
-        <div class="row">
-          <div><label>③ 施術反応/経過</label><textarea id="g_response"></textarea></div>
-          <div><label>④ 注意点/連携依頼</label><textarea id="g_note"></textarea></div>
-        </div>
-        <div class="btnrow" style="margin-top:8px">
-          <button class="btn ok" onclick="submitReportPdf()">この内容でPDF作成</button>
-          <button class="btn ghost" onclick="skipReportPdf()">メモ無しでPDF作成</button>
-          <button class="btn ghost" onclick="cancelReport()">閉じる</button>
-        </div>
       </div>
 
     </div>
@@ -219,28 +191,11 @@
         </div>
 
         <div class="btnrow" style="margin:12px 0 8px; gap:8px; flex-wrap:wrap">
-          <label class="inline" style="display:flex; align-items:center; gap:6px">
-            <span>対象期間</span>
-            <select id="icfRange" onchange="changeIcfRange(this.value)" style="max-width:160px">
-            <option value="1m">直近1か月</option>
-            <option value="2m">直近2か月</option>
-            <option value="3m">直近3か月</option>
-            <option value="all">全期間</option>
-            </select>
-          </label>
-          <label class="inline" style="display:flex; align-items:center; gap:6px">
-            <span>対象</span>
-            <select id="icfAudience" onchange="changeIcfAudience(this.value)" style="max-width:200px">
-            <option value="doctor">医師向け報告書</option>
-            <option value="caremanager">ケアマネ向けサマリ</option>
-            <option value="family">家族向けサマリ</option>
-            </select>
-          </label>
-          <button class="btn ghost" onclick="generateIcfSummary()">報告書サマリを生成</button>
+          <span class="muted" style="font-size:0.9rem">現在、報告書自動生成は停止中です。</span>
           <button class="btn ghost" onclick="loadClinicalTrends(true)">グラフを再読込</button>
         </div>
         <div id="icfSummaryBox" class="icf-summary">
-          <div class="muted">報告書サマリを生成するとここに表示されます。</div>
+          <div class="muted">報告書自動生成は現在停止中です。</div>
         </div>
         <div id="clinicalTrendBox" class="trend-container">
           <div class="muted">臨床指標の記録がまだありません。</div>
@@ -278,13 +233,10 @@ function pid(){ return val('pid'); }
 
 let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
 let _pendingVisitPlanDate = null;
-let _reportType = null;
 let METRIC_DEFS = [];
 let METRIC_DEF_MAP = {};
 let _metricRowSeq = 0;
 let _clinicalCharts = {};
-let _icfRange = '1m';
-let _icfAudience = 'doctor';
 
 function resetFlags(){ _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false}; _pendingVisitPlanDate=null; }
 
@@ -407,43 +359,6 @@ function clearMetricRows(){
   ensureMetricEmptyMessage();
 }
 
-function copyAiReport(text){
-  const str = String(text == null ? '' : text);
-  if (!str) {
-    toast('コピー対象がありません');
-    return;
-  }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(str)
-      .then(()=> toast('コピーしました'))
-      .catch(()=> copyAiReportFallback(str));
-  } else {
-    copyAiReportFallback(str);
-  }
-}
-
-function copyAiReportFallback(text){
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  try {
-    if (document.execCommand('copy')) {
-      toast('コピーしました');
-    } else {
-      throw new Error('copy command failed');
-    }
-  } catch (err) {
-    console.error(err);
-    alert('コピーに失敗しました');
-  } finally {
-    document.body.removeChild(ta);
-  }
-}
-
 function collectMetricInputs(){
   const box = q('metricInputs');
   if (!box) return [];
@@ -557,106 +472,6 @@ function renderClinicalCharts(metrics){
   });
 }
 
-function clearIcfSummary(){
-  const box = q('icfSummaryBox');
-  if (box){
-    box.innerHTML = '<div class="muted">報告書サマリを生成するとここに表示されます。</div>';
-  }
-}
-
-function changeIcfRange(v){
-  _icfRange = v || 'all';
-}
-
-function changeIcfAudience(v){
-  _icfAudience = v || 'doctor';
-}
-
-function renderIcfSummary(res){
-  const box = q('icfSummaryBox');
-  if (!box) return;
-  if (!res || !res.ok){
-    const msg = res && res.message ? res.message : '報告書サマリの生成に失敗しました。';
-    box.innerHTML = `<div class="muted" style="color:#b91c1c">${escapeHtml(msg)}</div>`;
-    return;
-  }
-
-  const report = res.report || {};
-  const statusText = String(report.status || '').trim();
-  const specialList = Array.isArray(report.special) ? report.special.filter(Boolean) : [];
-  const specialText = specialList.length ? specialList.join('\n') : '特記すべき事項はありません。';
-
-  const metaInfo = [];
-  if (res.rangeLabel) metaInfo.push(res.rangeLabel);
-  if (res.generatedAt) metaInfo.push(res.generatedAt);
-  metaInfo.push(res.usedAi ? 'AI生成' : 'ローカル生成');
-  if (res.meta) {
-    if (typeof res.meta.handoverCount === 'number') metaInfo.push(`申し送り:${res.meta.handoverCount}件`);
-    if (typeof res.meta.metricCount === 'number') metaInfo.push(`臨床指標:${res.meta.metricCount}件`);
-    if (typeof res.meta.treatmentCount === 'number') metaInfo.push(`施術記録:${res.meta.treatmentCount}件`);
-    if (res.meta.frequencyLabel) metaInfo.push(`施術頻度:${res.meta.frequencyLabel}`);
-  }
-
-  box.innerHTML = '';
-
-  if (metaInfo.length){
-    const meta = document.createElement('div');
-    meta.className = 'icf-meta';
-    meta.textContent = metaInfo.join(' ／ ');
-    box.appendChild(meta);
-  }
-
-  if (res.meta && res.meta.patientFound === false) {
-    const warn = document.createElement('div');
-    warn.className = 'icf-meta';
-    warn.style.color = '#b91c1c';
-    warn.textContent = '患者情報が見つからなかったため、ID未指定としてサマリを作成しました。';
-    box.appendChild(warn);
-  }
-
-  const preview = document.createElement('div');
-  preview.className = 'ai-report-preview';
-
-  const statusBlock = document.createElement('div');
-  statusBlock.className = 'ai-report-block';
-  statusBlock.innerHTML = `
-    <div class="ai-report-heading">
-      <div class="ai-report-title">${escapeHtml(res.audienceLabel || '報告書サマリ')}</div>
-      <button type="button" class="btn ghost" onclick="copyAiReport(${jsString(statusText)})">コピー</button>
-    </div>
-    ${statusText ? `<div class="ai-report-text">${escapeHtml(statusText).replace(/\n/g,'<br>')}</div>` : '<div class="muted">内容がありません</div>'}
-  `;
-  preview.appendChild(statusBlock);
-
-  const specialBlock = document.createElement('div');
-  specialBlock.className = 'ai-report-block ai-report-special';
-  specialBlock.innerHTML = `
-    <div class="ai-report-heading">
-      <div class="ai-report-title">${escapeHtml(res.specialLabel || '共有したい特記事項')}</div>
-      <button type="button" class="btn ghost" onclick="copyAiReport(${jsString(specialText)})">コピー</button>
-    </div>
-    ${specialList.length
-      ? `<ul>${specialList.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-      : '<div class="muted">特記すべき事項はありません。</div>'}
-  `;
-  preview.appendChild(specialBlock);
-
-  box.appendChild(preview);
-}
-
-function generateIcfSummary(){
-  const p = pid();
-  if (!p){ alert('患者IDを入力してください'); return; }
-  const box = q('icfSummaryBox');
-  if (box) box.innerHTML = '<div class="muted">報告書サマリを生成中です…</div>';
-  google.script.run
-    .withSuccessHandler(res => renderIcfSummary(res))
-    .withFailureHandler(e => {
-      const msg = (e && e.message) ? e.message : String(e);
-      if (box) box.innerHTML = `<div class="muted" style="color:#b91c1c">報告書サマリ生成に失敗しました：${escapeHtml(msg)}</div>`;
-    })
-    .generateAiReport({ patientId: p, range: _icfRange, reportType: _icfAudience });
-}
 /* 候補/定型文 */
 function loadPidList(){
   google.script.run.withSuccessHandler(list=>{
@@ -807,34 +622,8 @@ function setSuspend(){ const p=pid(); if(!p) return; if(!confirm('休止にし�
 function setStop(){ const p=pid(); if(!p) return; if(!confirm('中止にします。続行？')) return;
   google.script.run.withSuccessHandler(()=>{ alert('中止に設定'); refresh(); }).markStop(p); }
 
-/* 外部向けレポート */
-function toggleReportMenu(){ q('reportTab').classList.toggle('open'); }
-function chooseReport(type){
-  _reportType = type;
-  q('reportGuide').style.display='block';
-  q('reportTab').classList.remove('open');
-  window.scrollTo({ top: q('reportGuide').offsetTop-20, behavior:'smooth'});
-}
-function submitReportPdf(){
-  const p=pid(); if(!p||!_reportType){ alert('患者IDと作成先を確認してください'); return; }
-  const notes={ vital:val('g_vital'), pain:val('g_pain'), response:val('g_response'), note:val('g_note') };
-  google.script.run
-    .withSuccessHandler(res=>{ alert('PDF作成: '+(res?.name||'')); })
-    .withFailureHandler(e=> alert(e.message||e))
-    .generateReportViaApi(p, _reportType, notes);
-}
-function skipReportPdf(){
-  const p=pid(); if(!p||!_reportType){ alert('患者IDと作成先を確認してください'); return; }
-  google.script.run
-    .withSuccessHandler(res=>{ alert('PDF作成: '+(res?.name||'')); })
-    .withFailureHandler(e=> alert(e.message||e))
-    .generateReportViaApi(p, _reportType, null);
-}
-function cancelReport(){ q('reportGuide').style.display='none'; }
-
 /* 画面更新 */
 function refresh(){
-  clearIcfSummary();
   loadHeader();
   loadNews();
   loadThisMonth();
@@ -1045,9 +834,6 @@ function saveHandoverUI(){
   loadPresets();
   loadMetricDefinitions();
   ensureMetricEmptyMessage();
-  clearIcfSummary();
-  const rangeSelect = q('icfRange');
-  if (rangeSelect) rangeSelect.value = _icfRange;
   const p = "<?= patientId ?>";
   if (p) {
     refresh();

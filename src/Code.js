@@ -1571,14 +1571,11 @@ function composeAiReportViaOpenAI_(header, context, reportType){
 
   const sys = [
     'あなたは訪問鍼灸マッサージチームの一員として、関係者向けの報告文を日本語で作成するアシスタントです。',
-    '提供されたデータのみを根拠に、事実ベースで丁寧にまとめてください。',
-    '過度な推測や医療的断定は避け、必要な配慮や連携の視点を含めます。'
+    '提供されたデータのみを根拠に、事実ベースで丁寧語（へりくだり口調）でまとめてください。',
+    '必ず status と special の2ブロックのみを出力してください。'
   ].join('\n');
 
-  const prompt = [
-    `以下の参考情報を要約して、${meta.promptLabel}向けに報告書を作成してください。`,
-    '参考情報はそのまま羅列せず、要点を整理して文章化してください。',
-    '',
+  const rawData = [
     '【患者基本情報】',
     `- 氏名: ${header?.name || '-'}`,
     `- 患者ID: ${header?.patientId || ''}`,
@@ -1596,22 +1593,80 @@ function composeAiReportViaOpenAI_(header, context, reportType){
     treatmentLines.join('\n'),
     '',
     '【臨床指標（参考情報）】',
-    metricLines.join('\n'),
-    '',
-    '要件:',
-    `- status は2〜3段落で丁寧語（へりくだり口調）を用いて最新の経過と今後の見通しをまとめ、必ず「同意内容に沿った施術を継続しております。」を含めてください。`,
-    `- ${meta.statusInstruction}`,
-    `- special は共有したい観察事項やICF的な視点を配列で列挙し、該当がない場合は「特記すべき事項はありません。」のみを含めてください。`,
-    `- ${meta.specialInstruction}`,
-    '',
-    '出力形式（JSONのみ）:',
-    '{',
-    '  "status": "...",',
-    '  "special": ["..."]',
-    '}',
-    '',
-    'JSON以外の文章や説明は出力しないでください。'
+    metricLines.join('\n')
   ].join('\n');
+
+  const metaFamily = resolveReportTypeMeta_('family');
+  const metaCare = resolveReportTypeMeta_('caremanager');
+  const metaDoctor = resolveReportTypeMeta_('doctor');
+
+  const prompts = {
+    family: [
+      'あなたは医療・介護現場で患者様のご家族に安心感を与える文章を作成する専門家です。',
+      '以下のデータはあくまで参考情報です。そのまま羅列せず、要点だけを取り出し、',
+      '2〜3段落のやさしい丁寧語・へりくだり口調でまとめてください。',
+      '必ず文中に「同意内容に沿った施術を継続しております。」を含めてください。',
+      '',
+      '出力は必ず以下の形式にしてください：',
+      '',
+      'status:',
+      '（ここに患者様の状態・経過をまとめる）',
+      '',
+      'special:',
+      '（ここにICF視点の特記。なければ「特記すべき事項はありません。」）',
+      '',
+      '補足要件:',
+      metaFamily.statusInstruction,
+      metaFamily.specialInstruction,
+      '',
+      '参考情報：',
+      rawData
+    ].join('\n'),
+    caremanager: [
+      'あなたはケアマネジャーに提出する報告書を作成する専門家です。',
+      '以下のデータは参考情報です。そのまま羅列せず、要点を簡潔に抽出し、',
+      '2〜3段落の丁寧語・へりくだり口調でまとめてください。',
+      '必ず「同意内容に沿った施術を継続しております。」を含めてください。',
+      '',
+      '出力は必ず以下の形式にしてください：',
+      '',
+      'status:',
+      '（患者様の状態・経過）',
+      '',
+      'special:',
+      '（ADL/IADLに関連する変化や介護連携上の特記。なければ「特記すべき事項はありません。」）',
+      '',
+      '補足要件:',
+      metaCare.statusInstruction,
+      metaCare.specialInstruction,
+      '',
+      '参考情報：',
+      rawData
+    ].join('\n'),
+    doctor: [
+      'あなたは主治医に提出する医師向け報告書を作成する専門家です。',
+      '以下のデータは参考情報です。そのまま羅列せず、医学的視点を意識して要点を整理し、',
+      '2〜3段落の丁寧語・へりくだり口調でまとめてください。',
+      '必ず「同意内容に沿った施術を継続しております。」を含めてください。',
+      '',
+      '出力は必ず以下の形式にしてください：',
+      '',
+      'status:',
+      '（患者の状態・経過を医学的視点で要約）',
+      '',
+      'special:',
+      '（疾患・症状・既往歴に関する注意点。なければ「特記すべき事項はありません。」）',
+      '',
+      '補足要件:',
+      metaDoctor.statusInstruction,
+      metaDoctor.specialInstruction,
+      '',
+      '参考情報：',
+      rawData
+    ].join('\n')
+  };
+
+  const prompt = prompts[meta.key] || prompts.doctor;
 
   try {
     const res = UrlFetchApp.fetch(APP.OPENAI_ENDPOINT, {
@@ -1634,47 +1689,36 @@ function composeAiReportViaOpenAI_(header, context, reportType){
     }
     const content = (JSON.parse(res.getContentText())?.choices?.[0]?.message?.content || '').trim();
     if (!content) return null;
-    let jsonText = content;
-    if (/^```/m.test(jsonText)) {
-      jsonText = jsonText.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
-    }
-    let parsed = null;
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch (e) {
-      return null;
-    }
-    if (!parsed) return null;
 
-    let status = String(parsed.status || '').trim();
-    let specialRaw = parsed.special;
-    let special = [];
-    if (Array.isArray(specialRaw)) {
-      special = specialRaw;
-    } else if (typeof specialRaw === 'string') {
-      const s = specialRaw.trim();
-      if (s) {
-        if (s === '[]') {
-          special = [];
-        } else {
-          try {
-            const maybe = JSON.parse(s);
-            if (Array.isArray(maybe)) {
-              special = maybe;
-            } else {
-              special = s.split(/\n+/);
-            }
-          } catch (e) {
-            special = s.split(/\n+/);
-          }
-        }
-      }
+    let plain = content;
+    if (/^```/.test(plain)) {
+      plain = plain.replace(/^```[^\n]*\n?/, '');
     }
-    special = Array.isArray(special) ? special.map(x => String(x || '').trim()).filter(Boolean) : [];
+    if (/```$/.test(plain)) {
+      plain = plain.replace(/```$/, '');
+    }
+    plain = plain.trim();
+    if (!plain) return null;
+
+    const statusMatch = plain.match(/status:\s*([\s\S]*?)(?=\n\s*special:)/i);
+    const specialMatch = plain.match(/special:\s*([\s\S]*)$/i);
+    if (!statusMatch || !specialMatch) return null;
+
+    let status = statusMatch[1].trim();
+    let specialText = specialMatch[1].trim();
+
     if (!status) return null;
     if (status.indexOf('同意内容に沿った施術を継続しております。') < 0) {
       status += (status.endsWith('。') ? '' : '。') + '同意内容に沿った施術を継続しております。';
     }
+
+    // specialブロックに「参考情報」など余計な行が混ざった場合は除去
+    specialText = specialText.replace(/参考情報：[\s\S]*$/i, '').trim();
+    const specialLines = specialText
+      ? specialText.split(/\n+/).map(line => line.replace(/^[-*・]\s*/, '').trim()).filter(Boolean)
+      : [];
+    const special = specialLines.length ? specialLines : [];
+
     return {
       via: 'ai',
       status,

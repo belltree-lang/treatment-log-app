@@ -1068,14 +1068,57 @@ function getConsentContentForPatient_(pid){
 }
 
 
-function buildDoctorReportTemplate_(header, context, statusText, specialItems){
+function buildDoctorReportTemplate_(header, context, statusSections, specialItems){
   const hospital = header?.hospital ? String(header.hospital).trim() : '';
   const doctor = header?.doctor ? String(header.doctor).trim() : '';
   const name = header?.name ? String(header.name).trim() : `ID:${header?.patientId || ''}`;
   const birth = header?.birth ? String(header.birth).trim() : '';
   const consent = context?.consentText ? String(context.consentText).trim() : '情報不足';
   const frequency = context?.frequencyLabel ? String(context.frequencyLabel).trim() : '情報不足';
-  const status = statusText ? String(statusText).trim() : '（情報不足のため生成できません）';
+  const normalize = (text) => String(text || '')
+    .replace(/\s*\n+\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  const ensureSentence = (text, fallback) => {
+    const norm = normalize(text);
+    if (!norm) {
+      const fb = normalize(fallback);
+      if (!fb) return '';
+      return fb.endsWith('。') ? fb : fb + '。';
+    }
+    return norm.endsWith('。') ? norm : norm + '。';
+  };
+  const dropPeriod = (text) => normalize(text).replace(/[。]+$/, '');
+  const sections = (statusSections && typeof statusSections === 'object') ? statusSections : {};
+  const rangeLabel = normalize(context?.rangeLabel);
+  const body = ensureSentence(
+    sections.body,
+    rangeLabel
+      ? `該当期間（${rangeLabel}）の記録では、心身機能の大きな変化は確認されていません。`
+      : '心身機能の大きな変化は確認されていません。'
+  );
+  const activities = ensureSentence(
+    sections.activities,
+    '日常生活動作は概ね維持されています。'
+  );
+  const env = dropPeriod(sections.environment);
+  let participationRaw = dropPeriod(sections.participation);
+  if (env) {
+    participationRaw = [participationRaw, `環境・支援：${env}`].filter(Boolean).join(' / ');
+  }
+  const participation = ensureSentence(
+    participationRaw,
+    '社会参加や外出状況に大きな変化はありません。'
+  );
+  const metricsDigest = normalize(context?.metricsDigest);
+  let safetyRaw = dropPeriod(sections.safety);
+  if (metricsDigest) {
+    safetyRaw = [safetyRaw, `臨床指標：${metricsDigest}`].filter(Boolean).join(' / ');
+  }
+  const safety = ensureSentence(
+    safetyRaw,
+    '重大なリスクはみられず、訪問ごとにバイタルを確認しています。'
+  );
   let specialLines = [];
   if (Array.isArray(specialItems)) {
     specialLines = specialItems.map(s => String(s || '').trim()).filter(Boolean);
@@ -1101,10 +1144,16 @@ function buildDoctorReportTemplate_(header, context, statusText, specialItems){
       }
     }
   }
-  specialLines = specialLines.filter(line => line && line !== '[]').slice(0, 3);
+  specialLines = Array.from(new Set(specialLines.map(line => normalize(line)))).filter(line => line && line !== '[]').slice(0, 3);
+  const formatBullet = (text) => {
+    const norm = normalize(text);
+    if (!norm) return '';
+    const sentence = norm.endsWith('。') ? norm : norm + '。';
+    return `・${sentence}`;
+  };
   const special = specialLines.length
-    ? specialLines.map(line => `・${line}`).join('\n')
-    : '施術前にバイタル値を確認し、リスク管理を徹底しております。';
+    ? specialLines.map(formatBullet).filter(Boolean).join('\n')
+    : '・特記すべき事項はありません。';
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
   const createdAt = Utilities.formatDate(new Date(), tz, 'yyyy年M月d日');
   return [
@@ -1115,7 +1164,12 @@ function buildDoctorReportTemplate_(header, context, statusText, specialItems){
     `【同意内容】${consent}`,
     `【施術頻度】${frequency}`,
     '【患者の状態・経過】',
-    status,
+    '',
+    `心身機能・構造：${body}`,
+    `活動（ADL）：${activities}`,
+    `参加（IADL/社会参加）：${participation}`,
+    `リスク・体調管理：${safety}`,
+    '',
     '【特記すべき事項】',
     special,
     '',
@@ -1260,14 +1314,26 @@ function buildAudienceNarrative_(audienceMeta, header, range, source, sections){
       metricsDigest,
       handoverDigest
     };
-    const lines = [];
-    lines.push(`対象期間：${rangeLabel}`);
-    if (sectionSummary) lines.push(sectionSummary);
-    if (handoverDigest) lines.push(handoverDigest);
-    if (metricsDigest) lines.push(`臨床指標：${metricsDigest}`);
-    const statusText = lines.length ? lines.join('\n') : '該当期間の記録が少なく、経過を報告できません。';
+    const sectionMap = {};
+    (Array.isArray(sections) ? sections : []).forEach(sec => {
+      const key = String(sec?.key || '').trim();
+      const text = String(sec?.text || '').trim();
+      if (!key || !text) return;
+      if (sectionMap[key]) {
+        sectionMap[key] = `${sectionMap[key]} ${text}`.trim();
+      } else {
+        sectionMap[key] = text;
+      }
+    });
+    const statusSections = {
+      body: sectionMap.body || sectionMap.general || '',
+      activities: sectionMap.activities || '',
+      participation: sectionMap.participation || '',
+      environment: sectionMap.environment || '',
+      safety: sectionMap.safety || ''
+    };
     const specialItems = extractSpecialPointsFallback_(handovers);
-    return buildDoctorReportTemplate_(header, context, statusText, specialItems);
+    return buildDoctorReportTemplate_(header, context, statusSections, specialItems);
   }
 
   if (audienceKey === 'caremanager') {

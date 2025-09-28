@@ -209,10 +209,10 @@
               <select id="icfRange" onchange="onIcfRangeChange(this)"></select>
             </div>
             <div class="icf-actions">
-              <button class="btn ghost" data-icf-audience="doctor" onclick="generateIcfSummary('doctor')">医師向け報告書</button>
-              <button class="btn ghost" data-icf-audience="caremanager" onclick="generateIcfSummary('caremanager')">ケアマネ向けサマリ</button>
-              <button class="btn ghost" data-icf-audience="family" onclick="generateIcfSummary('family')">家族向けサマリ</button>
-              <button class="btn ghost" id="icfGenerateAll" onclick="generateAllIcfSummaries()">3種類まとめて生成</button>
+              <button class="btn ghost" data-icf-audience="doctor" onclick="generateAiSummary('doctor')">医師向け報告書</button>
+              <button class="btn ghost" data-icf-audience="caremanager" onclick="generateAiSummary('caremanager')">ケアマネ向けサマリ</button>
+              <button class="btn ghost" data-icf-audience="family" onclick="generateAiSummary('family')">家族向けサマリ</button>
+              <button class="btn ghost" id="icfGenerateAll" onclick="generateAllAiSummaries()">3種類まとめて生成</button>
             </div>
           </div>
           <div id="icfSummaryStatus" class="muted icf-status-text"></div>
@@ -673,21 +673,72 @@ function fallbackCopy(text, successMessage){
   }
 }
 
-function callGenerateSummary(pidValue, rangeKey, audience){
+function callGenerateAiSummary(pidValue, rangeKey, audience){
   return new Promise((resolve, reject)=>{
     google.script.run
       .withSuccessHandler(resolve)
       .withFailureHandler(err => reject(err))
-      .generateSummaryForAudience(pidValue, rangeKey, audience);
+      .generateAiSummaryServer(pidValue, rangeKey, audience); // 新しいサーバー関数
   });
 }
+
+function callGenerateAllAiSummaries(pidValue, rangeLabel){
+  return new Promise((resolve, reject)=>{
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(err => reject(err))
+      .generateAllAiSummariesServer(pidValue, rangeLabel); // 新しいサーバー関数
+  });
+}
+
+function generateAiSummary(audience){
+  const p = pid();
+  if(!p){ alert('患者IDを入力してください'); return; }
+  const rangeKey = _icfSummaryState.range || 'all';
+  const label = getIcfAudienceLabel(audience);
+  setIcfButtonsDisabled(true);
+  updateIcfSummaryStatus(`${label}を生成しています…`);
+  callGenerateAiSummary(p, rangeKey, audience)
+    .then(res => {
+      const ok = handleIcfSummaryResponse(res, audience);
+      if (ok) updateIcfSummaryStatus(`${label}を更新しました。`);
+    })
+    .catch(err => {
+      console.error('[generateAiSummary]', err);
+      updateIcfSummaryStatus(`${label}の生成に失敗しました：${err.message || err}`);
+    })
+    .finally(()=> setIcfButtonsDisabled(false));
+}
+
+async function generateAllAiSummaries(){
+  const p = pid();
+  if(!p){ alert('患者IDを入力してください'); return; }
+  const rangeKey = _icfSummaryState.range || 'all';
+  const rangeOption = ICF_RANGE_OPTIONS.find(opt => opt.key === rangeKey);
+  const rangeLabel = rangeOption ? rangeOption.label : rangeKey;
+  setIcfButtonsDisabled(true);
+  updateIcfSummaryStatus('3種類のサマリを生成しています…');
+  try {
+    const res = await callGenerateAllAiSummaries(p, rangeLabel);
+    if (!res || !res.ok){
+      alert('サマリ生成に失敗しました。');
+      return;
+    }
+    _icfSummaryState.results = res.reports;
+    renderIcfSummaryResults();
+    updateIcfSummaryStatus('3種類のサマリを更新しました。');
+  } finally {
+    setIcfButtonsDisabled(false);
+  }
+}
+
 
 function callGetReportsForUI(pidValue, rangeLabel){
   return new Promise((resolve, reject)=>{
     google.script.run
       .withSuccessHandler(resolve)
       .withFailureHandler(err => reject(err))
-      .getReportsForUI(pidValue, rangeLabel);
+      .generateAllAiSummariesServer(pidValue, rangeLabel);
   });
 }
 

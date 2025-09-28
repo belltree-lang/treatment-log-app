@@ -682,6 +682,15 @@ function callGenerateSummary(pidValue, rangeKey, audience){
   });
 }
 
+function callGetReportsForUI(pidValue, rangeLabel){
+  return new Promise((resolve, reject)=>{
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(err => reject(err))
+      .getReportsForUI(pidValue, rangeLabel);
+  });
+}
+
 function handleIcfSummaryResponse(res, fallbackAudience){
   const key = res && res.audience ? res.audience : fallbackAudience;
   if (!res || !res.ok){
@@ -729,27 +738,28 @@ async function generateAllIcfSummaries(){
   const p = pid();
   if(!p){ alert('患者IDを入力してください'); return; }
   const rangeKey = _icfSummaryState.range || 'all';
-  const audiences = ['doctor','caremanager','family'];
-  let hadError = false;
+  const rangeOption = ICF_RANGE_OPTIONS.find(opt => opt.key === rangeKey);
+  const rangeLabel = rangeOption ? rangeOption.label : rangeKey;
   setIcfButtonsDisabled(true);
   updateIcfSummaryStatus('3種類のサマリを生成しています…');
   try {
-    for (const audience of audiences){
-      try {
-        const res = await callGenerateSummary(p, rangeKey, audience);
-        const ok = handleIcfSummaryResponse(res, audience);
-        if (!ok) hadError = true;
-      } catch (err) {
-        hadError = true;
-        console.error('[generateAllIcfSummaries]', err);
-        const msg = err && err.message ? err.message : String(err);
-        const label = getIcfAudienceLabel(audience);
-        updateIcfSummaryStatus(`${label}の生成に失敗しました：${msg}`);
+    const res = await callGetReportsForUI(p, rangeLabel);
+    const aggregated = res && res.reports ? res.reports : null;
+    if (!res || !res.ok || !aggregated || !aggregated.ok){
+      const message = res && res.rangeLabel ? `${res.rangeLabel}のサマリ生成に失敗しました。` : 'サマリ生成に失敗しました。';
+      updateIcfSummaryStatus(message);
+      alert(message);
+      return;
+    }
+    const results = {};
+    ['doctor','caremanager','family'].forEach(key => {
+      if (aggregated[key]) {
+        results[key] = aggregated[key];
       }
-    }
-    if (!hadError){
-      updateIcfSummaryStatus('3種類のサマリを更新しました。');
-    }
+    });
+    _icfSummaryState.results = results;
+    renderIcfSummaryResults();
+    updateIcfSummaryStatus('3種類のサマリを更新しました。');
   } finally {
     setIcfButtonsDisabled(false);
   }

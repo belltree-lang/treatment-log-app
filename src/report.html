@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI報告書プレビュー</title>
+<style>
+  body{ font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; margin:0; padding:24px; background:#f7f7f9; color:#1f2933; }
+  h1{ margin-top:0; font-size:1.5rem; }
+  .card{ background:#fff; border-radius:16px; box-shadow:0 8px 24px rgba(15,23,42,0.08); padding:20px; max-width:960px; margin:0 auto; }
+  .controls{ display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+  .controls label{ display:flex; flex-direction:column; font-weight:600; font-size:0.95rem; gap:6px; }
+  .controls input,.controls select{ border:1px solid #d1d5db; border-radius:10px; padding:10px 12px; font-size:0.95rem; }
+  button{ appearance:none; border:none; border-radius:999px; background:#2563eb; color:#fff; padding:10px 18px; font-size:0.95rem; font-weight:600; cursor:pointer; }
+  button:disabled{ background:#9ca3af; cursor:not-allowed; }
+  .status{ margin-bottom:12px; color:#4b5563; font-size:0.9rem; }
+  .report-block{ background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin-top:12px; }
+  .report-block h2{ margin:0 0 6px; font-size:1.1rem; }
+  pre{ white-space:pre-wrap; word-break:break-word; font-family:"Noto Sans JP",system-ui,sans-serif; font-size:0.95rem; margin:0; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>AI報告書プレビュー</h1>
+    <div class="controls">
+      <label>
+        患者ID
+        <input id="reportPid" placeholder="例: 123" value="<?= patientId ?>" />
+      </label>
+      <label>
+        対象期間
+        <select id="reportRange">
+          <option value="直近1か月">直近1か月</option>
+          <option value="直近2か月">直近2か月</option>
+          <option value="直近3か月">直近3か月</option>
+          <option value="全期間">全期間</option>
+        </select>
+      </label>
+      <div style="display:flex; align-items:flex-end;">
+        <button id="reportFetch">報告書を生成</button>
+      </div>
+    </div>
+    <div id="reportStatus" class="status">対象を選んで「報告書を生成」をクリックしてください。</div>
+    <div class="report-block">
+      <h2>医師向け報告書</h2>
+      <pre id="doctor"></pre>
+    </div>
+    <div class="report-block">
+      <h2>ケアマネ向けサマリ</h2>
+      <pre id="caremanager"></pre>
+    </div>
+    <div class="report-block">
+      <h2>家族向けサマリ</h2>
+      <pre id="family"></pre>
+    </div>
+  </div>
+
+<script>
+function setReportStatus(message){
+  document.getElementById('reportStatus').textContent = message || '';
+}
+function setButtonDisabled(disabled){
+  document.getElementById('reportFetch').disabled = !!disabled;
+}
+function renderReports(payload){
+  ['doctor','caremanager','family'].forEach(key => {
+    const el = document.getElementById(key);
+    if (!el) return;
+    const text = payload && payload[key] ? String(payload[key]).trim() : '';
+    el.textContent = text || '生成できませんでした';
+  });
+}
+function fetchReports(){
+  const pid = document.getElementById('reportPid').value.trim();
+  if (!pid){
+    alert('患者IDを入力してください');
+    return;
+  }
+  const range = document.getElementById('reportRange').value;
+  setButtonDisabled(true);
+  setReportStatus('報告書を生成しています…');
+  google.script.run
+    .withSuccessHandler(res => {
+      const reports = res && res.reports ? res.reports : null;
+      if (!res || !res.ok || !reports || !reports.ok){
+        setReportStatus('報告書の生成に失敗しました。');
+        renderReports({});
+        setButtonDisabled(false);
+        return;
+      }
+      renderReports({
+        doctor: reports.doctor?.text || '',
+        caremanager: reports.caremanager?.text || '',
+        family: reports.family?.text || ''
+      });
+      const label = res.rangeLabel || range;
+      setReportStatus(`${label}の報告書を更新しました。`);
+      setButtonDisabled(false);
+    })
+    .withFailureHandler(err => {
+      console.error('[fetchReports]', err);
+      const msg = err && err.message ? err.message : '不明なエラーが発生しました。';
+      setReportStatus(`報告書の生成に失敗しました：${msg}`);
+      renderReports({});
+      setButtonDisabled(false);
+    })
+    .getReportsForUI(pid, range);
+}
+document.getElementById('reportFetch').addEventListener('click', fetchReports);
+</script>
+</body>
+</html>

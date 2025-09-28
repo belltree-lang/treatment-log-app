@@ -1310,7 +1310,20 @@ function buildMetricDigestForSummary_(metrics){
 }
 
 function resolveReportTypeMeta_(reportType){
-  return { key: String(reportType || ''), label: '（停止中）', specialLabel: '' };
+  const normalized = String(reportType || 'doctor').trim();
+  const key = normalized.toLowerCase();
+  switch (key) {
+    case 'doctor':
+      return { key: 'doctor', label: '医師向け報告書', specialLabel: '特記すべき事項' };
+    case 'caremanager':
+    case 'care_manager':
+    case 'care-manager':
+      return { key: 'caremanager', label: 'ケアマネ向けサマリ', specialLabel: '' };
+    case 'family':
+      return { key: 'family', label: '家族向けサマリ', specialLabel: '' };
+    default:
+      return { key, label: 'サマリ', specialLabel: '' };
+  }
 }
 
 function normalizeAudienceRange_(rangeInput){
@@ -1454,6 +1467,13 @@ function composeAiReportViaOpenAI_(header, context, reportType){
     });
     const text = res.getContentText();
     const httpCode = res.getResponseCode();
+    Logger.log(JSON.stringify({
+      at: 'composeAiReportViaOpenAI_',
+      audience: reportType,
+      httpCode,
+      requestBytes: JSON.stringify(payload).length,
+      responseBytes: text ? text.length : 0
+    }));
     if (httpCode < 200 || httpCode >= 300) {
       Logger.log(`composeAiReportViaOpenAI_ error: HTTP ${httpCode} ${text}`);
       return null;
@@ -1475,7 +1495,9 @@ function composeAiReportViaOpenAI_(header, context, reportType){
       via: 'openai',
       audience: String(reportType || ''),
       text: String(parsed?.text || '').trim(),
-      special: parsed?.special
+      special: parsed?.special,
+      httpCode,
+      responseLength: message ? String(message).length : 0
     };
     if (!result.text) {
       Logger.log('composeAiReportViaOpenAI_ returned empty text');
@@ -1518,6 +1540,31 @@ function normalizeReportSpecial_(special){
     .split(/\r?\n|[,、・]/)
     .map(item => normalizeDoctorReportText_(item))
     .filter(Boolean);
+}
+
+function recordAiReportOutcome_(header, range, audienceMeta, outcome, final){
+  if (!header || !header.patientId) return;
+  const sheet = ensureAiReportSheet_();
+  const statusParts = [];
+  statusParts.push(outcome.usedAi ? 'via=ai' : 'via=local');
+  const meta = outcome.meta || {};
+  if (meta.noteCount != null) statusParts.push(`notes=${meta.noteCount}`);
+  if (meta.handoverCount != null) statusParts.push(`handovers=${meta.handoverCount}`);
+  if (meta.metricCount != null) statusParts.push(`metrics=${meta.metricCount}`);
+  if (final && final.httpCode) statusParts.push(`http=${final.httpCode}`);
+  if (final && typeof final.responseLength === 'number') statusParts.push(`len=${final.responseLength}`);
+  const status = statusParts.join(' | ');
+  const specialText = Array.isArray(outcome.special)
+    ? outcome.special.join('\n')
+    : String(outcome.special || '');
+  sheet.appendRow([
+    new Date(),
+    String(header.patientId || ''),
+    range && range.label ? range.label : '',
+    audienceMeta && audienceMeta.label ? audienceMeta.label : audienceMeta.key || '',
+    status,
+    specialText
+  ]);
 }
 
 function buildIcfSource_(pid, range){
@@ -1661,22 +1708,30 @@ function composeAudienceReport_(source, range, sections, audienceKey){
   const final = ai && finalHasText_(ai) ? ai : local;
   const special = normalizeReportSpecial_(final.special);
   const text = String(final.text || '').trim();
+  const meta = {
+    patientFound: true,
+    rangeLabel: range.label,
+    noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
+    handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
+    metricCount: source.metrics && Array.isArray(source.metrics.metrics) ? source.metrics.metrics.length : 0
+  };
 
-  return {
+  const outcome = {
     ok: true,
     usedAi: final.via === 'openai',
     audience: audienceMeta.key,
     audienceLabel: audienceMeta.label,
     text,
     special,
-    meta: {
-      patientFound: true,
-      rangeLabel: range.label,
-      noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
-      handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
-      metricCount: source.metrics && Array.isArray(source.metrics.metrics) ? source.metrics.metrics.length : 0
-    }
+    meta
   };
+  try {
+    recordAiReportOutcome_(source.header, range, audienceMeta, outcome, final);
+  } catch (err) {
+    Logger.log('recordAiReportOutcome_ error: ' + err);
+  }
+
+  return outcome;
 }
 
 function finalHasText_(result){
@@ -1754,13 +1809,35 @@ function getReportsForUI(patientId, rangeInput){
 }
 
 function generateAiReport(payload){
-  const reportType = payload && typeof payload === 'object' && payload.reportType ? String(payload.reportType) : '';
-  return {
-    ok: false,
-    usedAi: false,
-    reportType,
-    message: '現在、報告書自動生成は停止中です'
-  };
+  const meta = payload && typeof payload === 'object' ? resolveReportTypeMeta_(payload.reportType) : resolveReportTypeMeta_('');
+  const patientId = payload && typeof payload === 'object'
+    ? (payload.patientId || payload.pid || payload.id || '')
+    : '';
+  if (!patientId) {
+    return {
+      ok: false,
+      usedAi: false,
+      reportType: meta.key,
+      message: '患者IDが指定されていません。'
+    };
+  }
+  const rangeKeyRaw = payload && typeof payload === 'object' && payload.range ? payload.range : (payload && payload.rangeKey) ? payload.rangeKey : 'all';
+  const rangeKey = normalizeAudienceRange_(rangeKeyRaw);
+  const range = resolveIcfSummaryRange_(rangeKey || 'all');
+  const source = buildIcfSource_(patientId, range);
+  if (!source.patientFound) {
+    return {
+      ok: false,
+      usedAi: false,
+      reportType: meta.key,
+      message: '患者が見つかりませんでした。',
+      meta: { patientFound: false, rangeLabel: range.label }
+    };
+  }
+  const composed = composeIcfLocal_(source);
+  const sections = composed.sections || [];
+  const result = composeAudienceReport_(source, range, sections, meta.key);
+  return Object.assign({}, result, { reportType: meta.key });
 }
 
 /***** レポートPDF（API→フォールバック） *****/
@@ -1770,7 +1847,12 @@ function getPatientHeaderForReport_(pid){
   return header;
 }
 function generateReportViaApi(pid, type, notes){
-  throw new Error('現在、報告書自動生成は停止中です');
+  const res = generateAiReport({ patientId: pid, reportType: type, range: '1m' });
+  if (!res || !res.ok) {
+    const message = res && res.message ? res.message : '報告書の生成に失敗しました。';
+    throw new Error(message);
+  }
+  return res.text;
 }
 
 function ensureIntakeScaffolding_() {

@@ -801,46 +801,166 @@ function updateBurdenShare(pid, shareText){
 }
 
 
-/***** 請求集計（回数/負担） *****/
+/***** 請求集計（回数/負担/請求額） *****/
+function parseBillingMonth_(text) {
+  const trimmed = String(text || '').trim();
+  const match = trimmed.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  return {
+    year,
+    month,
+    ym: match[1] + '-' + match[2],
+    sheetSuffix: match[1] + match[2]
+  };
+}
+
+function calculateBillingForMonth(ym) {
+  const parsed = parseBillingMonth_(ym);
+  if (!parsed) throw new Error('請求月は YYYY-MM 形式で指定してください');
+
+  const treatment = sh('施術録');
+  const patients = sh('患者情報');
+
+  const patientLastCol = patients.getLastColumn();
+  const patientLastRow = patients.getLastRow();
+  const patientHead = patients.getRange(1, 1, 1, patientLastCol).getDisplayValues()[0];
+  const cRec = resolveColByLabels_(patientHead, LABELS.recNo, '施術録番号');
+  const cName = resolveColByLabels_(patientHead, LABELS.name, '名前');
+  const cShare = resolveColByLabels_(patientHead, LABELS.share, '負担割合');
+
+  const patientValues = patientLastRow > 1
+    ? patients.getRange(2, 1, patientLastRow - 1, patientLastCol).getDisplayValues()
+    : [];
+  const patientMap = {};
+  patientValues.forEach(row => {
+    const rec = String(row[cRec - 1] || '').trim();
+    if (!rec) return;
+    const shareRaw = row[cShare - 1] || '';
+    const shareRatio = normalizeBurdenRatio_(shareRaw);
+    const shareDisp = shareRatio ? toBurdenDisp_(shareRatio) : shareRaw;
+    patientMap[rec] = {
+      name: row[cName - 1] || '',
+      shareDisplay: shareDisp,
+      shareRatio
+    };
+  });
+
+  const treatmentLastRow = treatment.getLastRow();
+  const counts = {};
+  if (treatmentLastRow >= 2) {
+    const treatmentValues = treatment.getRange(2, 1, treatmentLastRow - 1, 6).getValues();
+    const start = new Date(parsed.year, parsed.month - 1, 1, 0, 0, 0);
+    const end = new Date(parsed.year, parsed.month, 0, 23, 59, 59);
+    treatmentValues.forEach(row => {
+      const timestamp = row[0];
+      const rec = String(row[1] || '').trim();
+      if (!rec) return;
+      const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+      if (isNaN(date.getTime())) return;
+      if (date >= start && date <= end) {
+        counts[rec] = (counts[rec] || 0) + 1;
+      }
+    });
+  }
+
+  const unit = APP.BASE_FEE_YEN || 4170;
+  const rows = Object.keys(counts)
+    .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0))
+    .map(rec => {
+      const info = patientMap[rec] || { name: '', shareDisplay: '', shareRatio: null };
+      const totalCount = counts[rec];
+      const amount = info.shareRatio != null ? Math.round(totalCount * unit * info.shareRatio) : null;
+      return {
+        recNo: rec,
+        name: info.name,
+        totalCount,
+        shareDisplay: info.shareDisplay,
+        shareRatio: info.shareRatio,
+        amount
+      };
+    });
+
+  return {
+    ym: parsed.ym,
+    year: parsed.year,
+    month: parsed.month,
+    sheetName: '請求集計_' + parsed.sheetSuffix,
+    unitFee: unit,
+    rows
+  };
+}
+
+function generateBillingAggregationSheet(ym) {
+  const result = calculateBillingForMonth(ym);
+  const wb = ss();
+  let sheet = wb.getSheetByName(result.sheetName);
+  if (!sheet) {
+    sheet = wb.insertSheet(result.sheetName);
+  } else {
+    sheet.clear();
+  }
+
+  const header = ['施術録番号', '患者様氏名', '合計施術回数', '負担割合', '請求金額'];
+  sheet.getRange(1, 1, 1, header.length).setValues([header]);
+
+  if (result.rows.length) {
+    const values = result.rows.map(row => [
+      row.recNo,
+      row.name,
+      row.totalCount,
+      row.shareDisplay,
+      row.amount != null ? row.amount : ''
+    ]);
+    sheet.getRange(2, 1, values.length, header.length).setValues(values);
+  }
+
+  return { sheetName: result.sheetName, rowCount: result.rows.length };
+}
+
 function rebuildInvoiceForMonth_(year, month){
+  const ym = String(year) + '-' + String(month).padStart(2, '0');
+  const result = calculateBillingForMonth(ym);
+
   const ssb = ss();
-  const t = sh('施術録'); const p = sh('患者情報');
   const outName = year + '年' + month + '月分';
-  let out = ssb.getSheetByName(outName); if(!out) out = ssb.insertSheet(outName); else out.clear();
+  let out = ssb.getSheetByName(outName);
+  if(!out) out = ssb.insertSheet(outName); else out.clear();
   out.getRange(1,1,1,4).setValues([['施術録番号','患者様氏名','合計施術回数','負担割合']]);
 
-  const plc = p.getLastColumn(), plr=p.getLastRow();
-  const ph = p.getRange(1,1,1,plc).getDisplayValues()[0];
-  const cRec = resolveColByLabels_(ph, LABELS.recNo, '施術録番号');
-  const cName= resolveColByLabels_(ph, LABELS.name,  '名前');
-  const cShare=resolveColByLabels_(ph, LABELS.share, '負担割合');
-  const pvals = plr>1 ? p.getRange(2,1,plr-1,plc).getDisplayValues() : [];
-  const pmap = {};
-  pvals.forEach(r=>{
-    const rec=String(r[cRec-1]||'').trim(); if(!rec) return;
-    pmap[rec]={ name:r[cName-1]||'', share:r[cShare-1]||'' };
-  });
-
-  const tlr=t.getLastRow(); if(tlr<2) return;
-  const tvals=t.getRange(2,1,tlr-1,6).getValues();
-  const start=new Date(year, month-1, 1, 0,0,0);
-  const end  =new Date(year, month, 0, 23,59,59);
-  const counts={};
-  tvals.forEach(r=>{
-    const ts=r[0], id=String(r[1]||'').trim(); if(!id) return;
-    const d = ts instanceof Date ? ts : new Date(ts); if(isNaN(d.getTime())) return;
-    if(d>=start && d<=end) counts[id]=(counts[id]||0)+1;
-  });
-
-  const rows=[];
-  Object.keys(counts).sort((a,b)=> (parseInt(a,10)||0)-(parseInt(b,10)||0)).forEach(rec=>{
-    const info=pmap[rec]||{name:'',share:''};
-    rows.push([rec, info.name, counts[rec], info.share]);
-  });
-  if(rows.length) out.getRange(2,1,rows.length,4).setValues(rows);
+  if (result.rows.length) {
+    const rows = result.rows.map(r => [r.recNo, r.name, r.totalCount, r.shareDisplay]);
+    out.getRange(2, 1, rows.length, 4).setValues(rows);
+  }
 }
 function rebuildInvoiceForCurrentMonth(){
   const now=new Date(); rebuildInvoiceForMonth_(now.getFullYear(), now.getMonth()+1);
+}
+
+function promptBillingAggregation(){
+  const ui = SpreadsheetApp.getUi();
+  while (true) {
+    const response = ui.prompt('請求集計', '請求月 (YYYY-MM) を入力してください。', ui.ButtonSet.OK_CANCEL);
+    const button = response.getSelectedButton();
+    if (button !== ui.Button.OK) return;
+
+    const value = response.getResponseText();
+    const parsed = parseBillingMonth_(value);
+    if (!parsed) {
+      ui.alert('請求月は YYYY-MM 形式で入力してください。');
+      continue;
+    }
+
+    try {
+      const result = generateBillingAggregationSheet(parsed.ym);
+      ui.alert('請求集計', '請求月 ' + parsed.ym + ' の集計が完了しました。\n出力先シート: ' + result.sheetName, ui.ButtonSet.OK);
+    } catch (e) {
+      Logger.log('[promptBillingAggregation] ' + e);
+      ui.alert('請求集計に失敗しました: ' + (e && e.message ? e.message : e));
+    }
+    return;
+  }
 }
 
 /***** PDF保存（Doc→PDFエクスポート方式：確実にPDF化） *****/
@@ -1856,9 +1976,12 @@ function doGet(e) {
 
 /***** メニュー *****/
 function onOpen(){
-  SpreadsheetApp.getUi()
-    .createMenu('請求')
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('請求')
     .addItem('今月の集計（回数+負担割合）','rebuildInvoiceForCurrentMonth')
+    .addToUi();
+  ui.createMenu('請求集計')
+    .addItem('請求月を指定して集計','promptBillingAggregation')
     .addToUi();
 }
 

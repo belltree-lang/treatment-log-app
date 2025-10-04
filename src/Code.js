@@ -2520,6 +2520,35 @@ function submitTreatment(payload) {
       recordClinicalMetrics_(pid, payload.clinicalMetrics, now, user);
     }
 
+    const job = { patientId: pid };
+    let hasFollowUp = false;
+
+    const presetLabel = String(payload?.presetLabel || '').trim();
+    if (presetLabel) {
+      job.presetLabel = presetLabel;
+      hasFollowUp = true;
+    }
+
+    const burdenShare = payload?.burdenShare;
+    if (burdenShare != null && String(burdenShare).trim() !== '') {
+      job.burdenShare = String(burdenShare).trim();
+      hasFollowUp = true;
+    }
+
+    const visitPlanDate = payload?.actions?.visitPlanDate;
+    if (visitPlanDate) {
+      job.visitPlanDate = String(visitPlanDate).trim();
+      if (job.visitPlanDate) {
+        hasFollowUp = true;
+      } else {
+        delete job.visitPlanDate;
+      }
+    }
+
+    if (hasFollowUp) {
+      queueAfterTreatmentJob(job);
+    }
+
     return { ok: true, vitals: vit, wroteTo: s.getName(), row };
   } catch (e) {
     throw e;

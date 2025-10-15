@@ -427,6 +427,7 @@ function listPatientIds(){
   const lc=s.getLastColumn(); const head=s.getRange(1,1,1,lc).getDisplayValues()[0];
   const cRec = getColFlexible_(head, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
   const cName = getColFlexible_(head, LABELS.name, PATIENT_COLS_FIXED.name, '名前');
+  const cFuri = getColFlexible_(head, LABELS.furigana, PATIENT_COLS_FIXED.furigana, 'ﾌﾘｶﾞﾅ');
   const vals=s.getRange(2,1,lr-1,lc).getDisplayValues();
   const seen = new Set();
   const out = [];
@@ -434,7 +435,11 @@ function listPatientIds(){
     const id = normId_(r[cRec-1]);
     if(!id || seen.has(id)) return;
     seen.add(id);
-    out.push({ id, name: r[cName-1] || '' });
+    out.push({
+      id,
+      name: r[cName-1] || '',
+      kana: (cFuri && r[cFuri-1]) ? r[cFuri-1] : ''
+    });
   });
   return out;
 }

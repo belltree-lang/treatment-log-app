@@ -254,6 +254,8 @@ function jsString(s){ return JSON.stringify(String(s == null ? '' : s)); }
 const PATIENT_ID_CACHE_KEY = 'treatmentLogApp.patientIdCache';
 let _patientIdIndex = {};
 let _patientIdList = [];
+let _patientIdKanaIndex = {};
+let _patientIdOptionKeys = new Set();
 
 function normalizePatientIdKey(id){
   if (id == null) return '';
@@ -266,10 +268,237 @@ function normalizePatientIdKey(id){
   return text;
 }
 
-function formatPatientIdDisplay(id, name){
+const KANA_SMALL_TO_FULL_MAP = {
+  'ァ': 'ア', 'ィ': 'イ', 'ゥ': 'ウ', 'ェ': 'エ', 'ォ': 'オ',
+  'ャ': 'ヤ', 'ュ': 'ユ', 'ョ': 'ヨ', 'ッ': 'ツ',
+  'ヮ': 'ワ', 'ヵ': 'カ', 'ヶ': 'ケ',
+  'ゎ': 'ワ', 'ゕ': 'カ', 'ゖ': 'ケ'
+};
+const KANA_DAKUTEN_BASE_MAP = {
+  'ガ': 'カ', 'ギ': 'キ', 'グ': 'ク', 'ゲ': 'ケ', 'ゴ': 'コ',
+  'ザ': 'サ', 'ジ': 'シ', 'ズ': 'ス', 'ゼ': 'セ', 'ゾ': 'ソ',
+  'ダ': 'タ', 'ヂ': 'チ', 'ヅ': 'ツ', 'デ': 'テ', 'ド': 'ト',
+  'バ': 'ハ', 'ビ': 'ヒ', 'ブ': 'フ', 'ベ': 'ヘ', 'ボ': 'ホ',
+  'パ': 'ハ', 'ピ': 'ヒ', 'プ': 'フ', 'ペ': 'ヘ', 'ポ': 'ホ',
+  'ヴ': 'ウ', 'ヷ': 'ワ', 'ヸ': 'イ', 'ヹ': 'エ', 'ヺ': 'ヲ'
+};
+const LONG_SOUND_MARKS_REGEX = /[\u30fc\u2010-\u2015\u2212\uFF0D]/g;
+
+function toKatakanaSearchText(text){
+  if (text == null) return '';
+  let value = String(text).trim();
+  if (!value) return '';
+  if (typeof value.normalize === 'function') {
+    value = value.normalize('NFKC');
+  }
+  value = value.replace(/[ぁ-ん]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60));
+  value = value.replace(/[\s\u3000]+/g, '');
+  value = value.replace(/[\u3099\u309A]/g, '');
+  return value;
+}
+
+function expandSmallKana(text){
+  if (!text) return '';
+  return text.replace(/[ァィゥェォャュョッヮヵヶゎゕゖ]/g, ch => KANA_SMALL_TO_FULL_MAP[ch] || ch);
+}
+
+function normalizeKatakanaString(text){
+  if (!text) return '';
+  const expanded = expandSmallKana(text);
+  const withoutMarks = expanded.replace(/[\u3099\u309A]/g, '');
+  const withoutLong = withoutMarks.replace(LONG_SOUND_MARKS_REGEX, '');
+  const base = withoutLong.split('').map(ch => KANA_DAKUTEN_BASE_MAP[ch] || ch);
+  return base.join('');
+}
+
+function normalizePatientKana(text){
+  const katakana = toKatakanaSearchText(text);
+  if (!katakana) return '';
+  return normalizeKatakanaString(katakana);
+}
+
+function katakanaToHiragana(text){
+  if (!text) return '';
+  return text.replace(/[ァ-ン]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+}
+
+function createPatientRecord(id, name, kana){
+  const key = normalizePatientIdKey(id);
+  if (!key) return null;
+  const nameText = name ? String(name).trim() : '';
+  const kanaText = kana ? String(kana).trim() : '';
+  const record = {
+    id: key,
+    name: nameText,
+    kana: kanaText,
+    kanaKatakana: '',
+    kanaHiragana: '',
+    kanaNormalized: '',
+    kanaIndexKey: ''
+  };
+  if (kanaText){
+    const katakana = toKatakanaSearchText(kanaText);
+    record.kanaKatakana = katakana;
+    record.kanaHiragana = katakanaToHiragana(katakana);
+    record.kanaNormalized = normalizePatientKana(kanaText);
+  }
+  return record;
+}
+
+function updateRecordKanaIndex(record){
+  if (!record) return;
+  const prevKey = record.kanaIndexKey || '';
+  if (prevKey && _patientIdKanaIndex[prevKey]){
+    _patientIdKanaIndex[prevKey] = _patientIdKanaIndex[prevKey].filter(r => r.id !== record.id);
+    if (!_patientIdKanaIndex[prevKey].length){
+      delete _patientIdKanaIndex[prevKey];
+    }
+  }
+  const nextKey = record.kanaNormalized || '';
+  if (nextKey){
+    if (!_patientIdKanaIndex[nextKey]){
+      _patientIdKanaIndex[nextKey] = [];
+    }
+    _patientIdKanaIndex[nextKey].push(record);
+    record.kanaIndexKey = nextKey;
+  } else {
+    record.kanaIndexKey = '';
+  }
+}
+
+function registerPatientRecord(record){
+  if (!record || !record.id) return null;
+  const existing = _patientIdIndex[record.id];
+  if (existing){
+    if (record.name && record.name !== existing.name){
+      existing.name = record.name;
+    }
+    if (record.kana !== existing.kana){
+      existing.kana = record.kana;
+      existing.kanaKatakana = record.kanaKatakana;
+      existing.kanaHiragana = record.kanaHiragana;
+      existing.kanaNormalized = record.kanaNormalized;
+      updateRecordKanaIndex(existing);
+    }
+    return existing;
+  }
+  const stored = Object.assign({ kanaIndexKey: '' }, record);
+  _patientIdIndex[stored.id] = stored;
+  _patientIdList.push(stored);
+  updateRecordKanaIndex(stored);
+  return stored;
+}
+
+function resetPatientIdCaches(){
+  _patientIdIndex = {};
+  _patientIdList = [];
+  _patientIdKanaIndex = {};
+  _patientIdOptionKeys = new Set();
+}
+
+function appendPatientOption(container, record, value, label, source){
+  if (!container || !record) return;
+  if (value == null) return;
+  const trimmed = String(value).trim();
+  if (!trimmed) return;
+  const key = `${record.id}::${source || 'value'}::${trimmed}`;
+  if (_patientIdOptionKeys.has(key)) return;
+  _patientIdOptionKeys.add(key);
+  const option = document.createElement('option');
+  option.value = trimmed;
+  const display = label || trimmed;
+  option.textContent = display;
+  option.label = display;
+  option.setAttribute('label', display);
+  option.dataset.id = record.id;
+  if (source) option.dataset.source = source;
+  container.appendChild(option);
+}
+
+function appendPatientIdOptions(record, container){
+  if (!record || !container) return;
+  const label = formatPatientIdDisplay(record.id, record.name, record.kana);
+  appendPatientOption(container, record, label, label, 'display');
+  appendPatientOption(container, record, record.id, label, 'id');
+  if (record.kana){
+    appendPatientOption(container, record, record.kana, label, 'kana-original');
+  }
+  if (record.kanaKatakana){
+    appendPatientOption(container, record, record.kanaKatakana, label, 'kana-katakana');
+  }
+  if (record.kanaHiragana){
+    appendPatientOption(container, record, record.kanaHiragana, label, 'kana-hiragana');
+  }
+  if (record.kanaNormalized && record.kanaNormalized !== record.kanaKatakana){
+    appendPatientOption(container, record, record.kanaNormalized, label, 'kana-normalized');
+  }
+}
+
+function findRecordByDatalistValue(value){
+  if (value == null) return null;
+  const dl = q('pidlist');
+  if (!dl) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  const options = dl.options;
+  for (let i=0; i<options.length; i++){
+    const opt = options[i];
+    if (opt.value !== trimmed) continue;
+    const id = opt.dataset && opt.dataset.id;
+    if (id && _patientIdIndex[id]){
+      return _patientIdIndex[id];
+    }
+  }
+  return null;
+}
+
+function findPatientRecordByKana(input){
+  if (input == null) return null;
+  const raw = String(input).trim();
+  if (!raw) return null;
+  const katakana = toKatakanaSearchText(raw);
+  const normalized = normalizePatientKana(raw);
+  const exactMatches = [];
+  const prefixMatches = [];
+  if (katakana){
+    _patientIdList.forEach(rec => {
+      if (!rec || !rec.kanaKatakana) return;
+      if (rec.kanaKatakana === katakana){
+        exactMatches.push(rec);
+      } else if (rec.kanaKatakana.startsWith(katakana)){
+        prefixMatches.push(rec);
+      }
+    });
+    if (exactMatches.length === 1) return exactMatches[0];
+    if (!exactMatches.length && prefixMatches.length === 1) return prefixMatches[0];
+  }
+  if (normalized){
+    const candidates = _patientIdKanaIndex[normalized];
+    if (candidates && candidates.length === 1) return candidates[0];
+    const normalizedPrefix = [];
+    const normalizedPartial = [];
+    _patientIdList.forEach(rec => {
+      if (!rec || !rec.kanaNormalized) return;
+      if (rec.kanaNormalized.startsWith(normalized)){
+        normalizedPrefix.push(rec);
+      } else if (rec.kanaNormalized.includes(normalized)){
+        normalizedPartial.push(rec);
+      }
+    });
+    if (normalizedPrefix.length === 1) return normalizedPrefix[0];
+    if (!normalizedPrefix.length && normalizedPartial.length === 1) return normalizedPartial[0];
+  }
+  return null;
+}
+
+function formatPatientIdDisplay(id, name, kana){
   const key = normalizePatientIdKey(id);
   if (!key) return '';
   const nameText = name ? String(name).trim() : '';
+  const kanaText = kana ? String(kana).trim() : '';
+  if (nameText && kanaText){
+    return `${key} – ${nameText}（${kanaText}）`;
+  }
   return nameText ? `${key} – ${nameText}` : key;
 }
 
@@ -289,25 +518,16 @@ function setPatientIdInputDisplay(id, name){
   if (!key){ setv('pid', ''); return; }
   const record = _patientIdIndex[key];
   if (record){
-    setv('pid', formatPatientIdDisplay(record.id, record.name));
+    setv('pid', formatPatientIdDisplay(record.id, record.name, record.kana));
     return;
   }
   const nameText = name ? String(name).trim() : '';
-  setv('pid', formatPatientIdDisplay(key, nameText));
+  setv('pid', formatPatientIdDisplay(key, nameText, ''));
   if (nameText){
-    if (!_patientIdIndex[key]){
-      const newRecord = { id: key, name: nameText };
-      _patientIdIndex[key] = newRecord;
-      _patientIdList.push(newRecord);
-      const dl = q('pidlist');
-      if (dl){
-        const option = document.createElement('option');
-        const label = formatPatientIdDisplay(newRecord.id, newRecord.name);
-        option.value = label;
-        option.textContent = label;
-        option.dataset.id = newRecord.id;
-        dl.appendChild(option);
-      }
+    const dl = q('pidlist');
+    const stored = registerPatientRecord(createPatientRecord(key, nameText, ''));
+    if (dl && stored){
+      appendPatientIdOptions(stored, dl);
     }
   }
 }
@@ -316,23 +536,51 @@ function ensurePatientIdDisplayFromInput(options){
   const opts = Object.assign({ showError:false, allowPlainOnMiss:false }, options || {});
   const inputEl = q('pid');
   if (!inputEl) return null;
-  const parsed = splitPatientIdDisplay(inputEl.value);
-  const key = normalizePatientIdKey(parsed.id);
-  if (!key){
+  const rawInput = String(inputEl.value || '');
+  const trimmed = rawInput.trim();
+  if (!trimmed){
     setv('pid', '');
     return null;
   }
-  const record = _patientIdIndex[key];
-  if (record){
-    setv('pid', formatPatientIdDisplay(record.id, record.name));
-    return record;
+  const parsed = splitPatientIdDisplay(rawInput);
+  const key = normalizePatientIdKey(parsed.id);
+  if (key){
+    const byId = _patientIdIndex[key];
+    if (byId){
+      setv('pid', formatPatientIdDisplay(byId.id, byId.name, byId.kana));
+      return byId;
+    }
+  }
+
+  const byOption = findRecordByDatalistValue(trimmed);
+  if (byOption){
+    setv('pid', formatPatientIdDisplay(byOption.id, byOption.name, byOption.kana));
+    return byOption;
+  }
+
+  const byKana = findPatientRecordByKana(trimmed);
+  if (byKana){
+    setv('pid', formatPatientIdDisplay(byKana.id, byKana.name, byKana.kana));
+    return byKana;
+  }
+
+  if (key){
+    if (opts.allowPlainOnMiss){
+      setv('pid', key);
+      return { id: key, name: '' };
+    }
+    if (opts.showError && _patientIdList.length){
+      toast('IDが見つかりません');
+    }
+    return null;
+  }
+
+  if (opts.allowPlainOnMiss){
+    setv('pid', trimmed);
+    return { id: trimmed, name: '' };
   }
   if (opts.showError && _patientIdList.length){
     toast('IDが見つかりません');
-  }
-  if (opts.allowPlainOnMiss){
-    setv('pid', key);
-    return { id: key, name: '' };
   }
   return null;
 }
@@ -911,30 +1159,23 @@ function applyPatientIdList(rawList){
   const dl = q('pidlist');
   if (!dl) return;
   dl.innerHTML = '';
-  _patientIdIndex = {};
-  _patientIdList = [];
+  resetPatientIdCaches();
   if (!Array.isArray(rawList)) return;
+  const fragment = document.createDocumentFragment();
   rawList.forEach(item => {
-    let id = '';
-    let name = '';
+    let record = null;
     if (item && typeof item === 'object'){
-      id = item.id != null ? item.id : '';
-      name = item.name != null ? item.name : '';
+      record = createPatientRecord(item.id, item.name, item.kana);
     } else {
-      id = item;
+      record = createPatientRecord(item, '', '');
     }
-    const key = normalizePatientIdKey(id);
-    if (!key || _patientIdIndex[key]) return;
-    const record = { id: key, name: name ? String(name).trim() : '' };
-    _patientIdIndex[key] = record;
-    _patientIdList.push(record);
-    const option = document.createElement('option');
-    const label = formatPatientIdDisplay(record.id, record.name);
-    option.value = label;
-    option.textContent = label;
-    option.dataset.id = record.id;
-    dl.appendChild(option);
+    if (!record) return;
+    const stored = registerPatientRecord(record);
+    if (stored){
+      appendPatientIdOptions(stored, fragment);
+    }
   });
+  dl.appendChild(fragment);
 }
 
 function loadPatientIdCache(){
@@ -943,9 +1184,22 @@ function loadPatientIdCache(){
     const raw = localStorage.getItem(PATIENT_ID_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.list) && parsed.list.length){
-      return parsed.list;
-    }
+    if (!parsed || !Array.isArray(parsed.list)) return null;
+    const sanitized = [];
+    parsed.list.forEach(item => {
+      if (item == null) return;
+      if (typeof item === 'string' || typeof item === 'number'){
+        const key = normalizePatientIdKey(item);
+        if (key) sanitized.push({ id: key, name: '', kana: '' });
+        return;
+      }
+      const key = normalizePatientIdKey(item.id);
+      if (!key) return;
+      const name = item.name != null ? String(item.name).trim() : '';
+      const kana = item.kana != null ? String(item.kana).trim() : '';
+      sanitized.push({ id: key, name, kana });
+    });
+    return sanitized.length ? sanitized : null;
   }catch(err){
     console.warn('[loadPatientIdCache] failed', err);
   }
@@ -955,8 +1209,27 @@ function loadPatientIdCache(){
 function savePatientIdCache(list){
   if (typeof localStorage === 'undefined') return;
   try{
-    if (Array.isArray(list) && list.length){
-      localStorage.setItem(PATIENT_ID_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), list }));
+    if (!Array.isArray(list) || !list.length) return;
+    const sanitized = [];
+    const seen = new Set();
+    list.forEach(item => {
+      if (item == null) return;
+      let id = '';
+      let name = '';
+      let kana = '';
+      if (typeof item === 'string' || typeof item === 'number'){
+        id = normalizePatientIdKey(item);
+      } else if (typeof item === 'object'){
+        id = normalizePatientIdKey(item.id);
+        name = item.name != null ? String(item.name).trim() : '';
+        kana = item.kana != null ? String(item.kana).trim() : '';
+      }
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      sanitized.push({ id, name, kana });
+    });
+    if (sanitized.length){
+      localStorage.setItem(PATIENT_ID_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), list: sanitized }));
     }
   }catch(err){
     console.warn('[savePatientIdCache] failed', err);

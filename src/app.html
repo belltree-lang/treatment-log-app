@@ -91,8 +91,8 @@
       <div>
         <label>患者ID（施術録番号）</label>
         <input id="pid" list="pidlist" placeholder="例: 5702" value="<?= patientId ?>"
-               onkeydown="if(event.key==='Enter'){ refresh(); }"
-               onchange="refresh()" onblur="refresh()" />
+               onkeydown="handlePatientIdKeydown(event)"
+               onchange="handlePatientIdConfirm()" onblur="handlePatientIdBlur()" />
         <datalist id="pidlist"></datalist>
       </div>
       <div>
@@ -250,7 +250,97 @@ function q(id){ return document.getElementById(id); }
 function val(id){ return q(id).value.trim(); }
 function setv(id,v){ q(id).value=v; }
 function jsString(s){ return JSON.stringify(String(s == null ? '' : s)); }
-function pid(){ return val('pid'); }
+
+const PATIENT_ID_CACHE_KEY = 'treatmentLogApp.patientIdCache';
+let _patientIdIndex = {};
+let _patientIdList = [];
+
+function normalizePatientIdKey(id){
+  if (id == null) return '';
+  let text = String(id);
+  if (typeof text.normalize === 'function') {
+    text = text.normalize('NFKC');
+  }
+  text = text.replace(/\s+/g, '');
+  text = text.replace(/^0+/, '');
+  return text;
+}
+
+function formatPatientIdDisplay(id, name){
+  const key = normalizePatientIdKey(id);
+  if (!key) return '';
+  const nameText = name ? String(name).trim() : '';
+  return nameText ? `${key} – ${nameText}` : key;
+}
+
+function splitPatientIdDisplay(text){
+  if (text == null) return { id: '', name: '' };
+  const trimmed = String(text).trim();
+  if (!trimmed) return { id: '', name: '' };
+  const match = trimmed.match(/^(.+?)[\s]*[–-][\s]*(.+)$/);
+  if (match){
+    return { id: match[1].trim(), name: match[2].trim() };
+  }
+  return { id: trimmed, name: '' };
+}
+
+function setPatientIdInputDisplay(id, name){
+  const key = normalizePatientIdKey(id);
+  if (!key){ setv('pid', ''); return; }
+  const record = _patientIdIndex[key];
+  if (record){
+    setv('pid', formatPatientIdDisplay(record.id, record.name));
+    return;
+  }
+  const nameText = name ? String(name).trim() : '';
+  setv('pid', formatPatientIdDisplay(key, nameText));
+  if (nameText){
+    if (!_patientIdIndex[key]){
+      const newRecord = { id: key, name: nameText };
+      _patientIdIndex[key] = newRecord;
+      _patientIdList.push(newRecord);
+      const dl = q('pidlist');
+      if (dl){
+        const option = document.createElement('option');
+        const label = formatPatientIdDisplay(newRecord.id, newRecord.name);
+        option.value = label;
+        option.textContent = label;
+        option.dataset.id = newRecord.id;
+        dl.appendChild(option);
+      }
+    }
+  }
+}
+
+function ensurePatientIdDisplayFromInput(options){
+  const opts = Object.assign({ showError:false, allowPlainOnMiss:false }, options || {});
+  const inputEl = q('pid');
+  if (!inputEl) return null;
+  const parsed = splitPatientIdDisplay(inputEl.value);
+  const key = normalizePatientIdKey(parsed.id);
+  if (!key){
+    setv('pid', '');
+    return null;
+  }
+  const record = _patientIdIndex[key];
+  if (record){
+    setv('pid', formatPatientIdDisplay(record.id, record.name));
+    return record;
+  }
+  if (opts.showError && _patientIdList.length){
+    toast('IDが見つかりません');
+  }
+  if (opts.allowPlainOnMiss){
+    setv('pid', key);
+    return { id: key, name: '' };
+  }
+  return null;
+}
+
+function pid(){
+  const parsed = splitPatientIdDisplay(q('pid') ? q('pid').value : '');
+  return normalizePatientIdKey(parsed.id);
+}
 
 let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
 let _pendingVisitPlanDate = null;
@@ -817,11 +907,116 @@ async function generateAllIcfSummaries(){
 }
 
 /* 候補/定型文 */
+function applyPatientIdList(rawList){
+  const dl = q('pidlist');
+  if (!dl) return;
+  dl.innerHTML = '';
+  _patientIdIndex = {};
+  _patientIdList = [];
+  if (!Array.isArray(rawList)) return;
+  rawList.forEach(item => {
+    let id = '';
+    let name = '';
+    if (item && typeof item === 'object'){
+      id = item.id != null ? item.id : '';
+      name = item.name != null ? item.name : '';
+    } else {
+      id = item;
+    }
+    const key = normalizePatientIdKey(id);
+    if (!key || _patientIdIndex[key]) return;
+    const record = { id: key, name: name ? String(name).trim() : '' };
+    _patientIdIndex[key] = record;
+    _patientIdList.push(record);
+    const option = document.createElement('option');
+    const label = formatPatientIdDisplay(record.id, record.name);
+    option.value = label;
+    option.textContent = label;
+    option.dataset.id = record.id;
+    dl.appendChild(option);
+  });
+}
+
+function loadPatientIdCache(){
+  if (typeof localStorage === 'undefined') return null;
+  try{
+    const raw = localStorage.getItem(PATIENT_ID_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.list) && parsed.list.length){
+      return parsed.list;
+    }
+  }catch(err){
+    console.warn('[loadPatientIdCache] failed', err);
+  }
+  return null;
+}
+
+function savePatientIdCache(list){
+  if (typeof localStorage === 'undefined') return;
+  try{
+    if (Array.isArray(list) && list.length){
+      localStorage.setItem(PATIENT_ID_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), list }));
+    }
+  }catch(err){
+    console.warn('[savePatientIdCache] failed', err);
+  }
+}
+
 function loadPidList(){
-  google.script.run.withSuccessHandler(list=>{
-    const dl=q('pidlist'); dl.innerHTML='';
-    list.forEach(x=>{ const o=document.createElement('option'); o.value=x; dl.appendChild(o); });
-  }).listPatientIds();
+  const useList = list => {
+    applyPatientIdList(list);
+    ensurePatientIdDisplayFromInput({ allowPlainOnMiss: true });
+  };
+  const tryCache = () => {
+    const cached = loadPatientIdCache();
+    if (cached && cached.length){
+      useList(cached);
+      return true;
+    }
+    return false;
+  };
+  google.script.run
+    .withSuccessHandler(list => {
+      if (Array.isArray(list) && list.length){
+        savePatientIdCache(list);
+        useList(list);
+      } else if (!tryCache()) {
+        applyPatientIdList([]);
+      }
+    })
+    .withFailureHandler(err => {
+      console.error('[loadPidList] failed', err);
+      if (tryCache()){
+        toast('ID候補の取得に失敗したため、キャッシュから復元しました。');
+      } else {
+        applyPatientIdList([]);
+        toast('ID候補の取得に失敗しました。IDのみで続行します。');
+      }
+    })
+    .listPatientIds();
+}
+
+function handlePatientIdKeydown(evt){
+  if (evt && evt.key === 'Enter'){
+    evt.preventDefault();
+    handlePatientIdConfirm();
+  }
+}
+
+function handlePatientIdConfirm(){
+  const result = ensurePatientIdDisplayFromInput({
+    showError: true,
+    allowPlainOnMiss: !_patientIdList.length
+  });
+  const id = pid();
+  if (!id) return;
+  if (!result && _patientIdList.length) return;
+  refresh();
+}
+
+function handlePatientIdBlur(){
+  ensurePatientIdDisplayFromInput({ allowPlainOnMiss: !_patientIdList.length });
 }
 function loadPresets(){
   google.script.run.withSuccessHandler(arr=>{
@@ -997,6 +1192,7 @@ function loadHeader(){
           <div class="muted">最終施術: ${h.recent.lastTreat||'—'}　最終同意: ${h.recent.lastConsent||'—'}　直近担当: ${h.recent.lastStaff||'—'}</div>
         </div>
       </div>`;
+    setPatientIdInputDisplay(h.patientId, h.name);
   }).getPatientHeader(p);
 }
 function loadNews(){

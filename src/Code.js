@@ -426,8 +426,17 @@ function listPatientIds(){
   const s=sh('患者情報'); const lr=s.getLastRow(); if(lr<2) return [];
   const lc=s.getLastColumn(); const head=s.getRange(1,1,1,lc).getDisplayValues()[0];
   const cRec = getColFlexible_(head, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
-  const vals=s.getRange(2,1,lr-1,lc).getValues();
-  return vals.map(r=> normId_(r[cRec-1])).filter(Boolean);
+  const cName = getColFlexible_(head, LABELS.name, PATIENT_COLS_FIXED.name, '名前');
+  const vals=s.getRange(2,1,lr-1,lc).getDisplayValues();
+  const seen = new Set();
+  const out = [];
+  vals.forEach(r=>{
+    const id = normId_(r[cRec-1]);
+    if(!id || seen.has(id)) return;
+    seen.add(id);
+    out.push({ id, name: r[cName-1] || '' });
+  });
+  return out;
 }
 
 /***** バイタル・定型文 *****/

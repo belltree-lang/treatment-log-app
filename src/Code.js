@@ -194,9 +194,30 @@ function clearConsentRelatedNews_(pid){
   for (let i=0;i<vals.length;i++){
     if(String(vals[i][1])===String(pid)){
       const typ=String(vals[i][2]||'');
-      if(typ.indexOf('同意')>=0 || typ.indexOf('期限')>=0 || typ.indexOf('予定')>=0){
+      const trimmed = typ.trim();
+      if(typ.indexOf('同意')>=0 || typ.indexOf('期限')>=0 || typ.indexOf('予定')>=0 || trimmed === '再同意取得確認' || trimmed === '再同意'){
         s.getRange(2+i,5).setValue('1');
       }
+    }
+  }
+}
+
+function clearNewsByTypes_(pid, types){
+  if(!Array.isArray(types) || !types.length) return;
+  const normalized = types
+    .map(t => String(t || '').trim())
+    .filter(t => t.length);
+  if(!normalized.length) return;
+  const s = sh('News');
+  const lr = s.getLastRow();
+  if(lr < 2) return;
+  const vals = s.getRange(2, 1, lr - 1, 5).getDisplayValues();
+  const typeSet = new Set(normalized);
+  for(let i=0;i<vals.length;i++){
+    if(String(vals[i][1]) !== String(pid)) continue;
+    const typ = String(vals[i][2] || '').trim();
+    if(typeSet.has(typ)){
+      s.getRange(2 + i, 5).setValue('1');
     }
   }
 }
@@ -600,6 +621,7 @@ function afterTreatmentJob(){
     const treatmentMeta = job.treatmentId ? { source: 'treatment', treatmentId: job.treatmentId } : null;
 
     // News / 同意日 / 負担割合 / 予定登録など重い処理をここでまとめて実行
+    let consentReminderPushed = false;
     if (job.presetLabel){
       if (job.presetLabel.indexOf('再同意取得確認') >= 0){
         const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
@@ -607,7 +629,14 @@ function afterTreatmentJob(){
       }
       if (job.presetLabel.indexOf('同意書受渡') >= 0){
         pushNews_(pid,'再同意','同意書を受け渡し', treatmentMeta);
+        if (job.consentUndecided){
+          pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
+          consentReminderPushed = true;
+        }
       }
+    }
+    if (job.consentUndecided && !consentReminderPushed){
+      pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
     }
     if (job.burdenShare){
       updateBurdenShare(pid, job.burdenShare, treatmentMeta ? { meta: treatmentMeta } : undefined);
@@ -845,6 +874,7 @@ function updateConsentDate(pid, dateStr, options){
   const meta = options && options.meta ? options.meta : null;
   pushNews_(pid,'同意','再同意取得確認（同意日更新：'+dateStr+'）', meta);
   clearConsentRelatedNews_(pid);
+  clearNewsByTypes_(pid, ['同意','再同意取得確認']);
   log_('同意日更新', pid, dateStr);
 }
 function updateBurdenShare(pid, shareText, options){
@@ -2623,6 +2653,11 @@ function submitTreatment(payload) {
       } else {
         delete job.visitPlanDate;
       }
+    }
+
+    if (payload?.actions && payload.actions.consentUndecided) {
+      job.consentUndecided = true;
+      hasFollowUp = true;
     }
 
     if (hasFollowUp) {

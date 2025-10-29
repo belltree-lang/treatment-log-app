@@ -237,6 +237,21 @@
   </div>
 </div>
 
+<!-- 同意日編集モーダル -->
+<div id="consentEditModal" class="modal" onclick="closeConsentEditModal()">
+  <div class="dialog" onclick="event.stopPropagation()">
+    <div class="section-title" style="margin:0 0 8px">同意日を編集</div>
+    <div class="muted" id="consentEditPatient" style="margin-bottom:8px"></div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px">
+      <input type="date" id="consentEditDate">
+    </div>
+    <div class="btnrow">
+      <button class="btn ok" onclick="applyConsentEdit(event)">保存</button>
+      <button class="btn ghost" onclick="hideConsentEditModal()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function q(id){ return document.getElementById(id); }
 function val(id){ return q(id).value.trim(); }
@@ -595,6 +610,9 @@ function currentPatientName(){
 
 let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
 let _pendingVisitPlanDate = null;
+let _pendingConsentUndecided = false;
+let _currentHeader = null;
+let _consentEditContext = null;
 let METRIC_DEFS = [];
 let METRIC_DEF_MAP = {};
 let _metricRowSeq = 0;
@@ -612,7 +630,11 @@ const ICF_AUDIENCE_LABELS = {
 };
 let _icfSummaryState = { range: '1m', results: {} };
 
-function resetFlags(){ _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false}; _pendingVisitPlanDate=null; }
+function resetFlags(){
+  _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false};
+  _pendingVisitPlanDate=null;
+  _pendingConsentUndecided=false;
+}
 
 function loadMetricDefinitions(){
   google.script.run.withSuccessHandler(defs=>{
@@ -1337,6 +1359,7 @@ function showConsentModal(){
   q('consentDate').value='';
   q('consentUndecided').checked=false;
   _pendingVisitPlanDate = null;
+  _pendingConsentUndecided = false;
   q('consentModal').classList.add('open');
 }
 function hideConsentModal(){ q('consentModal').classList.remove('open'); }
@@ -1354,6 +1377,7 @@ function applyConsentHandout(){
   filtered.push(message);
   setv('obs', filtered.join('\n'));
   _pendingVisitPlanDate = und ? null : d;
+  _pendingConsentUndecided = und;
   hideConsentModal();
 }
 
@@ -1398,6 +1422,7 @@ function save(){
     const metrics = collectMetricInputs();
     if (metrics.length) payload.clinicalMetrics = metrics;
     if(_pendingVisitPlanDate){ payload.actions.visitPlanDate = _pendingVisitPlanDate; }
+    if(_pendingConsentUndecided){ payload.actions.consentUndecided = true; }
 
     // ボタン連打防止
     const btns = document.querySelectorAll('button');
@@ -1452,34 +1477,49 @@ function refresh(){
 }
 function loadHeader(){
   const p=pid(); if(!p) return;
-  google.script.run.withSuccessHandler(h=>{
-    if(!h){ q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>'; return; }
-    const status = h.status==='active'? '🟢稼働中' : h.status==='suspended'? '🟡休止' : '🔴中止';
-    const estCur = h.monthly.current.est? '約'+h.monthly.current.est.toLocaleString()+'円' : '—';
-    const estPrev = h.monthly.previous.est? '約'+h.monthly.previous.est.toLocaleString()+'円' : '—';
-    q('hdr').innerHTML = `
-      <div class="row">
-        <div>
-          <div class="badge">患者ID ${h.patientId}</div>
-          <div style="margin:6px 0 2px">氏名：${h.name||'—'}　（${h.age!=null? h.age+'歳':''} ${h.ageClass||''}）</div>
-          <div>病院名：${h.hospital||'—'}　医師：${h.doctor||'—'}</div>
-          <div>同意日：${h.consentDate||'—'}　次回期限：${h.consentExpiry||'—'}　負担割合：${h.burden||'—'}</div>
-        </div>
-        <div>
-          <div>${status} ${h.pauseUntil? '（ミュート:'+h.pauseUntil+'まで）':''}</div>
-          <div class="muted">当月: ${h.monthly.current.count}回 / ${estCur}　｜　前月: ${h.monthly.previous.count}回 / ${estPrev}</div>
-          <div class="muted">最終施術: ${h.recent.lastTreat||'—'}　最終同意: ${h.recent.lastConsent||'—'}　直近担当: ${h.recent.lastStaff||'—'}</div>
-        </div>
-      </div>`;
-    setPatientIdInputDisplay(h.patientId, h.name);
-  }).getPatientHeader(p);
+  google.script.run
+    .withSuccessHandler(h=>{
+      _currentHeader = h || null;
+      if(!h){ q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>'; return; }
+      const status = h.status==='active'? '🟢稼働中' : h.status==='suspended'? '🟡休止' : '🔴中止';
+      const estCur = h.monthly.current.est? '約'+h.monthly.current.est.toLocaleString()+'円' : '—';
+      const estPrev = h.monthly.previous.est? '約'+h.monthly.previous.est.toLocaleString()+'円' : '—';
+      q('hdr').innerHTML = `
+        <div class="row">
+          <div>
+            <div class="badge">患者ID ${h.patientId}</div>
+            <div style="margin:6px 0 2px">氏名：${h.name||'—'}　（${h.age!=null? h.age+'歳':''} ${h.ageClass||''}）</div>
+            <div>病院名：${h.hospital||'—'}　医師：${h.doctor||'—'}</div>
+            <div>同意日：${h.consentDate||'—'}　次回期限：${h.consentExpiry||'—'}　負担割合：${h.burden||'—'}</div>
+          </div>
+          <div>
+            <div>${status} ${h.pauseUntil? '（ミュート:'+h.pauseUntil+'まで）':''}</div>
+            <div class="muted">当月: ${h.monthly.current.count}回 / ${estCur}　｜　前月: ${h.monthly.previous.count}回 / ${estPrev}</div>
+            <div class="muted">最終施術: ${h.recent.lastTreat||'—'}　最終同意: ${h.recent.lastConsent||'—'}　直近担当: ${h.recent.lastStaff||'—'}</div>
+          </div>
+        </div>`;
+      setPatientIdInputDisplay(h.patientId, h.name);
+    })
+    .withFailureHandler(err=>{
+      console.error('[loadHeader] failed', err);
+      _currentHeader = null;
+      q('hdr').innerHTML = '<div class="muted" style="color:#b91c1c">患者情報の取得に失敗しました</div>';
+    })
+    .getPatientHeader(p);
 }
 function loadNews(){
   const p=pid(); if(!p) return;
   google.script.run.withSuccessHandler(list=>{
     const el=q('news');
     if(!list||!list.length){ el.innerHTML='<div class="muted">Newsはありません</div>'; return; }
-    el.innerHTML=list.map(n=>`<div class="news-item"><div class="muted">${n.when} ／ ${n.type}</div><div>${n.message}</div></div>`).join('');
+    el.innerHTML=list.map(n=>{
+      const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
+      const showConsentEdit = shouldShowConsentEditButton(n);
+      const actions = showConsentEdit
+        ? `<div class="btnrow" style="margin-top:6px"><button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button></div>`
+        : '';
+      return `<div class="news-item"><div class="muted">${escapeHtml(n.when||'')} ／ ${escapeHtml(n.type||'')}</div><div>${messageHtml}</div>${actions}</div>`;
+    }).join('');
   }).getNews(p);
 }
 function loadThisMonth(){
@@ -1515,6 +1555,76 @@ function delRow(row){
   google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).deleteTreatmentRow(row);
 }
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+function shouldShowConsentEditButton(news){
+  if(!news) return false;
+  const type = String(news.type || '').trim();
+  if(type !== '同意') return false;
+  const message = String(news.message || '');
+  return message.indexOf('未定') >= 0 || message.indexOf('確認') >= 0;
+}
+
+function openConsentEditModal(){
+  const patientId = pid();
+  if(!patientId){
+    alert('患者IDを入力してください');
+    return;
+  }
+  _consentEditContext = { patientId };
+  const patientLabel = currentPatientName() || `患者ID ${patientId}`;
+  q('consentEditPatient').textContent = `${patientLabel} の同意日を入力してください。`;
+  const input = q('consentEditDate');
+  input.value = '';
+  if(_currentHeader && _currentHeader.consentDate){
+    const match = String(_currentHeader.consentDate).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(match){
+      input.value = match[0];
+    }
+  }
+  q('consentEditModal').classList.add('open');
+  input.focus();
+}
+
+function hideConsentEditModal(){
+  q('consentEditModal').classList.remove('open');
+  _consentEditContext = null;
+  q('consentEditDate').value='';
+}
+
+function closeConsentEditModal(){ hideConsentEditModal(); }
+
+function applyConsentEdit(evt){
+  if(!_consentEditContext){
+    hideConsentEditModal();
+    return;
+  }
+  const date = q('consentEditDate').value;
+  if(!date){
+    alert('同意日を選択してください');
+    return;
+  }
+  const patientId = _consentEditContext.patientId;
+  const patientName = currentPatientName();
+  const toastLabel = patientName ? `【${patientName}】` : `患者ID ${patientId}`;
+  const button = evt && evt.currentTarget && evt.currentTarget.tagName === 'BUTTON'
+    ? evt.currentTarget
+    : (evt && evt.target && evt.target.tagName === 'BUTTON' ? evt.target : null);
+  if(button){ button.disabled = true; }
+  google.script.run
+    .withSuccessHandler(()=>{
+      hideConsentEditModal();
+      toast(`${toastLabel}様の同意日を更新しました。`);
+      loadHeader();
+      loadNews();
+      if(button){ button.disabled = false; }
+    })
+    .withFailureHandler(e=>{
+      const msg = e && e.message ? e.message : String(e);
+      alert('同意日の更新に失敗しました: ' + msg);
+      if(button){ button.disabled = false; }
+    })
+    .updateConsentDate(patientId, date, { meta: { source: 'news_edit' } });
+}
 
 /* 当月記録の日時編集 */
 function editRowTime(row, whenT){

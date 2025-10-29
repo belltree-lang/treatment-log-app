@@ -127,10 +127,7 @@
             <div class="muted" style="margin:4px 0">例) vital 126/79/72bpm / SpO2:97%  36.2℃</div>
             <input id="vitals" placeholder="未入力なら自動付与" />
             <div class="btnrow" style="margin-top:6px">
-              <button class="btn ghost" onclick="fillVitals()">バイタル自動生成</button>
-              <button class="btn ghost" onclick="startDictation()">🎙 音声入力</button>
-              <select id="preset" style="max-width:260px"></select>
-              <button class="btn ghost" onclick="insertPreset()">定型文を挿入</button>
+              <select id="preset" style="max-width:260px" onchange="insertPreset()"></select>
             </div>
           </div>
         </div>
@@ -1303,22 +1300,18 @@ function loadPresets(){
   }).getPresets();
 }
 
-/* バイタル/音声 */
-function fillVitals(){ google.script.run.withSuccessHandler(v=> setv('vitals', v)).genVitals(); }
-function startDictation(){
-  const S = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!S){ alert('音声入力に未対応のブラウザです'); return; }
-  const rec = new S(); rec.lang='ja-JP'; rec.interimResults=false;
-  rec.onresult=(e)=>{ const t=e.results[0][0].transcript; setv('obs', (val('obs')+' '+t).trim()); };
-  rec.start();
-}
-
 /* 定型文挿入＋Flags */
 function insertPreset(){
   const sel=q('preset');
-  const t = sel.value; const label = sel.options[sel.selectedIndex]?.dataset?.label || '';
-  if(!t){ alert('定型文を選択してください'); return; }
-  setv('obs', (val('obs')+'\n'+t).trim());
+  if(!sel) return;
+  const value = sel.value;
+  if(!value) return;
+  const label = sel.options[sel.selectedIndex]?.dataset?.label || '';
+  const current = val('obs');
+  const parts = [];
+  if(current) parts.push(current);
+  parts.push(value);
+  setv('obs', parts.join('\n'));
 
   if(label.indexOf('請求書・領収書受渡')>=0) _flags.receipt=true;
   if(label.indexOf('配布物受渡')>=0)         _flags.handout=true;
@@ -1328,8 +1321,6 @@ function insertPreset(){
     _flags.consentHandout=true;
     showConsentModal();
   }
-    // ⭐ 挿入直後に自動保存したいならこれを追加
-  save();
 }
 
 /* 通院予定モーダル */

@@ -2663,6 +2663,49 @@ function parseDateTimeFlexible_(input, tz){
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
+function normalizeAutoVitalText_(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .map(item => normalizeAutoVitalText_(item))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+  if (typeof value === 'object') {
+    const preferredKeys = ['note', 'text', 'body', 'message', 'vitals', 'value'];
+    for (let i = 0; i < preferredKeys.length; i += 1) {
+      const key = preferredKeys[i];
+      if (key in value) {
+        const resolved = normalizeAutoVitalText_(value[key]);
+        if (resolved) return resolved;
+      }
+    }
+
+    const merged = Object.keys(value || {})
+      .map(k => normalizeAutoVitalText_(value[k]))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (merged) return merged;
+    return '';
+  }
+  return String(value).trim();
+}
+
+function tryGenerateAutoVitals_(payload) {
+  try {
+    if (typeof genVitals !== 'function') return '';
+    const raw = genVitals(payload);
+    return normalizeAutoVitalText_(raw);
+  } catch (err) {
+    const message = err && err.stack ? err.stack : (err && err.message) ? err.message : String(err);
+    Logger.log(`[submitTreatment] genVitals() failed: ${message}`);
+    return '';
+  }
+}
+
 function submitTreatment(payload) {
   try {
     ensureAuxSheets_();
@@ -2677,7 +2720,11 @@ function submitTreatment(payload) {
     const now = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss');
 
     const note = String(payload?.notesParts?.note || '').trim();
-    const merged = note;
+    let merged = note;
+    if (!merged) {
+      const autoVitals = tryGenerateAutoVitals_(payload);
+      merged = autoVitals || 'バイタル自動記録';
+    }
 
     // 🔒 二重保存チェック（直近の1件と比較）
     const lr = s.getLastRow();

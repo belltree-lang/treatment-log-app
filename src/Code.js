@@ -503,13 +503,7 @@ function listPatientIds(){
   return out;
 }
 
-/***** バイタル・定型文 *****/
-function genVitals(){
-  const rnd=(min,max)=> Math.floor(Math.random()*(max-min+1))+min;
-  const sys=rnd(110,150), dia=rnd(70,90), bpm=rnd(60,90), spo=rnd(93,99);
-  const tmp=(Math.round((Math.random()*(36.9-35.8)+35.8)*10)/10).toFixed(1);
-  return `vital ${sys}/${dia}/${bpm}bpm / SpO2:${spo}%  ${tmp}℃`;
-}
+/***** 定型文 *****/
 function getPresets(){
   ensureAuxSheets_();
   const s = sh('定型文'); const lr = s.getLastRow();
@@ -519,7 +513,7 @@ function getPresets(){
       {cat:'所見',label:'バイタル安定',text:'バイタル安定。生活指導継続。'},
       {cat:'所見',label:'請求書・領収書受渡',text:'請求書・領収書を受け渡し済み。'},
       {cat:'所見',label:'配布物受渡',text:'配布物（説明資料）を受け渡し済み。'},
-      {cat:'所見',label:'再同意書受渡',text:'再同意書を受け渡し済み。通院予定の確認をお願いします。'},
+      {cat:'所見',label:'同意書受渡',text:'同意書受渡。'},
       {cat:'所見',label:'再同意取得確認',text:'再同意の取得を確認。引き続き施術を継続。'}
     ];
   }
@@ -611,8 +605,8 @@ function afterTreatmentJob(){
         const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
         updateConsentDate(pid, today, treatmentMeta ? { meta: treatmentMeta } : undefined);
       }
-      if (job.presetLabel.indexOf('再同意書受渡') >= 0){
-        pushNews_(pid,'再同意','再同意書を受け渡し', treatmentMeta);
+      if (job.presetLabel.indexOf('同意書受渡') >= 0){
+        pushNews_(pid,'再同意','同意書を受け渡し', treatmentMeta);
       }
     }
     if (job.burdenShare){
@@ -2584,9 +2578,8 @@ function submitTreatment(payload) {
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
     const now = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss');
 
-    const vit = (payload?.overrideVitals || '').trim() || genVitals();
     const note = String(payload?.notesParts?.note || '').trim();
-    const merged = note ? (note + '\n' + vit) : vit;
+    const merged = note;
 
     // 🔒 二重保存チェック（直近の1件と比較）
     const lr = s.getLastRow();
@@ -2636,7 +2629,7 @@ function submitTreatment(payload) {
       queueAfterTreatmentJob(job);
     }
 
-    return { ok: true, vitals: vit, wroteTo: s.getName(), row };
+    return { ok: true, wroteTo: s.getName(), row };
   } catch (e) {
     throw e;
   }

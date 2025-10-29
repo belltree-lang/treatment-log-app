@@ -2694,6 +2694,26 @@ function normalizeAutoVitalText_(value) {
   return String(value).trim();
 }
 
+function genVitals(payload) {
+  const randomInt = (min, max) => {
+    const lower = Math.ceil(min);
+    const upper = Math.floor(max);
+    return Math.floor(Math.random() * (upper - lower + 1)) + lower;
+  };
+
+  const systolic = randomInt(105, 160);
+  let diastolic = randomInt(65, 95);
+  if (diastolic >= systolic) {
+    diastolic = Math.max(65, systolic - randomInt(10, 20));
+  }
+  const pulse = randomInt(60, 95);
+  const spo2 = randomInt(96, 99);
+  const temperature = Math.random() * (36.8 - 36.0) + 36.0;
+
+  const formattedTemp = temperature.toFixed(1);
+  return `vital ${systolic}/${diastolic}/${pulse}bpm / SpO2:${spo2}% ${formattedTemp}℃`;
+}
+
 function tryGenerateAutoVitals_(payload) {
   try {
     if (typeof genVitals !== 'function') return '';

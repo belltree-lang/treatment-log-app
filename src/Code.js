@@ -544,15 +544,43 @@ function getPresets(){
 
 /***** 施術保存 *****/
 function queueAfterTreatmentJob(job){
-  const p = PropertiesService.getScriptProperties();
-  const key = 'AFTER_JOBS';
-  const jobs = JSON.parse(p.getProperty(key) || '[]');
-  jobs.push(job);
-  p.setProperty(key, JSON.stringify(jobs));
+  if (!job || typeof job !== 'object') return;
 
-  // 1分後に afterTreatmentJob を実行
-  ScriptApp.newTrigger('afterTreatmentJob')
-    .timeBased().after(1000 * 60).create();
+  const key = 'AFTER_JOBS';
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log('[queueAfterTreatmentJob] Failed to acquire lock');
+    // ロックが取れない場合でもフォールバックトリガーで後続処理を試みる
+    ScriptApp.newTrigger('afterTreatmentJob')
+      .timeBased().after(1000 * 60).create();
+    return;
+  }
+  try {
+    const p = PropertiesService.getScriptProperties();
+    let jobs = [];
+    try {
+      const raw = p.getProperty(key);
+      jobs = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(jobs)) jobs = [];
+    } catch (e) {
+      Logger.log('[queueAfterTreatmentJob] Failed to parse existing jobs: ' + (e && e.message ? e.message : e));
+      jobs = [];
+    }
+    jobs.push(job);
+    p.setProperty(key, JSON.stringify(jobs));
+    Logger.log('[queueAfterTreatmentJob] Queued: ' + JSON.stringify(job));
+  } finally {
+    lock.releaseLock();
+  }
+
+  try {
+    afterTreatmentJob();
+  } catch (e) {
+    Logger.log('[queueAfterTreatmentJob] Immediate flush failed: ' + (e && e.message ? e.message : e));
+    // フォールバックとして従来通りのトリガーも登録
+    ScriptApp.newTrigger('afterTreatmentJob')
+      .timeBased().after(1000 * 60).create();
+  }
 }
 
 function normalizeClinicalMetricTimestamp_(value){
@@ -610,42 +638,69 @@ function recordClinicalMetrics_(patientId, metrics, whenStr, user){
 }
 
 function afterTreatmentJob(){
-  const p = PropertiesService.getScriptProperties();
   const key = 'AFTER_JOBS';
-  const jobs = JSON.parse(p.getProperty(key) || '[]');
-  p.deleteProperty(key);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log('[afterTreatmentJob] Failed to acquire lock');
+    return;
+  }
+
+  let jobs = [];
+  try {
+    const p = PropertiesService.getScriptProperties();
+    const raw = p.getProperty(key);
+    p.deleteProperty(key);
+    if (raw) {
+      try {
+        jobs = JSON.parse(raw) || [];
+        if (!Array.isArray(jobs)) jobs = [];
+      } catch (e) {
+        Logger.log('[afterTreatmentJob] Failed to parse jobs: ' + (e && e.message ? e.message : e));
+        jobs = [];
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
   if (!jobs.length) return;
 
-  jobs.forEach(job=>{
-    const pid = job.patientId;
-    const treatmentMeta = job.treatmentId ? { source: 'treatment', treatmentId: job.treatmentId } : null;
+  Logger.log('[afterTreatmentJob] Executing jobs: ' + jobs.length);
 
-    // News / 同意日 / 負担割合 / 予定登録など重い処理をここでまとめて実行
-    let consentReminderPushed = false;
-    if (job.presetLabel){
-      if (job.presetLabel.indexOf('再同意取得確認') >= 0){
-        const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
-        updateConsentDate(pid, today, treatmentMeta ? { meta: treatmentMeta } : undefined);
-      }
-      if (job.presetLabel.indexOf('同意書受渡') >= 0){
-        pushNews_(pid,'再同意','同意書を受け渡し', treatmentMeta);
-        if (job.consentUndecided){
-          pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
-          consentReminderPushed = true;
+  jobs.forEach(job=>{
+    try {
+      const pid = job.patientId;
+      const treatmentMeta = job.treatmentId ? { source: 'treatment', treatmentId: job.treatmentId } : null;
+
+      // News / 同意日 / 負担割合 / 予定登録など重い処理をここでまとめて実行
+      let consentReminderPushed = false;
+      if (job.presetLabel){
+        if (job.presetLabel.indexOf('再同意取得確認') >= 0){
+          const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
+          updateConsentDate(pid, today, treatmentMeta ? { meta: treatmentMeta } : undefined);
+        }
+        if (job.presetLabel.indexOf('同意書受渡') >= 0){
+          pushNews_(pid,'再同意','同意書を受け渡し', treatmentMeta);
+          if (job.consentUndecided){
+            pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
+            consentReminderPushed = true;
+          }
         }
       }
+      if (job.consentUndecided && !consentReminderPushed){
+        pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
+      }
+      if (job.burdenShare){
+        updateBurdenShare(pid, job.burdenShare, treatmentMeta ? { meta: treatmentMeta } : undefined);
+      }
+      if (job.visitPlanDate){
+        sh('予定').appendRow([pid,'通院', job.visitPlanDate, (Session.getActiveUser()||{}).getEmail()]);
+        pushNews_(pid,'予定','通院予定を登録：' + job.visitPlanDate, treatmentMeta);
+      }
+      log_('施術後処理', pid, JSON.stringify(job));
+    } catch (e) {
+      Logger.log('[afterTreatmentJob] Job failed: ' + (e && e.message ? e.message : e));
     }
-    if (job.consentUndecided && !consentReminderPushed){
-      pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
-    }
-    if (job.burdenShare){
-      updateBurdenShare(pid, job.burdenShare, treatmentMeta ? { meta: treatmentMeta } : undefined);
-    }
-    if (job.visitPlanDate){
-      sh('予定').appendRow([pid,'通院', job.visitPlanDate, (Session.getActiveUser()||{}).getEmail()]);
-      pushNews_(pid,'予定','通院予定を登録：' + job.visitPlanDate, treatmentMeta);
-    }
-    log_('施術後処理', pid, JSON.stringify(job));
   });
 }
 
@@ -872,9 +927,22 @@ function updateConsentDate(pid, dateStr, options){
   const cCons= getColFlexible_(head, LABELS.consent, PATIENT_COLS_FIXED.consent, '同意年月日');
   s.getRange(hit.row, cCons).setValue(dateStr);
   const meta = options && options.meta ? options.meta : null;
-  pushNews_(pid,'同意','再同意取得確認（同意日更新：'+dateStr+'）', meta);
+  const source = meta && meta.source ? String(meta.source) : '';
+
   clearConsentRelatedNews_(pid);
-  clearNewsByTypes_(pid, ['同意','再同意取得確認']);
+
+  if (source === 'news_edit') {
+    const message = dateStr
+      ? '同意書受渡。（通院予定：' + dateStr + '）'
+      : '同意書受渡。';
+    pushNews_(pid, '同意', message, meta);
+    if (dateStr) {
+      pushNews_(pid, '予定', '通院予定を登録：' + dateStr, meta);
+      sh('予定').appendRow([String(pid), '通院', dateStr, (Session.getActiveUser()||{}).getEmail()]);
+    }
+  } else {
+    pushNews_(pid,'同意','再同意取得確認（同意日更新：'+dateStr+'）', meta);
+  }
   log_('同意日更新', pid, dateStr);
 }
 function updateBurdenShare(pid, shareText, options){

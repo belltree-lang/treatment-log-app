@@ -1570,7 +1570,8 @@ function shouldShowConsentEditButton(news){
   const type = String(news.type || '').trim();
   if(type !== '同意') return false;
   const message = String(news.message || '');
-  return message.indexOf('未定') >= 0 || message.indexOf('確認') >= 0;
+  if (message.indexOf('未定') >= 0 || message.indexOf('確認') >= 0) return true;
+  return message.indexOf('同意書受渡。') >= 0;
 }
 
 function openConsentEditModal(){

@@ -582,6 +582,17 @@ function pid(){
   return normalizePatientIdKey(parsed.id);
 }
 
+function currentPatientName(){
+  const id = pid();
+  if (!id) return '';
+  const record = _patientIdIndex[id];
+  if (record && record.name){
+    return record.name;
+  }
+  const parsed = splitPatientIdDisplay(q('pid') ? q('pid').value : '');
+  return parsed.name || '';
+}
+
 let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
 let _pendingVisitPlanDate = null;
 let METRIC_DEFS = [];
@@ -1397,11 +1408,12 @@ function save(){
     google.script.run
       .withSuccessHandler(res=>{
         console.log('[save] success', res);
+        const name = currentPatientName();
+        let message = name ? `${name}さんの施術録を保存しました` : '施術録を保存しました';
         if (res && res.row && Array.isArray(res.row)) {
-          alert('保存しました → 行: ' + res.row.join(' , '));
-        } else {
-          alert('保存しました');
+          message += `（行: ${res.row.join(' , ')}）`;
         }
+        toast(message);
         resetFlags();
         setv('obs','');
         q('preset').selectedIndex = 0;

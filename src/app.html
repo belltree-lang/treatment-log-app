@@ -17,7 +17,6 @@
 
   .card{ background:var(--card); border-radius:16px; padding:16px; box-shadow:0 6px 24px rgba(0,0,0,.06); margin-bottom:16px }
   .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start }
-  .row-obs{ display:grid; grid-template-columns:3fr 2fr; gap:12px; align-items:start }
   input,select,textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-size:14px; box-sizing:border-box }
   textarea{ min-height:120px; resize:vertical }
   .btn{ appearance:none; border:0; border-radius:999px; padding:8px 12px; background:var(--brand); color:#fff; cursor:pointer; font-weight:600; font-size:13px }
@@ -117,18 +116,14 @@
       <!-- 施術録入力 -->
       <div class="card">
         <div class="section-title">施術録入力</div>
-        <div class="row-obs">
-          <div>
-            <label>所見（自由記載）</label>
-            <textarea id="obs"></textarea>
-          </div>
-          <div>
-            <label>バイタル（自動/上書き）</label>
-            <div class="muted" style="margin:4px 0">例) vital 126/79/72bpm / SpO2:97%  36.2℃</div>
-            <input id="vitals" placeholder="未入力なら自動付与" />
-            <div class="btnrow" style="margin-top:6px">
-              <select id="preset" style="max-width:260px" onchange="insertPreset()"></select>
-            </div>
+        <div>
+          <label>所見（自由記載）</label>
+          <textarea id="obs"></textarea>
+        </div>
+        <div style="margin-top:12px">
+          <label>定型文</label>
+          <div class="btnrow" style="margin-top:6px">
+            <select id="preset" style="max-width:260px" onchange="insertPreset()"></select>
           </div>
         </div>
 
@@ -1307,17 +1302,20 @@ function insertPreset(){
   const value = sel.value;
   if(!value) return;
   const label = sel.options[sel.selectedIndex]?.dataset?.label || '';
-  const current = val('obs');
-  const parts = [];
-  if(current) parts.push(current);
-  parts.push(value);
-  setv('obs', parts.join('\n'));
+  const isConsentHandout = label.indexOf('同意書受渡')>=0;
+  if(!isConsentHandout){
+    const current = val('obs');
+    const parts = [];
+    if(current) parts.push(current);
+    parts.push(value);
+    setv('obs', parts.join('\n'));
+  }
 
   if(label.indexOf('請求書・領収書受渡')>=0) _flags.receipt=true;
   if(label.indexOf('配布物受渡')>=0)         _flags.handout=true;
   if(label.indexOf('再同意取得確認')>=0)      _flags.consentObtained=true;
 
-  if(label.indexOf('再同意書受渡')>=0){
+  if(isConsentHandout){
     _flags.consentHandout=true;
     showConsentModal();
   }
@@ -1327,6 +1325,7 @@ function insertPreset(){
 function showConsentModal(){
   q('consentDate').value='';
   q('consentUndecided').checked=false;
+  _pendingVisitPlanDate = null;
   q('consentModal').classList.add('open');
 }
 function hideConsentModal(){ q('consentModal').classList.remove('open'); }
@@ -1335,8 +1334,15 @@ function applyConsentHandout(){
   const und = q('consentUndecided').checked;
   const d   = q('consentDate').value;
   if(!und && !d){ alert('日付を選ぶか、未定にチェックしてください'); return; }
-  if(und){ _pendingVisitPlanDate = null; setv('obs', (val('obs')+'\n通院予定：未定').trim()); }
-  else   { _pendingVisitPlanDate = d;    setv('obs', (val('obs')+`\\n通院予定：${d}`).trim()); }
+  const message = und
+    ? '同意書受渡。通院日を確認してください。'
+    : `同意書受渡。（通院予定：${d}）`;
+  const current = val('obs');
+  const lines = current ? current.split('\n') : [];
+  const filtered = lines.filter(line => !line.trim().startsWith('同意書受渡。'));
+  filtered.push(message);
+  setv('obs', filtered.join('\n'));
+  _pendingVisitPlanDate = und ? null : d;
   hideConsentModal();
 }
 
@@ -1344,13 +1350,14 @@ function applyConsentHandout(){
 function detectPresetLabelFromNote(){
   const t = (val('obs')||'');
   if(_flags.consentObtained) return '再同意取得確認';
-  if(_flags.consentHandout)  return '再同意書受渡';
+  if(_flags.consentHandout)  return '同意書受渡';
   if(_flags.receipt)         return '請求書・領収書受渡';
   if(_flags.handout)         return '配布物受渡';
   if(t.indexOf('請求書')>=0 && t.indexOf('受け渡し')>=0) return '請求書・領収書受渡';
   if(t.indexOf('配布物')>=0 && t.indexOf('受け渡し')>=0) return '配布物受渡';
   if(t.indexOf('再同意')>=0 && t.indexOf('取得')>=0)     return '再同意取得確認';
-  if(t.indexOf('再同意書')>=0 && t.indexOf('受け渡し')>=0) return '再同意書受渡';
+  if(t.indexOf('同意書受渡')>=0) return '同意書受渡';
+  if(t.indexOf('再同意書')>=0 && t.indexOf('受け渡し')>=0) return '同意書受渡';
   return '';
 }
 function toast(msg){
@@ -1373,7 +1380,6 @@ function save(){
     const payload={
       patientId: p,
       presetLabel: detectPresetLabelFromNote(),
-      overrideVitals: val('vitals'),
       burdenShare: val('burden')||null,
       notesParts:{ note: val('obs') },
       actions:{}
@@ -1396,11 +1402,8 @@ function save(){
         } else {
           alert('保存しました');
         }
-        if (res && res.vitals && !val('vitals')) setv('vitals', res.vitals);
-
         resetFlags();
         setv('obs','');
-        setv('vitals','');
         q('preset').selectedIndex = 0;
         clearMetricRows();
         refresh();

@@ -29,6 +29,7 @@ const LABELS = {
   furigana:  ['ﾌﾘｶﾞﾅ','ふりがな','フリガナ'],
   birth:     ['生年月日','誕生日','生年','生年月'],
   consent:   ['同意年月日','同意日','同意開始日','同意開始'],
+  consentHandout: ['配布','配布欄','配布状況','配布日','配布（同意書）'],
   share:     ['負担割合','負担','自己負担','負担率','負担割','負担%','負担％'],
   phone:     ['電話','電話番号','TEL','Tel']
 };
@@ -42,6 +43,7 @@ const PATIENT_COLS_FIXED = {
   birth:    7,   // 生年月日
   doctor:  26,   // 医師
   consent: 28,   // 同意年月日
+  consentHandout: 54, // 配布（同意書取得日）
   phone:   32,   // 電話
   share:   47    // 負担割合
 };
@@ -458,6 +460,7 @@ function getPatientHeader(pid){
   const cFuri = getColFlexible_(head, LABELS.furigana, PATIENT_COLS_FIXED.furigana, 'ﾌﾘｶﾞﾅ');
   const cBirth= getColFlexible_(head, LABELS.birth,    PATIENT_COLS_FIXED.birth,    '生年月日');
   const cCons = getColFlexible_(head, LABELS.consent,  PATIENT_COLS_FIXED.consent,  '同意年月日');
+  const cConsHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
   const cShare= getColFlexible_(head, LABELS.share,    PATIENT_COLS_FIXED.share,    '負担割合');
   const cTel  = getColFlexible_(head, LABELS.phone,    PATIENT_COLS_FIXED.phone,    '電話');
 
@@ -472,6 +475,7 @@ function getPatientHeader(pid){
 
   // 同意期限
   const consent = rowV[cCons-1]||'';
+  const consentHandout = rowV[cConsHandout-1]||'';
   const expiry  = calcConsentExpiry_(consent) || '—';
 
   // 負担割合
@@ -493,6 +497,7 @@ function getPatientHeader(pid){
     birth:    rowV[cBirth-1]||'',
     age, ageClass,
     consentDate: consent || '',
+    consentHandoutDate: consentHandout || '',
     consentExpiry: expiry,
     burden: shareDisp || '',
     monthly, recent,
@@ -925,25 +930,26 @@ function updateConsentDate(pid, dateStr, options){
   if (!hit) throw new Error('患者が見つかりません');
   const s=sh('患者情報'); const head=hit.head;
   const cCons= getColFlexible_(head, LABELS.consent, PATIENT_COLS_FIXED.consent, '同意年月日');
-  s.getRange(hit.row, cCons).setValue(dateStr);
+  const cHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
   const meta = options && options.meta ? options.meta : null;
   const source = meta && meta.source ? String(meta.source) : '';
+  const isTreatmentTriggered = source === 'treatment';
+
+  if (isTreatmentTriggered) {
+    s.getRange(hit.row, cHandout).setValue(dateStr || '');
+  } else {
+    s.getRange(hit.row, cCons).setValue(dateStr || '');
+  }
 
   clearConsentRelatedNews_(pid);
 
-  if (source === 'news_edit') {
-    const message = dateStr
-      ? '同意書受渡。（通院予定：' + dateStr + '）'
-      : '同意書受渡。';
-    pushNews_(pid, '同意', message, meta);
-    if (dateStr) {
-      pushNews_(pid, '予定', '通院予定を登録：' + dateStr, meta);
-      sh('予定').appendRow([String(pid), '通院', dateStr, (Session.getActiveUser()||{}).getEmail()]);
-    }
-  } else {
-    pushNews_(pid,'同意','再同意取得確認（同意日更新：'+dateStr+'）', meta);
-  }
-  log_('同意日更新', pid, dateStr);
+  const newsMessage = dateStr
+    ? '再同意取得確認（同意日更新：' + dateStr + '）'
+    : '再同意取得確認（同意日更新）';
+  pushNews_(pid,'同意', newsMessage, meta);
+
+  const logDetail = isTreatmentTriggered ? '確認日:' + (dateStr || '') : (dateStr || '');
+  log_('同意日更新', pid, logDetail);
 }
 function updateBurdenShare(pid, shareText, options){
   const hit = findPatientRow_(pid);

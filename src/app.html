@@ -1499,7 +1499,7 @@ function loadHeader(){
             <div class="badge">患者ID ${h.patientId}</div>
             <div style="margin:6px 0 2px">氏名：${h.name||'—'}　（${h.age!=null? h.age+'歳':''} ${h.ageClass||''}）</div>
             <div>病院名：${h.hospital||'—'}　医師：${h.doctor||'—'}</div>
-            <div>同意日：${h.consentDate||'—'}　次回期限：${h.consentExpiry||'—'}　負担割合：${h.burden||'—'}</div>
+            <div>同意書確認日：${h.consentHandoutDate||'—'}　同意日：${h.consentDate||'—'}　次回期限：${h.consentExpiry||'—'}　負担割合：${h.burden||'—'}</div>
           </div>
           <div>
             <div>${status} ${h.pauseUntil? '（ミュート:'+h.pauseUntil+'まで）':''}</div>

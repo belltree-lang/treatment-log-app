@@ -609,8 +609,13 @@ function currentPatientName(){
 }
 
 let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
-let _pendingVisitPlanDate = null;
-let _pendingConsentUndecided = false;
+window._actions = window._actions || {};
+function getActionState(){
+  if (!window._actions || typeof window._actions !== 'object'){
+    window._actions = {};
+  }
+  return window._actions;
+}
 let _currentHeader = null;
 let _consentEditContext = null;
 let METRIC_DEFS = [];
@@ -632,8 +637,7 @@ let _icfSummaryState = { range: '1m', results: {} };
 
 function resetFlags(){
   _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false};
-  _pendingVisitPlanDate=null;
-  _pendingConsentUndecided=false;
+  window._actions = {};
 }
 
 function loadMetricDefinitions(){
@@ -1358,8 +1362,9 @@ function insertPreset(){
 function showConsentModal(){
   q('consentDate').value='';
   q('consentUndecided').checked=false;
-  _pendingVisitPlanDate = null;
-  _pendingConsentUndecided = false;
+  const actions = getActionState();
+  delete actions.visitPlanDate;
+  delete actions.consentUndecided;
   q('consentModal').classList.add('open');
 }
 function hideConsentModal(){ q('consentModal').classList.remove('open'); }
@@ -1376,8 +1381,14 @@ function applyConsentHandout(){
   const filtered = lines.filter(line => !line.trim().startsWith('同意書受渡。'));
   filtered.push(message);
   setv('obs', filtered.join('\n'));
-  _pendingVisitPlanDate = und ? null : d;
-  _pendingConsentUndecided = und;
+  const actions = getActionState();
+  if (und){
+    actions.consentUndecided = true;
+    delete actions.visitPlanDate;
+  }else{
+    delete actions.consentUndecided;
+    actions.visitPlanDate = d;
+  }
   hideConsentModal();
 }
 
@@ -1417,12 +1428,10 @@ function save(){
       presetLabel: detectPresetLabelFromNote(),
       burdenShare: val('burden')||null,
       notesParts:{ note: val('obs') },
-      actions:{}
+      actions: Object.assign({}, window._actions || {})
     };
     const metrics = collectMetricInputs();
     if (metrics.length) payload.clinicalMetrics = metrics;
-    if(_pendingVisitPlanDate){ payload.actions.visitPlanDate = _pendingVisitPlanDate; }
-    if(_pendingConsentUndecided){ payload.actions.consentUndecided = true; }
 
     // ボタン連打防止
     const btns = document.querySelectorAll('button');

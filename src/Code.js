@@ -68,8 +68,25 @@ function ensureAuxSheets_() {
   };
 
   // 既存タブ
-  ensureHeader('施術録',   ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前']);
-  ensureHeader('News',     ['TS','患者ID','種別','メッセージ','cleared']);
+  ensureHeader('施術録',   ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
+  ensureHeader('News',     ['TS','患者ID','種別','メッセージ','cleared','meta']);
+
+  const upgradeHeader = (sheetName, header) => {
+    const sheet = wb.getSheetByName(sheetName);
+    if (!sheet) return;
+    const needed = header.length;
+    if (sheet.getMaxColumns() < needed) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+    }
+    const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+    const mismatch = current.length < needed || header.some((label, idx) => String(current[idx] || '') !== label);
+    if (mismatch) {
+      sheet.getRange(1, 1, 1, needed).setValues([header]);
+    }
+  };
+
+  upgradeHeader('施術録', ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
+  upgradeHeader('News',   ['TS','患者ID','種別','メッセージ','cleared','meta']);
   ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
   ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
   ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
@@ -154,12 +171,21 @@ function init_(){ ensureAuxSheets_(); }
 function log_(op,pid,detail){
   sh('操作ログ').appendRow([new Date(), op, String(pid), detail||'', (Session.getActiveUser()||{}).getEmail()]);
 }
-function pushNews_(pid,type,msg){
-  sh('News').appendRow([new Date(), String(pid), type, msg, '']);
+function pushNews_(pid,type,msg,meta){
+  const sheet = sh('News');
+  let metaStr = '';
+  if (meta != null) {
+    try {
+      metaStr = typeof meta === 'string' ? meta : JSON.stringify(meta);
+    } catch (e) {
+      metaStr = String(meta);
+    }
+  }
+  sheet.appendRow([new Date(), String(pid), type, msg, '', metaStr]);
 }
 function getNews(pid){
   const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return [];
-  const vals=s.getRange(2,1,lr-1,5).getDisplayValues();
+  const vals=s.getRange(2,1,lr-1,6).getDisplayValues();
   return vals.filter(r=> String(r[1])===String(pid) && !String(r[4])).map(r=>({ when:r[0], type:r[2], message:r[3] }));
 }
 function clearConsentRelatedNews_(pid){
@@ -173,6 +199,39 @@ function clearConsentRelatedNews_(pid){
       }
     }
   }
+}
+
+function clearNewsByTreatment_(treatmentId){
+  if (!treatmentId) return;
+  const s = sh('News');
+  const lr = s.getLastRow();
+  if (lr < 2) return;
+  const width = Math.min(6, s.getMaxColumns());
+  if (width < 5) return;
+  const vals = s.getRange(2, 1, lr - 1, width).getValues();
+  const metaIndex = width >= 6 ? 5 : -1;
+  const clearedCol = 4; // 5列目（cleared）
+  const matches = [];
+  for (let i = 0; i < vals.length; i++) {
+    const metaText = metaIndex >= 0 ? String(vals[i][metaIndex] || '').trim() : '';
+    if (!metaText) continue;
+    let meta;
+    try {
+      meta = JSON.parse(metaText);
+    } catch (e) {
+      meta = null;
+    }
+    if (meta && String(meta.treatmentId || '') === String(treatmentId)) {
+      matches.push(i);
+      continue;
+    }
+    if (!meta && metaText === String(treatmentId)) {
+      matches.push(i);
+    }
+  }
+  matches.forEach(idx => {
+    s.getRange(2 + idx, clearedCol + 1).setValue('1');
+  });
 }
 
 /***** ステータス（休止/中止） *****/
@@ -544,23 +603,24 @@ function afterTreatmentJob(){
 
   jobs.forEach(job=>{
     const pid = job.patientId;
+    const treatmentMeta = job.treatmentId ? { source: 'treatment', treatmentId: job.treatmentId } : null;
 
     // News / 同意日 / 負担割合 / 予定登録など重い処理をここでまとめて実行
     if (job.presetLabel){
       if (job.presetLabel.indexOf('再同意取得確認') >= 0){
         const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
-        updateConsentDate(pid, today);
+        updateConsentDate(pid, today, treatmentMeta ? { meta: treatmentMeta } : undefined);
       }
       if (job.presetLabel.indexOf('再同意書受渡') >= 0){
-        pushNews_(pid,'再同意','再同意書を受け渡し');
+        pushNews_(pid,'再同意','再同意書を受け渡し', treatmentMeta);
       }
     }
     if (job.burdenShare){
-      updateBurdenShare(pid, job.burdenShare);
+      updateBurdenShare(pid, job.burdenShare, treatmentMeta ? { meta: treatmentMeta } : undefined);
     }
     if (job.visitPlanDate){
       sh('予定').appendRow([pid,'通院', job.visitPlanDate, (Session.getActiveUser()||{}).getEmail()]);
-      pushNews_(pid,'予定','通院予定を登録：' + job.visitPlanDate);
+      pushNews_(pid,'予定','通院予定を登録：' + job.visitPlanDate, treatmentMeta);
     }
     log_('施術後処理', pid, JSON.stringify(job));
   });
@@ -570,7 +630,8 @@ function afterTreatmentJob(){
 /***** 当月の施術一覧 取得・更新・削除 *****/
 function listTreatmentsForCurrentMonth(pid){
   const s=sh('施術録'); const lr=s.getLastRow(); if(lr<2) return [];
-  const vals=s.getRange(2,1,lr-1,6).getValues(); // A..F
+  const width = Math.min(7, s.getMaxColumns());
+  const vals=s.getRange(2,1,lr-1,width).getValues(); // A..G
   const tz=Session.getScriptTimeZone()||'Asia/Tokyo';
   const now=new Date();
   const start=new Date(now.getFullYear(), now.getMonth(), 1, 0,0,0);
@@ -582,6 +643,7 @@ function listTreatmentsForCurrentMonth(pid){
     if(id!==String(pid)) continue;
     const d = ts instanceof Date ? ts : new Date(ts);
     if(isNaN(d.getTime())) continue;
+    if(d < start || d > end) continue;
     out.push({
       row: 2+i,
       when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
@@ -615,8 +677,14 @@ function updateTreatmentRow(row, note) {
 }
 
 function deleteTreatmentRow(row){
-  const s=sh('施術録'); if(row<=1 || row>s.getLastRow()) throw new Error('行が不正です');
+  const s=sh('施術録'); const lr = s.getLastRow();
+  if(row<=1 || row>lr) throw new Error('行が不正です');
+  const maxCols = s.getMaxColumns();
+  const width = Math.min(7, maxCols);
+  const rowVals = s.getRange(row, 1, 1, width).getValues()[0];
+  const treatmentId = width >= 7 ? String(rowVals[6] || '').trim() : '';
   s.deleteRow(row);
+  if (treatmentId) clearNewsByTreatment_(treatmentId);
   log_('施術削除', '(row:'+row+')', '');
   return true;
 }
@@ -774,17 +842,18 @@ function resolveIcfSummaryRange_(rangeKey){
 }
 
 /***** 同意・負担割合 更新（findPatientRow_ベース） *****/
-function updateConsentDate(pid, dateStr){
+function updateConsentDate(pid, dateStr, options){
   const hit = findPatientRow_(pid);
   if (!hit) throw new Error('患者が見つかりません');
   const s=sh('患者情報'); const head=hit.head;
   const cCons= getColFlexible_(head, LABELS.consent, PATIENT_COLS_FIXED.consent, '同意年月日');
   s.getRange(hit.row, cCons).setValue(dateStr);
-  pushNews_(pid,'同意','再同意取得確認（同意日更新：'+dateStr+'）');
+  const meta = options && options.meta ? options.meta : null;
+  pushNews_(pid,'同意','再同意取得確認（同意日更新：'+dateStr+'）', meta);
   clearConsentRelatedNews_(pid);
   log_('同意日更新', pid, dateStr);
 }
-function updateBurdenShare(pid, shareText){
+function updateBurdenShare(pid, shareText, options){
   const hit = findPatientRow_(pid);
   if (!hit) throw new Error('患者が見つかりません');
   const s=sh('患者情報'); const headers=hit.head;
@@ -804,12 +873,13 @@ function updateBurdenShare(pid, shareText){
 
   // 3) 代表へ通知＆News
   const disp = parsed.disp || String(shareText||'');
-  pushNews_(pid,'通知','負担割合を更新：' + disp);
+  const meta = options && options.meta ? options.meta : null;
+  pushNews_(pid,'通知','負担割合を更新：' + disp, meta);
   log_('負担割合更新', pid, disp);
 
   // 4) 施術録にも記録を残す（監査・検索用）
   const user = (Session.getActiveUser()||{}).getEmail();
-  sh('施術録').appendRow([new Date(), String(pid), '負担割合を更新：' + (disp || shareText || ''), user, '', '' ]);
+  sh('施術録').appendRow([new Date(), String(pid), '負担割合を更新：' + (disp || shareText || ''), user, '', '', Utilities.getUuid() ]);
 
   return true;
 }
@@ -2459,6 +2529,7 @@ function updateTreatmentTimestamp(row, newLocal){
   // 現在の値を退避（監査ログ用）
   const oldTs = s.getRange(row, 1).getValue();        // 列A: タイムスタンプ
   const pid   = String(s.getRange(row, 2).getValue()); // 列B: 施術録番号（患者ID）
+  const treatmentId = String(s.getRange(row, 7).getValue() || '').trim();
 
   // 入力（例: "2025-09-04T14:30" / "2025-09-04 14:30" / "2025/9/4 14:30"）を Date に変換
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
@@ -2471,7 +2542,8 @@ function updateTreatmentTimestamp(row, newLocal){
   // 監査ログ
   const toDisp = (v)=> v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd HH:mm') : String(v||'');
   log_('施術TS修正', pid, `row=${row}  ${toDisp(oldTs)} -> ${toDisp(d)}`);
-  pushNews_(pid, '記録', `施術記録の日時を修正: ${toDisp(d)}`);
+  const newsMeta = treatmentId ? { source: 'treatment', treatmentId } : null;
+  pushNews_(pid, '記録', `施術記録の日時を修正: ${toDisp(d)}`, newsMeta);
 
   // ダッシュボードの最終施術日に影響するので Index を更新（v1は全件でOK）
   DashboardIndex_updatePatients([pid]);
@@ -2527,14 +2599,15 @@ function submitTreatment(payload) {
       }
     }
 
-    const row = [now, pid, merged, user, '', ''];
+    const treatmentId = Utilities.getUuid();
+    const row = [now, pid, merged, user, '', '', treatmentId];
     s.appendRow(row);
 
     if (Array.isArray(payload?.clinicalMetrics) && payload.clinicalMetrics.length) {
       recordClinicalMetrics_(pid, payload.clinicalMetrics, now, user);
     }
 
-    const job = { patientId: pid };
+    const job = { patientId: pid, treatmentId, treatmentTimestamp: now };
     let hasFollowUp = false;
 
     const presetLabel = String(payload?.presetLabel || '').trim();

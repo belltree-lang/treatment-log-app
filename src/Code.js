@@ -2733,6 +2733,10 @@ function tryGenerateAutoVitals_(payload) {
 }
 
 function submitTreatment(payload) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw new Error('保存処理が混み合っています。数秒後に再度お試しください。');
+  }
   try {
     ensureAuxSheets_();
     const s = sh('施術録');
@@ -2741,9 +2745,9 @@ function submitTreatment(payload) {
 
     const user = (Session.getActiveUser() || {}).getEmail() || '';
 
-    // タイムゾーンを日本時間に固定して文字列保存
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
-    const now = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss');
+    const nowDate = new Date();
+    const now = Utilities.formatDate(nowDate, tz, 'yyyy-MM-dd HH:mm:ss');
 
     const note = String(payload?.notesParts?.note || '').trim();
     let merged = note;
@@ -2752,18 +2756,37 @@ function submitTreatment(payload) {
       merged = autoVitals || 'バイタル自動記録';
     }
 
-    // 🔒 二重保存チェック（直近の1件と比較）
-    const lr = s.getLastRow();
-    if (lr >= 2) {
-      const last = s.getRange(lr, 1, 1, 4).getValues()[0]; // [TS, pid, 所見, user]
-      const lastPid = String(last[1] || '').trim();
-      const lastNote = String(last[2] || '').trim();
-      if (lastPid === pid && lastNote === merged) {
-        return { ok: false, skipped: true, msg: '直前と同じ内容のため保存をスキップしました' };
+    const incomingTreatmentId = String(payload?.treatmentId || '').trim();
+    if (incomingTreatmentId) {
+      const dupRow = findTreatmentRowById_(s, incomingTreatmentId);
+      if (dupRow) {
+        return {
+          ok: false,
+          skipped: true,
+          duplicate: true,
+          msg: '同じ操作が既に保存されています',
+          row: dupRow.row,
+          treatmentId: incomingTreatmentId,
+        };
       }
     }
 
-    const treatmentId = Utilities.getUuid();
+    const recentDup = detectRecentDuplicateTreatment_(s, pid, merged, nowDate, tz, incomingTreatmentId);
+    if (recentDup) {
+      if (recentDup.reason === 'recentContent') {
+        pushNews_(pid, '警告', '二重登録を検出し保存をスキップしました');
+      }
+      return {
+        ok: false,
+        skipped: true,
+        duplicate: true,
+        msg: recentDup.message,
+        row: recentDup.row,
+        treatmentId: recentDup.treatmentId,
+      };
+    }
+
+    const treatmentId = incomingTreatmentId || Utilities.getUuid();
     const row = [now, pid, merged, user, '', '', treatmentId];
     s.appendRow(row);
 
@@ -2805,10 +2828,83 @@ function submitTreatment(payload) {
       queueAfterTreatmentJob(job);
     }
 
-    return { ok: true, wroteTo: s.getName(), row };
-  } catch (e) {
-    throw e;
+    return { ok: true, wroteTo: s.getName(), row, treatmentId };
+  } finally {
+    lock.releaseLock();
   }
+}
+
+function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTreatmentId) {
+  const lr = sheet.getLastRow();
+  if (lr < 2) return null;
+
+  const rowsToScan = Math.min(lr - 1, 50);
+  const startRow = Math.max(2, lr - rowsToScan + 1);
+  const values = sheet.getRange(startRow, 1, rowsToScan, 7).getValues();
+  const nowMs = nowDate.getTime();
+  const windowMs = 60 * 1000; // 1分以内の重複をブロック
+
+  for (let i = values.length - 1; i >= 0; i--) {
+    const row = values[i];
+    const existingPid = String(row[1] || '').trim();
+    if (existingPid !== pid) continue;
+    const existingNote = String(row[2] || '').trim();
+    if (existingNote !== note) continue;
+    const existingTreatmentId = String(row[6] || '').trim();
+    if (ignoreTreatmentId && existingTreatmentId && existingTreatmentId === ignoreTreatmentId) {
+      return {
+        row,
+        treatmentId: existingTreatmentId,
+        message: '同じ操作が既に保存されています',
+        reason: 'sameRequest',
+      };
+    }
+    const tsDate = normalizeTreatmentTimestamp_(row[0], tz);
+    if (!tsDate) continue;
+    if (nowMs - tsDate.getTime() <= windowMs) {
+      return {
+        row,
+        treatmentId: existingTreatmentId,
+        message: '直近1分以内に同じ内容が登録済みのため保存をスキップしました',
+        reason: 'recentContent',
+      };
+    }
+  }
+  return null;
+}
+
+function normalizeTreatmentTimestamp_(value, tz) {
+  if (value instanceof Date) {
+    return value;
+  }
+  const str = String(value || '').trim();
+  if (!str) return null;
+  const iso = str.replace(' ', 'T');
+  const date = new Date(iso + (iso.endsWith('Z') || iso.includes('+') ? '' : (tz === 'Asia/Tokyo' ? '+09:00' : 'Z')));
+  if (!isNaN(date.getTime())) {
+    return date;
+  }
+  try {
+    return new Date(str);
+  } catch (e) {
+    return null;
+  }
+}
+
+function findTreatmentRowById_(sheet, treatmentId) {
+  if (!treatmentId) return null;
+  const lr = sheet.getLastRow();
+  if (lr < 2) return null;
+  const ids = sheet.getRange(2, 7, lr - 1, 1).getValues();
+  for (let i = 0; i < ids.length; i++) {
+    const id = String(ids[i][0] || '').trim();
+    if (id === treatmentId) {
+      const rowNumber = i + 2;
+      const row = sheet.getRange(rowNumber, 1, 1, 7).getValues()[0];
+      return { rowNumber, row };
+    }
+  }
+  return null;
 }
 
 /***** 申し送り：内部ユーティリティ *****/

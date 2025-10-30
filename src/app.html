@@ -610,6 +610,16 @@ function currentPatientName(){
 
 let _flags = { receipt:false, handout:false, consentHandout:false, consentObtained:false };
 window._actions = window._actions || {};
+let _saveInFlight = false;
+let _pendingSaveRequestId = null;
+
+function generateSaveRequestId(){
+  if (window.crypto && typeof window.crypto.randomUUID === 'function'){
+    return window.crypto.randomUUID();
+  }
+  return 'tx_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+}
+
 function getActionState(){
   if (!window._actions || typeof window._actions !== 'object'){
     window._actions = {};
@@ -638,6 +648,8 @@ let _icfSummaryState = { range: '1m', results: {} };
 function resetFlags(){
   _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false};
   window._actions = {};
+  _pendingSaveRequestId = null;
+  _saveInFlight = false;
 }
 
 function loadMetricDefinitions(){
@@ -1419,8 +1431,14 @@ function toast(msg){
 function save(){
   try{
     console.log('[save] start');
+    if (_saveInFlight){
+      console.warn('[save] already in flight');
+      toast('保存処理中です。完了までお待ちください');
+      return;
+    }
     const p = pid();
     if(!p){ alert('患者IDを入力'); return; }
+    _saveInFlight = true;
 
     // 送信ペイロード
     const payload={
@@ -1430,6 +1448,9 @@ function save(){
       notesParts:{ note: val('obs') },
       actions: Object.assign({}, window._actions || {})
     };
+    const requestId = _pendingSaveRequestId || generateSaveRequestId();
+    _pendingSaveRequestId = requestId;
+    payload.treatmentId = requestId;
     const metrics = collectMetricInputs();
     if (metrics.length) payload.clinicalMetrics = metrics;
 
@@ -1442,29 +1463,38 @@ function save(){
     google.script.run
       .withSuccessHandler(res=>{
         console.log('[save] success', res);
-        const name = currentPatientName();
-        let message = name ? `${name}さんの施術録を保存しました` : '施術録を保存しました';
-        if (res && res.row && Array.isArray(res.row)) {
-          message += `（行: ${res.row.join(' , ')}）`;
+        _saveInFlight = false;
+        if (res && res.skipped){
+          toast(res.msg || '直前と同じ内容のため保存をスキップしました');
+        } else {
+          const name = currentPatientName();
+          let message = name ? `${name}さんの施術録を保存しました` : '施術録を保存しました';
+          if (res && res.row && Array.isArray(res.row)) {
+            message += `（行: ${res.row.join(' , ')}）`;
+          }
+          toast(message);
+          resetFlags();
+          setv('obs','');
+          q('preset').selectedIndex = 0;
+          clearMetricRows();
+          refresh();
         }
-        toast(message);
-        resetFlags();
-        setv('obs','');
-        q('preset').selectedIndex = 0;
-        clearMetricRows();
-        refresh();
 
+        _pendingSaveRequestId = null;
         btns.forEach(b=> b.disabled = false);
       })
       .withFailureHandler(e=>{
         console.error('[save] failure', e);
         alert('保存に失敗: ' + (e && e.message ? e.message : e));
+        _saveInFlight = false;
         btns.forEach(b=> b.disabled = false);
       })
       .submitTreatment(payload);
   }catch(err){
     console.error('[save] exception', err);
     alert('エラー: ' + (err && err.message ? err.message : err));
+    _saveInFlight = false;
+    document.querySelectorAll('button').forEach(b=> b.disabled = false);
   }
 }
 

@@ -289,6 +289,28 @@ function hideGlobalLoading(){
   }
 }
 
+function focusPatientIdInput(){
+  const input = q('pid');
+  if (!input || typeof input.focus !== 'function') return;
+  const focusTask = () => {
+    try {
+      input.focus();
+      if (typeof input.select === 'function') {
+        input.select();
+      }
+    } catch (err) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[focusPatientIdInput] failed', err);
+      }
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(focusTask);
+  } else {
+    setTimeout(focusTask, 0);
+  }
+}
+
 const PATIENT_ID_CACHE_KEY = 'treatmentLogApp.patientIdCache';
 let _patientIdIndex = {};
 let _patientIdList = [];
@@ -1509,6 +1531,10 @@ function scheduleRefresh(delayMs){
 function save(){
   const saveBtn = document.getElementById('saveBtn');
   let endTiming = () => {};
+  const finalizeSave = () => {
+    hideGlobalLoading();
+    if (saveBtn) saveBtn.disabled = false;
+  };
   try{
     console.log('[save] start');
     if (_saveInFlight){
@@ -1521,6 +1547,7 @@ function save(){
     _saveInFlight = true;
 
     if (saveBtn) saveBtn.disabled = true;
+    showGlobalLoading('保存中です…');
 
     // 送信ペイロード
     const payload={
@@ -1563,20 +1590,22 @@ function save(){
         endTiming();
         _saveInFlight = false;
         _pendingSaveRequestId = null;
-        if (res && res.skipped){
-          toast(res.msg || '直前と同じ内容のため保存をスキップしました');
-        } else {
-          const name = currentPatientName();
-          let message = name ? `${name}さんの施術録を保存しました` : '施術録を保存しました';
-          toast(message);
-          resetFlags();
-          setv('obs','');
-          q('preset').selectedIndex = 0;
-          clearMetricRows();
-          scheduleRefresh(700);
+        try {
+          if (res && res.skipped){
+            toast(res.msg || '直前と同じ内容のため保存をスキップしました');
+          } else {
+            const name = currentPatientName();
+            let message = name ? `${name}さんの施術録を保存しました` : '施術録を保存しました';
+            toast(message);
+            resetFlags();
+            setv('obs','');
+            q('preset').selectedIndex = 0;
+            clearMetricRows();
+            scheduleRefresh(700);
+          }
+        } finally {
+          finalizeSave();
         }
-
-        if (saveBtn) saveBtn.disabled = false;
       })
       .withFailureHandler(e=>{
         console.error('[save] failure', e);
@@ -1584,7 +1613,7 @@ function save(){
         alert('保存に失敗: ' + (e && e.message ? e.message : e));
         _saveInFlight = false;
         _pendingSaveRequestId = null;
-        if (saveBtn) saveBtn.disabled = false;
+        finalizeSave();
       })
       .submitTreatment(payload);
   }catch(err){
@@ -1593,7 +1622,7 @@ function save(){
     alert('エラー: ' + (err && err.message ? err.message : err));
     _saveInFlight = false;
     _pendingSaveRequestId = null;
-    if (saveBtn) saveBtn.disabled = false;
+    finalizeSave();
   }
 }
 
@@ -1622,8 +1651,6 @@ function refresh(){
   if (q('hdr')) q('hdr').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('news')) q('news').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('list')) q('list').innerHTML = '<div class="muted">読み込み中…</div>';
-  showGlobalLoading('患者データを読み込み中…');
-
   loadHeader(patientId, () => {
     loadNews(patientId, () => {
       loadThisMonth(patientId, () => {
@@ -1965,6 +1992,7 @@ function saveHandoverUI(){
   loadMetricDefinitions();
   ensureMetricEmptyMessage();
   setupIcfSummaryUI();
+  focusPatientIdInput();
   const p = "<?= patientId ?>";
   if (p) {
     refresh();

@@ -20,6 +20,87 @@ const CLINICAL_METRICS = [
   { id: 'walk_distance', label: '歩行距離（6MWT）', unit: 'm',   min: 0,   max: 600, step: 5,   description: '6分間歩行距離などの歩行パフォーマンス' },
 ];
 
+const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202501';
+const PATIENT_CACHE_TTL_SECONDS = 90;
+const PATIENT_CACHE_KEYS = {
+  header: pid => 'patient:header:' + normId_(pid),
+  news: pid => 'patient:news:' + normId_(pid),
+  treatments: pid => 'patient:treatments:' + normId_(pid),
+};
+
+function getScriptCache_(){
+  try {
+    return CacheService.getScriptCache();
+  } catch (e) {
+    Logger.log('[cache] CacheService unavailable: ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+function cacheFetch_(key, fetchFn, ttlSeconds){
+  const cache = getScriptCache_();
+  if (!cache || !key || typeof fetchFn !== 'function') {
+    return fetchFn ? fetchFn() : null;
+  }
+
+  try {
+    const hit = cache.get(key);
+    if (hit != null && hit !== '') {
+      return JSON.parse(hit);
+    }
+  } catch (err) {
+    Logger.log('[cache] read miss (' + key + '): ' + (err && err.message ? err.message : err));
+  }
+
+  const fresh = fetchFn();
+  if (fresh === undefined) return fresh;
+
+  try {
+    cache.put(key, JSON.stringify(fresh), Math.max(5, ttlSeconds || PATIENT_CACHE_TTL_SECONDS));
+  } catch (err) {
+    Logger.log('[cache] write fail (' + key + '): ' + (err && err.message ? err.message : err));
+  }
+  return fresh;
+}
+
+function invalidateCacheKeys_(keys){
+  if (!Array.isArray(keys) || !keys.length) return;
+  const filtered = keys.filter(Boolean);
+  if (!filtered.length) return;
+  const cache = getScriptCache_();
+  if (!cache) return;
+  try {
+    cache.removeAll(filtered);
+  } catch (err) {
+    Logger.log('[cache] remove fail: ' + (err && err.message ? err.message : err));
+  }
+}
+
+function invalidatePatientCaches_(pidOrList, scope){
+  if (Array.isArray(pidOrList)) {
+    const allKeys = [];
+    pidOrList.forEach(id => {
+      const keys = collectPatientCacheKeys_(id, scope);
+      if (keys.length) allKeys.push.apply(allKeys, keys);
+    });
+    invalidateCacheKeys_(allKeys);
+    return;
+  }
+  const keys = collectPatientCacheKeys_(pidOrList, scope);
+  invalidateCacheKeys_(keys);
+}
+
+function collectPatientCacheKeys_(pid, scope){
+  const normalized = normId_(pid);
+  if (!normalized) return [];
+  const applyAll = !scope;
+  const keys = [];
+  if (applyAll || scope.header) keys.push(PATIENT_CACHE_KEYS.header(normalized));
+  if (applyAll || scope.news) keys.push(PATIENT_CACHE_KEYS.news(normalized));
+  if (applyAll || scope.treatments) keys.push(PATIENT_CACHE_KEYS.treatments(normalized));
+  return keys;
+}
+
 /***** 先頭行（見出し）の揺れに耐えるためのラベル候補群 *****/
 const LABELS = {
   recNo:     ['施術録番号','施術録No','施術録NO','記録番号','カルテ番号','患者ID','患者番号'],
@@ -97,53 +178,79 @@ function scheduleAfterTreatmentJobTrigger_(options){
   }
 }
 /***** 補助タブの用意（不足時に自動生成＋ヘッダ挿入） *****/
-function ensureAuxSheets_() {
-  const wb = ss();
-  const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','臨床指標','AI報告書'];
-  need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
+function ensureAuxSheets_(options) {
+  const props = PropertiesService.getScriptProperties();
+  const force = options && options.force;
+  if (!force && props.getProperty(AUX_SHEETS_INIT_KEY) === '1') {
+    return;
+  }
 
-  const ensureHeader = (name, header) => {
-    const s = wb.getSheetByName(name);
-    if (s.getLastRow() === 0) s.appendRow(header);
-  };
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try {
+    locked = lock.tryLock(5000);
+  } catch (e) {
+    locked = false;
+  }
 
-  // 既存タブ
-  ensureHeader('施術録',   ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
-  ensureHeader('News',     ['TS','患者ID','種別','メッセージ','cleared','meta']);
-
-  const upgradeHeader = (sheetName, header) => {
-    const sheet = wb.getSheetByName(sheetName);
-    if (!sheet) return;
-    const needed = header.length;
-    if (sheet.getMaxColumns() < needed) {
-      sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  try {
+    if (!force && props.getProperty(AUX_SHEETS_INIT_KEY) === '1') {
+      return;
     }
-    const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
-    const mismatch = current.length < needed || header.some((label, idx) => String(current[idx] || '') !== label);
-    if (mismatch) {
-      sheet.getRange(1, 1, 1, needed).setValues([header]);
+
+    const wb = ss();
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','臨床指標','AI報告書'];
+    need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
+
+    const ensureHeader = (name, header) => {
+      const s = wb.getSheetByName(name);
+      if (s.getLastRow() === 0) s.appendRow(header);
+    };
+
+    // 既存タブ
+    ensureHeader('施術録',   ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
+    ensureHeader('News',     ['TS','患者ID','種別','メッセージ','cleared','meta']);
+
+    const upgradeHeader = (sheetName, header) => {
+      const sheet = wb.getSheetByName(sheetName);
+      if (!sheet) return;
+      const needed = header.length;
+      if (sheet.getMaxColumns() < needed) {
+        sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+      }
+      const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+      const mismatch = current.length < needed || header.some((label, idx) => String(current[idx] || '') !== label);
+      if (mismatch) {
+        sheet.getRange(1, 1, 1, needed).setValues([header]);
+      }
+    };
+
+    upgradeHeader('施術録', ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
+    upgradeHeader('News',   ['TS','患者ID','種別','メッセージ','cleared','meta']);
+    ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
+    ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
+    ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
+    ensureHeader('定型文',   ['カテゴリ','ラベル','文章']);
+    ensureHeader('添付索引', ['TS','患者ID','月','ファイル名','FileId','種別','登録者']);
+    ensureHeader('AI報告書', ['TS','患者ID','範囲','対象','status','special']);
+
+    // 年次確認タブ（未作成時はヘッダだけ用意）
+    ensureHeader('年次確認', ['患者ID','年','確認日','担当者メール']);
+
+    // ダッシュボード（Index）タブ
+    ensureHeader('ダッシュボード', [
+      '患者ID','氏名','同意年月日','次回期限','期限ステータス',
+      '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
+    ]);
+
+    ensureHeader('臨床指標', ['TS','患者ID','指標ID','値','メモ','登録者']);
+
+    props.setProperty(AUX_SHEETS_INIT_KEY, '1');
+  } finally {
+    if (locked) {
+      lock.releaseLock();
     }
-  };
-
-  upgradeHeader('施術録', ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
-  upgradeHeader('News',   ['TS','患者ID','種別','メッセージ','cleared','meta']);
-  ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
-  ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
-  ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
-  ensureHeader('定型文',   ['カテゴリ','ラベル','文章']);
-  ensureHeader('添付索引', ['TS','患者ID','月','ファイル名','FileId','種別','登録者']);
-  ensureHeader('AI報告書', ['TS','患者ID','範囲','対象','status','special']);
-
-  // 年次確認タブ（未作成時はヘッダだけ用意）
-  ensureHeader('年次確認', ['患者ID','年','確認日','担当者メール']);
-
-  // ダッシュボード（Index）タブ
-  ensureHeader('ダッシュボード', [
-    '患者ID','氏名','同意年月日','次回期限','期限ステータス',
-    '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
-  ]);
-
-  ensureHeader('臨床指標', ['TS','患者ID','指標ID','値','メモ','登録者']);
+  }
 }
 
 function getClinicalMetricDefinitions(){
@@ -227,6 +334,10 @@ function pushNewsRows_(rows){
   const sheet = sh('News');
   const start = sheet.getLastRow() + 1;
   sheet.getRange(start, 1, rows.length, 6).setValues(rows);
+  const affected = Array.from(new Set(rows.map(r => normId_(r && r[1])))).filter(Boolean);
+  if (affected.length) {
+    invalidatePatientCaches_(affected, { news: true });
+  }
 }
 function pushNews_(pid,type,msg,meta){
   pushNewsRows_([formatNewsRow_(pid, type, msg, meta)]);
@@ -238,9 +349,18 @@ function appendRowsToSheet_(sheetName, rows){
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, width).setValues(rows);
 }
 function getNews(pid){
-  const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return [];
-  const vals=s.getRange(2,1,lr-1,6).getDisplayValues();
-  return vals.filter(r=> String(r[1])===String(pid) && !String(r[4])).map(r=>({ when:r[0], type:r[2], message:r[3] }));
+  const normalized = normId_(pid);
+  if (!normalized) return [];
+  const cacheKey = PATIENT_CACHE_KEYS.news(normalized);
+  return cacheFetch_(cacheKey, () => {
+    const s = sh('News');
+    const lr = s.getLastRow();
+    if (lr < 2) return [];
+    const vals = s.getRange(2, 1, lr - 1, 6).getDisplayValues();
+    return vals
+      .filter(r => normId_(r[1]) === normalized && !String(r[4] || '').trim())
+      .map(r => ({ when: r[0], type: r[2], message: r[3] }));
+  }, PATIENT_CACHE_TTL_SECONDS);
 }
 function clearConsentRelatedNews_(pid){
   const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;
@@ -254,6 +374,7 @@ function clearConsentRelatedNews_(pid){
       }
     }
   }
+  invalidatePatientCaches_(pid, { news: true });
 }
 
 function clearNewsByTypes_(pid, types){
@@ -274,6 +395,7 @@ function clearNewsByTypes_(pid, types){
       s.getRange(2 + i, 5).setValue('1');
     }
   }
+  invalidatePatientCaches_(pid, { news: true });
 }
 
 function clearNewsByTreatment_(treatmentId){
@@ -304,9 +426,15 @@ function clearNewsByTreatment_(treatmentId){
       matches.push(i);
     }
   }
+  const affected = new Set();
   matches.forEach(idx => {
     s.getRange(2 + idx, clearedCol + 1).setValue('1');
+    const pid = normId_(vals[idx][1]);
+    if (pid) affected.add(pid);
   });
+  if (affected.size) {
+    invalidatePatientCaches_(Array.from(affected), { news: true });
+  }
 }
 
 /***** ステータス（休止/中止） *****/
@@ -323,12 +451,14 @@ function markSuspend(pid){
   sh('フラグ').appendRow([String(pid),'suspended',until]);
   pushNews_((pid),'状態','休止に設定（ミュート '+until+' まで）');
   log_('休止', pid, until);
+  invalidatePatientCaches_(pid, { header: true });
 }
 function markStop(pid){
   ensureAuxSheets_();
   sh('フラグ').appendRow([String(pid),'stopped','']);
   pushNews_(pid,'状態','中止に設定（以降のリマインド停止）');
   log_('中止', pid, '');
+  invalidatePatientCaches_(pid, { header: true });
 }
 
 /***** ヘッダ正規化ユーティリティ *****/
@@ -501,61 +631,66 @@ function getRecentActivity_(pid) {
 
 /***** 患者ヘッダ（画面表示用） *****/
 function getPatientHeader(pid){
-  ensureAuxSheets_();
-  const hit = findPatientRow_(pid);
-  if (!hit) return null;
+  const normalized = normId_(pid);
+  if (!normalized) return null;
+  const cacheKey = PATIENT_CACHE_KEYS.header(normalized);
+  return cacheFetch_(cacheKey, () => {
+    ensureAuxSheets_();
+    const hit = findPatientRow_(pid);
+    if (!hit) return null;
 
-  const s = sh('患者情報'), head = hit.head, rowV = hit.rowValues;
-  const cName = getColFlexible_(head, LABELS.name,     PATIENT_COLS_FIXED.name,     '名前');
-  const cHos  = getColFlexible_(head, LABELS.hospital, PATIENT_COLS_FIXED.hospital, '病院名');
-  const cDoc  = getColFlexible_(head, LABELS.doctor,   PATIENT_COLS_FIXED.doctor,   '医師');
-  const cFuri = getColFlexible_(head, LABELS.furigana, PATIENT_COLS_FIXED.furigana, 'ﾌﾘｶﾞﾅ');
-  const cBirth= getColFlexible_(head, LABELS.birth,    PATIENT_COLS_FIXED.birth,    '生年月日');
-  const cCons = getColFlexible_(head, LABELS.consent,  PATIENT_COLS_FIXED.consent,  '同意年月日');
-  const cConsHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
-  const cShare= getColFlexible_(head, LABELS.share,    PATIENT_COLS_FIXED.share,    '負担割合');
-  const cTel  = getColFlexible_(head, LABELS.phone,    PATIENT_COLS_FIXED.phone,    '電話');
+    const s = sh('患者情報'), head = hit.head, rowV = hit.rowValues;
+    const cName = getColFlexible_(head, LABELS.name,     PATIENT_COLS_FIXED.name,     '名前');
+    const cHos  = getColFlexible_(head, LABELS.hospital, PATIENT_COLS_FIXED.hospital, '病院名');
+    const cDoc  = getColFlexible_(head, LABELS.doctor,   PATIENT_COLS_FIXED.doctor,   '医師');
+    const cFuri = getColFlexible_(head, LABELS.furigana, PATIENT_COLS_FIXED.furigana, 'ﾌﾘｶﾞﾅ');
+    const cBirth= getColFlexible_(head, LABELS.birth,    PATIENT_COLS_FIXED.birth,    '生年月日');
+    const cCons = getColFlexible_(head, LABELS.consent,  PATIENT_COLS_FIXED.consent,  '同意年月日');
+    const cConsHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
+    const cShare= getColFlexible_(head, LABELS.share,    PATIENT_COLS_FIXED.share,    '負担割合');
+    const cTel  = getColFlexible_(head, LABELS.phone,    PATIENT_COLS_FIXED.phone,    '電話');
 
-  // 年齢
-  const bd = parseDateFlexible_(rowV[cBirth-1]||'');
-  let age=null, ageClass='';
-  if (bd) {
-    const t=new Date();
-    age = t.getFullYear()-bd.getFullYear() - ((t.getMonth()<bd.getMonth() || (t.getMonth()===bd.getMonth() && t.getDate()<bd.getDate()))?1:0);
-    if (age>=75) ageClass='後期高齢'; else if (age>=65) ageClass='前期高齢';
-  }
+    // 年齢
+    const bd = parseDateFlexible_(rowV[cBirth-1]||'');
+    let age=null, ageClass='';
+    if (bd) {
+      const t=new Date();
+      age = t.getFullYear()-bd.getFullYear() - ((t.getMonth()<bd.getMonth() || (t.getMonth()===bd.getMonth() && t.getDate()<bd.getDate()))?1:0);
+      if (age>=75) ageClass='後期高齢'; else if (age>=65) ageClass='前期高齢';
+    }
 
-  // 同意期限
-  const consent = rowV[cCons-1]||'';
-  const consentHandout = rowV[cConsHandout-1]||'';
-  const expiry  = calcConsentExpiry_(consent) || '—';
+    // 同意期限
+    const consent = rowV[cCons-1]||'';
+    const consentHandout = rowV[cConsHandout-1]||'';
+    const expiry  = calcConsentExpiry_(consent) || '—';
 
-  // 負担割合
-  const shareRaw  = rowV[cShare-1]||'';
-  const shareNorm = normalizeBurdenRatio_(shareRaw);
-  const shareDisp = shareNorm ? toBurdenDisp_(shareNorm) : shareRaw;
+    // 負担割合
+    const shareRaw  = rowV[cShare-1]||'';
+    const shareNorm = normalizeBurdenRatio_(shareRaw);
+    const shareDisp = shareNorm ? toBurdenDisp_(shareNorm) : shareRaw;
 
-  const monthly = getMonthlySummary_(pid);
-  const recent  = getRecentActivity_(pid);
-  const stat    = getStatus_(pid);
+    const monthly = getMonthlySummary_(pid);
+    const recent  = getRecentActivity_(pid);
+    const stat    = getStatus_(pid);
 
-  return {
-    patientId:String(normId_(pid)),
-    name: rowV[cName-1]||'',
-    furigana: rowV[cFuri-1]||'',
-    hospital: rowV[cHos-1]||'',
-    doctor:   rowV[cDoc-1]||'',
-    phone:    rowV[cTel-1]||'',
-    birth:    rowV[cBirth-1]||'',
-    age, ageClass,
-    consentDate: consent || '',
-    consentHandoutDate: consentHandout || '',
-    consentExpiry: expiry,
-    burden: shareDisp || '',
-    monthly, recent,
-    status: stat.status,
-    pauseUntil: stat.pauseUntil
-  };
+    return {
+      patientId:String(normId_(pid)),
+      name: rowV[cName-1]||'',
+      furigana: rowV[cFuri-1]||'',
+      hospital: rowV[cHos-1]||'',
+      doctor:   rowV[cDoc-1]||'',
+      phone:    rowV[cTel-1]||'',
+      birth:    rowV[cBirth-1]||'',
+      age, ageClass,
+      consentDate: consent || '',
+      consentHandoutDate: consentHandout || '',
+      consentExpiry: expiry,
+      burden: shareDisp || '',
+      monthly, recent,
+      status: stat.status,
+      pauseUntil: stat.pauseUntil
+    };
+  }, PATIENT_CACHE_TTL_SECONDS);
 }
 
 /***** ID候補 *****/
@@ -771,29 +906,38 @@ function afterTreatmentJob(){
 
 /***** 当月の施術一覧 取得・更新・削除 *****/
 function listTreatmentsForCurrentMonth(pid){
-  const s=sh('施術録'); const lr=s.getLastRow(); if(lr<2) return [];
-  const width = Math.min(7, s.getMaxColumns());
-  const vals=s.getRange(2,1,lr-1,width).getValues(); // A..G
-  const tz=Session.getScriptTimeZone()||'Asia/Tokyo';
-  const now=new Date();
-  const start=new Date(now.getFullYear(), now.getMonth(), 1, 0,0,0);
-  const end  =new Date(now.getFullYear(), now.getMonth()+1, 0, 23,59,59);
+  const normalized = normId_(pid);
+  if (!normalized) return [];
+  const cacheKey = PATIENT_CACHE_KEYS.treatments(normalized);
+  return cacheFetch_(cacheKey, () => {
+    const s = sh('施術録');
+    const lr = s.getLastRow();
+    if (lr < 2) return [];
+    const width = Math.min(7, s.getMaxColumns());
+    const vals = s.getRange(2, 1, lr - 1, width).getValues(); // A..G
+    const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+    const end   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-  const out=[];
-  for(let i=0;i<vals.length;i++){
-    const r=vals[i]; const ts=r[0]; const id=String(r[1]);
-    if(id!==String(pid)) continue;
-    const d = ts instanceof Date ? ts : new Date(ts);
-    if(isNaN(d.getTime())) continue;
-    if(d < start || d > end) continue;
-    out.push({
-      row: 2+i,
-      when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
-      note: String(r[2]||''),
-      email: String(r[3]||'')
-    });
-  }
-  return out.reverse();
+    const out = [];
+    for (let i = 0; i < vals.length; i++) {
+      const r = vals[i];
+      const ts = r[0];
+      const id = normId_(r[1]);
+      if (id !== normalized) continue;
+      const d = ts instanceof Date ? ts : new Date(ts);
+      if (isNaN(d.getTime())) continue;
+      if (d < start || d > end) continue;
+      out.push({
+        row: 2 + i,
+        when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
+        note: String(r[2] || ''),
+        email: String(r[3] || '')
+      });
+    }
+    return out.reverse();
+  }, PATIENT_CACHE_TTL_SECONDS);
 }
 function updateTreatmentRow(row, note) {
   const s = sh('施術録');
@@ -803,6 +947,7 @@ function updateTreatmentRow(row, note) {
 
   // 直前の値を取得
   const oldNote = String(s.getRange(row, 3).getValue() || '').trim();
+  const pid = String(s.getRange(row, 2).getValue() || '').trim();
 
   // 🔒 二重編集チェック
   if (oldNote === newNote) {
@@ -815,6 +960,10 @@ function updateTreatmentRow(row, note) {
   // ログ
   log_('施術修正', '(row:' + row + ')', newNote);
 
+  if (pid) {
+    invalidatePatientCaches_(pid, { header: true, treatments: true });
+  }
+
   return { ok: true, updatedRow: row, newNote };
 }
 
@@ -825,9 +974,13 @@ function deleteTreatmentRow(row){
   const width = Math.min(7, maxCols);
   const rowVals = s.getRange(row, 1, 1, width).getValues()[0];
   const treatmentId = width >= 7 ? String(rowVals[6] || '').trim() : '';
+  const pid = String(rowVals[1] || '').trim();
   s.deleteRow(row);
   if (treatmentId) clearNewsByTreatment_(treatmentId);
   log_('施術削除', '(row:'+row+')', '');
+  if (pid) {
+    invalidatePatientCaches_(pid, { header: true, treatments: true });
+  }
   return true;
 }
 
@@ -1009,6 +1162,7 @@ function updateConsentDate(pid, dateStr, options){
 
   const logDetail = isTreatmentTriggered ? '確認日:' + (dateStr || '') : (dateStr || '');
   log_('同意日更新', pid, logDetail);
+  invalidatePatientCaches_(pid, { header: true });
 }
 function updateBurdenShare(pid, shareText, options){
   const hit = findPatientRow_(pid);
@@ -1038,6 +1192,7 @@ function updateBurdenShare(pid, shareText, options){
   const user = (Session.getActiveUser()||{}).getEmail();
   sh('施術録').appendRow([new Date(), String(pid), '負担割合を更新：' + (disp || shareText || ''), user, '', '', Utilities.getUuid() ]);
 
+  invalidatePatientCaches_(pid, { header: true, treatments: true });
   return true;
 }
 
@@ -2660,9 +2815,11 @@ function runBulkActions(actions){
     });
 
     // Index差分更新（v1は全件でOK）
-    if (touched.size) DashboardIndex_updatePatients(Array.from(touched));
-    // キャッシュは雑に全無効化（運用後にキー粒度を最適化）
-    CacheService.getScriptCache().removeAll();
+    if (touched.size) {
+      const ids = Array.from(touched);
+      DashboardIndex_updatePatients(ids);
+      invalidatePatientCaches_(ids);
+    }
     return { ok:true, updated: actions.length };
   } finally {
     lock.releaseLock();
@@ -2674,6 +2831,7 @@ function unpause_(pid){
   const s=sh('フラグ'); s.appendRow([String(pid),'active','']);
   pushNews_(pid,'状態','休止解除');
   log_('休止解除', pid, '');
+  invalidatePatientCaches_(pid, { header: true });
 }
 /*** ── 施術録：タイムスタンプ編集 ───────────────── **/
 function updateTreatmentTimestamp(row, newLocal){
@@ -2705,6 +2863,7 @@ function updateTreatmentTimestamp(row, newLocal){
   // ダッシュボードの最終施術日に影響するので Index を更新（v1は全件でOK）
   DashboardIndex_updatePatients([pid]);
 
+  invalidatePatientCaches_(pid, { header: true, treatments: true });
   return true;
 }
 /** 文字列→Date（datetime-localや各種区切りに耐性） */
@@ -2920,6 +3079,7 @@ function submitTreatment(payload) {
     logSubmitTreatmentTimings_(pid, treatmentId, 'ok', timings);
     timingLogged = true;
 
+    invalidatePatientCaches_(pid, { header: true, treatments: true });
     return { ok: true, wroteTo: s.getName(), row, treatmentId };
   } finally {
     lock.releaseLock();

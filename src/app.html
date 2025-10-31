@@ -78,10 +78,21 @@
   .ai-report-text{ white-space:pre-wrap; font-size:0.95rem; line-height:1.6; margin-top:4px }
   .ai-report-special ul{ margin:4px 0 0 16px; padding:0 }
   .ai-report-special li{ margin:2px 0 }
+  .loading-overlay{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.76); z-index:10000; color:#1f2937; font-weight:600; font-size:1.05rem; backdrop-filter:blur(2px); }
+  .loading-overlay.hidden{ display:none; }
+  .loading-overlay .loading-box{ background:rgba(255,255,255,0.92); border-radius:14px; padding:16px 22px; box-shadow:0 14px 38px rgba(15,23,42,0.14); display:flex; align-items:center; gap:12px; }
+  .loading-overlay .spinner{ width:18px; height:18px; border-radius:50%; border:3px solid rgba(37,99,235,0.28); border-top-color:#2563eb; animation:loading-spin 0.75s linear infinite; }
+  @keyframes loading-spin{ to { transform:rotate(360deg); } }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head>
 <body>
+<div id="globalLoading" class="loading-overlay hidden" role="status" aria-live="polite">
+  <div class="loading-box">
+    <div class="spinner" aria-hidden="true"></div>
+    <div id="globalLoadingText">読み込み中…</div>
+  </div>
+</div>
 <div class="wrap">
 
   <!-- ===== ヘッダ（全幅） ===== -->
@@ -257,6 +268,26 @@ function q(id){ return document.getElementById(id); }
 function val(id){ return q(id).value.trim(); }
 function setv(id,v){ q(id).value=v; }
 function jsString(s){ return JSON.stringify(String(s == null ? '' : s)); }
+
+function setGlobalLoadingText(message){
+  const textEl = q('globalLoadingText');
+  if (textEl && typeof message === 'string') {
+    textEl.textContent = message;
+  }
+}
+function showGlobalLoading(message){
+  if (message) setGlobalLoadingText(message);
+  const overlay = q('globalLoading');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+  }
+}
+function hideGlobalLoading(){
+  const overlay = q('globalLoading');
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+}
 
 const PATIENT_ID_CACHE_KEY = 'treatmentLogApp.patientIdCache';
 let _patientIdIndex = {};
@@ -800,13 +831,22 @@ function destroyClinicalCharts(){
   _clinicalCharts = {};
 }
 
-function loadClinicalTrends(){
+function loadClinicalTrends(options, next){
+  let done = null;
+  let opts = {};
+  if (typeof options === 'function'){ done = options; }
+  else if (options == null) { opts = {}; }
+  else if (typeof options === 'boolean'){ opts = { force: options }; }
+  else if (typeof options === 'object'){ opts = options; }
+  if (typeof next === 'function') done = next;
+
   const box = q('clinicalTrendBox');
-  if (!box) return;
-  const p = pid();
-  if (!p){
+  if (!box){ if (done) done(); return; }
+  const targetPid = opts.patientId || pid();
+  if (!targetPid){
     destroyClinicalCharts();
     box.innerHTML = '<div class="muted">患者IDを入力すると臨床指標が表示されます。</div>';
+    if (done) done();
     return;
   }
   box.innerHTML = '<div class="muted">読み込み中…</div>';
@@ -814,13 +854,15 @@ function loadClinicalTrends(){
     .withSuccessHandler(res=>{
       const metrics = (res && res.metrics) ? res.metrics : [];
       renderClinicalCharts(metrics);
+      if (done) done();
     })
     .withFailureHandler(e=>{
       const msg = (e && e.message) ? e.message : String(e);
       box.innerHTML = `<div class="muted" style="color:#b91c1c">臨床指標の取得に失敗しました：${escapeHtml(msg)}</div>`;
       destroyClinicalCharts();
+      if (done) done();
     })
-    .listClinicalMetricSeries(p);
+    .listClinicalMetricSeries(targetPid);
 }
 
 function renderClinicalCharts(metrics){
@@ -1564,19 +1606,47 @@ function setStop(){ const p=pid(); if(!p) return; if(!confirm('中止にしま�
 /* 画面更新 */
 function refresh(){
   resetIcfSummaries();
-  loadHeader();
-  loadNews();
-  loadThisMonth();
-  loadClinicalTrends();
   clearMetricRows();
   ensureMetricEmptyMessage();
+
+  const patientId = pid();
+  if (!patientId){
+    hideGlobalLoading();
+    if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
+    if (q('news')) q('news').innerHTML = '<div class="muted">患者IDを入力するとNewsが表示されます</div>';
+    if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
+    destroyClinicalCharts();
+    return;
+  }
+
+  if (q('hdr')) q('hdr').innerHTML = '<div class="muted">読み込み中…</div>';
+  if (q('news')) q('news').innerHTML = '<div class="muted">読み込み中…</div>';
+  if (q('list')) q('list').innerHTML = '<div class="muted">読み込み中…</div>';
+  showGlobalLoading('患者データを読み込み中…');
+
+  loadHeader(patientId, () => {
+    loadNews(patientId, () => {
+      loadThisMonth(patientId, () => {
+        loadClinicalTrends({ patientId }, () => {
+          hideGlobalLoading();
+        });
+      });
+    });
+  });
 }
-function loadHeader(){
-  const p=pid(); if(!p) return;
+function loadHeader(patientId, next){
+  if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
+  const targetPid = patientId || pid();
+  const done = typeof next === 'function' ? next : null;
+  if(!targetPid){ if (done) done(); return; }
   google.script.run
     .withSuccessHandler(h=>{
       _currentHeader = h || null;
-      if(!h){ q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>'; return; }
+      if(!h){
+        q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>';
+        if (done) done();
+        return;
+      }
       const status = h.status==='active'? '🟢稼働中' : h.status==='suspended'? '🟡休止' : '🔴中止';
       const estCur = h.monthly.current.est? '約'+h.monthly.current.est.toLocaleString()+'円' : '—';
       const estPrev = h.monthly.previous.est? '約'+h.monthly.previous.est.toLocaleString()+'円' : '—';
@@ -1595,19 +1665,28 @@ function loadHeader(){
           </div>
         </div>`;
       setPatientIdInputDisplay(h.patientId, h.name);
+      if (done) done();
     })
     .withFailureHandler(err=>{
       console.error('[loadHeader] failed', err);
       _currentHeader = null;
       q('hdr').innerHTML = '<div class="muted" style="color:#b91c1c">患者情報の取得に失敗しました</div>';
+      if (done) done();
     })
-    .getPatientHeader(p);
+    .getPatientHeader(targetPid);
 }
-function loadNews(){
-  const p=pid(); if(!p) return;
+function loadNews(patientId, next){
+  if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
+  const targetPid = patientId || pid();
+  const done = typeof next === 'function' ? next : null;
+  if(!targetPid){ if (done) done(); return; }
   google.script.run.withSuccessHandler(list=>{
     const el=q('news');
-    if(!list||!list.length){ el.innerHTML='<div class="muted">Newsはありません</div>'; return; }
+      if(!list||!list.length){
+        el.innerHTML='<div class="muted">Newsはありません</div>';
+        if (done) done();
+        return;
+      }
     el.innerHTML=list.map(n=>{
       const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
       const showConsentEdit = shouldShowConsentEditButton(n);
@@ -1616,13 +1695,28 @@ function loadNews(){
         : '';
       return `<div class="news-item"><div class="muted">${escapeHtml(n.when||'')} ／ ${escapeHtml(n.type||'')}</div><div>${messageHtml}</div>${actions}</div>`;
     }).join('');
-  }).getNews(p);
+    if (done) done();
+  }).withFailureHandler(err=>{
+    console.error('[loadNews] failed', err);
+    const el=q('news');
+    if (el) {
+      el.innerHTML = '<div class="muted" style="color:#b91c1c">Newsの取得に失敗しました</div>';
+    }
+    if (done) done();
+  }).getNews(targetPid);
 }
-function loadThisMonth(){
-  const p=pid(); if(!p) return;
+function loadThisMonth(patientId, next){
+  if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
+  const targetPid = patientId || pid();
+  const done = typeof next === 'function' ? next : null;
+  if(!targetPid){ if (done) done(); return; }
   google.script.run.withSuccessHandler(rows=>{
     const el=q('list');
-    if(!rows || !rows.length){ el.innerHTML='<div class="muted">今月の記録はありません</div>'; return; }
+      if(!rows || !rows.length){
+        el.innerHTML='<div class="muted">今月の記録はありません</div>';
+        if (done) done();
+        return;
+      }
     el.innerHTML = `<table>
       <thead><tr><th style="width:150px">日時</th><th>所見</th><th style="width:140px">操作</th></tr></thead>
       <tbody>
@@ -1639,7 +1733,16 @@ function loadThisMonth(){
           </tr>`).join('')}
       </tbody>
     </table>`;
-  }).listTreatmentsForCurrentMonth(p);
+    if (done) done();
+  }).withFailureHandler(err=>{
+    console.error('[loadThisMonth] failed', err);
+    const el=q('list');
+    if (el) {
+      const msg = err && err.message ? err.message : String(err || '不明なエラー');
+      el.innerHTML = `<div class="muted" style="color:#b91c1c">施術一覧の取得に失敗しました：${escapeHtml(msg)}</div>`;
+    }
+    if (done) done();
+  }).listTreatmentsForCurrentMonth(targetPid);
 }
 function editRow(row, note){
   const v = prompt('所見を編集', note||'');

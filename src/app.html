@@ -316,6 +316,7 @@ let _patientIdIndex = {};
 let _patientIdList = [];
 let _patientIdKanaIndex = {};
 let _patientIdOptionKeys = new Set();
+const PATIENT_ID_RENDER_CHUNK_SIZE = 200;
 
 function normalizePatientIdKey(id){
   if (id == null) return '';
@@ -1261,27 +1262,59 @@ async function generateAllIcfSummaries(){
 }
 
 /* 候補/定型文 */
+function schedulePatientIdRenderTask(callback){
+  if (typeof requestIdleCallback === 'function'){
+    return requestIdleCallback(callback);
+  }
+  return setTimeout(callback, 0);
+}
+
 function applyPatientIdList(rawList){
   const dl = q('pidlist');
-  if (!dl) return;
-  dl.innerHTML = '';
   resetPatientIdCaches();
-  if (!Array.isArray(rawList)) return;
-  const fragment = document.createDocumentFragment();
-  rawList.forEach(item => {
-    let record = null;
-    if (item && typeof item === 'object'){
-      record = createPatientRecord(item.id, item.name, item.kana);
-    } else {
-      record = createPatientRecord(item, '', '');
-    }
-    if (!record) return;
-    const stored = registerPatientRecord(record);
-    if (stored){
-      appendPatientIdOptions(stored, fragment);
-    }
+  if (!dl){
+    return Promise.resolve();
+  }
+  dl.innerHTML = '';
+  if (!Array.isArray(rawList) || !rawList.length){
+    return Promise.resolve();
+  }
+  const total = rawList.length;
+  let index = 0;
+  return new Promise((resolve, reject) => {
+    const processChunk = () => {
+      try {
+        const fragment = document.createDocumentFragment();
+        let processed = 0;
+        while (index < total && processed < PATIENT_ID_RENDER_CHUNK_SIZE){
+          const item = rawList[index++];
+          let record = null;
+          if (item && typeof item === 'object'){
+            record = createPatientRecord(item.id, item.name, item.kana);
+          } else {
+            record = createPatientRecord(item, '', '');
+          }
+          if (!record) continue;
+          const stored = registerPatientRecord(record);
+          if (stored){
+            appendPatientIdOptions(stored, fragment);
+          }
+          processed++;
+        }
+        if (fragment.childNodes.length){
+          dl.appendChild(fragment);
+        }
+        if (index >= total){
+          resolve();
+          return;
+        }
+        schedulePatientIdRenderTask(processChunk);
+      } catch (err){
+        reject(err);
+      }
+    };
+    processChunk();
   });
-  dl.appendChild(fragment);
 }
 
 function loadPatientIdCache(){
@@ -1343,35 +1376,61 @@ function savePatientIdCache(list){
 }
 
 function loadPidList(){
-  const useList = list => {
-    applyPatientIdList(list);
-    ensurePatientIdDisplayFromInput({ allowPlainOnMiss: true });
+  const ensureAfterApply = () => {
+    try {
+      ensurePatientIdDisplayFromInput({ allowPlainOnMiss: true });
+    } catch (err){
+      console.error('[loadPidList] ensurePatientIdDisplayFromInput failed', err);
+    }
   };
-  const tryCache = () => {
+  const useList = list => {
+    return applyPatientIdList(list)
+      .catch(err => {
+        console.error('[applyPatientIdList] failed', err);
+      })
+      .then(() => {
+        ensureAfterApply();
+      });
+  };
+  let cacheApplied = false;
+  const applyCache = () => {
     const cached = loadPatientIdCache();
     if (cached && cached.length){
-      useList(cached);
-      return true;
+      if (cacheApplied){
+        return Promise.resolve(true);
+      }
+      cacheApplied = true;
+      return useList(cached).then(() => true);
     }
-    return false;
+    return Promise.resolve(false);
   };
+
+  applyCache();
+
   google.script.run
     .withSuccessHandler(list => {
       if (Array.isArray(list) && list.length){
         savePatientIdCache(list);
         useList(list);
-      } else if (!tryCache()) {
-        applyPatientIdList([]);
+      } else {
+        applyCache().then(fromCache => {
+          if (!fromCache){
+            useList([]);
+          }
+        });
       }
     })
     .withFailureHandler(err => {
       console.error('[loadPidList] failed', err);
-      if (tryCache()){
-        toast('ID候補の取得に失敗したため、キャッシュから復元しました。');
-      } else {
-        applyPatientIdList([]);
-        toast('ID候補の取得に失敗しました。IDのみで続行します。');
-      }
+      applyCache().then(fromCache => {
+        if (fromCache){
+          toast('ID候補の取得に失敗したため、キャッシュから復元しました。');
+        } else {
+          useList([]).then(() => {
+            toast('ID候補の取得に失敗しました。IDのみで続行します。');
+          });
+        }
+      });
     })
     .listPatientIds();
 }

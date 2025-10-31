@@ -322,6 +322,8 @@ let _patientIdKanaIndex = {};
 let _patientIdOptionKeys = new Set();
 const PATIENT_ID_RENDER_CHUNK_SIZE = determinePatientIdRenderChunkSize();
 let _patientIdRenderResumeAt = 0;
+let _pendingPatientIdList = null;
+let _pendingPatientIdListScheduled = false;
 
 function parsePatientIdChunkSizeCandidate(candidate){
   if (candidate == null) return NaN;
@@ -1397,7 +1399,79 @@ function schedulePatientIdRenderTask(callback){
   return setTimeout(() => invoke(), 0);
 }
 
+function schedulePendingPatientIdListFlush(){
+  if (!_pendingPatientIdList || _pendingPatientIdListScheduled){
+    return;
+  }
+  _pendingPatientIdListScheduled = true;
+  schedulePatientIdRenderTask(() => {
+    _pendingPatientIdListScheduled = false;
+    if (!_pendingPatientIdList){
+      return;
+    }
+    if (isPatientIdRenderPaused()){
+      schedulePendingPatientIdListFlush();
+      return;
+    }
+    const pending = _pendingPatientIdList;
+    _pendingPatientIdList = null;
+    const waiters = pending.waiters.slice();
+    performPatientIdListApply(pending.rawList, pending.options)
+      .then(result => {
+        waiters.forEach(waiter => {
+          try {
+            waiter.resolve(result);
+          } catch (err){
+            console.error('[applyPatientIdList] pending resolve failed', err);
+          }
+        });
+        if (_pendingPatientIdList){
+          schedulePendingPatientIdListFlush();
+        }
+      })
+      .catch(err => {
+        waiters.forEach(waiter => {
+          try {
+            waiter.reject(err);
+          } catch (resolveErr){
+            console.error('[applyPatientIdList] pending reject failed', resolveErr);
+          }
+        });
+        if (_pendingPatientIdList){
+          schedulePendingPatientIdListFlush();
+        }
+      });
+  });
+}
+
+function enqueuePendingPatientIdList(rawList, options){
+  return new Promise((resolve, reject) => {
+    const payload = {
+      rawList,
+      options: options ? Object.assign({}, options) : {},
+      waiters: [{ resolve, reject }]
+    };
+    if (_pendingPatientIdList){
+      const merged = _pendingPatientIdList;
+      merged.rawList = payload.rawList;
+      merged.options = payload.options;
+      merged.waiters.push(payload.waiters[0]);
+    } else {
+      _pendingPatientIdList = payload;
+    }
+    schedulePendingPatientIdListFlush();
+  });
+}
+
 function applyPatientIdList(rawList, options){
+  const opts = options ? Object.assign({}, options) : {};
+  if (opts.deferIfPaused !== false && isPatientIdRenderPaused()){
+    return enqueuePendingPatientIdList(rawList, opts);
+  }
+  return performPatientIdListApply(rawList, opts);
+}
+
+function performPatientIdListApply(rawList, options){
   const opts = options || {};
   const dl = q('pidlist');
   resetPatientIdCaches();

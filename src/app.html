@@ -101,9 +101,10 @@
       <div>
         <label>患者ID（施術録番号）</label>
         <input id="pid" list="pidlist" placeholder="例: 5702" value="<?= patientId ?>"
-               onkeydown="handlePatientIdKeydown(event)"
+               onkeydown="handlePatientIdKeydown(event)" oninput="handlePatientIdInput(event)"
                onchange="handlePatientIdConfirm()" onblur="handlePatientIdBlur()" />
         <datalist id="pidlist"></datalist>
+        <div id="pidLoadProgress" class="muted" aria-live="polite" style="margin-top:6px; min-height:1.2em"></div>
       </div>
       <div>
         <label>負担割合</label>
@@ -312,11 +313,127 @@ function focusPatientIdInput(){
 }
 
 const PATIENT_ID_CACHE_KEY = 'treatmentLogApp.patientIdCache';
+const PATIENT_ID_CHUNK_SIZE_STORAGE_KEY = 'treatmentLogApp.pidChunkSize';
+const PATIENT_ID_RENDER_CHUNK_DEFAULT = 200;
+const PATIENT_ID_RENDER_PAUSE_DEBOUNCE_MS = 180;
 let _patientIdIndex = {};
 let _patientIdList = [];
 let _patientIdKanaIndex = {};
 let _patientIdOptionKeys = new Set();
-const PATIENT_ID_RENDER_CHUNK_SIZE = 200;
+const PATIENT_ID_RENDER_CHUNK_SIZE = determinePatientIdRenderChunkSize();
+let _patientIdRenderResumeAt = 0;
+
+function parsePatientIdChunkSizeCandidate(candidate){
+  if (candidate == null) return NaN;
+  const num = Number(candidate);
+  if (!Number.isFinite(num)) return NaN;
+  if (num <= 0) return NaN;
+  return Math.round(num);
+}
+
+function determinePatientIdRenderChunkSize(){
+  const MIN = 50;
+  const MAX = 1000;
+  const clamp = value => Math.min(MAX, Math.max(MIN, value));
+  const candidates = [];
+  try {
+    if (typeof window !== 'undefined' && window){
+      if (typeof window.__PID_CHUNK_SIZE__ !== 'undefined'){
+        candidates.push(window.__PID_CHUNK_SIZE__);
+      }
+      if (window.location && typeof window.location.href === 'string'){
+        try {
+          const params = new URL(window.location.href).searchParams;
+          if (params.has('pidChunk')){
+            candidates.push(params.get('pidChunk'));
+          }
+        } catch (err) {
+          console.warn('[determinePatientIdRenderChunkSize] failed to parse URL params', err);
+        }
+      }
+    }
+  } catch (err){
+    console.warn('[determinePatientIdRenderChunkSize] global overrides failed', err);
+  }
+  try {
+    if (typeof localStorage !== 'undefined'){
+      const stored = localStorage.getItem(PATIENT_ID_CHUNK_SIZE_STORAGE_KEY);
+      if (stored != null && stored !== ''){
+        candidates.push(stored);
+      }
+    }
+  } catch (err){
+    console.warn('[determinePatientIdRenderChunkSize] localStorage read failed', err);
+  }
+  let selected = null;
+  for (let i = 0; i < candidates.length; i++){
+    const parsed = parsePatientIdChunkSizeCandidate(candidates[i]);
+    if (Number.isFinite(parsed) && parsed > 0){
+      selected = clamp(parsed);
+      break;
+    }
+  }
+  if (selected == null){
+    selected = PATIENT_ID_RENDER_CHUNK_DEFAULT;
+  }
+  try {
+    if (typeof localStorage !== 'undefined'){
+      localStorage.setItem(PATIENT_ID_CHUNK_SIZE_STORAGE_KEY, String(selected));
+    }
+  } catch (err){
+    console.warn('[determinePatientIdRenderChunkSize] localStorage write failed', err);
+  }
+  return selected;
+}
+
+function nowMs(){
+  return Date.now();
+}
+
+function isPatientIdRenderPaused(){
+  return nowMs() < _patientIdRenderResumeAt;
+}
+
+function getPatientIdRenderPauseDelay(){
+  const remaining = _patientIdRenderResumeAt - nowMs();
+  return remaining > 0 ? remaining : 0;
+}
+
+function pausePatientIdRender(){
+  const resumeAt = nowMs() + PATIENT_ID_RENDER_PAUSE_DEBOUNCE_MS;
+  _patientIdRenderResumeAt = Math.max(_patientIdRenderResumeAt, resumeAt);
+}
+
+function renderPatientIdProgress(state){
+  const el = q('pidLoadProgress');
+  if (!el) return;
+  if (!state){
+    el.textContent = '';
+    return;
+  }
+  if (typeof state.message === 'string'){
+    el.textContent = state.message;
+    return;
+  }
+  const total = typeof state.total === 'number' && state.total > 0 ? Math.round(state.total) : 0;
+  const appended = typeof state.appended === 'number' && state.appended > 0 ? Math.round(state.appended) : 0;
+  const source = state.source || '';
+  const done = !!state.done;
+  if (!total){
+    el.textContent = '';
+    return;
+  }
+  const clampedAppended = Math.min(appended, total);
+  const label = source === 'cache' ? '（キャッシュ）' : '';
+  if (done){
+    const prefix = source === 'cache'
+      ? '候補リストをキャッシュから読み込みました'
+      : '候補リストを更新しました';
+    el.textContent = `${prefix}（${total.toLocaleString()}件）。`;
+    return;
+  }
+  el.textContent = `候補読み込み中${label}… ${clampedAppended.toLocaleString()}/${total.toLocaleString()}`;
+}
 
 function normalizePatientIdKey(id){
   if (id == null) return '';
@@ -1263,13 +1380,25 @@ async function generateAllIcfSummaries(){
 
 /* 候補/定型文 */
 function schedulePatientIdRenderTask(callback){
-  if (typeof requestIdleCallback === 'function'){
-    return requestIdleCallback(callback);
+  const delay = getPatientIdRenderPauseDelay();
+  const invoke = deadline => {
+    if (isPatientIdRenderPaused()){
+      schedulePatientIdRenderTask(callback);
+      return;
+    }
+    callback(deadline);
+  };
+  if (delay > 0){
+    return setTimeout(() => invoke(), Math.min(delay, PATIENT_ID_RENDER_PAUSE_DEBOUNCE_MS));
   }
-  return setTimeout(callback, 0);
+  if (typeof requestIdleCallback === 'function'){
+    return requestIdleCallback(invoke);
+  }
+  return setTimeout(() => invoke(), 0);
 }
 
-function applyPatientIdList(rawList){
+function applyPatientIdList(rawList, options){
+  const opts = options || {};
   const dl = q('pidlist');
   resetPatientIdCaches();
   if (!dl){
@@ -1277,16 +1406,25 @@ function applyPatientIdList(rawList){
   }
   dl.innerHTML = '';
   if (!Array.isArray(rawList) || !rawList.length){
+    renderPatientIdProgress(rawList && rawList.length === 0 ? { message: 'ID候補は見つかりませんでした。' } : null);
     return Promise.resolve();
   }
   const total = rawList.length;
   let index = 0;
+  renderPatientIdProgress({ source: opts.source || '', total, appended: 0, done: false });
   return new Promise((resolve, reject) => {
-    const processChunk = () => {
+    const processChunk = deadline => {
+      if (isPatientIdRenderPaused()){
+        schedulePatientIdRenderTask(processChunk);
+        return;
+      }
       try {
         const fragment = document.createDocumentFragment();
         let processed = 0;
         while (index < total && processed < PATIENT_ID_RENDER_CHUNK_SIZE){
+          if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() <= 0){
+            break;
+          }
           const item = rawList[index++];
           let record = null;
           if (item && typeof item === 'object'){
@@ -1300,16 +1438,22 @@ function applyPatientIdList(rawList){
             appendPatientIdOptions(stored, fragment);
           }
           processed++;
+          if (isPatientIdRenderPaused()){
+            break;
+          }
         }
         if (fragment.childNodes.length){
           dl.appendChild(fragment);
         }
+        renderPatientIdProgress({ source: opts.source || '', total, appended: index, done: false });
         if (index >= total){
+          renderPatientIdProgress({ source: opts.source || '', total, appended: total, done: true });
           resolve();
           return;
         }
         schedulePatientIdRenderTask(processChunk);
       } catch (err){
+        renderPatientIdProgress({ message: 'ID候補の読み込み中にエラーが発生しました。' });
         reject(err);
       }
     };
@@ -1383,8 +1527,8 @@ function loadPidList(){
       console.error('[loadPidList] ensurePatientIdDisplayFromInput failed', err);
     }
   };
-  const useList = list => {
-    return applyPatientIdList(list)
+  const useList = (list, source) => {
+    return applyPatientIdList(list, { source })
       .catch(err => {
         console.error('[applyPatientIdList] failed', err);
       })
@@ -1400,7 +1544,7 @@ function loadPidList(){
         return Promise.resolve(true);
       }
       cacheApplied = true;
-      return useList(cached).then(() => true);
+      return useList(cached, 'cache').then(() => true);
     }
     return Promise.resolve(false);
   };
@@ -1411,11 +1555,11 @@ function loadPidList(){
     .withSuccessHandler(list => {
       if (Array.isArray(list) && list.length){
         savePatientIdCache(list);
-        useList(list);
+        useList(list, 'network');
       } else {
         applyCache().then(fromCache => {
           if (!fromCache){
-            useList([]);
+            useList([], 'network');
           }
         });
       }
@@ -1426,7 +1570,7 @@ function loadPidList(){
         if (fromCache){
           toast('ID候補の取得に失敗したため、キャッシュから復元しました。');
         } else {
-          useList([]).then(() => {
+          useList([], 'network').then(() => {
             toast('ID候補の取得に失敗しました。IDのみで続行します。');
           });
         }
@@ -1436,10 +1580,17 @@ function loadPidList(){
 }
 
 function handlePatientIdKeydown(evt){
+  if (evt && evt.key !== 'Enter'){
+    pausePatientIdRender();
+  }
   if (evt && evt.key === 'Enter'){
     evt.preventDefault();
     handlePatientIdConfirm();
   }
+}
+
+function handlePatientIdInput(){
+  pausePatientIdRender();
 }
 
 function handlePatientIdConfirm(){

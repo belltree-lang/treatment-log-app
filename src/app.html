@@ -129,7 +129,7 @@
 
         <!-- 保存行＋外部向けレポート -->
         <div class="btnrow" style="margin-top:8px">
-          <button class="btn ok" onclick="save()">保存（施術録）</button>
+          <button id="saveBtn" class="btn ok" onclick="save()">保存（施術録）</button>
         </div>
       </div>
 
@@ -612,6 +612,7 @@ let _flags = { receipt:false, handout:false, consentHandout:false, consentObtain
 window._actions = window._actions || {};
 let _saveInFlight = false;
 let _pendingSaveRequestId = null;
+let _pendingRefreshTimer = null;
 
 function generateSaveRequestId(){
   if (window.crypto && typeof window.crypto.randomUUID === 'function'){
@@ -1428,7 +1429,44 @@ function toast(msg){
   }catch(e){ alert(msg); }
 }
 
+function scheduleRefresh(delayMs){
+  const ms = typeof delayMs === 'number' && delayMs >= 0 ? delayMs : 700;
+  const clearTimer = (typeof window !== 'undefined' && typeof window.clearTimeout === 'function')
+    ? window.clearTimeout.bind(window)
+    : (typeof clearTimeout === 'function' ? clearTimeout : null);
+  const startTimer = (typeof window !== 'undefined' && typeof window.setTimeout === 'function')
+    ? window.setTimeout.bind(window)
+    : (typeof setTimeout === 'function' ? setTimeout : null);
+
+  if (_pendingRefreshTimer && clearTimer) {
+    try { clearTimer(_pendingRefreshTimer); } catch (err) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[scheduleRefresh] failed to clear timer', err);
+      }
+    }
+    _pendingRefreshTimer = null;
+  }
+
+  if (!startTimer) {
+    refresh();
+    return;
+  }
+
+  _pendingRefreshTimer = startTimer(() => {
+    _pendingRefreshTimer = null;
+    try {
+      refresh();
+    } catch (err) {
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('[scheduleRefresh] refresh failed', err);
+      }
+    }
+  }, ms);
+}
+
 function save(){
+  const saveBtn = document.getElementById('saveBtn');
+  let endTiming = () => {};
   try{
     console.log('[save] start');
     if (_saveInFlight){
@@ -1439,6 +1477,8 @@ function save(){
     const p = pid();
     if(!p){ alert('患者IDを入力'); return; }
     _saveInFlight = true;
+
+    if (saveBtn) saveBtn.disabled = true;
 
     // 送信ペイロード
     const payload={
@@ -1454,47 +1494,64 @@ function save(){
     const metrics = collectMetricInputs();
     if (metrics.length) payload.clinicalMetrics = metrics;
 
-    // ボタン連打防止
-    const btns = document.querySelectorAll('button');
-    btns.forEach(b=> b.disabled = true);
+    const timingLabel = `save-request-${requestId}`;
+    const canTime = typeof console !== 'undefined' && typeof console.time === 'function';
+    const canTimeEnd = typeof console !== 'undefined' && typeof console.timeEnd === 'function';
+    if (canTime) {
+      try { console.time(timingLabel); } catch (err) {
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[save] console.time failed', err);
+        }
+      }
+    }
+    endTiming = () => {
+      if (!canTimeEnd) return;
+      try { console.timeEnd(timingLabel); } catch (err) {
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[save] console.timeEnd failed', err);
+        }
+      }
+    };
 
     console.log('[save] payload', payload);
 
     google.script.run
       .withSuccessHandler(res=>{
         console.log('[save] success', res);
+        endTiming();
         _saveInFlight = false;
+        _pendingSaveRequestId = null;
         if (res && res.skipped){
           toast(res.msg || '直前と同じ内容のため保存をスキップしました');
         } else {
           const name = currentPatientName();
           let message = name ? `${name}さんの施術録を保存しました` : '施術録を保存しました';
-          if (res && res.row && Array.isArray(res.row)) {
-            message += `（行: ${res.row.join(' , ')}）`;
-          }
           toast(message);
           resetFlags();
           setv('obs','');
           q('preset').selectedIndex = 0;
           clearMetricRows();
-          refresh();
+          scheduleRefresh(700);
         }
 
-        _pendingSaveRequestId = null;
-        btns.forEach(b=> b.disabled = false);
+        if (saveBtn) saveBtn.disabled = false;
       })
       .withFailureHandler(e=>{
         console.error('[save] failure', e);
+        endTiming();
         alert('保存に失敗: ' + (e && e.message ? e.message : e));
         _saveInFlight = false;
-        btns.forEach(b=> b.disabled = false);
+        _pendingSaveRequestId = null;
+        if (saveBtn) saveBtn.disabled = false;
       })
       .submitTreatment(payload);
   }catch(err){
     console.error('[save] exception', err);
+    endTiming();
     alert('エラー: ' + (err && err.message ? err.message : err));
     _saveInFlight = false;
-    document.querySelectorAll('button').forEach(b=> b.disabled = false);
+    _pendingSaveRequestId = null;
+    if (saveBtn) saveBtn.disabled = false;
   }
 }
 

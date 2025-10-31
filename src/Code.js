@@ -58,6 +58,44 @@ function assertDomain_() {
     throw new Error('権限がありません（社内ドメインのみ）');
   }
 }
+
+const AFTER_TREATMENT_TRIGGER_KEY = 'AFTER_JOBS_TRIGGER_TS';
+
+function scheduleAfterTreatmentJobTrigger_(options){
+  const props = PropertiesService.getScriptProperties();
+  const now = Date.now();
+  const lastScheduled = Number(props.getProperty(AFTER_TREATMENT_TRIGGER_KEY) || '0');
+  const minInterval = options && typeof options.minIntervalMs === 'number' ? options.minIntervalMs : 5000;
+  if (!options || !options.force) {
+    if (lastScheduled && now - lastScheduled < minInterval) {
+      return;
+    }
+  }
+
+  const delayMs = options && options.delayMs != null ? options.delayMs : 5000;
+  const delaySeconds = Math.max(1, Math.round(delayMs / 1000));
+  try {
+    ScriptApp.newTrigger('afterTreatmentJob')
+      .timeBased()
+      .after(delaySeconds * 1000)
+      .create();
+    props.setProperty(AFTER_TREATMENT_TRIGGER_KEY, String(now));
+  } catch (err) {
+    const message = err && err.message ? err.message : err;
+    Logger.log('[queueAfterTreatmentJob] Failed to schedule trigger: ' + message);
+    if (!options || !options.skipFallback) {
+      try {
+        ScriptApp.newTrigger('afterTreatmentJob')
+          .timeBased()
+          .after(60 * 1000)
+          .create();
+      } catch (fallbackErr) {
+        const fallbackMessage = fallbackErr && fallbackErr.message ? fallbackErr.message : fallbackErr;
+        Logger.log('[queueAfterTreatmentJob] Fallback trigger failed: ' + fallbackMessage);
+      }
+    }
+  }
+}
 /***** 補助タブの用意（不足時に自動生成＋ヘッダ挿入） *****/
 function ensureAuxSheets_() {
   const wb = ss();
@@ -173,8 +211,7 @@ function init_(){ ensureAuxSheets_(); }
 function log_(op,pid,detail){
   sh('操作ログ').appendRow([new Date(), op, String(pid), detail||'', (Session.getActiveUser()||{}).getEmail()]);
 }
-function pushNews_(pid,type,msg,meta){
-  const sheet = sh('News');
+function formatNewsRow_(pid, type, msg, meta){
   let metaStr = '';
   if (meta != null) {
     try {
@@ -183,7 +220,22 @@ function pushNews_(pid,type,msg,meta){
       metaStr = String(meta);
     }
   }
-  sheet.appendRow([new Date(), String(pid), type, msg, '', metaStr]);
+  return [new Date(), String(pid), type, msg, '', metaStr];
+}
+function pushNewsRows_(rows){
+  if (!rows || !rows.length) return;
+  const sheet = sh('News');
+  const start = sheet.getLastRow() + 1;
+  sheet.getRange(start, 1, rows.length, 6).setValues(rows);
+}
+function pushNews_(pid,type,msg,meta){
+  pushNewsRows_([formatNewsRow_(pid, type, msg, meta)]);
+}
+function appendRowsToSheet_(sheetName, rows){
+  if (!rows || !rows.length) return;
+  const sheet = sh(sheetName);
+  const width = rows[0].length;
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, width).setValues(rows);
 }
 function getNews(pid){
   const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return [];
@@ -555,9 +607,7 @@ function queueAfterTreatmentJob(job){
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) {
     Logger.log('[queueAfterTreatmentJob] Failed to acquire lock');
-    // ロックが取れない場合でもフォールバックトリガーで後続処理を試みる
-    ScriptApp.newTrigger('afterTreatmentJob')
-      .timeBased().after(1000 * 60).create();
+    scheduleAfterTreatmentJobTrigger_({ force: true });
     return;
   }
   try {
@@ -578,14 +628,7 @@ function queueAfterTreatmentJob(job){
     lock.releaseLock();
   }
 
-  try {
-    afterTreatmentJob();
-  } catch (e) {
-    Logger.log('[queueAfterTreatmentJob] Immediate flush failed: ' + (e && e.message ? e.message : e));
-    // フォールバックとして従来通りのトリガーも登録
-    ScriptApp.newTrigger('afterTreatmentJob')
-      .timeBased().after(1000 * 60).create();
-  }
+  scheduleAfterTreatmentJobTrigger_();
 }
 
 function normalizeClinicalMetricTimestamp_(value){
@@ -655,6 +698,7 @@ function afterTreatmentJob(){
     const p = PropertiesService.getScriptProperties();
     const raw = p.getProperty(key);
     p.deleteProperty(key);
+    p.deleteProperty(AFTER_TREATMENT_TRIGGER_KEY);
     if (raw) {
       try {
         jobs = JSON.parse(raw) || [];
@@ -672,41 +716,56 @@ function afterTreatmentJob(){
 
   Logger.log('[afterTreatmentJob] Executing jobs: ' + jobs.length);
 
+  const newsRows = [];
+  const scheduleRows = [];
+  const userEmail = (Session.getActiveUser()||{}).getEmail() || '';
+  const tz = Session.getScriptTimeZone()||'Asia/Tokyo';
+
   jobs.forEach(job=>{
     try {
       const pid = job.patientId;
       const treatmentMeta = job.treatmentId ? { source: 'treatment', treatmentId: job.treatmentId } : null;
+      const addNews = (type, message) => {
+        newsRows.push(formatNewsRow_(pid, type, message, treatmentMeta));
+      };
 
       // News / 同意日 / 負担割合 / 予定登録など重い処理をここでまとめて実行
       let consentReminderPushed = false;
       if (job.presetLabel){
         if (job.presetLabel.indexOf('再同意取得確認') >= 0){
-          const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
+          const today = Utilities.formatDate(new Date(), tz,'yyyy-MM-dd');
           updateConsentDate(pid, today, treatmentMeta ? { meta: treatmentMeta } : undefined);
         }
         if (job.presetLabel.indexOf('同意書受渡') >= 0){
-          pushNews_(pid,'再同意','同意書を受け渡し', treatmentMeta);
+          addNews('再同意','同意書を受け渡し');
           if (job.consentUndecided){
-            pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
+            addNews('同意','同意日未定です。後日確認してください。');
             consentReminderPushed = true;
           }
         }
       }
       if (job.consentUndecided && !consentReminderPushed){
-        pushNews_(pid,'同意','同意日未定です。後日確認してください。', treatmentMeta);
+        addNews('同意','同意日未定です。後日確認してください。');
       }
       if (job.burdenShare){
         updateBurdenShare(pid, job.burdenShare, treatmentMeta ? { meta: treatmentMeta } : undefined);
       }
       if (job.visitPlanDate){
-        sh('予定').appendRow([pid,'通院', job.visitPlanDate, (Session.getActiveUser()||{}).getEmail()]);
-        pushNews_(pid,'予定','通院予定を登録：' + job.visitPlanDate, treatmentMeta);
+        scheduleRows.push([String(pid),'通院', job.visitPlanDate, userEmail]);
+        addNews('予定','通院予定を登録：' + job.visitPlanDate);
       }
       log_('施術後処理', pid, JSON.stringify(job));
     } catch (e) {
       Logger.log('[afterTreatmentJob] Job failed: ' + (e && e.message ? e.message : e));
     }
   });
+
+  if (scheduleRows.length) {
+    appendRowsToSheet_('予定', scheduleRows);
+  }
+  if (newsRows.length) {
+    pushNewsRows_(newsRows);
+  }
 }
 
 
@@ -2732,15 +2791,28 @@ function tryGenerateAutoVitals_(payload) {
   }
 }
 
+function logSubmitTreatmentTimings_(pid, treatmentId, status, timings){
+  if (!timings || !timings.length) return;
+  const parts = timings.join(' | ');
+  Logger.log(`[submitTreatment][${status}] pid=${pid || ''} tid=${treatmentId || ''} ${parts}`);
+}
+
 function submitTreatment(payload) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) {
     throw new Error('保存処理が混み合っています。数秒後に再度お試しください。');
   }
+  const startMs = Date.now();
+  const timings = [];
+  const markTiming = label => { timings.push(`${label}:${Date.now() - startMs}ms`); };
+  let pid = '';
+  let treatmentIdForLog = String(payload?.treatmentId || '').trim();
+  let timingLogged = false;
   try {
     ensureAuxSheets_();
+    markTiming('prepared');
     const s = sh('施術録');
-    const pid = String(payload?.patientId || '').trim();
+    pid = String(payload?.patientId || '').trim();
     if (!pid) throw new Error('patientIdが空です');
 
     const user = (Session.getActiveUser() || {}).getEmail() || '';
@@ -2748,6 +2820,7 @@ function submitTreatment(payload) {
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
     const nowDate = new Date();
     const now = Utilities.formatDate(nowDate, tz, 'yyyy-MM-dd HH:mm:ss');
+    markTiming('context');
 
     const note = String(payload?.notesParts?.note || '').trim();
     let merged = note;
@@ -2755,11 +2828,15 @@ function submitTreatment(payload) {
       const autoVitals = tryGenerateAutoVitals_(payload);
       merged = autoVitals || 'バイタル自動記録';
     }
+    markTiming('noteReady');
 
     const incomingTreatmentId = String(payload?.treatmentId || '').trim();
     if (incomingTreatmentId) {
       const dupRow = findTreatmentRowById_(s, incomingTreatmentId);
+      markTiming('idCheck');
       if (dupRow) {
+        logSubmitTreatmentTimings_(pid, incomingTreatmentId, 'duplicate-id', timings);
+        timingLogged = true;
         return {
           ok: false,
           skipped: true,
@@ -2770,12 +2847,19 @@ function submitTreatment(payload) {
         };
       }
     }
+    if (!incomingTreatmentId) {
+      markTiming('idCheck');
+    }
 
     const recentDup = detectRecentDuplicateTreatment_(s, pid, merged, nowDate, tz, incomingTreatmentId);
+    markTiming('duplicateScan');
     if (recentDup) {
       if (recentDup.reason === 'recentContent') {
         pushNews_(pid, '警告', '二重登録を検出し保存をスキップしました');
       }
+      const duplicateId = recentDup.treatmentId || incomingTreatmentId;
+      logSubmitTreatmentTimings_(pid, duplicateId, 'duplicate-content', timings);
+      timingLogged = true;
       return {
         ok: false,
         skipped: true,
@@ -2787,11 +2871,14 @@ function submitTreatment(payload) {
     }
 
     const treatmentId = incomingTreatmentId || Utilities.getUuid();
+    treatmentIdForLog = treatmentId;
     const row = [now, pid, merged, user, '', '', treatmentId];
     s.appendRow(row);
+    markTiming('appendRow');
 
     if (Array.isArray(payload?.clinicalMetrics) && payload.clinicalMetrics.length) {
       recordClinicalMetrics_(pid, payload.clinicalMetrics, now, user);
+      markTiming('metrics');
     }
 
     const job = { patientId: pid, treatmentId, treatmentTimestamp: now };
@@ -2826,30 +2913,58 @@ function submitTreatment(payload) {
 
     if (hasFollowUp) {
       queueAfterTreatmentJob(job);
+      markTiming('queueJob');
     }
+
+    markTiming('done');
+    logSubmitTreatmentTimings_(pid, treatmentId, 'ok', timings);
+    timingLogged = true;
 
     return { ok: true, wroteTo: s.getName(), row, treatmentId };
   } finally {
     lock.releaseLock();
+    if (!timingLogged && timings.length) {
+      logSubmitTreatmentTimings_(pid, treatmentIdForLog, 'error', timings);
+    }
   }
+}
+
+function normalizeTreatmentNoteForComparison_(value){
+  if (value == null) return '';
+  const text = Array.isArray(value) ? value.join('\n') : String(value);
+  if (!text) return '';
+  return text
+    .replace(/\r/g, '')
+    .split('\n')
+    .map(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return '';
+      if (/^vital\s/i.test(trimmed) || trimmed === 'バイタル自動記録') {
+        return '[AUTO_VITAL]';
+      }
+      return trimmed;
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTreatmentId) {
   const lr = sheet.getLastRow();
   if (lr < 2) return null;
 
-  const rowsToScan = Math.min(lr - 1, 50);
+  const rowsToScan = Math.min(lr - 1, 20);
   const startRow = Math.max(2, lr - rowsToScan + 1);
   const values = sheet.getRange(startRow, 1, rowsToScan, 7).getValues();
   const nowMs = nowDate.getTime();
   const windowMs = 60 * 1000; // 1分以内の重複をブロック
+  const normalizedNote = normalizeTreatmentNoteForComparison_(note);
 
   for (let i = values.length - 1; i >= 0; i--) {
     const row = values[i];
     const existingPid = String(row[1] || '').trim();
     if (existingPid !== pid) continue;
-    const existingNote = String(row[2] || '').trim();
-    if (existingNote !== note) continue;
+    const existingNote = normalizeTreatmentNoteForComparison_(row[2]);
+    if (existingNote !== normalizedNote) continue;
     const existingTreatmentId = String(row[6] || '').trim();
     if (ignoreTreatmentId && existingTreatmentId && existingTreatmentId === ignoreTreatmentId) {
       return {
@@ -2861,13 +2976,17 @@ function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTr
     }
     const tsDate = normalizeTreatmentTimestamp_(row[0], tz);
     if (!tsDate) continue;
-    if (nowMs - tsDate.getTime() <= windowMs) {
+    const diff = nowMs - tsDate.getTime();
+    if (diff <= windowMs) {
       return {
         row,
         treatmentId: existingTreatmentId,
         message: '直近1分以内に同じ内容が登録済みのため保存をスキップしました',
         reason: 'recentContent',
       };
+    }
+    if (diff > windowMs) {
+      break;
     }
   }
   return null;

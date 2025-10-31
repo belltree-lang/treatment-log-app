@@ -348,10 +348,19 @@ const PATIENT_ID_RENDER_CHUNK_DEFAULT = 200;
 const PATIENT_ID_RENDER_PAUSE_DEBOUNCE_MS = 180;
 const PATIENT_ID_STANDALONE_CHUNK_SIZE = 100;
 const PATIENT_ID_PROGRESS_UPDATE_INTERVAL = IS_STANDALONE_DISPLAY_MODE ? 2 : 1;
+const PATIENT_ID_SEARCH_MIN_LENGTH = 2;
+const PATIENT_ID_SEARCH_RESULT_LIMIT = 100;
+const PATIENT_ID_SEARCH_RENDER_LIMIT = 10;
+const PATIENT_ID_SEARCH_CACHE_TTL_MS = 15 * 1000;
+const PATIENT_ID_SEARCH_CACHE_LIMIT = 20;
+const PATIENT_ID_SEARCH_DEBOUNCE_MS = 90;
 let _patientIdIndex = {};
 let _patientIdList = [];
 let _patientIdKanaIndex = {};
 let _patientIdOptionKeys = new Set();
+let _patientIdSearchCache = new Map();
+let _patientIdSearchTimer = null;
+let _lastPatientIdSearchText = '';
 const PATIENT_ID_RENDER_CHUNK_SIZE = determinePatientIdRenderChunkSize();
 let _patientIdRenderResumeAt = 0;
 let _pendingPatientIdList = null;
@@ -554,12 +563,23 @@ function createPatientRecord(id, name, kana){
   const record = {
     id: key,
     name: nameText,
+    nameNormalized: '',
+    nameSearch: '',
     kana: kanaText,
     kanaKatakana: '',
     kanaHiragana: '',
     kanaNormalized: '',
     kanaIndexKey: ''
   };
+  if (nameText){
+    let normalizedName = nameText;
+    if (typeof normalizedName.normalize === 'function'){
+      normalizedName = normalizedName.normalize('NFKC');
+    }
+    const compact = normalizedName.replace(/[\s\u3000]+/g, '');
+    record.nameNormalized = normalizedName;
+    record.nameSearch = compact.toLowerCase();
+  }
   if (kanaText){
     const katakana = toKatakanaSearchText(kanaText);
     record.kanaKatakana = katakana;
@@ -596,6 +616,8 @@ function registerPatientRecord(record){
   if (existing){
     if (record.name && record.name !== existing.name){
       existing.name = record.name;
+      existing.nameNormalized = record.nameNormalized;
+      existing.nameSearch = record.nameSearch;
     }
     if (record.kana !== existing.kana){
       existing.kana = record.kana;
@@ -613,11 +635,28 @@ function registerPatientRecord(record){
   return stored;
 }
 
+function clearPatientIdOptions(){
+  const dl = q('pidlist');
+  if (dl){
+    dl.innerHTML = '';
+  }
+  _patientIdOptionKeys = new Set();
+}
+
+function clearPatientIdSearchCache(){
+  if (_patientIdSearchCache && typeof _patientIdSearchCache.clear === 'function'){
+    _patientIdSearchCache.clear();
+  } else {
+    _patientIdSearchCache = new Map();
+  }
+}
+
 function resetPatientIdCaches(){
   _patientIdIndex = {};
   _patientIdList = [];
   _patientIdKanaIndex = {};
-  _patientIdOptionKeys = new Set();
+  clearPatientIdOptions();
+  clearPatientIdSearchCache();
 }
 
 function appendPatientOption(container, record, value, label, source){
@@ -715,6 +754,225 @@ function findPatientRecordByKana(input){
   return null;
 }
 
+function normalizePatientSearchInput(text){
+  if (text == null) return '';
+  let value = String(text);
+  if (typeof value.normalize === 'function'){
+    value = value.normalize('NFKC');
+  }
+  return value.trim();
+}
+
+function buildPatientIdSearchTokens(input){
+  const normalized = normalizePatientSearchInput(input);
+  const compact = normalized.replace(/[\s\u3000]+/g, '');
+  const katakana = toKatakanaSearchText(normalized);
+  return {
+    raw: input == null ? '' : String(input),
+    normalized,
+    compact,
+    compactLower: compact.toLowerCase(),
+    idPart: normalizePatientIdKey(normalized),
+    katakana,
+    kanaNormalized: normalizeKatakanaString(katakana),
+    hiragana: katakanaToHiragana(katakana)
+  };
+}
+
+function patientRecordMatchesTokens(record, tokens){
+  if (!record || !tokens) return false;
+  const { normalized, compactLower, idPart, katakana, hiragana, kanaNormalized } = tokens;
+  if (idPart && record.id && record.id.indexOf(idPart) !== -1) return true;
+  if (normalized && record.nameNormalized && record.nameNormalized.indexOf(normalized) !== -1) return true;
+  if (compactLower && record.nameSearch && record.nameSearch.indexOf(compactLower) !== -1) return true;
+  if (katakana && record.kanaKatakana && record.kanaKatakana.indexOf(katakana) !== -1) return true;
+  if (hiragana && record.kanaHiragana && record.kanaHiragana.indexOf(hiragana) !== -1) return true;
+  if (kanaNormalized && record.kanaNormalized && record.kanaNormalized.indexOf(kanaNormalized) !== -1) return true;
+  return false;
+}
+
+function prunePatientIdSearchCache(now){
+  if (!_patientIdSearchCache || typeof _patientIdSearchCache.forEach !== 'function') return;
+  const expiredKeys = [];
+  _patientIdSearchCache.forEach((entry, key) => {
+    if (!entry || !Number.isFinite(entry.timestamp)){
+      expiredKeys.push(key);
+      return;
+    }
+    if (now - entry.timestamp > PATIENT_ID_SEARCH_CACHE_TTL_MS){
+      expiredKeys.push(key);
+    }
+  });
+  expiredKeys.forEach(key => {
+    try {
+      _patientIdSearchCache.delete(key);
+    } catch (err){
+      console.warn('[prunePatientIdSearchCache] delete failed', err);
+    }
+  });
+}
+
+function trimPatientIdSearchCache(){
+  if (!_patientIdSearchCache || typeof _patientIdSearchCache.size !== 'number') return;
+  if (_patientIdSearchCache.size <= PATIENT_ID_SEARCH_CACHE_LIMIT) return;
+  let oldestKey = null;
+  let oldestTimestamp = Infinity;
+  _patientIdSearchCache.forEach((entry, key) => {
+    if (!entry || !Number.isFinite(entry.timestamp)) return;
+    if (entry.timestamp < oldestTimestamp){
+      oldestTimestamp = entry.timestamp;
+      oldestKey = key;
+    }
+  });
+  if (oldestKey != null){
+    try {
+      _patientIdSearchCache.delete(oldestKey);
+    } catch (err){
+      console.warn('[trimPatientIdSearchCache] delete failed', err);
+    }
+  }
+}
+
+function searchPatientIdRecords(tokens){
+  const result = { total: 0, records: [], hasOverflow: false };
+  if (!tokens) return result;
+  const matches = [];
+  let total = 0;
+  for (let i = 0; i < _patientIdList.length; i++){
+    const record = _patientIdList[i];
+    if (!record) continue;
+    if (!patientRecordMatchesTokens(record, tokens)) continue;
+    total++;
+    if (matches.length < PATIENT_ID_SEARCH_RESULT_LIMIT){
+      matches.push(record);
+    }
+  }
+  result.total = total;
+  result.records = matches;
+  result.hasOverflow = total > PATIENT_ID_SEARCH_RESULT_LIMIT;
+  return result;
+}
+
+function getPatientIdSearchResult(input){
+  const tokens = buildPatientIdSearchTokens(input);
+  const baseKey = (tokens.compactLower || tokens.normalized || '').toLowerCase();
+  const cacheKey = baseKey || '__empty__';
+  const now = nowMs();
+  prunePatientIdSearchCache(now);
+  let cached = null;
+  try {
+    cached = _patientIdSearchCache.get(cacheKey);
+  } catch (err){
+    console.warn('[getPatientIdSearchResult] cache get failed', err);
+  }
+  if (cached && Number.isFinite(cached.timestamp) && now - cached.timestamp <= PATIENT_ID_SEARCH_CACHE_TTL_MS){
+    return Object.assign({ source: 'cache' }, cached);
+  }
+  if (cached){
+    try {
+      _patientIdSearchCache.delete(cacheKey);
+    } catch (err){
+      console.warn('[getPatientIdSearchResult] cache delete failed', err);
+    }
+  }
+  const computed = searchPatientIdRecords(tokens);
+  const payload = Object.assign({
+    timestamp: now,
+    query: tokens.raw,
+    normalizedQuery: tokens.normalized
+  }, computed);
+  try {
+    _patientIdSearchCache.set(cacheKey, payload);
+    trimPatientIdSearchCache();
+  } catch (err){
+    console.warn('[getPatientIdSearchResult] cache set failed', err);
+  }
+  return Object.assign({ source: 'fresh' }, payload);
+}
+
+function renderPatientIdSearchResults(result){
+  const dl = q('pidlist');
+  if (!dl) return;
+  clearPatientIdOptions();
+  if (!result){
+    renderPatientIdProgress({ message: '候補が見つかりませんでした。' });
+    return;
+  }
+  if (!Array.isArray(result.records) || !result.records.length){
+    renderPatientIdProgress({ message: '候補が見つかりませんでした。' });
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  const renderLimit = result.hasOverflow
+    ? Math.min(result.records.length, PATIENT_ID_SEARCH_RENDER_LIMIT)
+    : result.records.length;
+  for (let i = 0; i < renderLimit; i++){
+    appendPatientIdOptions(result.records[i], fragment);
+  }
+  dl.appendChild(fragment);
+  const displayed = renderLimit;
+  const total = result.total || result.records.length;
+  let message = '';
+  if (result.hasOverflow){
+    message = `${total.toLocaleString()}件ヒット（${displayed.toLocaleString()}件を表示中）。さらに絞り込んでください。`;
+  } else {
+    message = `${total.toLocaleString()}件ヒット。`;
+  }
+  if (result.source === 'cache'){
+    message = `キャッシュから候補を再利用しました。${message}`;
+  }
+  renderPatientIdProgress({ message });
+}
+
+function updatePatientIdSuggestions(){
+  const inputEl = q('pid');
+  if (!inputEl){
+    return;
+  }
+  const raw = inputEl.value != null ? String(inputEl.value) : '';
+  const trimmed = raw.trim();
+  _lastPatientIdSearchText = trimmed;
+  if (!trimmed.length){
+    clearPatientIdOptions();
+    if (_patientIdList.length){
+      renderPatientIdProgress({ message: '候補は2文字以上入力すると表示されます。' });
+    } else {
+      renderPatientIdProgress(null);
+    }
+    return;
+  }
+  if (trimmed.length < PATIENT_ID_SEARCH_MIN_LENGTH){
+    clearPatientIdOptions();
+    renderPatientIdProgress({ message: '候補は2文字以上入力すると表示されます。' });
+    return;
+  }
+  if (!_patientIdList.length){
+    clearPatientIdOptions();
+    renderPatientIdProgress({ message: '候補リストを読み込み中です…' });
+    return;
+  }
+  const result = getPatientIdSearchResult(trimmed);
+  renderPatientIdSearchResults(result);
+}
+
+function schedulePatientIdSearchUpdate(immediate){
+  if (immediate){
+    if (_patientIdSearchTimer){
+      clearTimeout(_patientIdSearchTimer);
+      _patientIdSearchTimer = null;
+    }
+    updatePatientIdSuggestions();
+    return;
+  }
+  if (_patientIdSearchTimer){
+    clearTimeout(_patientIdSearchTimer);
+  }
+  _patientIdSearchTimer = setTimeout(() => {
+    _patientIdSearchTimer = null;
+    updatePatientIdSuggestions();
+  }, PATIENT_ID_SEARCH_DEBOUNCE_MS);
+}
+
 function formatPatientIdDisplay(id, name, kana){
   const key = normalizePatientIdKey(id);
   if (!key) return '';
@@ -739,10 +997,15 @@ function splitPatientIdDisplay(text){
 
 function setPatientIdInputDisplay(id, name){
   const key = normalizePatientIdKey(id);
-  if (!key){ setv('pid', ''); return; }
+  if (!key){
+    setv('pid', '');
+    schedulePatientIdSearchUpdate(true);
+    return;
+  }
   const record = _patientIdIndex[key];
   if (record){
     setv('pid', formatPatientIdDisplay(record.id, record.name, record.kana));
+    schedulePatientIdSearchUpdate(true);
     return;
   }
   const nameText = name ? String(name).trim() : '';
@@ -754,6 +1017,7 @@ function setPatientIdInputDisplay(id, name){
       appendPatientIdOptions(stored, dl);
     }
   }
+  schedulePatientIdSearchUpdate(true);
 }
 
 function ensurePatientIdDisplayFromInput(options){
@@ -1593,14 +1857,14 @@ function applyPatientIdList(rawList, options){
 
 function performPatientIdListApply(rawList, options){
   const opts = options || {};
-  const dl = q('pidlist');
   resetPatientIdCaches();
-  if (!dl){
-    return Promise.resolve();
-  }
-  dl.innerHTML = '';
+  clearPatientIdOptions();
   if (!Array.isArray(rawList) || !rawList.length){
-    renderPatientIdProgress(rawList && rawList.length === 0 ? { message: 'ID候補は見つかりませんでした。' } : null);
+    const message = Array.isArray(rawList) && rawList.length === 0
+      ? 'ID候補は見つかりませんでした。'
+      : null;
+    renderPatientIdProgress(message ? { message } : null);
+    schedulePatientIdSearchUpdate(true);
     return Promise.resolve();
   }
   const total = rawList.length;
@@ -1615,7 +1879,6 @@ function performPatientIdListApply(rawList, options){
         return;
       }
       try {
-        const fragment = document.createDocumentFragment();
         let processed = 0;
         while (index < total && processed < PATIENT_ID_RENDER_CHUNK_SIZE){
           if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() <= 0){
@@ -1629,17 +1892,11 @@ function performPatientIdListApply(rawList, options){
             record = createPatientRecord(item, '', '');
           }
           if (!record) continue;
-          const stored = registerPatientRecord(record);
-          if (stored){
-            appendPatientIdOptions(stored, fragment);
-          }
+          registerPatientRecord(record);
           processed++;
           if (isPatientIdRenderPaused()){
             break;
           }
-        }
-        if (fragment.childNodes.length){
-          dl.appendChild(fragment);
         }
         if (processed > 0){
           chunkCount++;
@@ -1649,6 +1906,12 @@ function performPatientIdListApply(rawList, options){
         }
         if (index >= total){
           renderPatientIdProgress({ source: opts.source || '', total, appended: total, done: true });
+          const prefix = opts.source === 'cache'
+            ? '候補リストをキャッシュから読み込みました'
+            : '候補リストを更新しました';
+          const suffix = '2文字以上入力すると候補が表示されます。';
+          renderPatientIdProgress({ message: `${prefix}（${total.toLocaleString()}件）。${suffix}` });
+          schedulePatientIdSearchUpdate(true);
           resolve();
           return;
         }
@@ -1724,6 +1987,7 @@ function loadPidList(){
   const ensureAfterApply = () => {
     try {
       ensurePatientIdDisplayFromInput({ allowPlainOnMiss: true });
+      schedulePatientIdSearchUpdate(true);
     } catch (err){
       console.error('[loadPidList] ensurePatientIdDisplayFromInput failed', err);
     }
@@ -1794,10 +2058,12 @@ function handlePatientIdKeydown(evt){
 function handlePatientIdInput(){
   unlockInitialPatientIdRender();
   pausePatientIdRender();
+  schedulePatientIdSearchUpdate();
 }
 
 function handlePatientIdFocus(){
   unlockInitialPatientIdRender();
+  schedulePatientIdSearchUpdate();
 }
 
 function handlePatientIdConfirm(){
@@ -1808,11 +2074,13 @@ function handlePatientIdConfirm(){
   const id = pid();
   if (!id) return;
   if (!result && _patientIdList.length) return;
+  schedulePatientIdSearchUpdate(true);
   refresh();
 }
 
 function handlePatientIdBlur(){
   ensurePatientIdDisplayFromInput({ allowPlainOnMiss: !_patientIdList.length });
+  schedulePatientIdSearchUpdate();
 }
 function loadPresets(){
   google.script.run.withSuccessHandler(arr=>{

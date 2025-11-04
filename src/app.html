@@ -894,12 +894,17 @@ function renderPatientIdSearchResults(result){
   const dl = q('pidlist');
   if (!dl) return;
   clearPatientIdOptions();
+  const confirmedId = pid();
+  const confirmedRecord = confirmedId ? _patientIdIndex[confirmedId] : null;
+  const noResultProgressState = confirmedRecord
+    ? null
+    : { message: '候補が見つかりませんでした。' };
   if (!result){
-    renderPatientIdProgress({ message: '候補が見つかりませんでした。' });
+    renderPatientIdProgress(noResultProgressState);
     return;
   }
   if (!Array.isArray(result.records) || !result.records.length){
-    renderPatientIdProgress({ message: '候補が見つかりませんでした。' });
+    renderPatientIdProgress(noResultProgressState);
     return;
   }
   const fragment = document.createDocumentFragment();

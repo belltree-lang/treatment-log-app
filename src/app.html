@@ -102,7 +102,7 @@
         <label>患者ID（施術録番号）</label>
         <input id="pid" list="pidlist" placeholder="例: 5702" value="<?= patientId ?>"
                onkeydown="handlePatientIdKeydown(event)" oninput="handlePatientIdInput(event)"
-               onchange="handlePatientIdConfirm()" onblur="handlePatientIdBlur()"
+               onchange="handlePatientIdConfirm(event)" onblur="handlePatientIdBlur(event)"
                onfocus="handlePatientIdFocus()" />
         <datalist id="pidlist"></datalist>
         <div id="pidLoadProgress" class="muted" aria-live="polite" style="margin-top:6px; min-height:1.2em"></div>
@@ -369,6 +369,7 @@ let _patientIdInitialRenderLocked = IS_STANDALONE_DISPLAY_MODE;
 let _patientIdInitialRenderBuffer = null;
 let _patientIdInitialRenderWaiters = [];
 let _patientIdInitialRenderNoticeShown = false;
+let _confirmedPatientId = '';
 
 function parsePatientIdChunkSizeCandidate(candidate){
   if (candidate == null) return NaN;
@@ -1000,38 +1001,77 @@ function splitPatientIdDisplay(text){
   return { id: trimmed, name: '' };
 }
 
+function setConfirmedPatientId(id){
+  _confirmedPatientId = normalizePatientIdKey(id);
+}
+
+function clearConfirmedPatientId(){
+  _confirmedPatientId = '';
+}
+
+function hasConfirmedPatient(){
+  return !!_confirmedPatientId;
+}
+
+function clearPatientSelection(options){
+  const opts = Object.assign({ keepInput:false }, options || {});
+  if (!opts.keepInput){
+    setv('pid', '');
+  }
+  clearConfirmedPatientId();
+}
+
+function clearPatientDisplay(options){
+  const opts = Object.assign({ keepInput:false, force:false }, options || {});
+  const hadConfirmed = hasConfirmedPatient();
+  clearPatientSelection({ keepInput: opts.keepInput });
+  if (hadConfirmed || opts.force){
+    refresh();
+  }
+}
+
 function setPatientIdInputDisplay(id, name){
   const key = normalizePatientIdKey(id);
   if (!key){
+    clearConfirmedPatientId();
     setv('pid', '');
     schedulePatientIdSearchUpdate(true);
     return;
   }
   const record = _patientIdIndex[key];
   if (record){
+    setConfirmedPatientId(record.id);
     setv('pid', formatPatientIdDisplay(record.id, record.name, record.kana));
     schedulePatientIdSearchUpdate(true);
     return;
   }
   const nameText = name ? String(name).trim() : '';
-  setv('pid', formatPatientIdDisplay(key, nameText, ''));
+  const stored = nameText ? registerPatientRecord(createPatientRecord(key, nameText, '')) : null;
+  if (stored){
+    setConfirmedPatientId(stored.id);
+    setv('pid', formatPatientIdDisplay(stored.id, stored.name, stored.kana));
+  } else {
+    setConfirmedPatientId(key);
+    setv('pid', formatPatientIdDisplay(key, nameText, ''));
+  }
   if (nameText){
     const dl = q('pidlist');
-    const stored = registerPatientRecord(createPatientRecord(key, nameText, ''));
-    if (dl && stored){
-      appendPatientIdOptions(stored, dl);
+    const recordForList = stored || createPatientRecord(key, nameText, '');
+    if (dl && recordForList){
+      appendPatientIdOptions(recordForList, dl);
     }
   }
   schedulePatientIdSearchUpdate(true);
 }
 
 function ensurePatientIdDisplayFromInput(options){
-  const opts = Object.assign({ showError:false, allowPlainOnMiss:false }, options || {});
+  const opts = Object.assign({ showError:false, allowPlainOnMiss:false, clearOnReject:false }, options || {});
   const inputEl = q('pid');
   if (!inputEl) return null;
   const rawInput = String(inputEl.value || '');
   const trimmed = rawInput.trim();
   if (!trimmed){
+    clearConfirmedPatientId();
     setv('pid', '');
     return null;
   }
@@ -1040,6 +1080,7 @@ function ensurePatientIdDisplayFromInput(options){
   if (key){
     const byId = _patientIdIndex[key];
     if (byId){
+      setConfirmedPatientId(byId.id);
       setv('pid', formatPatientIdDisplay(byId.id, byId.name, byId.kana));
       return byId;
     }
@@ -1047,40 +1088,59 @@ function ensurePatientIdDisplayFromInput(options){
 
   const byOption = findRecordByDatalistValue(trimmed);
   if (byOption){
+    setConfirmedPatientId(byOption.id);
     setv('pid', formatPatientIdDisplay(byOption.id, byOption.name, byOption.kana));
     return byOption;
   }
 
   const byKana = findPatientRecordByKana(trimmed);
   if (byKana){
+    setConfirmedPatientId(byKana.id);
     setv('pid', formatPatientIdDisplay(byKana.id, byKana.name, byKana.kana));
     return byKana;
   }
 
   if (key){
     if (opts.allowPlainOnMiss){
+      setConfirmedPatientId(key);
       setv('pid', key);
       return { id: key, name: '' };
     }
     if (opts.showError && _patientIdList.length){
       toast('IDが見つかりません');
     }
+    clearConfirmedPatientId();
+    if (opts.clearOnReject){
+      setv('pid', '');
+    }
     return null;
   }
 
   if (opts.allowPlainOnMiss){
+    setConfirmedPatientId(trimmed);
     setv('pid', trimmed);
     return { id: trimmed, name: '' };
   }
   if (opts.showError && _patientIdList.length){
     toast('IDが見つかりません');
   }
+  clearConfirmedPatientId();
+  if (opts.clearOnReject){
+    setv('pid', '');
+  }
   return null;
 }
 
 function pid(){
-  const parsed = splitPatientIdDisplay(q('pid') ? q('pid').value : '');
-  return normalizePatientIdKey(parsed.id);
+  if (_confirmedPatientId){
+    return _confirmedPatientId;
+  }
+  if (!_patientIdList.length){
+    const input = q('pid') ? q('pid').value : '';
+    const parsed = splitPatientIdDisplay(input);
+    return normalizePatientIdKey(parsed.id);
+  }
+  return '';
 }
 
 function currentPatientName(){
@@ -1991,7 +2051,13 @@ function savePatientIdCache(list){
 function loadPidList(){
   const ensureAfterApply = () => {
     try {
-      ensurePatientIdDisplayFromInput({ allowPlainOnMiss: true });
+      const result = ensurePatientIdDisplayFromInput({
+        allowPlainOnMiss: !_patientIdList.length,
+        clearOnReject: !!_patientIdList.length
+      });
+      if (!result && _patientIdList.length){
+        clearPatientDisplay({ keepInput: false, force: true });
+      }
       schedulePatientIdSearchUpdate(true);
     } catch (err){
       console.error('[loadPidList] ensurePatientIdDisplayFromInput failed', err);
@@ -2063,6 +2129,9 @@ function handlePatientIdKeydown(evt){
 function handlePatientIdInput(){
   unlockInitialPatientIdRender();
   pausePatientIdRender();
+  if (hasConfirmedPatient()){
+    clearPatientDisplay({ keepInput: true });
+  }
   schedulePatientIdSearchUpdate();
 }
 
@@ -2071,20 +2140,40 @@ function handlePatientIdFocus(){
   schedulePatientIdSearchUpdate();
 }
 
-function handlePatientIdConfirm(){
+function handlePatientIdConfirm(evt){
+  unlockInitialPatientIdRender();
+  const inputEl = evt && evt.target ? evt.target : q('pid');
+  const rawValue = inputEl && inputEl.value != null ? String(inputEl.value) : '';
+  const trimmed = rawValue.trim();
+  if (!trimmed){
+    clearPatientDisplay({ keepInput: false, force: true });
+    schedulePatientIdSearchUpdate(true);
+    return;
+  }
   const result = ensurePatientIdDisplayFromInput({
-    showError: true,
-    allowPlainOnMiss: !_patientIdList.length
+    allowPlainOnMiss: !_patientIdList.length,
+    clearOnReject: !!_patientIdList.length
   });
-  const id = pid();
-  if (!id) return;
-  if (!result && _patientIdList.length) return;
+  if (!result){
+    if (_patientIdList.length){
+      alert('⚠️ リストに存在しない患者は登録できません。');
+    }
+    clearPatientDisplay({ keepInput: !_patientIdList.length, force: true });
+    schedulePatientIdSearchUpdate(true);
+    return;
+  }
   schedulePatientIdSearchUpdate(true);
   refresh();
 }
 
-function handlePatientIdBlur(){
-  ensurePatientIdDisplayFromInput({ allowPlainOnMiss: !_patientIdList.length });
+function handlePatientIdBlur(evt){
+  const result = ensurePatientIdDisplayFromInput({
+    allowPlainOnMiss: !_patientIdList.length,
+    clearOnReject: !!_patientIdList.length
+  });
+  if (!result && _patientIdList.length){
+    clearPatientDisplay({ keepInput: false, force: true });
+  }
   schedulePatientIdSearchUpdate();
 }
 function loadPresets(){
@@ -2233,7 +2322,18 @@ function save(){
       return;
     }
     const p = pid();
-    if(!p){ alert('患者IDを入力'); return; }
+    if(!p){
+      if (_patientIdList.length){
+        alert('患者IDを候補から選択してください');
+      } else {
+        alert('患者IDを入力');
+      }
+      return;
+    }
+    if (_patientIdList.length && !_patientIdIndex[p]){
+      alert('⚠️ リストに存在しない患者は登録できません。');
+      return;
+    }
     _saveInFlight = true;
 
     if (saveBtn) saveBtn.disabled = true;
@@ -2687,6 +2787,7 @@ function saveHandoverUI(){
   }
   const p = "<?= patientId ?>";
   if (p) {
+    setConfirmedPatientId(p);
     refresh();
   } else {
     loadClinicalTrends();

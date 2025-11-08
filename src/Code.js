@@ -27,6 +27,7 @@ const PATIENT_CACHE_KEYS = {
   news: pid => 'patient:news:' + normId_(pid),
   treatments: pid => 'patient:treatments:' + normId_(pid),
 };
+const GLOBAL_NEWS_CACHE_KEY = 'patient:news:__global__';
 
 function getScriptCache_(){
   try {
@@ -99,6 +100,10 @@ function collectPatientCacheKeys_(pid, scope){
   if (applyAll || scope.news) keys.push(PATIENT_CACHE_KEYS.news(normalized));
   if (applyAll || scope.treatments) keys.push(PATIENT_CACHE_KEYS.treatments(normalized));
   return keys;
+}
+
+function invalidateGlobalNewsCache_(){
+  invalidateCacheKeys_([GLOBAL_NEWS_CACHE_KEY]);
 }
 
 /***** 先頭行（見出し）の揺れに耐えるためのラベル候補群 *****/
@@ -329,14 +334,81 @@ function formatNewsRow_(pid, type, msg, meta){
   }
   return [new Date(), String(pid), type, msg, '', metaStr];
 }
+
+function readNewsRows_(){
+  const s = sh('News');
+  const lr = s.getLastRow();
+  if (lr < 2) return [];
+  const width = Math.min(6, s.getLastColumn());
+  const range = s.getRange(2, 1, lr - 1, width);
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
+  const timezone = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const rows = [];
+  for (let i = 0; i < values.length; i++) {
+    const raw = values[i];
+    const disp = displayValues[i];
+    const rawDate = raw[0];
+    let whenText = String(disp[0] || '').trim();
+    if (!whenText && rawDate instanceof Date) {
+      whenText = Utilities.formatDate(rawDate, timezone, 'yyyy-MM-dd HH:mm');
+    }
+    if (!whenText && rawDate != null && rawDate !== '') {
+      whenText = String(rawDate);
+    }
+    const tsCandidate = rawDate instanceof Date
+      ? rawDate.getTime()
+      : (whenText ? new Date(whenText).getTime() : NaN);
+    const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
+    rows.push({
+      ts,
+      when: whenText,
+      pid: normId_(disp[1] != null && disp[1] !== '' ? disp[1] : raw[1]),
+      type: String(disp[2] != null ? disp[2] : raw[2] || ''),
+      message: String(disp[3] != null ? disp[3] : raw[3] || ''),
+      cleared: String(disp[4] != null ? disp[4] : raw[4] || '').trim()
+    });
+  }
+  return rows;
+}
+
+function fetchNewsRowsForPid_(normalized){
+  if (!normalized) return [];
+  return readNewsRows_()
+    .filter(row => !row.cleared && row.pid === normalized)
+    .map(row => ({ ts: row.ts, when: row.when, type: row.type, message: row.message }));
+}
+
+function fetchGlobalNewsRows_(){
+  return readNewsRows_()
+    .filter(row => !row.cleared && !row.pid)
+    .map(row => ({ ts: row.ts, when: row.when, type: row.type, message: row.message }));
+}
+
+function formatNewsOutput_(rows){
+  if (!Array.isArray(rows) || !rows.length) return [];
+  return rows
+    .slice()
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+    .map(row => ({ when: row.when, type: row.type, message: row.message }));
+}
+
 function pushNewsRows_(rows){
   if (!rows || !rows.length) return;
   const sheet = sh('News');
   const start = sheet.getLastRow() + 1;
   sheet.getRange(start, 1, rows.length, 6).setValues(rows);
-  const affected = Array.from(new Set(rows.map(r => normId_(r && r[1])))).filter(Boolean);
+  let hasGlobal = false;
+  const affected = Array.from(new Set(rows.map(r => {
+    const normalized = normId_(r && r[1]);
+    if (!normalized) hasGlobal = true;
+    return normalized;
+  }).filter(Boolean)));
   if (affected.length) {
     invalidatePatientCaches_(affected, { news: true });
+  }
+  if (hasGlobal) {
+    invalidateGlobalNewsCache_();
   }
 }
 function pushNews_(pid,type,msg,meta){
@@ -350,17 +422,12 @@ function appendRowsToSheet_(sheetName, rows){
 }
 function getNews(pid){
   const normalized = normId_(pid);
-  if (!normalized) return [];
-  const cacheKey = PATIENT_CACHE_KEYS.news(normalized);
-  return cacheFetch_(cacheKey, () => {
-    const s = sh('News');
-    const lr = s.getLastRow();
-    if (lr < 2) return [];
-    const vals = s.getRange(2, 1, lr - 1, 6).getDisplayValues();
-    return vals
-      .filter(r => normId_(r[1]) === normalized && !String(r[4] || '').trim())
-      .map(r => ({ when: r[0], type: r[2], message: r[3] }));
-  }, PATIENT_CACHE_TTL_SECONDS);
+  const globalNews = cacheFetch_(GLOBAL_NEWS_CACHE_KEY, fetchGlobalNewsRows_, PATIENT_CACHE_TTL_SECONDS) || [];
+  if (!normalized) {
+    return formatNewsOutput_(globalNews);
+  }
+  const patientNews = cacheFetch_(PATIENT_CACHE_KEYS.news(normalized), () => fetchNewsRowsForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
+  return formatNewsOutput_(globalNews.concat(patientNews));
 }
 function clearConsentRelatedNews_(pid){
   const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;
@@ -409,6 +476,7 @@ function clearNewsByTreatment_(treatmentId){
   const metaIndex = width >= 6 ? 5 : -1;
   const clearedCol = 4; // 5列目（cleared）
   const matches = [];
+  let touchedGlobal = false;
   for (let i = 0; i < vals.length; i++) {
     const metaText = metaIndex >= 0 ? String(vals[i][metaIndex] || '').trim() : '';
     if (!metaText) continue;
@@ -430,10 +498,17 @@ function clearNewsByTreatment_(treatmentId){
   matches.forEach(idx => {
     s.getRange(2 + idx, clearedCol + 1).setValue('1');
     const pid = normId_(vals[idx][1]);
-    if (pid) affected.add(pid);
+    if (pid) {
+      affected.add(pid);
+    } else {
+      touchedGlobal = true;
+    }
   });
   if (affected.size) {
     invalidatePatientCaches_(Array.from(affected), { news: true });
+  }
+  if (touchedGlobal) {
+    invalidateGlobalNewsCache_();
   }
 }
 

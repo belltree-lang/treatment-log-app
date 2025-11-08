@@ -2430,11 +2430,12 @@ function refresh(){
 
   const patientId = pid();
   if (!patientId){
-    hideGlobalLoading();
     if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
-    if (q('news')) q('news').innerHTML = '<div class="muted">患者IDを入力するとNewsが表示されます</div>';
     if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
     destroyClinicalCharts();
+    loadNews('', () => {
+      hideGlobalLoading();
+    });
     return;
   }
 
@@ -2494,33 +2495,42 @@ function loadHeader(patientId, next){
 }
 function loadNews(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
-  const targetPid = patientId || pid();
   const done = typeof next === 'function' ? next : null;
-  if(!targetPid){ if (done) done(); return; }
-  google.script.run.withSuccessHandler(list=>{
-    const el=q('news');
-      if(!list||!list.length){
-        el.innerHTML='<div class="muted">Newsはありません</div>';
+  const el = q('news');
+  if (!el){ if (done) done(); return; }
+
+  const explicitPidProvided = typeof patientId !== 'undefined';
+  const candidatePid = explicitPidProvided ? patientId : pid();
+  const targetPid = candidatePid == null ? '' : String(candidatePid);
+  const isGlobalRequest = !targetPid;
+
+  el.innerHTML = '<div class="muted">読み込み中…</div>';
+
+  google.script.run
+    .withSuccessHandler(list => {
+      if (!Array.isArray(list) || !list.length){
+        el.innerHTML = isGlobalRequest
+          ? '<div class="muted">現在表示できるお知らせはありません</div>'
+          : '<div class="muted">Newsはありません</div>';
         if (done) done();
         return;
       }
-    el.innerHTML=list.map(n=>{
-      const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
-      const showConsentEdit = shouldShowConsentEditButton(n);
-      const actions = showConsentEdit
-        ? `<div class="btnrow" style="margin-top:6px"><button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button></div>`
-        : '';
-      return `<div class="news-item"><div class="muted">${escapeHtml(n.when||'')} ／ ${escapeHtml(n.type||'')}</div><div>${messageHtml}</div>${actions}</div>`;
-    }).join('');
-    if (done) done();
-  }).withFailureHandler(err=>{
-    console.error('[loadNews] failed', err);
-    const el=q('news');
-    if (el) {
+      el.innerHTML = list.map(n => {
+        const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
+        const showConsentEdit = shouldShowConsentEditButton(n);
+        const actions = showConsentEdit
+          ? `<div class="btnrow" style="margin-top:6px"><button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button></div>`
+          : '';
+        return `<div class="news-item"><div class="muted">${escapeHtml(n.when||'')} ／ ${escapeHtml(n.type||'')}</div><div>${messageHtml}</div>${actions}</div>`;
+      }).join('');
+      if (done) done();
+    })
+    .withFailureHandler(err => {
+      console.error('[loadNews] failed', err);
       el.innerHTML = '<div class="muted" style="color:#b91c1c">Newsの取得に失敗しました</div>';
-    }
-    if (done) done();
-  }).getNews(targetPid);
+      if (done) done();
+    })
+    .getNews(targetPid);
 }
 function loadThisMonth(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }

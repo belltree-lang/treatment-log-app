@@ -688,10 +688,13 @@ function checkConsentExpiration_(){
     if (!expiryStr) continue;
     const expiryDate = parseIsoLocal(expiryStr);
     if (!expiryDate) continue;
+    expiryDate.setHours(0, 0, 0, 0);
     const reminderDate = new Date(expiryDate.getTime() - 30 * dayMs);
     reminderDate.setHours(0, 0, 0, 0);
-    const diffDays = Math.round((reminderDate.getTime() - todayStart.getTime()) / dayMs);
-    if (diffDays !== 0) continue;
+    const daysFromReminder = Math.floor((todayStart.getTime() - reminderDate.getTime()) / dayMs);
+    if (daysFromReminder < 0) continue; // 1か月前より未来の場合はスキップ
+    const daysSinceExpiry = Math.floor((todayStart.getTime() - expiryDate.getTime()) / dayMs);
+    if (daysSinceExpiry > 30) continue; // 期限を30日以上過ぎていたらスキップ
     const key = pidNormalized + '|' + expiryStr;
     if (existingKeys.has(key) || insertedKeys.has(key)) {
       continue;

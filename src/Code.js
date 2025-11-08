@@ -2432,6 +2432,10 @@ function looksLikeEmail_(text){
   return /@/.test(text || '') && /\./.test(text || '');
 }
 
+function normalizeEmailKey_(email){
+  return String(email || '').trim().toLowerCase();
+}
+
 function getWebhookConfig_(){
   const props = PropertiesService.getScriptProperties().getProperties() || {};
   const map = new Map();
@@ -2452,6 +2456,215 @@ function getWebhookConfig_(){
     }
   });
   return { map, defaultUrl };
+}
+
+function createStaffShiftRule_(identifier, options){
+  const opts = options || {};
+  const aliases = [];
+  const normalizedId = normalizeEmailKey_(identifier);
+  if (normalizedId) {
+    aliases.push(normalizedId);
+  }
+  if (Array.isArray(opts.aliases)) {
+    opts.aliases.forEach(value => {
+      const alias = normalizeEmailKey_(value);
+      if (alias && aliases.indexOf(alias) === -1) {
+        aliases.push(alias);
+      }
+    });
+  }
+
+  const workDays = new Set();
+  if (Array.isArray(opts.workDays)) {
+    opts.workDays.forEach(num => {
+      const day = Number(num);
+      if (!isNaN(day) && day >= 0 && day <= 6) {
+        workDays.add(day);
+      }
+    });
+  }
+  if (!workDays.size) {
+    for (let i = 0; i < 7; i++) workDays.add(i);
+  }
+
+  const displayName = opts.displayName || (normalizedId ? normalizedId.split('@')[0] : String(identifier || '')); 
+
+  return {
+    id: normalizedId || displayName,
+    aliases,
+    displayName,
+    workDays,
+    skipHolidays: !!opts.skipHolidays,
+    matches(email){
+      const normalized = normalizeEmailKey_(email);
+      if (!normalized) return false;
+      if (typeof opts.matcher === 'function') {
+        try {
+          return !!opts.matcher(normalized);
+        } catch (err) {
+          Logger.log(`[createStaffShiftRule_] matcher failed for ${displayName}: ${err && err.message ? err.message : err}`);
+          return false;
+        }
+      }
+      for (let i = 0; i < aliases.length; i++) {
+        const alias = aliases[i];
+        if (alias && normalized.indexOf(alias) >= 0) {
+          return true;
+        }
+      }
+      return false;
+    }
+  };
+}
+
+const STAFF_SHIFT_RULES = [
+  createStaffShiftRule_('sugawara@', { displayName: 'sugawara@', workDays: [1,2,3,4,5], skipHolidays: true }),
+  createStaffShiftRule_('yanai@', { displayName: 'yanai@', workDays: [1,2,3,4,5], skipHolidays: true }),
+  createStaffShiftRule_('nakazawa@', { displayName: 'nakazawa@', workDays: [1,2,3,4,5], skipHolidays: true }),
+  createStaffShiftRule_('horiguchi@', { displayName: 'horiguchi@', workDays: [1,2,3,4,5], skipHolidays: true }),
+  createStaffShiftRule_('takahiro@', { displayName: 'takahiro@', workDays: [0,1,3,4,6], skipHolidays: true }),
+  createStaffShiftRule_('ishimatu@', { displayName: 'ishimatu@', workDays: [0,1,2,3,4], skipHolidays: true }),
+  createStaffShiftRule_('maruyama@', { displayName: 'maruyama@', workDays: [1,3,4,5,6], skipHolidays: true }),
+  createStaffShiftRule_('takeuti@', { displayName: 'takeuti@', workDays: [1,2,4,6], skipHolidays: true }),
+  createStaffShiftRule_('kouno@', { displayName: 'kouno@', workDays: [1,3,5], skipHolidays: true }),
+  createStaffShiftRule_('makishima@', { displayName: 'makishima@', workDays: [4,6], skipHolidays: true }),
+  createStaffShiftRule_('urano@', { displayName: 'urano@', workDays: [1,2,4,5,6], skipHolidays: true })
+];
+
+function isJapaneseHoliday_(date){
+  if (!(date instanceof Date) || isNaN(date.getTime())) return false;
+  try {
+    const cal = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com');
+    if (!cal) return false;
+    const events = cal.getEventsForDay(date);
+    return Array.isArray(events) && events.length > 0;
+  } catch (err) {
+    Logger.log(`[isJapaneseHoliday_] failed: ${err && err.message ? err.message : err}`);
+    return false;
+  }
+}
+
+function isStaffScheduledForDay_(rule, weekday, isHoliday){
+  if (!rule) return false;
+  if (rule.skipHolidays && isHoliday) {
+    return false;
+  }
+  if (rule.workDays && rule.workDays.size) {
+    return rule.workDays.has(weekday);
+  }
+  return true;
+}
+
+function collectTreatmentStaffEmails_(start, end){
+  const result = new Set();
+  const sheet = sh('施術録');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return result;
+  const values = sheet.getRange(2,1,lastRow-1,6).getValues();
+  values.forEach(row => {
+    const ts = row[0];
+    const email = normalizeEmailKey_(row[3]);
+    if (!email) return;
+    const when = ts instanceof Date ? ts : new Date(ts);
+    if (isNaN(when.getTime()) || when < start || when >= end) return;
+    result.add(email);
+  });
+  return result;
+}
+
+function hasRecordedForRule_(rule, recordedEmails){
+  if (!recordedEmails || !recordedEmails.size) return false;
+  for (const email of recordedEmails) {
+    if (rule.matches(email)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function checkMissingTreatmentRecords(targetDate){
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const base = targetDate ? new Date(targetDate) : new Date();
+  if (isNaN(base.getTime())) {
+    throw new Error('日付指定が不正です');
+  }
+
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const weekday = start.getDay();
+  const holiday = isJapaneseHoliday_(start);
+
+  const recorded = collectTreatmentStaffEmails_(start, end);
+  const scheduled = STAFF_SHIFT_RULES.filter(rule => isStaffScheduledForDay_(rule, weekday, holiday));
+  const missing = scheduled.filter(rule => !hasRecordedForRule_(rule, recorded));
+
+  const summary = {
+    date: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
+    weekday,
+    isHoliday: holiday,
+    scheduledCount: scheduled.length,
+    missingCount: missing.length,
+    recordedCount: recorded.size,
+    scheduledStaff: scheduled.map(rule => rule.displayName),
+    missingStaff: missing.map(rule => rule.displayName)
+  };
+
+  if (!scheduled.length) {
+    Logger.log(`[checkMissingTreatmentRecords] 当日の出勤対象者が見つかりません date=${summary.date} holiday=${holiday}`);
+    summary.notified = false;
+    return summary;
+  }
+
+  if (!missing.length) {
+    Logger.log(`[checkMissingTreatmentRecords] 施術記録漏れはありません date=${summary.date}`);
+    summary.notified = false;
+    return summary;
+  }
+
+  const staffLines = missing.map(rule => `・${rule.displayName}`).join('\n');
+  const message = `⚠️ 本日の施術録記載がされていません。ご確認ください。\n対象スタッフ:\n${staffLines}`;
+  notifyChat_(message);
+  summary.notified = true;
+  return summary;
+}
+
+function runMissingTreatmentAlertJob(){
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    Logger.log('[runMissingTreatmentAlertJob] ロック取得に失敗しました');
+    return null;
+  }
+  try {
+    const result = checkMissingTreatmentRecords();
+    Logger.log(`[runMissingTreatmentAlertJob] result=${JSON.stringify(result)}`);
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function ensureMissingTreatmentAlertTrigger(){
+  const handler = 'runMissingTreatmentAlertJob';
+  const triggers = ScriptApp.getProjectTriggers();
+  let hasClockTrigger = false;
+  triggers.forEach(tr => {
+    if (tr.getHandlerFunction() === handler) {
+      if (tr.getEventType() === ScriptApp.EventType.CLOCK) {
+        hasClockTrigger = true;
+      } else {
+        ScriptApp.deleteTrigger(tr);
+      }
+    }
+  });
+  if (!hasClockTrigger) {
+    ScriptApp.newTrigger(handler)
+      .timeBased()
+      .everyDays(1)
+      .atHour(19)
+      .create();
+    Logger.log('[ensureMissingTreatmentAlertTrigger] 新規トリガーを作成しました (19:00 JST)');
+  }
+  return true;
 }
 
 function fetchPatientNamesMap_(idSet){

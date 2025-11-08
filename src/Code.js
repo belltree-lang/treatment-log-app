@@ -335,6 +335,18 @@ function formatNewsRow_(pid, type, msg, meta){
   return [new Date(), String(pid), type, msg, '', metaStr];
 }
 
+function parseNewsMetaValue_(value){
+  if (value == null || value === '') return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  const text = String(value).trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return text;
+  }
+}
+
 function readNewsRows_(){
   const s = sh('News');
   const lr = s.getLastRow();
@@ -359,13 +371,22 @@ function readNewsRows_(){
     const tsCandidate = rawDate instanceof Date
       ? rawDate.getTime()
       : (whenText ? new Date(whenText).getTime() : NaN);
+    const rowNumber = 2 + i;
+    const pidRaw = disp[1] != null && disp[1] !== '' ? disp[1] : raw[1];
+    const normalizedPid = normId_(pidRaw);
+    const typeText = String(disp[2] != null ? disp[2] : raw[2] || '');
+    const messageText = String(disp[3] != null ? disp[3] : raw[3] || '');
+    const metaRaw = width >= 6 ? raw[5] : '';
+    const meta = parseNewsMetaValue_(metaRaw);
     const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
     rows.push({
       ts,
       when: whenText,
-      pid: normId_(disp[1] != null && disp[1] !== '' ? disp[1] : raw[1]),
-      type: String(disp[2] != null ? disp[2] : raw[2] || ''),
-      message: String(disp[3] != null ? disp[3] : raw[3] || ''),
+      rowNumber,
+      pid: normalizedPid,
+      type: typeText,
+      message: messageText,
+      meta,
       cleared: String(disp[4] != null ? disp[4] : raw[4] || '').trim()
     });
   }
@@ -376,13 +397,29 @@ function fetchNewsRowsForPid_(normalized){
   if (!normalized) return [];
   return readNewsRows_()
     .filter(row => !row.cleared && row.pid === normalized)
-    .map(row => ({ ts: row.ts, when: row.when, type: row.type, message: row.message }));
+    .map(row => ({
+      ts: row.ts,
+      when: row.when,
+      type: row.type,
+      message: row.message,
+      meta: row.meta,
+      rowNumber: row.rowNumber,
+      pid: row.pid
+    }));
 }
 
 function fetchGlobalNewsRows_(){
   return readNewsRows_()
     .filter(row => !row.cleared && !row.pid)
-    .map(row => ({ ts: row.ts, when: row.when, type: row.type, message: row.message }));
+    .map(row => ({
+      ts: row.ts,
+      when: row.when,
+      type: row.type,
+      message: row.message,
+      meta: row.meta,
+      rowNumber: row.rowNumber,
+      pid: row.pid
+    }));
 }
 
 function formatNewsOutput_(rows){
@@ -390,7 +427,14 @@ function formatNewsOutput_(rows){
   return rows
     .slice()
     .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-    .map(row => ({ when: row.when, type: row.type, message: row.message }));
+    .map(row => ({
+      when: row.when,
+      type: row.type,
+      message: row.message,
+      meta: row.meta,
+      rowNumber: row.rowNumber,
+      pid: row.pid
+    }));
 }
 
 function pushNewsRows_(rows){
@@ -478,6 +522,69 @@ function clearNewsByTypes_(pid, types){
   invalidatePatientCaches_(pid, { news: true });
 }
 
+function markNewsClearedByType(pid, type, options){
+  const typeName = String(type || '').trim();
+  if (!typeName) return 0;
+  const s = sh('News');
+  const lr = s.getLastRow();
+  if (lr < 2) return 0;
+  const width = Math.min(6, s.getMaxColumns());
+  const vals = s.getRange(2, 1, lr - 1, width).getValues();
+  const matchPid = String(pid || '').trim();
+  const normalizedPid = normId_(matchPid);
+  const filterMessage = options && options.messageContains ? String(options.messageContains) : '';
+  const filterMetaType = options && options.metaType ? String(options.metaType).trim() : '';
+  const filterRow = options && typeof options.rowNumber === 'number' ? Number(options.rowNumber) : null;
+  const touchedPatients = new Set();
+  let touchedGlobal = false;
+  let cleared = 0;
+  for (let i = 0; i < vals.length; i++) {
+    const rowNumber = 2 + i;
+    if (filterRow && rowNumber !== filterRow) continue;
+    const rowPidRaw = vals[i][1];
+    const rowPid = normId_(rowPidRaw);
+    if (normalizedPid) {
+      if (rowPid !== normalizedPid) continue;
+    } else if (matchPid && String(rowPidRaw || '').trim() !== matchPid) {
+      continue;
+    }
+    const rowType = String(vals[i][2] || '').trim();
+    if (rowType !== typeName) continue;
+    if (filterMessage) {
+      const message = String(vals[i][3] || '');
+      if (message.indexOf(filterMessage) < 0) continue;
+    }
+    if (filterMetaType) {
+      const metaRaw = width >= 6 ? vals[i][5] : '';
+      const meta = parseNewsMetaValue_(metaRaw);
+      let resolvedType = '';
+      if (meta && typeof meta === 'object' && meta.type != null) {
+        resolvedType = String(meta.type);
+      } else if (typeof meta === 'string') {
+        resolvedType = meta;
+      }
+      if (resolvedType !== filterMetaType) continue;
+    }
+    s.getRange(rowNumber, 5).setValue('1');
+    cleared++;
+    if (rowPid) {
+      touchedPatients.add(rowPid);
+    } else {
+      touchedGlobal = true;
+    }
+  }
+  if (cleared) {
+    if (touchedPatients.size) {
+      const ids = Array.from(touchedPatients);
+      invalidatePatientCaches_(ids, { news: true });
+    }
+    if (touchedGlobal) {
+      invalidateGlobalNewsCache_();
+    }
+  }
+  return cleared;
+}
+
 function clearNewsByTreatment_(treatmentId){
   if (!treatmentId) return;
   const s = sh('News');
@@ -523,6 +630,92 @@ function clearNewsByTreatment_(treatmentId){
   if (touchedGlobal) {
     invalidateGlobalNewsCache_();
   }
+}
+
+function checkConsentExpiration_(){
+  ensureAuxSheets_();
+  const sheet = sh('患者情報');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { ok: true, scanned: 0, inserted: 0 };
+  const lastCol = sheet.getLastColumn();
+  const head = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const cRec = getColFlexible_(head, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
+  const cConsent = getColFlexible_(head, LABELS.consent, PATIENT_COLS_FIXED.consent, '同意年月日');
+  if (!cRec || !cConsent) {
+    return { ok: false, scanned: 0, inserted: 0, reason: 'missingColumns' };
+  }
+
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const today = new Date();
+  const todayY = Number(Utilities.formatDate(today, tz, 'yyyy'));
+  const todayM = Number(Utilities.formatDate(today, tz, 'MM')) - 1;
+  const todayD = Number(Utilities.formatDate(today, tz, 'dd'));
+  const todayStart = new Date(todayY, todayM, todayD);
+
+  const rows = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const existing = readNewsRows_();
+  const existingKeys = new Set();
+  existing.forEach(row => {
+    if (row.cleared) return;
+    if (!row.pid) return;
+    if (String(row.type || '').trim() !== '同意') return;
+    const message = String(row.message || '').trim();
+    if (message !== '同意書受渡が必要です') return;
+    const meta = row.meta;
+    let expiryKey = '';
+    if (meta && typeof meta === 'object' && meta.consentExpiry) {
+      expiryKey = String(meta.consentExpiry);
+    }
+    existingKeys.add(row.pid + '|' + expiryKey);
+  });
+
+  const toInsert = [];
+  const insertedKeys = new Set();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const parseIsoLocal = (text) => {
+    const m = text && text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  };
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const pidRaw = row[cRec - 1];
+    const pidNormalized = normId_(pidRaw);
+    if (!pidNormalized) continue;
+    const consent = row[cConsent - 1];
+    const expiryStr = calcConsentExpiry_(consent);
+    if (!expiryStr) continue;
+    const expiryDate = parseIsoLocal(expiryStr);
+    if (!expiryDate) continue;
+    const reminderDate = new Date(expiryDate.getTime() - 30 * dayMs);
+    reminderDate.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((reminderDate.getTime() - todayStart.getTime()) / dayMs);
+    if (diffDays !== 0) continue;
+    const key = pidNormalized + '|' + expiryStr;
+    if (existingKeys.has(key) || insertedKeys.has(key)) {
+      continue;
+    }
+    const pidForNews = String(pidRaw || '').trim();
+    if (!pidForNews) continue;
+    const meta = {
+      source: 'auto',
+      type: 'consent_reminder',
+      consentExpiry: expiryStr,
+      reminderDate: Utilities.formatDate(reminderDate, tz, 'yyyy-MM-dd')
+    };
+    toInsert.push(formatNewsRow_(pidForNews, '同意', '同意書受渡が必要です', meta));
+    insertedKeys.add(key);
+  }
+
+  if (toInsert.length) {
+    pushNewsRows_(toInsert);
+  }
+  return { ok: true, scanned: rows.length, inserted: toInsert.length };
+}
+
+function checkConsentExpiration(){
+  return checkConsentExpiration_();
 }
 
 /***** ステータス（休止/中止） *****/
@@ -3424,6 +3617,53 @@ function submitTreatment(payload) {
       logSubmitTreatmentTimings_(pid, treatmentIdForLog, 'error', timings);
     }
   }
+}
+
+function completeConsentHandoutFromNews(payload) {
+  const pid = String(payload && payload.patientId || '').trim();
+  if (!pid) throw new Error('patientIdが空です');
+  const consentUndecided = !!(payload && payload.consentUndecided);
+  const visitPlanDate = String(payload && payload.visitPlanDate || '').trim();
+  const providedNote = String(payload && payload.note || '').trim();
+  const note = providedNote
+    || (consentUndecided
+      ? '同意書受渡。通院日を確認してください。'
+      : (visitPlanDate ? `同意書受渡。（通院予定：${visitPlanDate}）` : '同意書受渡。'));
+  const actions = {};
+  if (consentUndecided) {
+    actions.consentUndecided = true;
+  } else if (visitPlanDate) {
+    actions.visitPlanDate = visitPlanDate;
+  }
+
+  const treatmentPayload = {
+    patientId: pid,
+    presetLabel: '同意書受渡',
+    notesParts: { note },
+    actions
+  };
+  if (payload && payload.treatmentId) {
+    treatmentPayload.treatmentId = String(payload.treatmentId);
+  }
+
+  const result = submitTreatment(treatmentPayload);
+  const newsType = String(payload && payload.newsType || '同意').trim() || '同意';
+  const newsMessage = String(payload && payload.newsMessage || '');
+  const metaType = payload && payload.newsMetaType ? String(payload.newsMetaType) : '';
+  const rowNumber = payload && typeof payload.newsRow === 'number' ? Number(payload.newsRow) : null;
+  const cleared = markNewsClearedByType(pid, newsType, {
+    messageContains: newsMessage,
+    metaType: metaType,
+    rowNumber
+  });
+
+  return {
+    ok: true,
+    result,
+    cleared,
+    note,
+    actions
+  };
 }
 
 function normalizeTreatmentNoteForComparison_(value){

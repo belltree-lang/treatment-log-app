@@ -395,9 +395,22 @@ function formatNewsOutput_(rows){
 
 function pushNewsRows_(rows){
   if (!rows || !rows.length) return;
-  const sheet = sh('News');
+  let sheet;
+  try {
+    sheet = sh('News');
+  } catch (err) {
+    Logger.log('[pushNewsRows_] Failed to get News sheet: ' + (err && err.message ? err.message : err));
+    try {
+      ensureAuxSheets_({ force: true });
+      sheet = sh('News');
+    } catch (retryErr) {
+      Logger.log('[pushNewsRows_] Retried ensureAuxSheets_ but still failed: ' + (retryErr && retryErr.message ? retryErr.message : retryErr));
+      throw retryErr;
+    }
+  }
   const start = sheet.getLastRow() + 1;
   sheet.getRange(start, 1, rows.length, 6).setValues(rows);
+  Logger.log('[pushNewsRows_] appended rows: ' + rows.length);
   let hasGlobal = false;
   const affected = Array.from(new Set(rows.map(r => {
     const normalized = normId_(r && r[1]);
@@ -838,7 +851,10 @@ function queueAfterTreatmentJob(job){
     lock.releaseLock();
   }
 
-  scheduleAfterTreatmentJobTrigger_();
+  const processedInline = drainAfterTreatmentJobs_({ inline: true });
+  if (!processedInline) {
+    scheduleAfterTreatmentJobTrigger_();
+  }
 }
 
 function normalizeClinicalMetricTimestamp_(value){
@@ -896,11 +912,34 @@ function recordClinicalMetrics_(patientId, metrics, whenStr, user){
 }
 
 function afterTreatmentJob(){
+  drainAfterTreatmentJobs_({ triggered: true });
+}
+
+function drainAfterTreatmentJobs_(options){
   const key = 'AFTER_JOBS';
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    Logger.log('[afterTreatmentJob] Failed to acquire lock');
-    return;
+  const inline = options && options.inline;
+  let lock;
+  try {
+    lock = LockService.getScriptLock();
+  } catch (err) {
+    Logger.log('[afterTreatmentJob] LockService unavailable: ' + (err && err.message ? err.message : err));
+    return false;
+  }
+  const waitMs = options && typeof options.waitMs === 'number'
+    ? options.waitMs
+    : (inline ? 50 : 5000);
+  let gotLock = false;
+  try {
+    gotLock = lock.tryLock(waitMs);
+  } catch (err) {
+    Logger.log('[afterTreatmentJob] Failed to acquire lock: ' + (err && err.message ? err.message : err));
+    gotLock = false;
+  }
+  if (!gotLock) {
+    if (!inline) {
+      Logger.log('[afterTreatmentJob] Failed to acquire lock');
+    }
+    return false;
   }
 
   let jobs = [];
@@ -919,13 +958,23 @@ function afterTreatmentJob(){
       }
     }
   } finally {
-    lock.releaseLock();
+    try { lock.releaseLock(); } catch (err) {
+      Logger.log('[afterTreatmentJob] Failed to release lock: ' + (err && err.message ? err.message : err));
+    }
   }
 
-  if (!jobs.length) return;
+  if (!jobs.length) {
+    return false;
+  }
 
-  Logger.log('[afterTreatmentJob] Executing jobs: ' + jobs.length);
+  Logger.log('[afterTreatmentJob] Executing jobs: ' + jobs.length + (inline ? ' (inline)' : ''));
+  executeAfterTreatmentJobs_(jobs);
+  return true;
+}
 
+function executeAfterTreatmentJobs_(jobs){
+  if (!Array.isArray(jobs) || !jobs.length) return;
+  ensureAuxSheets_();
   const newsRows = [];
   const scheduleRows = [];
   const userEmail = (Session.getActiveUser()||{}).getEmail() || '';

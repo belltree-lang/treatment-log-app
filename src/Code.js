@@ -15,6 +15,23 @@ const APP = {
   OPENAI_MODEL: 'gpt-4o-mini',
 };
 
+const SystemPrompt_GenericReport_JP = 'あなたは鍼灸マッサージ院の施術経過を医師・ケアマネ・家族向けに報告する専門アシスタントです。';
+const SystemPrompt_DoctorReport_JP = [
+  'あなたは鍼灸マッサージ院が医師向けに提出する施術報告書を作成する専門アシスタントです。',
+  '以下の法令遵守ルールを厳格に守ってください。',
+  '・文中で医行為を想起させる語（「治療」「施灸」「刺鍼」「マッサージ」など）は使用禁止です。入力に含まれる場合も必ず「施術」に言い換えてください。',
+  '・名詞・動詞いずれも「施術」を用いて記述し、施術の主体は当院スタッフであることを明確にしてください。',
+  '・文章全体を敬体（です・ます調）かつ客観的な記述で統一し、主観的・推測的な表現（例：「思います」「感じます」「〜と思われます」など）は用いないでください。',
+  '・出力は必ず次の3見出しで構成し、見出し行はそのまま出力してください。',
+  '  ■施術の内容・頻度',
+  '  ■患者の状態・経過',
+  '  ■特記すべき事項',
+  '・定量的・観察事実に基づき、VASやADLなどの客観指標が分かる場合は反映してください。',
+  '・最終文は必ず「今後も安全に配慮しながら施術を継続してまいります。」で締めてください（句点「。」を含む）。',
+  '・敬称は患者様・医師へ適切に付し、報告書全体を一つの文書として自然な流れにしてください。',
+  '・出力は日本語のみで行ってください。'
+].join('\n');
+
 const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special'];
 
 const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202501';
@@ -2615,14 +2632,20 @@ function composeAiReportViaOpenAI_(header, context, audienceKey) {
     throw new Error('OPENAI_API_KEY が設定されていません。');
   }
 
-  const prompt = buildReportPrompt_(header, context, audienceKey);
+  const promptConfig = buildReportPrompt_(header, context, audienceKey);
+  const promptObject = typeof promptConfig === 'string' ? { userPrompt: promptConfig } : (promptConfig || {});
+  const systemPrompt = promptObject.systemPrompt || SystemPrompt_GenericReport_JP;
+  const userPrompt = promptObject.userPrompt || promptObject.prompt || '';
+  if (!userPrompt) {
+    throw new Error('AIプロンプトの生成に失敗しました。');
+  }
 
   const url = 'https://api.openai.com/v1/chat/completions';
   const payload = {
-    model: 'gpt-4o-mini', // または gpt-4o / gpt-4.1 など
+    model: APP.OPENAI_MODEL || 'gpt-4o-mini', // または gpt-4o / gpt-4.1 など
     messages: [
-      { role: 'system', content: 'あなたは鍼灸マッサージ院の施術経過を医師・ケアマネ・家族向けに報告する専門アシスタントです。' },
-      { role: 'user', content: prompt }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
     ],
     temperature: 0.4
   };
@@ -2643,28 +2666,86 @@ function composeAiReportViaOpenAI_(header, context, audienceKey) {
 
 /***** AI に渡すプロンプトを組み立てる *****/
 function buildReportPrompt_(header, context, audienceKey) {
+  const safe = (value) => {
+    const text = value == null || value === '' ? '—' : String(value);
+    return text.trim() ? text : '—';
+  };
+
+  if (audienceKey === 'doctor') {
+    const formatEntries = (items, options) => {
+      const opts = options || {};
+      if (!Array.isArray(items) || !items.length) {
+        return 'なし';
+      }
+      return items
+        .slice(-10)
+        .reverse()
+        .map(entry => {
+          const when = entry && entry.when ? `[${entry.when}]` : '';
+          const pieces = [];
+          const noteText = entry && typeof entry.note === 'string' && entry.note.trim()
+            ? entry.note.trim()
+            : (entry && typeof entry.raw === 'string' && entry.raw.trim() ? entry.raw.trim() : '');
+          if (noteText) pieces.push(noteText);
+          if (opts.includeVitals && entry && entry.vitals) {
+            pieces.push(`バイタル: ${String(entry.vitals).trim()}`);
+          }
+          const body = pieces.filter(Boolean).join(' ／ ');
+          const text = [when, body].filter(Boolean).join(' ');
+          return `- ${text}`.trim();
+        })
+        .join('\n');
+    };
+
+    const lines = [];
+    lines.push(`【医療機関】${safe(header && header.hospital)}`);
+    lines.push(`【担当医】${safe(header && header.doctor)}`);
+    lines.push(`【患者氏名】${safe(header && header.name)}`);
+    lines.push(`【生年月日】${safe(header && header.birth)}`);
+    lines.push(`【対象期間】${safe(context && context.rangeLabel)}`);
+    lines.push(`【同意内容】${safe(context && context.consentText)}`);
+    lines.push(`【施術頻度】${safe(context && context.frequencyLabel)}`);
+    lines.push('');
+    lines.push('【申し送り（最新順）】');
+    lines.push(formatEntries(context && context.handovers, { includeVitals: false }));
+    lines.push('');
+    lines.push('【施術録メモ（最新順）】');
+    lines.push(formatEntries(context && context.notes, { includeVitals: true }));
+    lines.push('');
+    lines.push('上記情報をもとに医師向け施術報告書を作成してください。');
+    lines.push('必要に応じてVASやADLなどの客観指標を強調して構成してください。');
+    return {
+      systemPrompt: SystemPrompt_DoctorReport_JP,
+      userPrompt: lines.join('\n')
+    };
+  }
+
   const roleLabel = audienceKey === 'doctor'
     ? '医師'
     : audienceKey === 'caremanager'
       ? 'ケアマネジャー'
       : 'ご家族';
 
-  return `
-【病院名】${header.hospital || '—'}
-【担当医名】${header.doctor || '—'}
-【患者氏名】${header.name || '—'}
-【生年月日】${header.birth || '—'}
-【同意内容】${context.consentText || '—'}
-【施術頻度】${context.frequencyLabel || '—'}
+  const defaultLines = [];
+  defaultLines.push(`【病院名】${safe(header && header.hospital)}`);
+  defaultLines.push(`【担当医名】${safe(header && header.doctor)}`);
+  defaultLines.push(`【患者氏名】${safe(header && header.name)}`);
+  defaultLines.push(`【生年月日】${safe(header && header.birth)}`);
+  defaultLines.push(`【同意内容】${safe(context && context.consentText)}`);
+  defaultLines.push(`【施術頻度】${safe(context && context.frequencyLabel)}`);
+  defaultLines.push('');
+  defaultLines.push(`${roleLabel}向けに患者様の状態・経過をまとめてください。`);
+  defaultLines.push('必ず「同意内容に沿った施術を継続しております。」という一文を含めてください。');
+  defaultLines.push('');
+  defaultLines.push('参考情報：');
+  defaultLines.push(`- Notes: ${JSON.stringify((context && context.notes) || [])}`);
+  defaultLines.push(`- Handovers: ${JSON.stringify((context && context.handovers) || [])}`);
+  defaultLines.push(`- 期間: ${safe(context && context.rangeLabel)}`);
 
-${roleLabel}向けに患者様の状態・経過をまとめてください。
-必ず「同意内容に沿った施術を継続しております。」という一文を含めてください。
-
-参考情報：
-- Notes: ${JSON.stringify(context.notes || [])}
-- Handovers: ${JSON.stringify(context.handovers || [])}
-- 期間: ${context.rangeLabel}
-`;
+  return {
+    systemPrompt: SystemPrompt_GenericReport_JP,
+    userPrompt: defaultLines.join('\n')
+  };
 }
 
 

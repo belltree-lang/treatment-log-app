@@ -495,6 +495,9 @@ function markNewsClearedByType(pid, type, options){
   const filterMessage = options && options.messageContains ? String(options.messageContains) : '';
   const filterMetaType = options && options.metaType ? String(options.metaType).trim() : '';
   const filterRow = options && typeof options.rowNumber === 'number' ? Number(options.rowNumber) : null;
+  const metaMatches = options && typeof options.metaMatches === 'object' && options.metaMatches
+    ? options.metaMatches
+    : null;
   const touchedPatients = new Set();
   let touchedGlobal = false;
   let cleared = 0;
@@ -514,9 +517,12 @@ function markNewsClearedByType(pid, type, options){
       const message = String(vals[i][3] || '');
       if (message.indexOf(filterMessage) < 0) continue;
     }
-    if (filterMetaType) {
+    let meta = null;
+    if (filterMetaType || metaMatches) {
       const metaRaw = width >= 6 ? vals[i][5] : '';
-      const meta = parseNewsMetaValue_(metaRaw);
+      meta = parseNewsMetaValue_(metaRaw);
+    }
+    if (filterMetaType) {
       let resolvedType = '';
       if (meta && typeof meta === 'object' && meta.type != null) {
         resolvedType = String(meta.type);
@@ -524,6 +530,20 @@ function markNewsClearedByType(pid, type, options){
         resolvedType = meta;
       }
       if (resolvedType !== filterMetaType) continue;
+    }
+    if (metaMatches) {
+      if (!meta || typeof meta !== 'object') continue;
+      let metaOk = true;
+      Object.keys(metaMatches).forEach(key => {
+        if (!metaOk) return;
+        const expected = metaMatches[key];
+        const actual = meta[key];
+        if (expected == null && actual == null) return;
+        if (String(actual) !== String(expected)) {
+          metaOk = false;
+        }
+      });
+      if (!metaOk) continue;
     }
     s.getRange(rowNumber, 5).setValue('1');
     cleared++;
@@ -543,6 +563,18 @@ function markNewsClearedByType(pid, type, options){
     }
   }
   return cleared;
+}
+
+function clearMonthlyHandoverReminder_(pid, monthKey){
+  const matches = { type: 'handover_missing_monthly' };
+  if (monthKey) {
+    matches.month = monthKey;
+  }
+  return markNewsClearedByType(pid, '申し送り', {
+    metaType: 'handover_missing_monthly',
+    metaMatches: matches,
+    messageContains: '申し送りが未入力'
+  });
 }
 
 function clearNewsByTreatment_(treatmentId){
@@ -615,22 +647,37 @@ function checkConsentExpiration_(){
   const rows = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
   const existing = readNewsRows_();
   const existingKeys = new Set();
+  const existingDoctorReportKeys = new Set();
   existing.forEach(row => {
     if (row.cleared) return;
     if (!row.pid) return;
     if (String(row.type || '').trim() !== '同意') return;
-    const message = String(row.message || '').trim();
-    if (message !== '同意書受渡が必要です') return;
     const meta = row.meta;
     let expiryKey = '';
     if (meta && typeof meta === 'object' && meta.consentExpiry) {
       expiryKey = String(meta.consentExpiry);
     }
-    existingKeys.add(row.pid + '|' + expiryKey);
+    const message = String(row.message || '').trim();
+    if (meta && typeof meta === 'object' && meta.type === 'consent_reminder') {
+      existingKeys.add(row.pid + '|' + expiryKey);
+      return;
+    }
+    if (meta && typeof meta === 'object' && meta.type === 'consent_doctor_report') {
+      existingDoctorReportKeys.add(row.pid + '|' + expiryKey);
+      return;
+    }
+    if (message === '同意書受渡が必要です') {
+      existingKeys.add(row.pid + '|' + expiryKey);
+      return;
+    }
+    if (message.indexOf('同意期限50日前') >= 0) {
+      existingDoctorReportKeys.add(row.pid + '|' + expiryKey);
+    }
   });
 
   const toInsert = [];
   const insertedKeys = new Set();
+  const insertedDoctorReportKeys = new Set();
   const dayMs = 24 * 60 * 60 * 1000;
   const parseIsoLocal = (text) => {
     const m = text && text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -655,12 +702,29 @@ function checkConsentExpiration_(){
     if (daysFromReminder < 0) continue; // 1か月前より未来の場合はスキップ
     const daysSinceExpiry = Math.floor((todayStart.getTime() - expiryDate.getTime()) / dayMs);
     if (daysSinceExpiry > 30) continue; // 期限を30日以上過ぎていたらスキップ
+    const daysUntilExpiry = Math.floor((expiryDate.getTime() - todayStart.getTime()) / dayMs);
+    const pidForNews = String(pidRaw || '').trim();
+    if (!pidForNews) continue;
+    const reportTriggerDate = new Date(expiryDate.getTime() - 50 * dayMs);
+    reportTriggerDate.setHours(0, 0, 0, 0);
+    const daysSinceReportTrigger = Math.floor((todayStart.getTime() - reportTriggerDate.getTime()) / dayMs);
+    if (daysSinceReportTrigger >= 0 && daysUntilExpiry >= 0) {
+      const reportKey = pidNormalized + '|' + expiryStr;
+      if (!existingDoctorReportKeys.has(reportKey) && !insertedDoctorReportKeys.has(reportKey)) {
+        const reportMeta = {
+          source: 'auto',
+          type: 'consent_doctor_report',
+          consentExpiry: expiryStr,
+          triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
+        };
+        toInsert.push(formatNewsRow_(pidForNews, '同意', '⚠️ 同意期限50日前になりました', reportMeta));
+        insertedDoctorReportKeys.add(reportKey);
+      }
+    }
     const key = pidNormalized + '|' + expiryStr;
     if (existingKeys.has(key) || insertedKeys.has(key)) {
       continue;
     }
-    const pidForNews = String(pidRaw || '').trim();
-    if (!pidForNews) continue;
     const meta = {
       source: 'auto',
       type: 'consent_reminder',
@@ -681,7 +745,120 @@ function checkConsentExpiration(){
   return checkConsentExpiration_();
 }
 
+function checkMonthlyHandovers_(){
+  ensureAuxSheets_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const today = new Date();
+  const monthKey = Utilities.formatDate(today, tz, 'yyyy-MM');
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+
+  const handoverSheet = ensureHandoverSheet_();
+  const handoverSet = new Set();
+  const handoverLastRow = handoverSheet.getLastRow();
+  if (handoverLastRow >= 2) {
+    const handoverValues = handoverSheet.getRange(2, 1, handoverLastRow - 1, 5).getValues();
+    handoverValues.forEach(row => {
+      const pid = normId_(row[1]);
+      if (!pid) return;
+      let ts = row[0];
+      if (!(ts instanceof Date)) {
+        ts = parseDateTimeFlexible_(ts, tz) || parseDateFlexible_(ts);
+      }
+      if (!(ts instanceof Date) || isNaN(ts.getTime())) return;
+      const time = ts.getTime();
+      if (time < monthStart.getTime() || time > monthEnd.getTime()) return;
+      handoverSet.add(pid);
+    });
+  }
+
+  const existingNews = readNewsRows_();
+  const existingReminderKeys = new Set();
+  existingNews.forEach(row => {
+    if (row.cleared) return;
+    if (!row.pid) return;
+    if (String(row.type || '').trim() !== '申し送り') return;
+    const meta = row.meta;
+    if (meta && typeof meta === 'object' && meta.type === 'handover_missing_monthly') {
+      if (!meta.month || meta.month === monthKey) {
+        existingReminderKeys.add(row.pid);
+      }
+      return;
+    }
+    const message = String(row.message || '');
+    if (message.indexOf('申し送りが未入力') >= 0) {
+      existingReminderKeys.add(row.pid);
+    }
+  });
+
+  const statusMap = buildPatientStatusMap_();
+  const patientSheet = sh('患者情報');
+  const lastRow = patientSheet.getLastRow();
+  if (lastRow < 2) {
+    return { ok: true, month: monthKey, scanned: 0, inserted: 0 };
+  }
+  const lastCol = patientSheet.getLastColumn();
+  const head = patientSheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const cRec = getColFlexible_(head, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
+  const rows = patientSheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const reminders = [];
+  let scanned = 0;
+
+  rows.forEach(row => {
+    const pidRaw = row[cRec - 1];
+    const pidNormalized = normId_(pidRaw);
+    if (!pidNormalized) return;
+    scanned += 1;
+    if (handoverSet.has(pidNormalized)) return;
+    if (existingReminderKeys.has(pidNormalized)) return;
+    const statusInfo = statusMap[pidNormalized] || { status: 'active', pauseUntil: '' };
+    if (statusInfo.status === 'stopped') return;
+    if (statusInfo.status === 'suspended') {
+      const pauseUntil = parseDateFlexible_(statusInfo.pauseUntil);
+      if (pauseUntil && pauseUntil.getTime() >= todayStart.getTime()) {
+        return;
+      }
+    }
+    const pidForNews = String(pidRaw || '').trim() || pidNormalized;
+    const meta = { type: 'handover_missing_monthly', month: monthKey };
+    reminders.push(formatNewsRow_(pidForNews, '申し送り', '今月の申し送りが未入力です', meta));
+  });
+
+  if (reminders.length) {
+    pushNewsRows_(reminders);
+  }
+
+  return { ok: true, month: monthKey, scanned, inserted: reminders.length };
+}
+
+function checkMonthlyHandovers(){
+  return checkMonthlyHandovers_();
+}
+
 /***** ステータス（休止/中止） *****/
+function buildPatientStatusMap_(){
+  const map = {};
+  let sheet;
+  try {
+    sheet = sh('フラグ');
+  } catch (e) {
+    return map;
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return map;
+  const values = sheet.getRange(2, 1, lastRow - 1, 3).getDisplayValues();
+  values.forEach(row => {
+    const pid = normId_(row[0]);
+    if (!pid) return;
+    map[pid] = {
+      status: row[1] || 'active',
+      pauseUntil: row[2] || ''
+    };
+  });
+  return map;
+}
+
 function getStatus_(pid){
   const s=sh('フラグ'); const lr=s.getLastRow(); if (lr<2) return {status:'active', pauseUntil:''};
   const vals=s.getRange(2,1,lr-1,3).getDisplayValues();
@@ -2290,6 +2467,7 @@ function fetchReportHistoryForPid_(normalized){
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
     const disp = displays[i];
+    const sheetRow = 2 + i;
     const pidRaw = row[1] != null && row[1] !== '' ? row[1] : disp[1];
     const pid = normId_(pidRaw);
     if (pid !== normalized) continue;
@@ -2312,6 +2490,7 @@ function fetchReportHistoryForPid_(normalized){
     const special = parseReportSpecialText_(row[7] != null ? row[7] : disp[7]);
     const parsedStatus = parseReportStatusMeta_(status);
     rows.push({
+      rowNumber: sheetRow,
       ts,
       when: whenText,
       rangeLabel,
@@ -2383,6 +2562,142 @@ function getSavedReportsForUI(patientId) {
     rangeLabel: representative ? (representative.rangeLabel || '') : '',
     latestWhen
   };
+}
+
+function updateAiReportEntry(payload) {
+  const rowNumber = Number(payload && payload.rowNumber);
+  if (!rowNumber || rowNumber < 2) {
+    throw new Error('rowNumberが不正です');
+  }
+  const sheet = ensureAiReportSheet_();
+  const lastRow = sheet.getLastRow();
+  if (rowNumber > lastRow) {
+    throw new Error('指定された行が存在しません');
+  }
+  const width = AI_REPORT_SHEET_HEADER.length;
+  const values = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
+  const pid = normId_(values[1]);
+  if (!pid) {
+    throw new Error('患者IDを特定できません');
+  }
+
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const now = new Date();
+  const text = payload && payload.text != null ? String(payload.text) : '';
+  const rangeLabel = payload && payload.rangeLabel != null ? String(payload.rangeLabel) : null;
+
+  sheet.getRange(rowNumber, 1).setValue(now);
+  sheet.getRange(rowNumber, 6).setValue(text);
+  if (rangeLabel != null) {
+    sheet.getRange(rowNumber, 3).setValue(rangeLabel);
+  }
+
+  const statusRange = sheet.getRange(rowNumber, 7);
+  const statusRaw = String(statusRange.getValue() || '');
+  if (statusRaw.indexOf('edited=manual') < 0) {
+    const updatedStatus = statusRaw ? `${statusRaw} | edited=manual` : 'edited=manual';
+    statusRange.setValue(updatedStatus);
+  }
+
+  invalidatePatientCaches_(pid, { reports: true });
+
+  return {
+    ok: true,
+    patientId: pid,
+    rowNumber,
+    when: Utilities.formatDate(now, tz, 'yyyy-MM-dd HH:mm'),
+    text,
+    rangeLabel: rangeLabel != null ? rangeLabel : values[2]
+  };
+}
+
+function duplicateAiReportEntry(payload) {
+  const rowNumber = Number(payload && payload.rowNumber);
+  if (!rowNumber || rowNumber < 2) {
+    throw new Error('rowNumberが不正です');
+  }
+  const sheet = ensureAiReportSheet_();
+  const lastRow = sheet.getLastRow();
+  if (rowNumber > lastRow) {
+    throw new Error('指定された行が存在しません');
+  }
+  const width = AI_REPORT_SHEET_HEADER.length;
+  const values = sheet.getRange(rowNumber, 1, 1, width).getValues()[0];
+  const pid = normId_(values[1]);
+  if (!pid) {
+    throw new Error('患者IDを特定できません');
+  }
+
+  const sourceRangeLabel = values[2] != null ? String(values[2]) : '';
+  const sourceAudienceLabel = values[3] != null ? String(values[3]) : '';
+  const sourceAudienceKey = values[4] != null ? String(values[4]) : '';
+  const sourceText = values[5] != null ? String(values[5]) : '';
+  const sourceStatus = values[6] != null ? String(values[6]) : '';
+  const sourceSpecial = values[7] != null ? values[7] : '';
+
+  const audienceInput = payload && (payload.audienceKey || payload.audience || payload.targetAudience);
+  const audienceLabelInput = payload && payload.audienceLabel;
+  const resolvedAudienceKey = audienceInput
+    ? resolveAudienceKeyFromAny_(audienceInput, audienceLabelInput)
+    : resolveAudienceKeyFromAny_(sourceAudienceKey, sourceAudienceLabel);
+  const audienceMeta = resolveAudienceMeta_(resolvedAudienceKey);
+
+  const rangeLabel = payload && payload.rangeLabel != null ? String(payload.rangeLabel) : sourceRangeLabel;
+  const text = payload && payload.text != null ? String(payload.text) : sourceText;
+  const statusBase = payload && payload.status ? String(payload.status) : sourceStatus;
+  const status = statusBase ? `${statusBase} | copied=manual` : 'copied=manual';
+
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const now = new Date();
+
+  sheet.appendRow([
+    now,
+    pid,
+    rangeLabel,
+    audienceMeta.label,
+    audienceMeta.key,
+    text,
+    status,
+    sourceSpecial
+  ]);
+
+  invalidatePatientCaches_(pid, { reports: true });
+
+  const newRowNumber = sheet.getLastRow();
+
+  return {
+    ok: true,
+    patientId: pid,
+    rowNumber: newRowNumber,
+    when: Utilities.formatDate(now, tz, 'yyyy-MM-dd HH:mm'),
+    audience: audienceMeta.key,
+    rangeLabel,
+    text
+  };
+}
+
+function clearDoctorReportReminder(payload) {
+  const pid = String(payload && payload.patientId || '').trim();
+  if (!pid) {
+    throw new Error('patientIdが空です');
+  }
+  const newsType = String(payload && payload.newsType || '同意').trim() || '同意';
+  const metaMatches = { type: 'consent_doctor_report' };
+  if (payload && payload.consentExpiry) {
+    metaMatches.consentExpiry = String(payload.consentExpiry);
+  }
+  const options = {
+    metaType: 'consent_doctor_report',
+    metaMatches
+  };
+  if (payload && payload.newsMessage) {
+    options.messageContains = String(payload.newsMessage);
+  }
+  if (payload && typeof payload.newsRow === 'number') {
+    options.rowNumber = Number(payload.newsRow);
+  }
+  const cleared = markNewsClearedByType(pid, newsType, options);
+  return { ok: true, cleared };
 }
 
 function buildIcfSource_(pid, range){
@@ -3836,7 +4151,18 @@ function saveHandover(payload) {
 
   s.appendRow([ now, pid, user, String(payload && payload.note || ''), fileIds.join(',') ]);
 
-  return { ok:true, fileIds };
+  const monthKey = now.slice(0, 7);
+  let cleared = 0;
+  try {
+    cleared = clearMonthlyHandoverReminder_(pid, monthKey);
+    if (!cleared) {
+      cleared = clearMonthlyHandoverReminder_(pid);
+    }
+  } catch (e) {
+    Logger.log('[saveHandover] failed to clear monthly reminder: ' + (e && e.message ? e.message : e));
+  }
+
+  return { ok:true, fileIds, cleared };
 }
 /***** 申し送り：一覧取得 *****/
 function listHandovers(pid) {

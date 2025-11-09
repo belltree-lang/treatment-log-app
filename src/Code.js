@@ -1421,7 +1421,7 @@ function executeAfterTreatmentJobs_(jobs){
       if (job.presetLabel){
         if (job.presetLabel.indexOf('同意書受渡') >= 0){
           if (job.consentUndecided){
-            addNews('同意','同意日未定です。後日確認してください。');
+            addNews('同意','通院日未定です。後日確認してください。');
             consentReminderPushed = true;
           } else {
             const visitPlanDate = job.visitPlanDate ? String(job.visitPlanDate).trim() : '';
@@ -1438,7 +1438,7 @@ function executeAfterTreatmentJobs_(jobs){
         }
       }
       if (job.consentUndecided && !consentReminderPushed){
-        addNews('同意','同意日未定です。後日確認してください。');
+        addNews('同意','通院日未定です。後日確認してください。');
       }
       if (job.burdenShare){
         updateBurdenShare(pid, job.burdenShare, treatmentMeta ? { meta: treatmentMeta } : undefined);

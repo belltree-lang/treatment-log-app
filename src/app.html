@@ -31,6 +31,8 @@
   .news-item[data-type="再同意"]{ background-color:#ffebee; }
   .news-item[data-status="consent-reminder"]{ background:#fff3d4; border-left-color:#fb923c; }
   .news-item[data-status="consent-handout-followup"]{ background:#dbeafe; border-left-color:#2563eb; }
+  .news-item[data-status="handover-reminder"]{ background:#fef3c7; border-left-color:#f59e0b; }
+  .news-item[data-status="consent-doctor-report"]{ background:#ede9fe; border-left-color:#7c3aed; }
   .section-title{ font-weight:700; margin:8px 0 }
   .btnrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
   table{ width:100%; border-collapse:collapse; font-size:14px }
@@ -81,6 +83,8 @@
   .loading-overlay .loading-box{ background:rgba(255,255,255,0.92); border-radius:14px; padding:16px 22px; box-shadow:0 14px 38px rgba(15,23,42,0.14); display:flex; align-items:center; gap:12px; }
   .loading-overlay .spinner{ width:18px; height:18px; border-radius:50%; border:3px solid rgba(37,99,235,0.28); border-top-color:#2563eb; animation:loading-spin 0.75s linear infinite; }
   @keyframes loading-spin{ to { transform:rotate(360deg); } }
+  textarea.highlight{ box-shadow:0 0 0 3px rgba(37,99,235,0.35); outline:none; transition:box-shadow .2s ease; }
+  .highlight-block{ box-shadow:0 0 0 3px rgba(37,99,235,0.35); outline:none; transition:box-shadow .2s ease; }
 </style>
 </head>
 <body>
@@ -249,6 +253,30 @@
   </div>
 </div>
 
+<!-- 報告書編集・複製モーダル -->
+<div id="aiReportEditorModal" class="modal" onclick="closeAiReportEditor()">
+  <div class="dialog" onclick="event.stopPropagation()">
+    <div class="section-title" id="aiReportEditorTitle" style="margin:0 0 8px">報告書を編集</div>
+    <div class="muted" id="aiReportEditorSubtitle" style="margin-bottom:8px"></div>
+    <div style="margin-bottom:10px">
+      <label for="aiReportEditorAudience">対象</label>
+      <select id="aiReportEditorAudience"></select>
+    </div>
+    <div style="margin-bottom:10px">
+      <label for="aiReportEditorRange">対象期間</label>
+      <input type="text" id="aiReportEditorRange" placeholder="例：直近3か月" />
+    </div>
+    <div>
+      <label for="aiReportEditorText">本文</label>
+      <textarea id="aiReportEditorText" style="min-height:200px"></textarea>
+    </div>
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn ghost" type="button" onclick="closeAiReportEditor()">キャンセル</button>
+      <button class="btn ok" type="button" id="aiReportEditorSubmit" onclick="submitAiReportEditor()">保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function q(id){ return document.getElementById(id); }
 function val(id){ return q(id).value.trim(); }
@@ -272,6 +300,40 @@ function hideGlobalLoading(){
   const overlay = q('globalLoading');
   if (overlay) {
     overlay.classList.add('hidden');
+  }
+}
+
+function highlightElement(target, options){
+  const el = typeof target === 'string' ? q(target) : target;
+  if (!el) return;
+  const opts = options || {};
+  const className = opts.className || 'highlight-block';
+  const duration = typeof opts.duration === 'number' ? opts.duration : 2200;
+  const warn = (msg, err) => {
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn(msg, err);
+    }
+  };
+  if (opts.scrollIntoView) {
+    try {
+      el.scrollIntoView({ behavior: opts.behavior || 'smooth', block: opts.block || 'center' });
+    } catch (err) {
+      warn('[highlightElement] scrollIntoView failed', err);
+    }
+  }
+  try {
+    el.classList.add(className);
+  } catch (err) {
+    warn('[highlightElement] addClass failed', err);
+  }
+  if (duration > 0) {
+    setTimeout(() => {
+      try {
+        el.classList.remove(className);
+      } catch (err) {
+        warn('[highlightElement] removeClass failed', err);
+      }
+    }, duration);
   }
 }
 
@@ -1163,6 +1225,8 @@ let _consentModalCallback = null;
 let _latestNewsList = [];
 let _consentHandoutInFlight = false;
 let _consentVerificationInFlight = false;
+let _doctorReportReminderInFlight = false;
+let _aiReportEditorContext = null;
 const ICF_RANGE_OPTIONS = [
   { key: '1m', label: '直近1か月' },
   { key: '2m', label: '直近2か月' },
@@ -1320,6 +1384,20 @@ function renderIcfReportHistory(){
 
     const actions = document.createElement('div');
     actions.className = 'ai-report-actions';
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn ghost';
+    editBtn.textContent = '編集';
+    editBtn.onclick = () => openAiReportEditor(entry, 'edit');
+    actions.appendChild(editBtn);
+
+    const duplicateBtn = document.createElement('button');
+    duplicateBtn.type = 'button';
+    duplicateBtn.className = 'btn ghost';
+    duplicateBtn.textContent = '複製';
+    duplicateBtn.onclick = () => openAiReportEditor(entry, 'copy');
+    actions.appendChild(duplicateBtn);
+
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'btn ghost';
@@ -1565,6 +1643,127 @@ function fallbackCopy(text, successMessage){
   }
 }
 
+function openAiReportEditor(entry, mode){
+  if (!entry || !entry.rowNumber) {
+    alert('報告書情報を取得できませんでした。');
+    return;
+  }
+  const modal = q('aiReportEditorModal');
+  if (!modal) return;
+  const ctx = {
+    mode: mode === 'copy' ? 'copy' : 'edit',
+    entry
+  };
+  _aiReportEditorContext = ctx;
+  const title = q('aiReportEditorTitle');
+  const subtitle = q('aiReportEditorSubtitle');
+  const audienceSelect = q('aiReportEditorAudience');
+  const rangeInput = q('aiReportEditorRange');
+  const textarea = q('aiReportEditorText');
+  const submitBtn = q('aiReportEditorSubmit');
+
+  if (title) {
+    title.textContent = ctx.mode === 'copy' ? '報告書を複製' : '報告書を編集';
+  }
+  if (subtitle) {
+    subtitle.textContent = entry.when ? `保存日時：${entry.when}` : '';
+  }
+  if (audienceSelect) {
+    audienceSelect.innerHTML = '';
+    Object.keys(ICF_AUDIENCE_LABELS).forEach(key => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = ICF_AUDIENCE_LABELS[key];
+      audienceSelect.appendChild(opt);
+    });
+    if (entry.audience && !ICF_AUDIENCE_LABELS[entry.audience]) {
+      const opt = document.createElement('option');
+      opt.value = entry.audience;
+      opt.textContent = entry.audienceLabel || entry.audience;
+      audienceSelect.appendChild(opt);
+    }
+    audienceSelect.value = entry.audience || 'doctor';
+    audienceSelect.disabled = ctx.mode === 'edit';
+  }
+  if (rangeInput) {
+    rangeInput.value = entry.rangeLabel || '';
+    rangeInput.disabled = false;
+  }
+  if (textarea) {
+    textarea.value = entry.text || '';
+    textarea.focus();
+  }
+  if (submitBtn) {
+    submitBtn.textContent = ctx.mode === 'copy' ? '複製して保存' : '保存';
+    submitBtn.disabled = false;
+  }
+  modal.classList.add('open');
+}
+
+function closeAiReportEditor(){
+  const modal = q('aiReportEditorModal');
+  if (modal) modal.classList.remove('open');
+  _aiReportEditorContext = null;
+}
+
+function submitAiReportEditor(){
+  const ctx = _aiReportEditorContext;
+  if (!ctx || !ctx.entry) {
+    closeAiReportEditor();
+    return;
+  }
+  const submitBtn = q('aiReportEditorSubmit');
+  if (submitBtn) submitBtn.disabled = true;
+  const textarea = q('aiReportEditorText');
+  const rangeInput = q('aiReportEditorRange');
+  const audienceSelect = q('aiReportEditorAudience');
+  const text = textarea ? textarea.value : '';
+  const rangeLabel = rangeInput ? rangeInput.value : '';
+  const audience = audienceSelect ? audienceSelect.value : (ctx.entry.audience || 'doctor');
+  const patientId = pid();
+
+  const restore = () => {
+    hideGlobalLoading();
+    if (submitBtn) submitBtn.disabled = false;
+  };
+
+  if (ctx.mode === 'edit') {
+    showGlobalLoading('報告書を更新しています…');
+    google.script.run
+      .withSuccessHandler(() => {
+        restore();
+        closeAiReportEditor();
+        toast('報告書を更新しました。');
+        if (patientId) {
+          refreshReportHistory({ patientId, setStatus: false });
+        }
+      })
+      .withFailureHandler(err => {
+        restore();
+        const msg = err && err.message ? err.message : String(err);
+        alert('報告書の更新に失敗しました：' + msg);
+      })
+      .updateAiReportEntry({ rowNumber: ctx.entry.rowNumber, text, rangeLabel });
+  } else {
+    showGlobalLoading('報告書を複製しています…');
+    google.script.run
+      .withSuccessHandler(() => {
+        restore();
+        closeAiReportEditor();
+        toast('報告書を複製しました。');
+        if (patientId) {
+          refreshReportHistory({ patientId, setStatus: false });
+        }
+      })
+      .withFailureHandler(err => {
+        restore();
+        const msg = err && err.message ? err.message : String(err);
+        alert('報告書の複製に失敗しました：' + msg);
+      })
+      .duplicateAiReportEntry({ rowNumber: ctx.entry.rowNumber, text, rangeLabel, audience });
+  }
+}
+
 function callGenerateAiSummary(pidValue, rangeKey, audience){
   return new Promise((resolve, reject)=>{
     google.script.run
@@ -1583,26 +1782,55 @@ function callGenerateAllAiSummaries(pidValue, rangeLabel){
   });
 }
 
-function generateAiSummary(audience){
+async function generateAiSummary(audience, options){
+  const opts = options || {};
   const p = pid();
-  if(!p){ alert('患者IDを入力してください'); return; }
-  const rangeKey = _icfSummaryState.range || 'all';
+  if(!p){ alert('患者IDを入力してください'); return false; }
+  const rangeKey = opts.rangeKey || _icfSummaryState.range || 'all';
   const label = getIcfAudienceLabel(audience);
-  setIcfButtonsDisabled(true);
-  updateIcfSummaryStatus(`${label}を生成しています…`);
-  callGenerateAiSummary(p, rangeKey, audience)
-    .then(res => {
-      const ok = handleIcfSummaryResponse(res, audience);
-      if (ok) {
+  const disableButtons = opts.disableButtons !== false;
+  if (disableButtons) setIcfButtonsDisabled(true);
+  if (typeof opts.onStart === 'function') {
+    try { opts.onStart(); } catch (err) { console.error('[generateAiSummary] onStart failed', err); }
+  }
+  if (!opts.skipStatusUpdate) {
+    updateIcfSummaryStatus(`${label}を生成しています…`);
+  }
+  let ok = false;
+  try {
+    const res = await callGenerateAiSummary(p, rangeKey, audience);
+    ok = handleIcfSummaryResponse(res, audience);
+    if (ok) {
+      if (!opts.skipStatusUpdate) {
         updateIcfSummaryStatus(`${label}を更新しました。`);
-        refreshReportHistory({ patientId: p, setStatus: false });
       }
-    })
-    .catch(err => {
-      console.error('[generateAiSummary]', err);
-      updateIcfSummaryStatus(`${label}の生成に失敗しました：${err.message || err}`);
-    })
-    .finally(()=> setIcfButtonsDisabled(false));
+      if (!opts.skipHistoryRefresh) {
+        await refreshReportHistory({ patientId: p, setStatus: false });
+      }
+      if (typeof opts.onSuccess === 'function') {
+        await opts.onSuccess(res);
+      }
+    }
+  } catch (err) {
+    console.error('[generateAiSummary]', err);
+    if (!opts.skipStatusUpdate) {
+      const msg = err && err.message ? err.message : String(err);
+      updateIcfSummaryStatus(`${label}の生成に失敗しました：${msg}`);
+    }
+    if (typeof opts.onError === 'function') {
+      opts.onError(err);
+    }
+    if (disableButtons) setIcfButtonsDisabled(false);
+    if (typeof opts.onComplete === 'function') {
+      try { opts.onComplete(); } catch (completeErr) { console.error('[generateAiSummary] onComplete failed', completeErr); }
+    }
+    return false;
+  }
+  if (typeof opts.onComplete === 'function') {
+    try { opts.onComplete(); } catch (err) { console.error('[generateAiSummary] onComplete failed', err); }
+  }
+  if (disableButtons) setIcfButtonsDisabled(false);
+  return ok;
 }
 
 async function generateAllAiSummaries(){
@@ -2498,7 +2726,12 @@ function loadNews(patientId, next){
         const showConsentEdit = shouldShowConsentEditButton(n);
         const showConsentHandout = shouldShowConsentHandoutButton(n);
         const showConsentVerification = shouldShowConsentVerificationButton(n);
+        const showHandoverReminder = shouldShowHandoverReminderButton(n);
+        const showDoctorReport = shouldShowDoctorReportButton(n);
         const actionButtons = [];
+        if (showHandoverReminder) {
+          actionButtons.push(`<button class="btn ok" onclick="handleHandoverReminder(${idx})">申し送りを入力</button>`);
+        }
         if (showConsentHandout) {
           actionButtons.push(`<button class="btn ok" onclick="handleConsentHandout(${idx})">受渡</button>`);
         }
@@ -2507,6 +2740,9 @@ function loadNews(patientId, next){
         }
         if (showConsentEdit) {
           actionButtons.push('<button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button>');
+        }
+        if (showDoctorReport) {
+          actionButtons.push(`<button class="btn ok" onclick="handleDoctorReportReminder(${idx})">医師向け報告書を生成</button>`);
         }
         const actions = actionButtons.length
           ? `<div class="btnrow" style="margin-top:6px">${actionButtons.join('')}</div>`
@@ -2595,8 +2831,15 @@ function getNewsMetaType(news){
 function resolveNewsStatus(news){
   if(!news) return '';
   const type = String(news.type || '').trim();
-  if (type !== '同意') return '';
   const metaType = getNewsMetaType(news);
+  if (type === '申し送り') {
+    if (metaType === 'handover_missing_monthly') return 'handover-reminder';
+    const message = String(news.message || '');
+    if (message.indexOf('申し送りが未入力') >= 0) return 'handover-reminder';
+    return '';
+  }
+  if (type !== '同意') return '';
+  if (metaType === 'consent_doctor_report') return 'consent-doctor-report';
   if (metaType === 'consent_handout_followup') return 'consent-handout-followup';
   if (metaType === 'consent_reminder') return 'consent-reminder';
   const message = String(news.message || '');
@@ -2633,6 +2876,26 @@ function shouldShowConsentEditButton(news){
   const message = String(news.message || '');
   if (message.indexOf('未定') >= 0 || message.indexOf('確認') >= 0) return true;
   return message.indexOf('同意書受渡。') >= 0;
+}
+
+function shouldShowHandoverReminderButton(news){
+  if (!news) return false;
+  const type = String(news.type || '').trim();
+  if (type !== '申し送り') return false;
+  const metaType = getNewsMetaType(news);
+  if (metaType === 'handover_missing_monthly') return true;
+  const message = String(news.message || '');
+  return message.indexOf('申し送りが未入力') >= 0;
+}
+
+function shouldShowDoctorReportButton(news){
+  if (!news) return false;
+  const type = String(news.type || '').trim();
+  if (type !== '同意') return false;
+  const metaType = getNewsMetaType(news);
+  if (metaType === 'consent_doctor_report') return true;
+  const message = String(news.message || '');
+  return message.indexOf('同意期限50日前') >= 0;
 }
 
 function getNewsVisitPlanDate(news){
@@ -2695,6 +2958,92 @@ function handleConsentVerification(index){
       alert('再同意取得確認の処理に失敗しました: ' + msg);
     })
     .completeConsentVerificationFromNews(payload);
+}
+
+function handleHandoverReminder(index){
+  const list = Array.isArray(_latestNewsList) ? _latestNewsList : [];
+  const idx = Number(index);
+  const news = list[idx];
+  if (!shouldShowHandoverReminderButton(news)) {
+    toast('対象のお知らせが見つかりません。');
+    return;
+  }
+  const patientId = pid();
+  if (!patientId) {
+    alert('患者IDを入力してください');
+    return;
+  }
+  loadHandovers();
+  const note = q('handoverNote');
+  if (note) {
+    try { note.focus({ preventScroll: true }); } catch (e) { try { note.focus(); } catch (err) {} }
+    highlightElement(note, { className: 'highlight', scrollIntoView: true });
+  }
+}
+
+function handleDoctorReportReminder(index){
+  if (_doctorReportReminderInFlight) {
+    toast('処理中です。完了までお待ちください。');
+    return;
+  }
+  const list = Array.isArray(_latestNewsList) ? _latestNewsList : [];
+  const idx = Number(index);
+  const news = list[idx];
+  if (!shouldShowDoctorReportButton(news)) {
+    toast('対象のお知らせが見つかりません。');
+    return;
+  }
+  const patientId = pid();
+  if (!patientId) {
+    alert('患者IDを入力してください');
+    return;
+  }
+  const rangeKey = '3m';
+  const rangeSelect = q('icfRange');
+  if (rangeSelect) {
+    if (rangeSelect.value !== rangeKey) {
+      rangeSelect.value = rangeKey;
+      onIcfRangeChange(rangeSelect);
+    }
+  } else {
+    _icfSummaryState.range = rangeKey;
+  }
+  highlightElement('icfSummaryBox', { scrollIntoView: true });
+  const payload = {
+    patientId,
+    newsType: news.type,
+    newsMessage: news.message,
+    newsMetaType: getNewsMetaType(news),
+    newsRow: typeof news.rowNumber === 'number' ? news.rowNumber : null,
+    consentExpiry: news && news.meta && news.meta.consentExpiry ? String(news.meta.consentExpiry) : ''
+  };
+  _doctorReportReminderInFlight = true;
+  generateAiSummary('doctor', {
+    rangeKey,
+    onStart: () => {
+      showGlobalLoading('医師向け報告書を生成しています…');
+    },
+    onSuccess: () => {
+      toast('医師向け報告書を更新しました。');
+      google.script.run
+        .withSuccessHandler(() => {
+          loadNews(patientId);
+        })
+        .withFailureHandler(err => {
+          console.error('[handleDoctorReportReminder] clear failed', err);
+        })
+        .clearDoctorReportReminder(payload);
+    },
+    onError: err => {
+      const msg = err && err.message ? err.message : String(err || 'エラー');
+      alert(`医師向け報告書の生成に失敗しました：${msg}`);
+    },
+    onComplete: () => {
+      hideGlobalLoading();
+    }
+  }).finally(() => {
+    _doctorReportReminderInFlight = false;
+  });
 }
 
 function handleConsentHandout(index){
@@ -2914,6 +3263,7 @@ function saveHandoverUI(){
     alert("申し送りを保存しました");
     clearHandoverForm();
     loadHandovers();
+    loadNews(p);
   };
 
   if(filesInput.files && filesInput.files.length){

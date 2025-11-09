@@ -52,14 +52,6 @@
   /* 申し送り（画像プレビュー） */
   .thumbs{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px }
   .thumbs img{ max-width:120px; max-height:120px; border-radius:8px; border:1px solid #e5e7eb }
-  .metric-rows{ margin-top:6px; display:flex; flex-direction:column; gap:8px }
-  .metric-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:#f8fafc; padding:8px; border-radius:12px }
-  .metric-row select{ flex:1 1 180px; min-width:140px }
-  .metric-row input[type="number"]{ width:110px }
-  .metric-row .metric-unit{ color:var(--muted); font-size:0.85rem }
-  .metric-row input.metric-note{ flex:1 1 160px; min-width:140px }
-  .metric-row button{ flex:0 0 auto }
-  .metric-empty{ color:var(--muted); font-size:0.85rem }
   .icf-summary{ margin-top:8px; padding:12px; border-radius:12px; background:#f9fafb; color:var(--fg); }
   .icf-summary .icf-meta{ font-size:0.85rem; color:var(--muted); margin-bottom:6px }
   .icf-section{ margin-top:8px; }
@@ -72,10 +64,6 @@
   .icf-status-text{ margin-bottom:12px; white-space:pre-line }
   .ai-report-actions{ display:flex; flex-wrap:wrap; gap:6px }
   .ai-report-actions .btn{ padding:6px 12px; font-size:12px }
-  .trend-container{ margin-top:12px; display:flex; flex-direction:column; gap:16px }
-  .trend-item{ padding:12px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; }
-  .trend-item h4{ margin:0 0 6px; font-size:15px }
-  .trend-meta{ font-size:0.85rem; color:var(--muted); margin-top:6px }
   .ai-report-preview{ margin-top:12px; display:flex; flex-direction:column; gap:12px }
   .ai-report-block{ background:#f8fafc; border-radius:12px; padding:12px; border:1px solid #e5e7eb }
   .ai-report-heading{ display:flex; align-items:center; justify-content:space-between; gap:8px }
@@ -94,7 +82,6 @@
   .loading-overlay .spinner{ width:18px; height:18px; border-radius:50%; border:3px solid rgba(37,99,235,0.28); border-top-color:#2563eb; animation:loading-spin 0.75s linear infinite; }
   @keyframes loading-spin{ to { transform:rotate(360deg); } }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <div id="globalLoading" class="loading-overlay hidden" role="status" aria-live="polite">
@@ -202,22 +189,11 @@
       </div>
 
       <div class="card">
-        <div class="section-title">臨床・ケア連携（β）</div>
-        <div class="muted" style="font-size:0.9rem">ICFサマリと臨床指標を申し送りと合わせて活用できます。</div>
+        <div class="section-title">報告書AI生成</div>
+        <div class="muted" style="font-size:0.9rem">申し送りの内容からAIが自動生成します。</div>
 
-        <div class="section-title" style="margin-top:12px">臨床指標（任意入力）</div>
-        <div class="muted" style="font-size:0.9rem">痛みVASや可動域など数値化した情報を記録すると、自動で経過グラフを作成します。</div>
-        <div id="metricInputs" class="metric-rows"></div>
-        <div class="btnrow" style="margin-top:6px">
-          <button class="btn ghost" onclick="addMetricRow()">指標を追加</button>
-          <button class="btn ghost" onclick="clearMetricRows()">指標クリア</button>
-        </div>
-
-        <div class="btnrow" style="margin:12px 0 8px; gap:8px; flex-wrap:wrap">
-          <button class="btn ghost" onclick="loadClinicalTrends(true)">臨床指標グラフを再読込</button>
-        </div>
         <div id="icfSummaryBox" class="icf-summary">
-          <div class="muted" style="font-size:0.9rem">申し送りと臨床指標をもとにAIが用途別のサマリを生成します。</div>
+          <div class="muted" style="font-size:0.9rem">申し送りの内容をもとにAIが用途別のサマリを生成します。</div>
           <div class="icf-controls">
             <div class="icf-range-row">
               <label for="icfRange">対象期間</label>
@@ -233,9 +209,6 @@
           <div id="icfSummaryStatus" class="muted icf-status-text"></div>
           <div id="icfSummaryResults" class="ai-report-preview"></div>
           <div id="icfReportHistory" class="ai-report-history"></div>
-        </div>
-        <div id="clinicalTrendBox" class="trend-container">
-          <div class="muted">臨床指標の記録がまだありません。</div>
         </div>
       </div>
     </div>
@@ -1190,10 +1163,6 @@ let _consentModalCallback = null;
 let _latestNewsList = [];
 let _consentHandoutInFlight = false;
 let _consentVerificationInFlight = false;
-let METRIC_DEFS = [];
-let METRIC_DEF_MAP = {};
-let _metricRowSeq = 0;
-let _clinicalCharts = {};
 const ICF_RANGE_OPTIONS = [
   { key: '1m', label: '直近1か月' },
   { key: '2m', label: '直近2か月' },
@@ -1214,249 +1183,6 @@ function resetFlags(){
   window._actions = {};
   _pendingSaveRequestId = null;
   _saveInFlight = false;
-}
-
-function loadMetricDefinitions(){
-  google.script.run.withSuccessHandler(defs=>{
-    METRIC_DEFS = Array.isArray(defs) ? defs : [];
-    METRIC_DEF_MAP = {};
-    METRIC_DEFS.forEach(d=>{ METRIC_DEF_MAP[d.id] = d; });
-    clearMetricRows();
-  }).getClinicalMetricDefinitions();
-}
-
-function ensureMetricEmptyMessage(){
-  const box = q('metricInputs');
-  if (!box) return;
-  const hasRow = box.querySelector('[data-metric-row]');
-  let empty = box.querySelector('.metric-empty');
-  if (!hasRow) {
-    if (!empty){
-      empty = document.createElement('div');
-      empty.className = 'metric-empty';
-      empty.textContent = '必要に応じて「指標を追加」から入力してください。';
-      box.appendChild(empty);
-    }
-  } else if (empty) {
-    empty.remove();
-  }
-}
-
-function addMetricRow(prefill){
-  if (!METRIC_DEFS.length){
-    alert('指標マスタが未設定です');
-    return;
-  }
-  const box = q('metricInputs');
-  if (!box) return;
-  ensureMetricEmptyMessage();
-  const row = document.createElement('div');
-  row.className = 'metric-row';
-  const rowId = ++_metricRowSeq;
-  row.dataset.metricRow = String(rowId);
-
-  const sel = document.createElement('select');
-  METRIC_DEFS.forEach(def => {
-    const opt = document.createElement('option');
-    opt.value = def.id;
-    opt.textContent = def.unit ? `${def.label} (${def.unit})` : def.label;
-    sel.appendChild(opt);
-  });
-  row.appendChild(sel);
-
-  const input = document.createElement('input');
-  input.type = 'number';
-  input.step = '0.5';
-  row.appendChild(input);
-
-  const unit = document.createElement('span');
-  unit.className = 'metric-unit';
-  row.appendChild(unit);
-
-  const note = document.createElement('input');
-  note.type = 'text';
-  note.className = 'metric-note';
-  note.placeholder = 'メモ（任意）';
-  row.appendChild(note);
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'btn ghost';
-  btn.textContent = '削除';
-  btn.onclick = ()=> removeMetricRow(rowId);
-  row.appendChild(btn);
-
-  box.appendChild(row);
-
-  if (prefill && prefill.metricId) sel.value = prefill.metricId;
-  if (prefill && prefill.value != null) input.value = prefill.value;
-  if (prefill && prefill.note) note.value = prefill.note;
-
-  sel.addEventListener('change', ()=> updateMetricInputAttributes(row));
-  updateMetricInputAttributes(row);
-  ensureMetricEmptyMessage();
-}
-
-function updateMetricInputAttributes(row){
-  if (!row) return;
-  const sel = row.querySelector('select');
-  const input = row.querySelector('input[type="number"]');
-  const unit = row.querySelector('.metric-unit');
-  const def = METRIC_DEF_MAP[sel?.value] || null;
-  if (def){
-    input.min = def.min != null ? def.min : '';
-    input.max = def.max != null ? def.max : '';
-    input.step = def.step != null ? def.step : 1;
-    unit.textContent = def.unit || '';
-    if (def.description){
-      sel.title = def.description;
-    }
-  } else {
-    input.removeAttribute('min');
-    input.removeAttribute('max');
-    input.step = '1';
-    unit.textContent = '';
-    sel.title = '';
-  }
-}
-
-function removeMetricRow(rowId){
-  const box = q('metricInputs');
-  if (!box) return;
-  const row = box.querySelector(`[data-metric-row="${rowId}"]`);
-  if (row) row.remove();
-  ensureMetricEmptyMessage();
-}
-
-function clearMetricRows(){
-  const box = q('metricInputs');
-  if (!box) return;
-  Array.from(box.querySelectorAll('[data-metric-row]')).forEach(el => el.remove());
-  ensureMetricEmptyMessage();
-}
-
-function collectMetricInputs(){
-  const box = q('metricInputs');
-  if (!box) return [];
-  const rows = Array.from(box.querySelectorAll('[data-metric-row]'));
-  const out = [];
-  rows.forEach(row => {
-    const metricId = row.querySelector('select')?.value;
-    const valInput = row.querySelector('input[type="number"]');
-    const noteInput = row.querySelector('.metric-note');
-    if (!metricId) return;
-    if (!valInput) return;
-    const raw = valInput.value;
-    if (raw === '' || raw == null) return;
-    const num = Number(raw);
-    if (!isFinite(num)) return;
-    const note = noteInput ? noteInput.value.trim() : '';
-    out.push({ metricId, value: num, note });
-  });
-  return out;
-}
-
-function destroyClinicalCharts(){
-  Object.keys(_clinicalCharts).forEach(key => {
-    try { _clinicalCharts[key].destroy(); } catch(e){}
-  });
-  _clinicalCharts = {};
-}
-
-function loadClinicalTrends(options, next){
-  let done = null;
-  let opts = {};
-  if (typeof options === 'function'){ done = options; }
-  else if (options == null) { opts = {}; }
-  else if (typeof options === 'boolean'){ opts = { force: options }; }
-  else if (typeof options === 'object'){ opts = options; }
-  if (typeof next === 'function') done = next;
-
-  const box = q('clinicalTrendBox');
-  if (!box){ if (done) done(); return; }
-  const targetPid = opts.patientId || pid();
-  if (!targetPid){
-    destroyClinicalCharts();
-    box.innerHTML = '<div class="muted">患者IDを入力すると臨床指標が表示されます。</div>';
-    if (done) done();
-    return;
-  }
-  box.innerHTML = '<div class="muted">読み込み中…</div>';
-  google.script.run
-    .withSuccessHandler(res=>{
-      const metrics = (res && res.metrics) ? res.metrics : [];
-      renderClinicalCharts(metrics);
-      if (done) done();
-    })
-    .withFailureHandler(e=>{
-      const msg = (e && e.message) ? e.message : String(e);
-      box.innerHTML = `<div class="muted" style="color:#b91c1c">臨床指標の取得に失敗しました：${escapeHtml(msg)}</div>`;
-      destroyClinicalCharts();
-      if (done) done();
-    })
-    .listClinicalMetricSeries(targetPid);
-}
-
-function renderClinicalCharts(metrics){
-  const box = q('clinicalTrendBox');
-  if (!box) return;
-  destroyClinicalCharts();
-  if (!Array.isArray(metrics) || !metrics.length){
-    box.innerHTML = '<div class="muted">臨床指標の記録がまだありません。</div>';
-    return;
-  }
-  if (typeof Chart === 'undefined'){
-    box.innerHTML = '<div class="muted" style="color:#b91c1c">Chart.jsの読み込みに失敗しました</div>';
-    return;
-  }
-  box.innerHTML = '';
-  metrics.forEach(metric => {
-    const wrap = document.createElement('div');
-    wrap.className = 'trend-item';
-    const title = document.createElement('h4');
-    title.textContent = metric.unit ? `${metric.label} (${metric.unit})` : metric.label;
-    wrap.appendChild(title);
-    const canvas = document.createElement('canvas');
-    wrap.appendChild(canvas);
-    const ctx = canvas.getContext('2d');
-    const labels = metric.points.map(p => p.date);
-    const values = metric.points.map(p => p.value);
-    _clinicalCharts[metric.id] = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          label: metric.label,
-          data: values,
-          fill: false,
-          borderColor: '#2563eb',
-          backgroundColor: '#60a5fa',
-          tension: 0.25,
-          pointRadius: 4
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          y: {
-            suggestedMin: metric.min != null ? metric.min : undefined,
-            suggestedMax: metric.max != null ? metric.max : undefined
-          }
-        },
-        plugins: {
-          legend: { display: false }
-        }
-      }
-    });
-    canvas.style.maxHeight = '220px';
-    const latest = metric.points[metric.points.length - 1];
-    const meta = document.createElement('div');
-    meta.className = 'trend-meta';
-    meta.textContent = latest ? `最新：${latest.date} / ${latest.value}${metric.unit||''}` : '';
-    wrap.appendChild(meta);
-    box.appendChild(wrap);
-  });
 }
 
 function setupIcfSummaryUI(){
@@ -1516,7 +1242,6 @@ function buildIcfMetaText(data){
   const counts = [];
   if (meta.noteCount != null) counts.push(`施術録 ${meta.noteCount}件`);
   if (meta.handoverCount != null) counts.push(`申し送り ${meta.handoverCount}件`);
-  if (meta.metricCount != null) counts.push(`臨床指標 ${meta.metricCount}件`);
   if (counts.length) parts.push(counts.join('・'));
   parts.push(data.usedAi ? 'AI整形' : 'ローカル整形');
   return parts.filter(Boolean).join(' ｜ ');
@@ -2604,9 +2329,6 @@ function save(){
     const requestId = _pendingSaveRequestId || generateSaveRequestId();
     _pendingSaveRequestId = requestId;
     payload.treatmentId = requestId;
-    const metrics = collectMetricInputs();
-    if (metrics.length) payload.clinicalMetrics = metrics;
-
     const timingLabel = `save-request-${requestId}`;
     const canTime = typeof console !== 'undefined' && typeof console.time === 'function';
     const canTimeEnd = typeof console !== 'undefined' && typeof console.timeEnd === 'function';
@@ -2644,7 +2366,6 @@ function save(){
             resetFlags();
             setv('obs','');
             q('preset').selectedIndex = 0;
-            clearMetricRows();
             scheduleRefresh(700);
           }
         } finally {
@@ -2679,14 +2400,11 @@ function setStop(){ const p=pid(); if(!p) return; if(!confirm('中止にしま�
 /* 画面更新 */
 function refresh(){
   resetIcfSummaries();
-  clearMetricRows();
-  ensureMetricEmptyMessage();
 
   const patientId = pid();
   if (!patientId){
     if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
     if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
-    destroyClinicalCharts();
     _icfReportHistoryState = { loading: false, rows: [], error: null };
     renderIcfReportHistory();
     loadNews('', () => {
@@ -2702,9 +2420,7 @@ function refresh(){
     refreshReportHistory({ patientId, setStatus: true }).then(() => {
       loadNews(patientId, () => {
         loadThisMonth(patientId, () => {
-          loadClinicalTrends({ patientId }, () => {
-            hideGlobalLoading();
-          });
+          hideGlobalLoading();
         });
       });
     });
@@ -3192,14 +2908,11 @@ function saveHandoverUI(){
 
   const note = val("handoverNote");
   const filesInput = q("handoverFile");
-  const metrics = collectMetricInputs();
-  const payloadBase = { patientId:p, note, files:[], clinicalMetrics: metrics };
+  const payloadBase = { patientId:p, note, files:[] };
 
   const finish = ()=>{
     alert("申し送りを保存しました");
     clearHandoverForm();
-    if (metrics.length) clearMetricRows();
-    loadClinicalTrends();
     loadHandovers();
   };
 
@@ -3231,8 +2944,6 @@ function saveHandoverUI(){
 (function init(){
   loadPidList();
   loadPresets();
-  loadMetricDefinitions();
-  ensureMetricEmptyMessage();
   setupIcfSummaryUI();
   if (!IS_STANDALONE_DISPLAY_MODE){
     focusPatientIdInput();
@@ -3242,7 +2953,7 @@ function saveHandoverUI(){
     setConfirmedPatientId(p);
     refresh();
   } else {
-    loadClinicalTrends();
+    hideGlobalLoading();
   }
   q('consentModal')?.classList.remove('open');
 })();

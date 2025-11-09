@@ -70,6 +70,64 @@ function renderReports(payload){
     el.textContent = text || '生成できませんでした';
   });
 }
+
+function loadSavedReports(options){
+  const opts = options || {};
+  const pidInput = document.getElementById('reportPid');
+  const pid = pidInput ? pidInput.value.trim() : '';
+  if (!pid){
+    if (!opts.silent){
+      renderReports({});
+      setReportStatus('患者IDを入力してください。');
+    }
+    return Promise.resolve();
+  }
+
+  if (!opts.silent){
+    setReportStatus('保存済みの報告書を読み込んでいます…');
+    setButtonDisabled(true);
+  }
+
+  return new Promise(resolve => {
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res || !res.ok){
+          if (!opts.silent){
+            setReportStatus('保存済み報告書の取得に失敗しました。');
+            setButtonDisabled(false);
+          }
+          return resolve();
+        }
+
+        const reports = res.reports || {};
+        renderReports({
+          doctor: reports.doctor?.text || '',
+          caremanager: reports.caremanager?.text || '',
+          family: reports.family?.text || ''
+        });
+
+        if (!opts.silent){
+          const parts = [];
+          if (res.rangeLabel) parts.push(res.rangeLabel);
+          if (res.latestWhen) parts.push(`最終更新：${res.latestWhen}`);
+          setReportStatus(parts.length ? parts.join(' ｜ ') : '保存済みの報告書を表示しています。');
+          setButtonDisabled(false);
+        }
+        resolve();
+      })
+      .withFailureHandler(err => {
+        console.error('[loadSavedReports]', err);
+        if (!opts.silent){
+          const msg = err && err.message ? err.message : '保存済み報告書の取得に失敗しました。';
+          setReportStatus(msg);
+          setButtonDisabled(false);
+        }
+        resolve();
+      })
+      .getSavedReportsForUI(pid);
+  });
+}
+
 function fetchReports(){
   const pid = document.getElementById('reportPid').value.trim();
   if (!pid){
@@ -96,6 +154,7 @@ function fetchReports(){
       const label = res.rangeLabel || range;
       setReportStatus(`${label}の報告書を更新しました。`);
       setButtonDisabled(false);
+      loadSavedReports({ silent: true });
     })
     .withFailureHandler(err => {
       console.error('[fetchReports]', err);
@@ -107,6 +166,7 @@ function fetchReports(){
     .getReportsForUI(pid, range);
 }
 document.getElementById('reportFetch').addEventListener('click', fetchReports);
+loadSavedReports();
 </script>
 </body>
 </html>

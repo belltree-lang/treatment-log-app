@@ -81,6 +81,11 @@
   .ai-report-heading{ display:flex; align-items:center; justify-content:space-between; gap:8px }
   .ai-report-title{ font-weight:600; font-size:14px }
   .ai-report-text{ white-space:pre-wrap; font-size:0.95rem; line-height:1.6; margin-top:4px }
+  .ai-report-history{ margin-top:16px; display:flex; flex-direction:column; gap:12px }
+  .ai-report-history-title{ font-weight:600; font-size:0.95rem; color:var(--muted) }
+  .ai-report-history-list{ display:flex; flex-direction:column; gap:12px }
+  .ai-report-history-empty{ color:var(--muted); font-size:0.9rem }
+  .ai-report-history-meta{ font-size:0.85rem; color:var(--muted); margin-top:4px }
   .ai-report-special ul{ margin:4px 0 0 16px; padding:0 }
   .ai-report-special li{ margin:2px 0 }
   .loading-overlay{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.76); z-index:10000; color:#1f2937; font-weight:600; font-size:1.05rem; backdrop-filter:blur(2px); }
@@ -227,6 +232,7 @@
           </div>
           <div id="icfSummaryStatus" class="muted icf-status-text"></div>
           <div id="icfSummaryResults" class="ai-report-preview"></div>
+          <div id="icfReportHistory" class="ai-report-history"></div>
         </div>
         <div id="clinicalTrendBox" class="trend-container">
           <div class="muted">臨床指標の記録がまだありません。</div>
@@ -1199,7 +1205,9 @@ const ICF_AUDIENCE_LABELS = {
   caremanager: 'ケアマネ向けサマリ',
   family: '家族向けサマリ'
 };
+const ICF_REPORT_HISTORY_LIMIT = 10;
 let _icfSummaryState = { range: '1m', results: {} };
+let _icfReportHistoryState = { loading: false, rows: [], error: null };
 
 function resetFlags(){
   _flags={receipt:false,handout:false,consentHandout:false,consentObtained:false};
@@ -1514,6 +1522,219 @@ function buildIcfMetaText(data){
   return parts.filter(Boolean).join(' ｜ ');
 }
 
+function formatReportHistoryTimestamp(entry){
+  if (!entry) return '';
+  if (entry.when) return entry.when;
+  const value = entry.ts;
+  if (value == null) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = num => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function renderIcfReportHistory(){
+  const container = q('icfReportHistory');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'ai-report-history-title';
+  title.textContent = '保存済み報告書';
+  container.appendChild(title);
+
+  if (_icfReportHistoryState.loading) {
+    const loading = document.createElement('div');
+    loading.className = 'ai-report-history-empty';
+    loading.textContent = '読み込み中…';
+    container.appendChild(loading);
+    return;
+  }
+
+  if (_icfReportHistoryState.error) {
+    const err = document.createElement('div');
+    err.className = 'ai-report-history-empty';
+    err.textContent = `報告書の取得に失敗しました：${_icfReportHistoryState.error}`;
+    container.appendChild(err);
+    return;
+  }
+
+  const rows = Array.isArray(_icfReportHistoryState.rows) ? _icfReportHistoryState.rows : [];
+  if (!pid()) {
+    const msg = document.createElement('div');
+    msg.className = 'ai-report-history-empty';
+    msg.textContent = '患者IDを入力すると保存済み報告書が表示されます。';
+    container.appendChild(msg);
+    return;
+  }
+
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'ai-report-history-empty';
+    empty.textContent = '保存済みの報告書はまだありません。';
+    container.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'ai-report-history-list';
+  container.appendChild(list);
+
+  const limit = ICF_REPORT_HISTORY_LIMIT;
+  const limitedRows = limit > 0 ? rows.slice(0, limit) : rows.slice();
+  limitedRows.forEach(entry => {
+    const block = document.createElement('div');
+    block.className = 'ai-report-block';
+
+    const heading = document.createElement('div');
+    heading.className = 'ai-report-heading';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'ai-report-title';
+    titleEl.textContent = entry.audienceLabel || getIcfAudienceLabel(entry.audience);
+    heading.appendChild(titleEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-report-actions';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'btn ghost';
+    copyBtn.textContent = 'コピー';
+    copyBtn.onclick = () => copyIcfSummary(entry.text, entry.audienceLabel || getIcfAudienceLabel(entry.audience));
+    actions.appendChild(copyBtn);
+    heading.appendChild(actions);
+    block.appendChild(heading);
+
+    const metaDiv = document.createElement('div');
+    metaDiv.className = 'ai-report-history-meta';
+    const metaParts = [];
+    const whenText = formatReportHistoryTimestamp(entry);
+    if (whenText) metaParts.push(whenText);
+    const metaText = buildIcfMetaText({ usedAi: entry.usedAi !== false, meta: Object.assign({}, entry.meta || {}, { rangeLabel: entry.rangeLabel }) });
+    if (metaText) metaParts.push(metaText);
+    metaDiv.textContent = metaParts.filter(Boolean).join(' ｜ ');
+    block.appendChild(metaDiv);
+
+    const textDiv = document.createElement('div');
+    textDiv.className = 'ai-report-text';
+    const body = String(entry.text || '').trim();
+    if (body) {
+      textDiv.textContent = entry.text;
+    } else {
+      textDiv.classList.add('muted');
+      textDiv.textContent = '本文が保存されていません。';
+    }
+    block.appendChild(textDiv);
+
+    if (Array.isArray(entry.special) && entry.special.length) {
+      const specialWrap = document.createElement('div');
+      specialWrap.className = 'ai-report-special';
+      const ul = document.createElement('ul');
+      entry.special.forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        ul.appendChild(li);
+      });
+      specialWrap.appendChild(ul);
+      block.appendChild(specialWrap);
+    }
+
+    list.appendChild(block);
+  });
+
+  if (limit > 0 && rows.length > limit) {
+    const more = document.createElement('div');
+    more.className = 'ai-report-history-empty';
+    more.textContent = `ほか${rows.length - limit}件の履歴があります。`;
+    container.appendChild(more);
+  }
+}
+
+function integrateHistoryIntoSummaries(rows, options){
+  const opts = options || {};
+  const entries = Array.isArray(rows) ? rows : [];
+  if (!entries.length) {
+    _icfSummaryState.results = {};
+    renderIcfSummaryResults();
+    if (opts.setStatus) {
+      updateIcfSummaryStatus('保存済みの報告書はまだありません。');
+    }
+    return;
+  }
+
+  const latest = {};
+  entries.forEach(entry => {
+    if (!entry || !entry.audience) return;
+    const current = latest[entry.audience];
+    if (!current || (entry.ts || 0) > (current.ts || 0)) {
+      latest[entry.audience] = entry;
+    }
+  });
+
+  const results = {};
+  Object.keys(latest).forEach(key => {
+    const entry = latest[key];
+    results[key] = {
+      ok: true,
+      usedAi: entry.usedAi !== false,
+      audience: key,
+      audienceLabel: entry.audienceLabel || getIcfAudienceLabel(key),
+      text: entry.text || '',
+      meta: Object.assign({}, entry.meta || {}, { rangeLabel: entry.rangeLabel }),
+      savedAt: entry.ts || null,
+      persisted: true
+    };
+  });
+  _icfSummaryState.results = results;
+  renderIcfSummaryResults();
+  if (opts.setStatus) {
+    updateIcfSummaryStatus('保存済みの報告書を表示しています。');
+  }
+}
+
+function refreshReportHistory(options){
+  const opts = options || {};
+  const targetPid = opts.patientId || pid();
+  const setStatus = !!opts.setStatus;
+  return new Promise(resolve => {
+    const finalize = () => resolve();
+    if (!targetPid) {
+      _icfReportHistoryState = { loading: false, rows: [], error: null };
+      renderIcfReportHistory();
+      if (setStatus && pid()) {
+        updateIcfSummaryStatus('保存済みの報告書はまだありません。');
+      }
+      return finalize();
+    }
+
+    _icfReportHistoryState.loading = true;
+    _icfReportHistoryState.error = null;
+    renderIcfReportHistory();
+
+    google.script.run
+      .withSuccessHandler(res => {
+        const rows = Array.isArray(res && res.reports) ? res.reports : [];
+        _icfReportHistoryState.loading = false;
+        _icfReportHistoryState.rows = rows;
+        _icfReportHistoryState.error = null;
+        integrateHistoryIntoSummaries(rows, { setStatus });
+        renderIcfReportHistory();
+        finalize();
+      })
+      .withFailureHandler(err => {
+        console.error('[refreshReportHistory] failed', err);
+        _icfReportHistoryState.loading = false;
+        _icfReportHistoryState.rows = [];
+        _icfReportHistoryState.error = err && err.message ? err.message : '報告書の取得に失敗しました。';
+        if (setStatus) {
+          updateIcfSummaryStatus('保存済みの報告書の取得に失敗しました。');
+        }
+        renderIcfReportHistory();
+        finalize();
+      })
+      .listPatientReports(targetPid);
+  });
+}
+
 function renderIcfSummaryResults(){
   const box = q('icfSummaryResults');
   if (!box) return;
@@ -1647,7 +1868,10 @@ function generateAiSummary(audience){
   callGenerateAiSummary(p, rangeKey, audience)
     .then(res => {
       const ok = handleIcfSummaryResponse(res, audience);
-      if (ok) updateIcfSummaryStatus(`${label}を更新しました。`);
+      if (ok) {
+        updateIcfSummaryStatus(`${label}を更新しました。`);
+        refreshReportHistory({ patientId: p, setStatus: false });
+      }
     })
     .catch(err => {
       console.error('[generateAiSummary]', err);
@@ -1673,6 +1897,7 @@ async function generateAllAiSummaries(){
     _icfSummaryState.results = res.reports;
     renderIcfSummaryResults();
     updateIcfSummaryStatus('3種類のサマリを更新しました。');
+    await refreshReportHistory({ patientId: p, setStatus: false });
   } finally {
     setIcfButtonsDisabled(false);
   }
@@ -2462,6 +2687,8 @@ function refresh(){
     if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
     if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
     destroyClinicalCharts();
+    _icfReportHistoryState = { loading: false, rows: [], error: null };
+    renderIcfReportHistory();
     loadNews('', () => {
       hideGlobalLoading();
     });
@@ -2472,10 +2699,12 @@ function refresh(){
   if (q('news')) q('news').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('list')) q('list').innerHTML = '<div class="muted">読み込み中…</div>';
   loadHeader(patientId, () => {
-    loadNews(patientId, () => {
-      loadThisMonth(patientId, () => {
-        loadClinicalTrends({ patientId }, () => {
-          hideGlobalLoading();
+    refreshReportHistory({ patientId, setStatus: true }).then(() => {
+      loadNews(patientId, () => {
+        loadThisMonth(patientId, () => {
+          loadClinicalTrends({ patientId }, () => {
+            hideGlobalLoading();
+          });
         });
       });
     });

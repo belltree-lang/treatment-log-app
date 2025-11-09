@@ -13,13 +13,6 @@ const APP = {
   OPENAI_MODEL: 'gpt-4o-mini',
 };
 
-const CLINICAL_METRICS = [
-  { id: 'pain_vas',      label: '痛みVAS',           unit: '/10', min: 0,   max: 10,  step: 0.5, description: '主観的疼痛スケール（0=痛みなし, 10=最大）' },
-  { id: 'rom_knee_flex', label: '膝屈曲ROM',         unit: '°',   min: 0,   max: 150, step: 1,   description: '膝関節屈曲の可動域' },
-  { id: 'rom_knee_ext',  label: '膝伸展ROM',         unit: '°',   min: -20, max: 10,  step: 1,   description: '膝関節伸展の可動域（マイナスは屈曲拘縮）' },
-  { id: 'walk_distance', label: '歩行距離（6MWT）', unit: 'm',   min: 0,   max: 600, step: 5,   description: '6分間歩行距離などの歩行パフォーマンス' },
-];
-
 const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special'];
 
 const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202501';
@@ -208,7 +201,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','臨床指標','AI報告書'];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書'];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -253,60 +246,12 @@ function ensureAuxSheets_(options) {
       '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
     ]);
 
-    ensureHeader('臨床指標', ['TS','患者ID','指標ID','値','メモ','登録者']);
-
     props.setProperty(AUX_SHEETS_INIT_KEY, '1');
   } finally {
     if (locked) {
       lock.releaseLock();
     }
   }
-}
-
-function getClinicalMetricDefinitions(){
-  return CLINICAL_METRICS.map(m => ({
-    id: m.id,
-    label: m.label,
-    unit: m.unit || '',
-    min: m.min,
-    max: m.max,
-    step: m.step || 1,
-    description: m.description || ''
-  }));
-}
-
-function getClinicalMetricDef_(id){
-  return CLINICAL_METRICS.find(m => m.id === id) || null;
-}
-
-function ensureClinicalMetricSheet_(){
-  ensureAuxSheets_();
-  const wb = ss();
-  let sheet = wb.getSheetByName('臨床指標');
-  if (!sheet) {
-    const conflict = wb.getSheets().find(s => /^臨床指標[_\-]?conflict/i.test(s.getName()));
-    if (conflict) {
-      conflict.setName('臨床指標');
-      sheet = conflict;
-    } else {
-      sheet = wb.insertSheet('臨床指標');
-    }
-  }
-
-  wb.getSheets()
-    .filter(s => s !== sheet && /^臨床指標[_\-]?conflict/i.test(s.getName()))
-    .forEach(s => {
-      if (s.getLastRow() <= 1) {
-        wb.deleteSheet(s);
-      } else {
-        Logger.log(`[ensureClinicalMetricSheet_] 競合シートを検出: ${s.getName()}`);
-      }
-    });
-
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(['TS','患者ID','指標ID','値','メモ','登録者']);
-  }
-  return sheet;
 }
 
 function ensureAiReportSheet_(){
@@ -1070,60 +1015,6 @@ function queueAfterTreatmentJob(job){
   }
 }
 
-function normalizeClinicalMetricTimestamp_(value){
-  if (value instanceof Date && !isNaN(value.getTime())) return value;
-  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
-  if (value) {
-    const parsed = parseDateTimeFlexible_(value, tz) || parseDateFlexible_(value);
-    if (parsed && !isNaN(parsed.getTime())) return parsed;
-  }
-  return new Date();
-}
-
-function recordClinicalMetrics_(patientId, metrics, whenStr, user){
-  const pid = String(patientId || '').trim();
-  if (!pid) {
-    Logger.log('臨床指標は未入力です（保存はスキップしました） [pid=]');
-    return;
-  }
-
-  if (!Array.isArray(metrics) || !metrics.length) {
-    Logger.log(`臨床指標は未入力です（保存はスキップしました） [pid=${pid}]`);
-    return;
-  }
-
-  const sheet = ensureClinicalMetricSheet_();
-  const rows = [];
-  const timestamp = normalizeClinicalMetricTimestamp_(whenStr);
-  const owner = user ? String(user).trim() : '';
-
-  metrics.forEach(item => {
-    if (!item) return;
-    const metricId = String(item.metricId || item.id || '').trim();
-    const def = getClinicalMetricDef_(metricId);
-    if (!def) return;
-    const rawVal = item.value != null ? Number(item.value) : NaN;
-    if (!isFinite(rawVal)) return;
-    const note = item.note ? String(item.note).trim() : '';
-    rows.push([
-      timestamp,
-      pid,
-      metricId,
-      rawVal,
-      note,
-      owner
-    ]);
-  });
-
-  if (!rows.length) {
-    Logger.log(`臨床指標は未入力です（保存はスキップしました） [pid=${pid}]`);
-    return;
-  }
-
-  const start = sheet.getLastRow() + 1;
-  sheet.getRange(start, 1, rows.length, 6).setValues(rows);
-}
-
 function afterTreatmentJob(){
   drainAfterTreatmentJobs_({ triggered: true });
 }
@@ -1332,61 +1223,6 @@ function deleteTreatmentRow(row){
     invalidatePatientCaches_(pid, { header: true, treatments: true });
   }
   return true;
-}
-
-function parseClinicalMetricTimestamp_(value){
-  if (value instanceof Date && !isNaN(value.getTime())) return value;
-  const parsed = parseDateFlexible_(value);
-  return parsed || new Date(value);
-}
-
-function listClinicalMetricSeries(pid, startDate, endDate){
-  const sheet = ensureClinicalMetricSheet_();
-  const lr = sheet.getLastRow();
-  if (lr < 2) return { metrics: [] };
-
-  const vals = sheet.getRange(2, 1, lr - 1, 6).getValues();
-  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
-  const normalizedPid = String(normId_(pid));
-  const startTs = startDate instanceof Date ? startDate.getTime() : null;
-  const endTs = endDate instanceof Date ? endDate.getTime() : null;
-  const map = {};
-
-  vals.forEach(row => {
-    const ts = parseClinicalMetricTimestamp_(row[0]);
-    const rowPid = String(normId_(row[1]));
-    if (!normalizedPid || rowPid !== normalizedPid) return;
-    if (!(ts instanceof Date) || isNaN(ts.getTime())) return;
-    const ms = ts.getTime();
-    if (startTs != null && ms < startTs) return;
-    if (endTs != null && ms > endTs) return;
-    const metricId = String(row[2] || '').trim();
-    const def = getClinicalMetricDef_(metricId);
-    if (!def) return;
-    const value = Number(row[3]);
-    if (!isFinite(value)) return;
-    const note = row[4] || '';
-    const user = row[5] || '';
-    const dispDate = Utilities.formatDate(ts, tz, 'yyyy-MM-dd');
-    if (!map[metricId]) map[metricId] = [];
-    map[metricId].push({ date: dispDate, value, note: note ? String(note) : '', user: String(user || '') });
-  });
-
-  const defs = getClinicalMetricDefinitions();
-  const metrics = defs
-    .map(def => ({
-      id: def.id,
-      label: def.label,
-      unit: def.unit || '',
-      min: def.min,
-      max: def.max,
-      step: def.step,
-      description: def.description || '',
-      points: (map[def.id] || []).sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0))
-    }))
-    .filter(m => m.points.length);
-
-  return { metrics };
 }
 
 function splitTreatmentNoteForSummary_(text){
@@ -1971,7 +1807,6 @@ function buildDoctorReportTemplate_(header, context, statusSections){
   const consent = context?.consentText ? String(context.consentText).trim() : '情報不足';
   const frequency = context?.frequencyLabel ? String(context.frequencyLabel).trim() : '情報不足';
   const rangeLabel = normalizeDoctorReportText_(context?.rangeLabel);
-  const metricsDigest = normalizeDoctorReportText_(context?.metricsDigest);
   const status = buildDoctorStatusFromSections_(statusSections);
 
   const body = ensureDoctorSentenceWithFallback_(
@@ -1997,11 +1832,6 @@ function buildDoctorReportTemplate_(header, context, statusSections){
   );
 
   let safetySource = normalizeDoctorReportText_(status.safety);
-  if (metricsDigest) {
-    safetySource = safetySource
-      ? `${safetySource} / 臨床指標：${metricsDigest}`
-      : `臨床指標：${metricsDigest}`;
-  }
   let safety = ensureDoctorSentenceWithFallback_(
     safetySource,
     '重大なリスクはみられず、訪問ごとにバイタルを確認しています。'
@@ -2067,19 +1897,6 @@ function buildHandoverDigestForSummary_(handovers, audience){
     return `申し送りの要点：${joined}。`;
   }
   return `最近のようす：${joined}。`;
-}
-
-function buildMetricDigestForSummary_(metrics){
-  if (!Array.isArray(metrics) || !metrics.length) return '';
-  const lines = [];
-  metrics.forEach(metric => {
-    const pts = Array.isArray(metric?.points) ? metric.points : [];
-    if (!pts.length) return;
-    const last = pts[pts.length - 1];
-    const val = last ? `${last.date || ''} ${last.value}${metric.unit || ''}` : '';
-    if (val) lines.push(`${metric.label}: 最新 ${val}`);
-  });
-  return lines.join(' / ');
 }
 
 function resolveReportTypeMeta_(reportType){
@@ -2181,24 +1998,6 @@ function buildAiReportPrompt_(header, context){
     });
   }
 
-  const metrics = context?.metrics && Array.isArray(context.metrics.metrics)
-    ? context.metrics.metrics
-    : [];
-  if (metrics.length) {
-    lines.push('【臨床指標（最新値）】');
-    metrics.forEach(metric => {
-      const points = Array.isArray(metric?.points) ? metric.points : [];
-      if (!points.length) return;
-      const last = points[points.length - 1];
-      const value = last?.value != null ? `${last.value}${metric?.unit || ''}` : '';
-      const date = String(last?.date || '').trim();
-      const note = String(last?.note || '').trim();
-      const desc = [date, value, note].filter(Boolean).join(' / ');
-      const label = metric?.label || metric?.id;
-      lines.push(`- ${label}: ${desc}`);
-    });
-  }
-
   return lines.join('\n');
 }
 
@@ -2236,10 +2035,8 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
     consentText: source.consent,
     frequencyLabel: source.frequencyLabel,
     rangeLabel: range.label,
-    metricsDigest: source.metricsDigest,
     notes: source.notes,
-    handovers: source.handovers,
-    metrics: source.metrics
+    handovers: source.handovers
   };
 
   const aiRes = composeAiReportViaOpenAI_(header, context, audienceMeta.key) || {};
@@ -2256,8 +2053,7 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
       patientFound: true,
       rangeLabel: range.label,
       noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
-      handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
-      metricCount: source.metrics?.metrics?.length || 0
+      handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0
     }
   };
 
@@ -2328,7 +2124,6 @@ ${roleLabel}向けに患者様の状態・経過をまとめてください。
 参考情報：
 - Notes: ${JSON.stringify(context.notes || [])}
 - Handovers: ${JSON.stringify(context.handovers || [])}
-- Metrics: ${JSON.stringify(context.metrics || [])}
 - 期間: ${context.rangeLabel}
 `;
 }
@@ -2338,7 +2133,7 @@ function composeAiReportLocal_(header, context, reportType){
   const audienceMeta = resolveAudienceMeta_(reportType);
   const range = context?.range || { startDate: null, endDate: new Date(), label: '全期間' };
   const sections = Array.isArray(context?.sections) ? context.sections : [];
-  const source = context?.source || { header, notes: [], handovers: [], metrics: context?.metrics };
+  const source = context?.source || { header, notes: [], handovers: [] };
   const text = buildAudienceNarrative_(audienceMeta, header, range, source, sections);
   let special = [];
   if (audienceMeta.key === 'doctor') {
@@ -2374,8 +2169,7 @@ function parseReportStatusMeta_(status){
   const meta = {
     usedAi: null,
     noteCount: null,
-    handoverCount: null,
-    metricCount: null
+    handoverCount: null
   };
   const text = String(status || '').trim();
   if (!text) return meta;
@@ -2395,7 +2189,6 @@ function parseReportStatusMeta_(status){
       if (Number.isFinite(num)) {
         if (key === 'notes') meta.noteCount = num;
         if (key === 'handovers') meta.handoverCount = num;
-        if (key === 'metrics') meta.metricCount = num;
       }
     });
   return meta;
@@ -2439,7 +2232,6 @@ function persistAiReportsBatch_(patientId, rangeLabel, summaries){
     statusParts.push(summary.usedAi === false ? 'via=local' : 'via=ai');
     if (meta.noteCount != null) statusParts.push(`notes=${meta.noteCount}`);
     if (meta.handoverCount != null) statusParts.push(`handovers=${meta.handoverCount}`);
-    if (meta.metricCount != null) statusParts.push(`metrics=${meta.metricCount}`);
     const status = statusParts.join(' | ');
     const text = summary.text != null ? String(summary.text) : '';
     const specialList = normalizeReportSpecial_(summary.special);
@@ -2469,8 +2261,7 @@ function persistAiReportsBatch_(patientId, rangeLabel, summaries){
       meta: {
         rangeLabel: rangeText,
         noteCount: meta.noteCount != null ? Number(meta.noteCount) : null,
-        handoverCount: meta.handoverCount != null ? Number(meta.handoverCount) : null,
-        metricCount: meta.metricCount != null ? Number(meta.metricCount) : null
+        handoverCount: meta.handoverCount != null ? Number(meta.handoverCount) : null
       }
     });
   });
@@ -2533,8 +2324,7 @@ function fetchReportHistoryForPid_(normalized){
       meta: {
         rangeLabel,
         noteCount: parsedStatus.noteCount,
-        handoverCount: parsedStatus.handoverCount,
-        metricCount: parsedStatus.metricCount
+        handoverCount: parsedStatus.handoverCount
       }
     });
   }
@@ -2602,13 +2392,11 @@ function buildIcfSource_(pid, range){
   }
   const notes = getTreatmentNotesInRange_(pid, range.startDate, range.endDate);
   const handovers = getHandoversInRange_(pid, range.startDate, range.endDate);
-  const metrics = listClinicalMetricSeries(pid, range.startDate, range.endDate);
   return {
     patientFound: true,
     header,
     notes,
-    handovers,
-    metrics
+    handovers
   };
 }
 
@@ -2642,20 +2430,15 @@ function summarizeSectionsForAudience_(audienceKey, sections){
 function buildAudienceNarrative_(audienceMeta, header, range, source, sections){
   const audienceKey = audienceMeta.key;
   const rangeLabel = range.label || '全期間';
-  const metrics = source.metrics && Array.isArray(source.metrics.metrics)
-    ? source.metrics.metrics
-    : [];
   const handovers = Array.isArray(source.handovers) ? source.handovers : [];
   const sectionSummary = summarizeSectionsForAudience_(audienceKey, sections);
-  const metricsDigest = buildMetricDigestForSummary_(metrics);
   const handoverDigest = buildHandoverDigestForSummary_(handovers, audienceKey);
 
   if (audienceKey === 'doctor') {
     const context = {
       consentText: getConsentContentForPatient_(header.patientId),
       frequencyLabel: determineTreatmentFrequencyLabel_(countTreatmentsInRecentMonth_(header.patientId, range.endDate)),
-      rangeLabel,
-      metricsDigest
+      rangeLabel
     };
     return buildDoctorReportTemplate_(header, context, sections);
   }
@@ -2671,7 +2454,6 @@ function buildAudienceNarrative_(audienceMeta, header, range, source, sections){
       lines.push('【状態と変化】該当期間の記録が少なく、明確な変化は確認できませんでした。');
     }
     if (handoverDigest) lines.push(handoverDigest);
-    if (metricsDigest) lines.push(`【臨床指標】${metricsDigest}`);
     return lines.join('\n');
   }
 
@@ -2684,7 +2466,6 @@ function buildAudienceNarrative_(audienceMeta, header, range, source, sections){
     lines.push('この期間の詳細な記録は少ないですが、引き続き安全に配慮しながら訪問を継続しています。');
   }
   if (handoverDigest) lines.push(handoverDigest);
-  if (metricsDigest) lines.push(`最新の指標：${metricsDigest}`);
   lines.push('ご不明な点があればいつでもご連絡ください。');
   return lines.join('\n');
 }
@@ -2711,10 +2492,8 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
     consentText: source.consent,
     frequencyLabel: source.frequencyLabel,
     rangeLabel: range.label,
-    metricsDigest: source.metricsDigest,
     notes: source.notes,
-    handovers: source.handovers,
-    metrics: source.metrics
+    handovers: source.handovers
   };
 
   const doctorRes = composeAiReportViaOpenAI_(header, context, 'doctor') || {};
@@ -2725,8 +2504,7 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
     patientFound: true,
     rangeLabel: range.label,
     noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
-    handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
-    metricCount: source.metrics?.metrics?.length || 0
+    handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0
   };
 
   const reports = {
@@ -3758,11 +3536,6 @@ function submitTreatment(payload) {
     s.appendRow(row);
     markTiming('appendRow');
 
-    if (Array.isArray(payload?.clinicalMetrics) && payload.clinicalMetrics.length) {
-      recordClinicalMetrics_(pid, payload.clinicalMetrics, now, user);
-      markTiming('metrics');
-    }
-
     const job = { patientId: pid, treatmentId, treatmentTimestamp: now };
     let hasFollowUp = false;
 
@@ -4062,14 +3835,6 @@ function saveHandover(payload) {
   }
 
   s.appendRow([ now, pid, user, String(payload && payload.note || ''), fileIds.join(',') ]);
-
-  if (Object.prototype.hasOwnProperty.call(payload || {}, 'clinicalMetrics')) {
-    try {
-      recordClinicalMetrics_(pid, payload.clinicalMetrics, now, user);
-    } catch (err) {
-      Logger.log('[saveHandover] 臨床指標保存エラー: ' + err);
-    }
-  }
 
   return { ok:true, fileIds };
 }

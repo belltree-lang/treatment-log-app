@@ -1923,40 +1923,148 @@ function ensureChildFolder_(parent, name){
   return parent.createFolder(trimmed);
 }
 
+function normalizeDoctorSectionHeading_(raw){
+  const plain = String(raw || '')
+    .replace(/[【】\s]/g, '')
+    .replace(/[：:]/g, '')
+    .trim();
+  if (!plain) return '';
+  const normalized = plain.replace(/・/g, '');
+  const map = {
+    '施術の内容頻度': '施術の内容・頻度',
+    '施術内容頻度': '施術の内容・頻度',
+    '施術内容': '施術の内容・頻度',
+    '施術の内容': '施術の内容・頻度',
+    '施術': '施術の内容・頻度',
+    '施術頻度': '施術頻度',
+    '患者の状態経過': '患者の状態・経過',
+    '患者状態経過': '患者の状態・経過',
+    '患者の状態': '患者の状態・経過',
+    '患者状態': '患者の状態・経過',
+    '患者経過': '患者の状態・経過',
+    '状態経過': '患者の状態・経過',
+    '経過': '患者の状態・経過',
+    '報告内容': '報告内容',
+    '特記すべき事項': '特記すべき事項',
+    '特記事項': '特記すべき事項',
+    '同意内容': '同意内容',
+    '今後の方針': '今後の方針'
+  };
+  return map[normalized] || '';
+}
+
 function parseDoctorReportTextSections_(text){
   const lines = String(text || '').split(/\r?\n/);
   const map = {};
   let current = '';
-  lines.forEach(raw => {
-    const line = String(raw || '').trim();
-    if (!line) {
-      current = '';
-      return;
-    }
-    const heading = line.match(/^【([^】]+)】\s*(.*)$/);
-    if (heading) {
-      current = heading[1] ? heading[1].trim() : '';
-      if (!current) return;
-      map[current] = [];
-      const rest = heading[2] != null ? heading[2].trim() : '';
-      if (rest) map[current].push(rest);
-      return;
-    }
-    if (!current) return;
+  const setCurrent = (rawHeading, rest) => {
+    const normalized = normalizeDoctorSectionHeading_(rawHeading);
+    if (!normalized) return false;
+    current = normalized;
     if (!map[current]) map[current] = [];
-    map[current].push(line);
+    const tail = rest != null ? String(rest).trim() : '';
+    if (tail) {
+      map[current].push(tail);
+    }
+    return true;
+  };
+
+  lines.forEach(raw => {
+    const line = String(raw != null ? raw : '');
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (current && map[current]) {
+        map[current].push('');
+      }
+      return;
+    }
+
+    const bracket = trimmed.match(/^【([^】]+)】\s*(.*)$/);
+    if (bracket && setCurrent(bracket[1], bracket[2])) {
+      return;
+    }
+
+    const generic = trimmed.match(/^(?:[■□◆◇▶▷▶︎▸▹▶️➡＞>\-\*\s]*)([^：:】]+?)(?:\s*[：:]\s*(.*))?$/);
+    if (generic && setCurrent(generic[1], generic[2])) {
+      return;
+    }
+
+    if (!current) {
+      return;
+    }
+    if (!map[current]) {
+      map[current] = [];
+    }
+    map[current].push(trimmed);
   });
+
   const normalized = {};
   Object.keys(map).forEach(key => {
-    const joined = map[key]
-      .map(part => String(part || '').trim())
-      .filter(Boolean)
-      .join('\n');
+    const segments = [];
+    let previousBlank = true;
+    map[key].forEach(part => {
+      const textPart = String(part != null ? part : '');
+      const trimmed = textPart.trim();
+      if (!trimmed) {
+        if (!previousBlank && segments.length) {
+          segments.push('');
+          previousBlank = true;
+        }
+        return;
+      }
+      segments.push(trimmed);
+      previousBlank = false;
+    });
+    const joined = segments.join('\n').trim();
     if (joined) {
       normalized[key] = joined;
     }
   });
   return normalized;
+}
+
+function normalizeDoctorReportTextForStorage_(text){
+  const sections = parseDoctorReportTextSections_(text);
+  const select = (...keys) => {
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = sections[key];
+      if (value && String(value).trim()) {
+        return String(value).trim();
+      }
+    }
+    return '';
+  };
+
+  const section1 = select('施術の内容・頻度', '施術内容');
+  const section2 = select('患者の状態・経過', '報告内容');
+  const rawSection3 = select('特記すべき事項', '特記事項');
+  const section3 = rawSection3 || '特記すべき事項はありません。';
+  const frequencyText = select('施術頻度');
+
+  const blocks = [];
+  const addBlock = (label, value) => {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return;
+    if (blocks.length) blocks.push('');
+    blocks.push(`【${label}】`);
+    blocks.push(trimmed);
+  };
+
+  if (section1) addBlock('施術の内容・頻度', section1);
+  if (section2) addBlock('患者の状態・経過', section2);
+  addBlock('特記すべき事項', section3);
+
+  const normalizedText = blocks.join('\n').trim();
+  const resultText = normalizedText || String(text || '').trim();
+
+  return {
+    text: resultText,
+    section1,
+    section2,
+    section3,
+    frequencyText
+  };
 }
 
 function buildDoctorReportPdfData_(patientId){
@@ -1974,31 +2082,44 @@ function buildDoctorReportPdfData_(patientId){
   }
 
   const sections = parseDoctorReportTextSections_(entry.text || '');
-  const consent = sections['同意内容'] || getConsentContentForPatient_(header.patientId) || '';
-  const frequency = sections['施術頻度']
-    || sections['施術の内容・頻度']
-    || determineTreatmentFrequencyLabel_(countTreatmentsInRecentMonth_(header.patientId, new Date()));
-  const treatmentLines = [];
-  if (consent) treatmentLines.push('同意内容：' + consent);
-  if (frequency) treatmentLines.push('施術頻度：' + frequency);
-  let treatmentSummary = treatmentLines.join('\n');
-  if (!treatmentSummary) {
-    treatmentSummary = '施術頻度：情報不足';
-  }
+  const consent = (sections['同意内容'] && String(sections['同意内容']).trim())
+    || getConsentContentForPatient_(header.patientId)
+    || '';
+  const section1 = sections['施術の内容・頻度'] || sections['施術内容'] || '';
+  const section2 = sections['患者の状態・経過'] || sections['報告内容'] || '';
+  const section3 = sections['特記すべき事項'] || sections['特記事項'] || '';
+  const frequencySource = sections['施術頻度'] || '';
+  const frequencyText = frequencySource && String(frequencySource).trim()
+    ? String(frequencySource).trim()
+    : determineTreatmentFrequencyLabel_(countTreatmentsInRecentMonth_(header.patientId, new Date()));
 
-  const reportSummary = sections['患者の状態・経過'] || sections['報告内容'] || String(entry.text || '');
-  let plan = sections['今後の方針'] || '';
+  const treatmentLines = [];
+  if (consent && String(consent).trim()) {
+    treatmentLines.push('同意内容：' + String(consent).trim());
+  }
+  if (frequencyText) {
+    treatmentLines.push('施術頻度：' + frequencyText);
+  }
+  const section1Text = section1 && String(section1).trim();
+  if (section1Text) {
+    treatmentLines.push(section1Text);
+  }
+  const treatmentSummary = treatmentLines.length ? treatmentLines.join('\n') : '施術頻度：情報不足';
+
+  const reportSummary = section2 && String(section2).trim() ? String(section2).trim() : String(entry.text || '').trim();
+  const closingSentence = '今後も安全に配慮しながら施術を継続してまいります。';
+  let plan = sections['今後の方針'] && String(sections['今後の方針']).trim() || '';
   if (!plan) {
-    const safety = sections['特記すべき事項'] || '';
-    if (safety && safety.indexOf('同意内容に沿った施術を継続') >= 0) {
-      plan = '同意内容に沿った施術を継続しております。';
+    if (reportSummary.indexOf(closingSentence) >= 0) {
+      plan = closingSentence;
+    } else if (section3 && String(section3).indexOf(closingSentence) >= 0) {
+      plan = closingSentence;
+    } else {
+      plan = closingSentence;
     }
   }
-  if (!plan) {
-    plan = '同意内容に沿った施術を継続してまいります。';
-  }
 
-  let remarks = sections['特記すべき事項'] || '';
+  let remarks = section3 && String(section3).trim() ? String(section3).trim() : '';
   if (!remarks) {
     const specialList = Array.isArray(entry.special) ? entry.special.filter(Boolean) : [];
     if (specialList.length) {
@@ -2021,6 +2142,11 @@ function buildDoctorReportPdfData_(patientId){
       doctorName: header.doctor || '',
       patientName: header.name || '',
       birthDate: header.birth || '',
+      consentText: consent || '',
+      frequencyText: frequencyText || '',
+      section1: section1Text || '',
+      section2: reportSummary || '',
+      section3: remarks || '',
       treatmentSummary,
       reportSummary,
       plan,
@@ -2059,10 +2185,16 @@ function createDoctorReportPdfFile_(prepared){
     '{{医師}}': prepared.data.doctorName || '',
     '{{患者名}}': prepared.data.patientName || '',
     '{{生年月日}}': prepared.data.birthDate || '',
+    '{{同意内容}}': prepared.data.consentText || '',
+    '{{施術頻度}}': prepared.data.frequencyText || '',
+    '{{施術内容}}': prepared.data.section1 || '',
     '{{施術の内容・頻度}}': prepared.data.treatmentSummary || '',
     '{{報告内容}}': prepared.data.reportSummary || '',
+    '{{患者経過}}': prepared.data.section2 || '',
+    '{{患者の状態・経過}}': prepared.data.section2 || '',
     '{{今後の方針}}': prepared.data.plan || '',
     '{{特記事項}}': prepared.data.remarks || '',
+    '{{特記すべき事項}}': prepared.data.remarks || '',
     '{{作成日}}': todayText
   };
   Object.keys(replacements).forEach(key => {
@@ -2847,14 +2979,37 @@ function persistAiReportsBatch_(patientId, rangeLabel, summaries){
   summaries.forEach(summary => {
     if (!summary || summary.ok === false) return;
     const audienceMeta = resolveAudienceMeta_(summary.audience || '');
-    const meta = summary.meta || {};
+    const meta = summary.meta ? Object.assign({}, summary.meta) : {};
+    let text = summary.text != null ? String(summary.text) : '';
+    let doctorSectionsMeta = null;
+    let specialList = normalizeReportSpecial_(summary.special);
+
+    if (audienceMeta.key === 'doctor') {
+      const normalizedDoctor = normalizeDoctorReportTextForStorage_(text);
+      if (normalizedDoctor && normalizedDoctor.text) {
+        text = normalizedDoctor.text;
+        summary.text = text;
+        doctorSectionsMeta = {
+          section1: normalizedDoctor.section1,
+          section2: normalizedDoctor.section2,
+          section3: normalizedDoctor.section3,
+          frequencyText: normalizedDoctor.frequencyText
+        };
+        meta.doctorSections = doctorSectionsMeta;
+        if (!specialList.length) {
+          specialList = normalizeDoctorSpecialList_(normalizedDoctor.section3);
+          summary.special = specialList.slice();
+        }
+      }
+    }
+
+    summary.meta = meta;
+    specialList = normalizeReportSpecial_(summary.special);
     const statusParts = [];
     statusParts.push(summary.usedAi === false ? 'via=local' : 'via=ai');
     if (meta.noteCount != null) statusParts.push(`notes=${meta.noteCount}`);
     if (meta.handoverCount != null) statusParts.push(`handovers=${meta.handoverCount}`);
     const status = statusParts.join(' | ');
-    const text = summary.text != null ? String(summary.text) : '';
-    const specialList = normalizeReportSpecial_(summary.special);
     const specialText = specialList.join('\n');
     const ts = new Date();
     const rangeText = label || String(meta.rangeLabel || '');
@@ -2868,6 +3023,11 @@ function persistAiReportsBatch_(patientId, rangeLabel, summaries){
       status,
       specialText
     ]);
+    const savedMeta = Object.assign({}, meta, {
+      rangeLabel: rangeText,
+      noteCount: meta.noteCount != null ? Number(meta.noteCount) : null,
+      handoverCount: meta.handoverCount != null ? Number(meta.handoverCount) : null
+    });
     saved.push({
       ts: ts.getTime(),
       when: Utilities.formatDate(ts, timezone, 'yyyy-MM-dd HH:mm'),
@@ -2878,11 +3038,7 @@ function persistAiReportsBatch_(patientId, rangeLabel, summaries){
       status,
       special: specialList,
       usedAi: summary.usedAi === false ? false : true,
-      meta: {
-        rangeLabel: rangeText,
-        noteCount: meta.noteCount != null ? Number(meta.noteCount) : null,
-        handoverCount: meta.handoverCount != null ? Number(meta.handoverCount) : null
-      }
+      meta: savedMeta
     });
   });
 

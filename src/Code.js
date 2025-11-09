@@ -26,6 +26,7 @@ const PATIENT_CACHE_KEYS = {
   reports: pid => 'patient:reports:' + normId_(pid),
 };
 const GLOBAL_NEWS_CACHE_KEY = 'patient:news:__global__';
+const DOCTOR_REPORT_HANDOVER_WINDOW_DAYS = 30;
 
 function getScriptCache_(){
   try {
@@ -579,6 +580,18 @@ function clearMonthlyHandoverReminder_(pid, monthKey){
   });
 }
 
+function clearDoctorReportMissingReminder_(pid, consentExpiry){
+  const matches = { type: 'missing_moushiokuri' };
+  if (consentExpiry != null && consentExpiry !== '') {
+    matches.consentExpiry = String(consentExpiry);
+  }
+  return markNewsClearedByType(pid, '申し送り', {
+    metaType: 'missing_moushiokuri',
+    metaMatches: matches,
+    messageContains: '申し送りが未入力'
+  });
+}
+
 function clearNewsByTreatment_(treatmentId){
   if (!treatmentId) return;
   const s = sh('News');
@@ -626,6 +639,60 @@ function clearNewsByTreatment_(treatmentId){
   }
 }
 
+function buildLatestHandoverMap_(){
+  const map = {};
+  let sheet;
+  try {
+    sheet = ensureHandoverSheet_();
+  } catch (e) {
+    return map;
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return map;
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const values = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
+  values.forEach(row => {
+    const pid = normId_(row[1]);
+    if (!pid) return;
+    const ts = row[0] instanceof Date
+      ? row[0]
+      : parseDateTimeFlexible_(row[0], tz) || parseDateFlexible_(row[0]);
+    if (!(ts instanceof Date) || isNaN(ts.getTime())) return;
+    const note = String(row[3] || '').trim();
+    const time = ts.getTime();
+    const existing = map[pid];
+    if (!existing || time > existing.timestamp) {
+      map[pid] = {
+        timestamp: time,
+        note,
+        when: Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm')
+      };
+    }
+  });
+  return map;
+}
+
+function getLatestHandoverEntry_(pid, options){
+  const normalized = normId_(pid);
+  if (!normalized) return null;
+  const map = options && options.map ? options.map : buildLatestHandoverMap_();
+  return map[normalized] || null;
+}
+
+function isRecentHandoverEntry_(entry, referenceDate){
+  if (!entry || !entry.note || !entry.timestamp) return false;
+  const ref = referenceDate instanceof Date ? new Date(referenceDate.getTime()) : new Date();
+  if (!(ref instanceof Date) || isNaN(ref.getTime())) return false;
+  ref.setHours(0, 0, 0, 0);
+  const entryDate = new Date(entry.timestamp);
+  if (!(entryDate instanceof Date) || isNaN(entryDate.getTime())) return false;
+  const diff = ref.getTime() - entryDate.getTime();
+  if (diff < 0) return true;
+  const windowMs = DOCTOR_REPORT_HANDOVER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  if (diff <= windowMs) return true;
+  return entryDate.getFullYear() === ref.getFullYear() && entryDate.getMonth() === ref.getMonth();
+}
+
 function checkConsentExpiration_(){
   ensureAuxSheets_();
   const sheet = sh('患者情報');
@@ -650,15 +717,23 @@ function checkConsentExpiration_(){
   const existing = readNewsRows_();
   const existingKeys = new Set();
   const existingDoctorReportKeys = new Set();
+  const existingDoctorReportMissingKeys = new Set();
   existing.forEach(row => {
     if (row.cleared) return;
     if (!row.pid) return;
-    if (String(row.type || '').trim() !== '同意') return;
+    const typeText = String(row.type || '').trim();
     const meta = row.meta;
     let expiryKey = '';
     if (meta && typeof meta === 'object' && meta.consentExpiry) {
       expiryKey = String(meta.consentExpiry);
     }
+    if (typeText === '申し送り') {
+      if (meta && typeof meta === 'object' && meta.type === 'missing_moushiokuri') {
+        existingDoctorReportMissingKeys.add(row.pid + '|' + expiryKey);
+      }
+      return;
+    }
+    if (typeText !== '同意') return;
     const message = String(row.message || '').trim();
     if (meta && typeof meta === 'object' && meta.type === 'consent_reminder') {
       existingKeys.add(row.pid + '|' + expiryKey);
@@ -680,6 +755,10 @@ function checkConsentExpiration_(){
   const toInsert = [];
   const insertedKeys = new Set();
   const insertedDoctorReportKeys = new Set();
+  const insertedDoctorReportMissingKeys = new Set();
+  const doctorReportRemindersToClear = new Map();
+  const missingHandoverRemindersToClear = new Map();
+  const latestHandoversMap = buildLatestHandoverMap_();
   const dayMs = 24 * 60 * 60 * 1000;
   const parseIsoLocal = (text) => {
     const m = text && text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -712,15 +791,36 @@ function checkConsentExpiration_(){
     const daysSinceReportTrigger = Math.floor((todayStart.getTime() - reportTriggerDate.getTime()) / dayMs);
     if (daysSinceReportTrigger >= 0 && daysUntilExpiry >= 0) {
       const reportKey = pidNormalized + '|' + expiryStr;
-      if (!existingDoctorReportKeys.has(reportKey) && !insertedDoctorReportKeys.has(reportKey)) {
-        const reportMeta = {
-          source: 'auto',
-          type: 'consent_doctor_report',
-          consentExpiry: expiryStr,
-          triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
-        };
-        toInsert.push(formatNewsRow_(pidForNews, '同意', '⚠️ 同意期限50日前になりました', reportMeta));
-        insertedDoctorReportKeys.add(reportKey);
+      const latestHandover = latestHandoversMap[pidNormalized] || null;
+      const hasRecentHandover = isRecentHandoverEntry_(latestHandover, todayStart);
+      if (!hasRecentHandover) {
+        if (!existingDoctorReportMissingKeys.has(reportKey) && !insertedDoctorReportMissingKeys.has(reportKey)) {
+          const missingMeta = {
+            source: 'auto',
+            type: 'missing_moushiokuri',
+            consentExpiry: expiryStr,
+            triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
+          };
+          toInsert.push(formatNewsRow_(pidForNews, '申し送り', '申し送りが未入力のため報告書を生成できません。申し送りを入力してください。', missingMeta));
+          insertedDoctorReportMissingKeys.add(reportKey);
+        }
+        if (existingDoctorReportKeys.has(reportKey) && !doctorReportRemindersToClear.has(reportKey)) {
+          doctorReportRemindersToClear.set(reportKey, pidForNews);
+        }
+      } else {
+        if (existingDoctorReportMissingKeys.has(reportKey) && !missingHandoverRemindersToClear.has(reportKey)) {
+          missingHandoverRemindersToClear.set(reportKey, { pid: pidForNews, consentExpiry: expiryStr });
+        }
+        if (!existingDoctorReportKeys.has(reportKey) && !insertedDoctorReportKeys.has(reportKey)) {
+          const reportMeta = {
+            source: 'auto',
+            type: 'consent_doctor_report',
+            consentExpiry: expiryStr,
+            triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
+          };
+          toInsert.push(formatNewsRow_(pidForNews, '同意', '⚠️ 同意期限50日前になりました', reportMeta));
+          insertedDoctorReportKeys.add(reportKey);
+        }
       }
     }
     const key = pidNormalized + '|' + expiryStr;
@@ -737,6 +837,27 @@ function checkConsentExpiration_(){
     insertedKeys.add(key);
   }
 
+  if (doctorReportRemindersToClear.size) {
+    doctorReportRemindersToClear.forEach(pidValue => {
+      try {
+        markNewsClearedByType(pidValue, '同意', {
+          metaType: 'consent_doctor_report',
+          messageContains: '同意期限50日前'
+        });
+      } catch (err) {
+        Logger.log('[checkConsentExpiration_] failed to clear doctor report reminder: ' + (err && err.message ? err.message : err));
+      }
+    });
+  }
+  if (missingHandoverRemindersToClear.size) {
+    missingHandoverRemindersToClear.forEach(item => {
+      try {
+        clearDoctorReportMissingReminder_(item.pid, item.consentExpiry);
+      } catch (err) {
+        Logger.log('[checkConsentExpiration_] failed to clear missing handover reminder: ' + (err && err.message ? err.message : err));
+      }
+    });
+  }
   if (toInsert.length) {
     pushNewsRows_(toInsert);
   }
@@ -2436,6 +2557,26 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
     notes: source.notes,
     handovers: source.handovers
   };
+
+  if (audienceMeta.key === 'doctor') {
+    const latestHandover = getLatestHandoverEntry_(patientId);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (!isRecentHandoverEntry_(latestHandover, today)) {
+      return {
+        ok: false,
+        usedAi: false,
+        audience: audienceMeta.key,
+        audienceLabel: audienceMeta.label,
+        text: '申し送りが未入力のため、報告書を生成できません。申し送りを入力してください。',
+        meta: {
+          patientFound: true,
+          rangeLabel: range.label,
+          handoverRequired: true
+        }
+      };
+    }
+  }
 
   const aiRes = composeAiReportViaOpenAI_(header, context, audienceMeta.key) || {};
   const text = typeof aiRes === 'object' ? (aiRes.text || '') : String(aiRes || '');
@@ -4375,12 +4516,18 @@ function saveHandover(payload) {
   const monthKey = now.slice(0, 7);
   let cleared = 0;
   try {
-    cleared = clearMonthlyHandoverReminder_(pid, monthKey);
-    if (!cleared) {
-      cleared = clearMonthlyHandoverReminder_(pid);
+    const clearedMonthly = clearMonthlyHandoverReminder_(pid, monthKey);
+    cleared += clearedMonthly;
+    if (!clearedMonthly) {
+      cleared += clearMonthlyHandoverReminder_(pid);
     }
   } catch (e) {
     Logger.log('[saveHandover] failed to clear monthly reminder: ' + (e && e.message ? e.message : e));
+  }
+  try {
+    cleared += clearDoctorReportMissingReminder_(pid);
+  } catch (e) {
+    Logger.log('[saveHandover] failed to clear doctor report missing reminder: ' + (e && e.message ? e.message : e));
   }
 
   return { ok:true, fileIds, cleared };

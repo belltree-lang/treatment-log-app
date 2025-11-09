@@ -2921,7 +2921,7 @@ function resolveNewsStatus(news){
   const type = String(news.type || '').trim();
   const metaType = getNewsMetaType(news);
   if (type === '申し送り') {
-    if (metaType === 'handover_missing_monthly') return 'handover-reminder';
+    if (metaType === 'handover_missing_monthly' || metaType === 'missing_moushiokuri') return 'handover-reminder';
     const message = String(news.message || '');
     if (message.indexOf('申し送りが未入力') >= 0) return 'handover-reminder';
     return '';
@@ -2971,7 +2971,7 @@ function shouldShowHandoverReminderButton(news){
   const type = String(news.type || '').trim();
   if (type !== '申し送り') return false;
   const metaType = getNewsMetaType(news);
-  if (metaType === 'handover_missing_monthly') return true;
+  if (metaType === 'handover_missing_monthly' || metaType === 'missing_moushiokuri') return true;
   const message = String(news.message || '');
   return message.indexOf('申し送りが未入力') >= 0;
 }
@@ -2981,6 +2981,7 @@ function shouldShowDoctorReportButton(news){
   const type = String(news.type || '').trim();
   if (type !== '同意') return false;
   const metaType = getNewsMetaType(news);
+  if (metaType === 'missing_moushiokuri') return false;
   if (metaType === 'consent_doctor_report') return true;
   const message = String(news.message || '');
   return message.indexOf('同意期限50日前') >= 0;

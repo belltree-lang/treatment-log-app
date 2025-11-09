@@ -2493,8 +2493,10 @@ function insertPreset(){
 /* 通院予定モーダル */
 function showConsentModal(options){
   _consentModalCallback = options && typeof options.onConfirm === 'function' ? options.onConfirm : null;
-  q('consentDate').value='';
-  q('consentUndecided').checked=false;
+  const defaultDate = options && options.defaultDate ? String(options.defaultDate) : '';
+  const defaultUndecided = !!(options && options.defaultUndecided);
+  q('consentDate').value = defaultUndecided ? '' : defaultDate;
+  q('consentUndecided').checked = defaultUndecided;
   if (!_consentModalCallback) {
     const actions = getActionState();
     delete actions.visitPlanDate;
@@ -2812,6 +2814,7 @@ function loadNews(patientId, next){
       el.innerHTML = _latestNewsList.map((n, idx) => {
         const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
         const showConsentEdit = shouldShowConsentEditButton(n);
+        const showVisitPlanEdit = shouldShowVisitPlanEditButton(n);
         const showConsentHandout = shouldShowConsentHandoutButton(n);
         const showConsentVerification = shouldShowConsentVerificationButton(n);
         const showHandoverReminder = shouldShowHandoverReminderButton(n);
@@ -2822,6 +2825,9 @@ function loadNews(patientId, next){
         }
         if (showConsentHandout) {
           actionButtons.push(`<button class="btn ok" onclick="handleConsentHandout(${idx})">受渡</button>`);
+        }
+        if (showVisitPlanEdit) {
+          actionButtons.push(`<button class="btn ghost" onclick="handleVisitPlanEdit(${idx})">🗓 通院日を編集</button>`);
         }
         if (showConsentVerification) {
           actionButtons.push(`<button class="btn ok" onclick="handleConsentVerification(${idx})">再同意取得確認</button>`);
@@ -2951,19 +2957,26 @@ function shouldShowConsentVerificationButton(news){
   const type = String(news.type || '').trim();
   if (type !== '同意') return false;
   const metaType = getNewsMetaType(news);
-  if (metaType !== 'consent_handout_followup') return false;
-  return true;
+  if (metaType === 'consent_handout_followup') return false;
+  return metaType === 'consent_verification';
 }
 
 function shouldShowConsentEditButton(news){
   if(!news) return false;
   const type = String(news.type || '').trim();
   if(type !== '同意') return false;
-  const metaType = getNewsMetaType(news);
-  if (metaType === 'consent_handout_followup') return true;
   const message = String(news.message || '');
+  if (message.indexOf('通院日未定') >= 0) return false;
   if (message.indexOf('未定') >= 0 || message.indexOf('確認') >= 0) return true;
   return message.indexOf('同意書受渡。') >= 0;
+}
+
+function shouldShowVisitPlanEditButton(news){
+  if (!news) return false;
+  const type = String(news.type || '').trim();
+  if (type !== '同意') return false;
+  const message = String(news.message || '');
+  return message.indexOf('通院日未定') >= 0;
 }
 
 function shouldShowHandoverReminderButton(news){
@@ -3135,6 +3148,63 @@ function handleDoctorReportReminder(index){
   });
 }
 
+function submitConsentHandoutFromNews(options){
+  if (_consentHandoutInFlight) {
+    toast('処理中です。完了までお待ちください。');
+    return;
+  }
+  const patientId = options && options.patientId ? String(options.patientId) : '';
+  if (!patientId) {
+    alert('患者IDを入力してください');
+    return;
+  }
+  const news = options && options.news ? options.news : null;
+  const newsType = news && news.type != null ? String(news.type).trim() : '';
+  const newsMessage = options && options.newsMessage != null
+    ? String(options.newsMessage)
+    : (news && news.message != null ? String(news.message) : '');
+  const resolvedNewsMessage = newsMessage ? newsMessage.trim() : '';
+  const payload = {
+    patientId,
+    consentUndecided: !!(options && options.consentUndecided),
+    visitPlanDate: options && options.visitPlanDate ? String(options.visitPlanDate).trim() : '',
+    newsType,
+    newsMessage: resolvedNewsMessage,
+    newsMetaType: news ? getNewsMetaType(news) : '',
+    newsRow: news && typeof news.rowNumber === 'number' ? Number(news.rowNumber) : null
+  };
+
+  _consentHandoutInFlight = true;
+  showGlobalLoading('処理中です…');
+  google.script.run
+    .withSuccessHandler(res => {
+      _consentHandoutInFlight = false;
+      hideGlobalLoading();
+      const result = res && res.result;
+      if (result && result.skipped) {
+        toast(result.msg || '同じ内容が直近に登録済みのため保存をスキップしました');
+      } else {
+        const successMessage = options && options.successToast
+          ? options.successToast
+          : '同意書受渡を記録しました';
+        toast(successMessage);
+      }
+      loadNews(patientId);
+      loadThisMonth(patientId);
+      loadHeader(patientId);
+    })
+    .withFailureHandler(err => {
+      _consentHandoutInFlight = false;
+      hideGlobalLoading();
+      const msg = err && err.message ? err.message : String(err || 'エラー');
+      const label = options && options.errorMessage
+        ? options.errorMessage
+        : '同意書受渡の処理に失敗しました';
+      alert(`${label}: ${msg}`);
+    })
+    .completeConsentHandoutFromNews(payload);
+}
+
 function handleConsentHandout(index){
   if (_consentHandoutInFlight) {
     toast('処理中です。完了までお待ちください。');
@@ -3154,37 +3224,60 @@ function handleConsentHandout(index){
     return;
   }
 
-  _consentHandoutInFlight = true;
-  showGlobalLoading('処理中です…');
-  const payload = {
-    patientId,
-    visitPlanDate: getNewsVisitPlanDate(news),
-    newsType: news.type,
-    newsMessage: '受渡が必要です',
-    newsMetaType: getNewsMetaType(news),
-    newsRow: typeof news.rowNumber === 'number' ? news.rowNumber : null
-  };
-  google.script.run
-    .withSuccessHandler(res => {
-      _consentHandoutInFlight = false;
-      hideGlobalLoading();
-      const result = res && res.result;
-      if (result && result.skipped) {
-        toast(result.msg || '同じ内容が直近に登録済みのため保存をスキップしました');
-      } else {
-        toast('同意書受渡を記録しました');
-      }
-      loadNews(patientId);
-      loadThisMonth(patientId);
-      loadHeader(patientId);
-    })
-    .withFailureHandler(err => {
-      _consentHandoutInFlight = false;
-      hideGlobalLoading();
-      const msg = err && err.message ? err.message : String(err || 'エラー');
-      alert('同意書受渡の処理に失敗しました: ' + msg);
-    })
-    .completeConsentHandoutFromNews(payload);
+  const defaultDate = getNewsVisitPlanDate(news);
+  showConsentModal({
+    defaultDate,
+    defaultUndecided: false,
+    onConfirm: result => {
+      submitConsentHandoutFromNews({
+        patientId,
+        news,
+        consentUndecided: !!(result && result.undecided),
+        visitPlanDate: result && result.date ? String(result.date) : '',
+        newsMessage: '受渡が必要です',
+        successToast: '同意書受渡を記録しました',
+        errorMessage: '同意書受渡の処理に失敗しました'
+      });
+    }
+  });
+}
+
+function handleVisitPlanEdit(index){
+  if (_consentHandoutInFlight) {
+    toast('処理中です。完了までお待ちください。');
+    return;
+  }
+  const list = Array.isArray(_latestNewsList) ? _latestNewsList : [];
+  const idx = Number(index);
+  const news = list[idx];
+  if (!shouldShowVisitPlanEditButton(news)) {
+    toast('対象のお知らせが見つかりません。');
+    return;
+  }
+  const patientId = pid();
+  if (!patientId){
+    alert('患者IDを入力してください');
+    return;
+  }
+  const defaultDate = getNewsVisitPlanDate(news);
+  showConsentModal({
+    defaultDate,
+    defaultUndecided: !defaultDate,
+    onConfirm: result => {
+      const successToast = result && result.undecided
+        ? '通院日は未定のままです'
+        : '通院予定を更新しました';
+      submitConsentHandoutFromNews({
+        patientId,
+        news,
+        consentUndecided: !!(result && result.undecided),
+        visitPlanDate: result && result.date ? String(result.date) : '',
+        newsMessage: '通院日未定です',
+        successToast,
+        errorMessage: '通院日の更新に失敗しました'
+      });
+    }
+  });
 }
 
 function openConsentEditModal(){

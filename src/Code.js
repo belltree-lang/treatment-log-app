@@ -1011,7 +1011,8 @@ function getPresets(){
       {cat:'所見',label:'請求書・領収書受渡',text:'請求書・領収書を受け渡し済み。'},
       {cat:'所見',label:'配布物受渡',text:'配布物（説明資料）を受け渡し済み。'},
       {cat:'所見',label:'同意書受渡',text:'同意書受渡。'},
-      {cat:'所見',label:'再同意取得確認',text:'再同意の取得を確認。引き続き施術を継続。'}
+      {cat:'所見',label:'再同意取得確認',text:'再同意の取得を確認。引き続き施術を継続。'},
+      {cat:'所見',label:'同意書取得確認',text:'同意書取得確認。通院予定日を共有済み。'}
     ];
   }
   const vals = s.getRange(2,1,lr-1,3).getDisplayValues(); // [カテゴリ, ラベル, 文章]
@@ -1180,22 +1181,35 @@ function executeAfterTreatmentJobs_(jobs){
     try {
       const pid = job.patientId;
       const treatmentMeta = job.treatmentId ? { source: 'treatment', treatmentId: job.treatmentId } : null;
-      const addNews = (type, message) => {
-        newsRows.push(formatNewsRow_(pid, type, message, treatmentMeta));
+      const addNews = (type, message, extraMeta) => {
+        let meta = null;
+        if (treatmentMeta) {
+          meta = Object.assign({}, treatmentMeta);
+        }
+        if (extraMeta) {
+          meta = meta ? Object.assign(meta, extraMeta) : Object.assign({}, extraMeta);
+        }
+        newsRows.push(formatNewsRow_(pid, type, message, meta));
       };
 
       // News / 同意日 / 負担割合 / 予定登録など重い処理をここでまとめて実行
       let consentReminderPushed = false;
       if (job.presetLabel){
-        if (job.presetLabel.indexOf('再同意取得確認') >= 0){
-          const today = Utilities.formatDate(new Date(), tz,'yyyy-MM-dd');
-          updateConsentDate(pid, today, treatmentMeta ? { meta: treatmentMeta } : undefined);
-        }
         if (job.presetLabel.indexOf('同意書受渡') >= 0){
-          addNews('再同意','同意書を受け渡し');
           if (job.consentUndecided){
             addNews('同意','同意日未定です。後日確認してください。');
             consentReminderPushed = true;
+          } else {
+            const visitPlanDate = job.visitPlanDate ? String(job.visitPlanDate).trim() : '';
+            const followupMessageBase = '通院日が近づいています。ご利用者様に声かけをしてください。';
+            const followupMessage = visitPlanDate
+              ? `${followupMessageBase}（通院予定：${visitPlanDate}）`
+              : followupMessageBase;
+            const meta = { type: 'consent_handout_followup' };
+            if (visitPlanDate) {
+              meta.visitPlanDate = visitPlanDate;
+            }
+            addNews('同意', followupMessage, meta);
           }
         }
       }
@@ -3666,6 +3680,45 @@ function completeConsentHandoutFromNews(payload) {
     cleared,
     note,
     actions
+  };
+}
+
+function completeConsentVerificationFromNews(payload) {
+  const pid = String(payload && payload.patientId || '').trim();
+  if (!pid) throw new Error('patientIdが空です');
+  const visitPlanDate = String(payload && payload.visitPlanDate || '').trim();
+  const providedNote = String(payload && payload.note || '').trim();
+  const note = providedNote
+    || (visitPlanDate
+      ? `同意書取得確認（通院予定：${visitPlanDate}）`
+      : '同意書取得確認。');
+
+  const treatmentPayload = {
+    patientId: pid,
+    presetLabel: '同意書取得確認',
+    notesParts: { note }
+  };
+
+  if (payload && payload.treatmentId) {
+    treatmentPayload.treatmentId = String(payload.treatmentId);
+  }
+
+  const result = submitTreatment(treatmentPayload);
+  const newsType = String(payload && payload.newsType || '同意').trim() || '同意';
+  const newsMessage = String(payload && payload.newsMessage || '');
+  const metaType = payload && payload.newsMetaType ? String(payload.newsMetaType) : '';
+  const rowNumber = payload && typeof payload.newsRow === 'number' ? Number(payload.newsRow) : null;
+  const cleared = markNewsClearedByType(pid, newsType, {
+    messageContains: newsMessage,
+    metaType: metaType,
+    rowNumber
+  });
+
+  return {
+    ok: true,
+    result,
+    cleared,
+    note
   };
 }
 

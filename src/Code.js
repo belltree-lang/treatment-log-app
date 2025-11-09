@@ -1011,12 +1011,13 @@ function getPresets(){
       {cat:'所見',label:'請求書・領収書受渡',text:'請求書・領収書を受け渡し済み。'},
       {cat:'所見',label:'配布物受渡',text:'配布物（説明資料）を受け渡し済み。'},
       {cat:'所見',label:'同意書受渡',text:'同意書受渡。'},
-      {cat:'所見',label:'再同意取得確認',text:'再同意の取得を確認。引き続き施術を継続。'},
-      {cat:'所見',label:'同意書取得確認',text:'同意書取得確認。通院予定日を共有済み。'}
+      {cat:'所見',label:'再同意取得確認',text:'再同意の取得を確認。引き続き施術を継続。'}
     ];
   }
   const vals = s.getRange(2,1,lr-1,3).getDisplayValues(); // [カテゴリ, ラベル, 文章]
-  return vals.map(r=>({cat:r[0],label:r[1],text:r[2]}));
+  return vals
+    .map(r=>({cat:r[0],label:r[1],text:r[2]}))
+    .filter(preset => String(preset && preset.label || '').trim() !== '同意書取得確認');
 }
 
 /***** 施術保存 *****/
@@ -3690,12 +3691,12 @@ function completeConsentVerificationFromNews(payload) {
   const providedNote = String(payload && payload.note || '').trim();
   const note = providedNote
     || (visitPlanDate
-      ? `同意書取得確認（通院予定：${visitPlanDate}）`
-      : '同意書取得確認。');
+      ? `再同意取得確認（通院予定：${visitPlanDate}）`
+      : '再同意取得確認。');
 
   const treatmentPayload = {
     patientId: pid,
-    presetLabel: '同意書取得確認',
+    presetLabel: '再同意取得確認',
     notesParts: { note }
   };
 

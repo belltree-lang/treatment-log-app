@@ -2213,9 +2213,10 @@ function insertPreset(){
     setv('obs', parts.join('\n'));
   }
 
-  if(label.indexOf('請求書・領収書受渡')>=0) _flags.receipt=true;
-  if(label.indexOf('配布物受渡')>=0)         _flags.handout=true;
-  if(label.indexOf('再同意取得確認')>=0 || label.indexOf('同意書取得確認')>=0) _flags.consentObtained=true;
+  const normalizedLabel = String(label);
+  if(normalizedLabel.indexOf('請求書・領収書受渡')>=0) _flags.receipt=true;
+  if(normalizedLabel.indexOf('配布物受渡')>=0)         _flags.handout=true;
+  if(normalizedLabel.indexOf('再同意取得確認')>=0 || normalizedLabel.indexOf('同意書取得確認')>=0) _flags.consentObtained=true;
 
   if(isConsentHandout){
     _flags.consentHandout=true;
@@ -2273,16 +2274,18 @@ function applyConsentHandout(){
 function detectPresetLabelFromNote(){
   const t = (val('obs')||'');
   if(_flags.consentObtained){
-    if(t.indexOf('同意書取得確認')>=0) return '同意書取得確認';
+    if(t.indexOf('再同意取得確認')>=0) return '再同意取得確認';
+    if(t.indexOf('同意書取得確認')>=0) return '再同意取得確認';
     if(t.indexOf('再同意')>=0 && t.indexOf('取得')>=0) return '再同意取得確認';
-    return '同意書取得確認';
+    return '再同意取得確認';
   }
   if(_flags.consentHandout)  return '同意書受渡';
   if(_flags.receipt)         return '請求書・領収書受渡';
   if(_flags.handout)         return '配布物受渡';
   if(t.indexOf('請求書')>=0 && t.indexOf('受け渡し')>=0) return '請求書・領収書受渡';
   if(t.indexOf('配布物')>=0 && t.indexOf('受け渡し')>=0) return '配布物受渡';
-  if(t.indexOf('同意書取得確認')>=0) return '同意書取得確認';
+  if(t.indexOf('再同意取得確認')>=0) return '再同意取得確認';
+  if(t.indexOf('同意書取得確認')>=0) return '再同意取得確認';
   if(t.indexOf('再同意')>=0 && t.indexOf('取得')>=0)     return '再同意取得確認';
   if(t.indexOf('同意書受渡')>=0) return '同意書受渡';
   if(t.indexOf('再同意書')>=0 && t.indexOf('受け渡し')>=0) return '同意書受渡';
@@ -2555,7 +2558,7 @@ function loadNews(patientId, next){
           actionButtons.push(`<button class="btn ok" onclick="handleConsentHandout(${idx})">受渡</button>`);
         }
         if (showConsentVerification) {
-          actionButtons.push(`<button class="btn ok" onclick="handleConsentVerification(${idx})">同意書取得確認</button>`);
+          actionButtons.push(`<button class="btn ok" onclick="handleConsentVerification(${idx})">再同意取得確認</button>`);
         }
         if (showConsentEdit) {
           actionButtons.push('<button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button>');
@@ -2709,7 +2712,7 @@ function handleConsentVerification(index){
     toast('対象のお知らせが見つかりません。');
     return;
   }
-  if (!confirm('「同意書取得確認」を登録しますか？')) return;
+  if (!confirm('「再同意取得確認」を登録しますか？')) return;
   const patientId = pid();
   if (!patientId){
     alert('患者IDを入力してください');
@@ -2734,7 +2737,7 @@ function handleConsentVerification(index){
       if (result && result.skipped) {
         toast(result.msg || '同じ内容が直近に登録済みのため保存をスキップしました');
       } else {
-        toast('同意書取得確認を記録しました');
+        toast('再同意取得確認を記録しました');
       }
       loadNews(patientId);
       loadThisMonth(patientId);
@@ -2744,7 +2747,7 @@ function handleConsentVerification(index){
       _consentVerificationInFlight = false;
       hideGlobalLoading();
       const msg = err && err.message ? err.message : String(err || 'エラー');
-      alert('同意書取得確認の処理に失敗しました: ' + msg);
+      alert('再同意取得確認の処理に失敗しました: ' + msg);
     })
     .completeConsentVerificationFromNews(payload);
 }

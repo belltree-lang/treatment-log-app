@@ -11,6 +11,10 @@
   .controls{ display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
   .controls label{ display:flex; flex-direction:column; font-weight:600; font-size:0.95rem; gap:6px; }
   .controls input,.controls select{ border:1px solid #d1d5db; border-radius:10px; padding:10px 12px; font-size:0.95rem; }
+  .custom-range{ display:none; gap:8px; align-items:flex-end; }
+  .custom-range.active{ display:flex; }
+  .custom-range input{ border:1px solid #d1d5db; border-radius:10px; padding:10px 12px; font-size:0.95rem; }
+  .custom-range span{ color:#6b7280; font-size:0.9rem; }
   button{ appearance:none; border:none; border-radius:999px; background:#2563eb; color:#fff; padding:10px 18px; font-size:0.95rem; font-weight:600; cursor:pointer; }
   button:disabled{ background:#9ca3af; cursor:not-allowed; }
   .status{ margin-bottom:12px; color:#4b5563; font-size:0.9rem; }
@@ -30,12 +34,19 @@
       <label>
         対象期間
         <select id="reportRange">
-          <option value="直近1か月">直近1か月</option>
-          <option value="直近2か月">直近2か月</option>
-          <option value="直近3か月">直近3か月</option>
-          <option value="全期間">全期間</option>
+          <option value="1m">直近1か月</option>
+          <option value="3m">直近3か月</option>
+          <option value="6m" selected>直近6か月</option>
+          <option value="12m">直近12か月</option>
+          <option value="all">全期間</option>
+          <option value="custom">カスタム</option>
         </select>
       </label>
+      <div id="reportRangeCustom" class="custom-range">
+        <input type="date" id="reportRangeStart" />
+        <span>〜</span>
+        <input type="date" id="reportRangeEnd" />
+      </div>
       <div style="display:flex; align-items:flex-end;">
         <button id="reportFetch">報告書を生成</button>
       </div>
@@ -134,7 +145,12 @@ function fetchReports(){
     alert('患者IDを入力してください');
     return;
   }
-  const range = document.getElementById('reportRange').value;
+  const rangeSelect = document.getElementById('reportRange');
+  const rangeKey = rangeSelect ? rangeSelect.value : '6m';
+  const rangePayload = buildReportRangePayload(rangeKey);
+  if (!rangePayload){
+    return;
+  }
   setButtonDisabled(true);
   setReportStatus('報告書を生成しています…');
   google.script.run
@@ -151,7 +167,7 @@ function fetchReports(){
         caremanager: reports.caremanager?.text || '',
         family: reports.family?.text || ''
       });
-      const label = res.rangeLabel || range;
+      const label = res.rangeLabel || rangeSelect?.selectedOptions?.[0]?.text || rangeKey;
       setReportStatus(`${label}の報告書を更新しました。`);
       setButtonDisabled(false);
       loadSavedReports({ silent: true });
@@ -163,7 +179,34 @@ function fetchReports(){
       renderReports({});
       setButtonDisabled(false);
     })
-    .getReportsForUI(pid, range);
+    .getReportsForUI(pid, rangePayload);
+}
+
+function buildReportRangePayload(rangeKey){
+  if (rangeKey === 'custom'){
+    const start = (document.getElementById('reportRangeStart')?.value || '').trim();
+    const end = (document.getElementById('reportRangeEnd')?.value || '').trim();
+    if (!start || !end){
+      alert('カスタム期間を選択した場合は、開始日と終了日を入力してください。');
+      setReportStatus('カスタム期間の開始日と終了日を入力してください。');
+      return null;
+    }
+    return { key: 'custom', start, end };
+  }
+  return { key: rangeKey };
+}
+
+function updateReportCustomRangeVisibility(){
+  const select = document.getElementById('reportRange');
+  const container = document.getElementById('reportRangeCustom');
+  if (!container) return;
+  const show = select && select.value === 'custom';
+  container.classList.toggle('active', !!show);
+}
+const reportRangeSelect = document.getElementById('reportRange');
+if (reportRangeSelect){
+  reportRangeSelect.addEventListener('change', updateReportCustomRangeVisibility);
+  updateReportCustomRangeVisibility();
 }
 document.getElementById('reportFetch').addEventListener('click', fetchReports);
 loadSavedReports();

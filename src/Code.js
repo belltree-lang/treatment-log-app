@@ -43,11 +43,14 @@ const SystemPrompt_DoctorReport_JP = [
   '・「施術の内容・頻度」では目的（可動域改善・筋力強化・疼痛緩和など）と頻度（週2回など）を明確にしてください。',
   '・「患者の状態・経過」では観察事実を中心に、改善傾向・課題・留意点を簡潔に述べてください。',
   '・「特記すべき事項」では安全配慮・施術方針・今後の対応などを記載し、最終文は必ず「今後も安全に配慮しながら施術を継続してまいります。」で締めてください（句点を含む）。',
+  '・同一患者様の過去報告書が提示された場合は、内容を参考にしつつ、重複表現を避け、経過の変化を中心にまとめてください。',
+  '・前回と同じ内容を繰り返す場合は、文言を自然に言い換えてください。',
+  '・報告期間が6か月の場合は、主要な変化点や経過の要約を中心に記述してください。',
   '',
   '【出力言語】',
   '・日本語のみで出力してください。'
 ].join('\n');
-const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special'];
+const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special','期間（月）','参照元レポートID','生成方式'];
 
 const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202501';
 const PATIENT_CACHE_TTL_SECONDS = 90;
@@ -1625,25 +1628,59 @@ function getHandoversInRange_(pid, startDate, endDate){
 }
 
 function resolveIcfSummaryRange_(rangeKey){
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
+  const normalized = normalizeRangeInputObject_(rangeKey);
+  const key = normalized && normalized.key ? normalized.key : 'all';
+  const now = new Date();
+  const defaultEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  let end = defaultEnd;
   let start = null;
   let label = '全期間';
+  let monthsValue = 'all';
+  const formatYmd = (date) => {
+    if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
 
-  switch (rangeKey) {
+  switch (key) {
     case '1m':
     case '2m':
-    case '3m': {
-      const months = Number(rangeKey.replace('m', ''));
+    case '3m':
+    case '6m':
+    case '12m': {
+      const months = Number(String(key).replace('m', '')) || 0;
+      monthsValue = String(months || '');
       label = `直近${months}か月`;
       start = new Date(end.getTime());
       start.setHours(0, 0, 0, 0);
       start.setMonth(start.getMonth() - months);
       break;
     }
+    case 'custom': {
+      const startCandidate = parseDateFlexible_(normalized.start || '');
+      const endCandidate = parseDateFlexible_(normalized.end || '') || parseDateFlexible_(normalized.start || '');
+      if (!startCandidate || !endCandidate) {
+        throw new Error('カスタム期間の開始日と終了日を指定してください。');
+      }
+      const startDate = new Date(startCandidate.getFullYear(), startCandidate.getMonth(), startCandidate.getDate(), 0, 0, 0, 0);
+      const endDate = new Date(endCandidate.getFullYear(), endCandidate.getMonth(), endCandidate.getDate(), 23, 59, 59, 999);
+      if (startDate.getTime() > endDate.getTime()) {
+        throw new Error('カスタム期間の開始日が終了日より後になっています。');
+      }
+      start = startDate;
+      end = endDate;
+      monthsValue = normalized.months != null ? String(normalized.months) : 'custom';
+      const endLabelDate = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 0, 0, 0, 0);
+      label = `${formatYmd(startDate)}〜${formatYmd(endLabelDate)}`;
+      break;
+    }
+    case 'all':
     default:
       label = '全期間';
       start = null;
+      monthsValue = 'all';
       break;
   }
 
@@ -1651,7 +1688,15 @@ function resolveIcfSummaryRange_(rangeKey){
     start = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0);
   }
 
-  return { startDate: start, endDate: end, label };
+  return {
+    key,
+    startDate: start,
+    endDate: end,
+    label,
+    months: monthsValue,
+    customStart: normalized.start || '',
+    customEnd: normalized.end || ''
+  };
 }
 
 /***** 同意・負担割合 更新（findPatientRow_ベース） *****/
@@ -2623,16 +2668,70 @@ function normalizeAudienceRange_(rangeInput){
     '3m': '3m',
     'three_month': '3m',
     '全期間': 'all',
-    'all': 'all'
+    'all': 'all',
+    '直近6か月': '6m',
+    '直近６か月': '6m',
+    '直近6ヶ月': '6m',
+    '直近６ヶ月': '6m',
+    '6m': '6m',
+    'six_month': '6m',
+    '直近12か月': '12m',
+    '直近１２か月': '12m',
+    '直近12ヶ月': '12m',
+    '直近１２ヶ月': '12m',
+    '12m': '12m',
+    'twelve_month': '12m',
+    'custom': 'custom',
+    'カスタム': 'custom'
   };
   if (map[raw]) return map[raw];
   if (map[lower]) return map[lower];
-  const match = raw.match(/直近\s*(\d+)\s*か?月/);
+  const match = raw.match(/直近\s*(\d+)\s*(?:か月|ヶ月|か?\s*月)/);
   if (match) {
     const months = Math.max(1, Number(match[1] || 1));
     return `${months}m`;
   }
   return raw;
+}
+
+function normalizeRangeInputObject_(rangeInput){
+  if (rangeInput == null || rangeInput === '') {
+    return { key: 'all' };
+  }
+  if (typeof rangeInput === 'object') {
+    const keyCandidate = rangeInput.key != null ? rangeInput.key
+      : rangeInput.range != null ? rangeInput.range
+        : rangeInput.value != null ? rangeInput.value
+          : rangeInput.label;
+    const key = normalizeAudienceRange_(keyCandidate);
+    const normalized = { key: key || 'all' };
+    if (normalized.key === 'custom') {
+      normalized.start = rangeInput.start || rangeInput.startDate || rangeInput.from || '';
+      normalized.end = rangeInput.end || rangeInput.endDate || rangeInput.to || '';
+    }
+    if (rangeInput.months != null) {
+      normalized.months = rangeInput.months;
+    }
+    return normalized;
+  }
+
+  const raw = String(rangeInput || '').trim();
+  if (!raw) {
+    return { key: 'all' };
+  }
+  const key = normalizeAudienceRange_(raw);
+  if (key === 'custom') {
+    const normalized = { key: 'custom', start: '', end: '' };
+    const customPrefixPattern = /^(custom|カスタム)[\s:：-]*/i;
+    const rest = raw.replace(customPrefixPattern, '').trim();
+    if (rest) {
+      const tokens = rest.split(/[~〜\-–—|,、\s]+/).map(t => t.trim()).filter(Boolean);
+      if (tokens.length >= 1) normalized.start = tokens[0];
+      if (tokens.length >= 2) normalized.end = tokens[1];
+    }
+    return normalized;
+  }
+  return { key: key || 'all' };
 }
 
 function buildAiReportPrompt_(header, context){
@@ -2698,7 +2797,7 @@ function buildAiReportSystemPrompt_(reportType){
 }
 
 function generateAiSummaryServer(patientId, rangeKey, audience) {
-  const range = resolveIcfSummaryRange_(rangeKey || 'all');
+  const range = resolveIcfSummaryRange_(rangeKey);
   const source = buildIcfSource_(patientId, range);
   const audienceMeta = resolveAudienceMeta_(audience);
 
@@ -2718,10 +2817,18 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
     consentText: source.consent,
     frequencyLabel: source.frequencyLabel,
     rangeLabel: range.label,
+    range,
     notes: source.notes,
     handovers: source.handovers
   };
 
+  const timezone = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const formatDate = (date) => {
+    if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+    return Utilities.formatDate(date, timezone, 'yyyy-MM-dd');
+  };
+
+  let referenceReport = null;
   if (audienceMeta.key === 'doctor') {
     const latestHandover = getLatestHandoverEntry_(patientId);
     const today = new Date();
@@ -2740,11 +2847,36 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
         }
       };
     }
+    referenceReport = findLatestDoctorReportEntry_(header.patientId);
+    if (referenceReport && referenceReport.text) {
+      context.previousDoctorReport = {
+        text: referenceReport.text,
+        when: referenceReport.when,
+        ts: referenceReport.ts,
+        rangeLabel: referenceReport.rangeLabel,
+        rowNumber: referenceReport.rowNumber
+      };
+    }
   }
 
   const aiRes = composeAiReportViaOpenAI_(header, context, audienceMeta.key) || {};
   const text = typeof aiRes === 'object' ? (aiRes.text || '') : String(aiRes || '');
   const usedAi = !(aiRes && aiRes.via === 'local');
+
+  const baseMeta = {
+    patientFound: true,
+    rangeLabel: range.label,
+    rangeKey: range.key,
+    rangeMonths: range.months,
+    rangeStart: formatDate(range.startDate),
+    rangeEnd: formatDate(range.endDate),
+    noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
+    handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
+    generationMode: usedAi ? 'AI' : 'ローカル整形'
+  };
+  if (referenceReport && referenceReport.rowNumber != null) {
+    baseMeta.referenceReportId = String(referenceReport.rowNumber);
+  }
 
   const result = {
     ok: true,
@@ -2752,12 +2884,7 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
     audience: audienceMeta.key,
     audienceLabel: audienceMeta.label,
     text,
-    meta: {
-      patientFound: true,
-      rangeLabel: range.label,
-      noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
-      handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0
-    }
+    meta: baseMeta
   };
 
   if (aiRes && typeof aiRes === 'object' && aiRes.special != null) {
@@ -2861,6 +2988,18 @@ function buildReportPrompt_(header, context, audienceKey) {
     lines.push('');
     lines.push('上記情報をもとに医師向け施術報告書を作成してください。');
     lines.push('必要に応じてVASやADLなどの客観指標を強調して構成してください。');
+    if (context && context.previousDoctorReport && context.previousDoctorReport.text) {
+      const previous = context.previousDoctorReport;
+      const headerParts = [];
+      if (previous.rangeLabel) headerParts.push(`対象期間：${String(previous.rangeLabel).trim()}`);
+      if (previous.when) headerParts.push(`作成日時：${String(previous.when).trim()}`);
+      lines.push('');
+      lines.push(headerParts.length ? `【前回報告書】${headerParts.join(' ｜ ')}` : '【前回報告書】');
+      lines.push('---');
+      lines.push(String(previous.text).trim());
+      lines.push('---');
+      lines.push('前回内容を踏まえつつ、重複表現を避けて最新の経過を反映してください。');
+    }
     return {
       systemPrompt: SystemPrompt_DoctorReport_JP,
       userPrompt: lines.join('\n')
@@ -3028,6 +3167,30 @@ function persistAiReportsBatch_(patientId, rangeLabel, summaries){
     const specialText = specialList.join('\n');
     const ts = new Date();
     const rangeText = label || String(meta.rangeLabel || '');
+    let periodValue = '';
+    if (meta.rangeMonths != null && meta.rangeMonths !== '') {
+      periodValue = String(meta.rangeMonths);
+    } else if (meta.periodMonths != null && meta.periodMonths !== '') {
+      periodValue = String(meta.periodMonths);
+    } else if (meta.rangeKey) {
+      const keyText = String(meta.rangeKey);
+      if (/^\d+m$/.test(keyText)) {
+        periodValue = keyText.replace('m', '');
+      } else if (keyText === 'all') {
+        periodValue = 'all';
+      } else if (keyText === 'custom') {
+        periodValue = 'custom';
+      }
+    }
+    const referenceReportId = meta.referenceReportId != null ? String(meta.referenceReportId) : '';
+    const generationMode = meta.generationMode
+      ? String(meta.generationMode)
+      : (summary.usedAi === false ? 'ローカル整形' : 'AI');
+    meta.rangeLabel = rangeText;
+    meta.rangeKey = meta.rangeKey || (periodValue && periodValue !== 'all' && periodValue !== 'custom' ? `${periodValue}m` : (periodValue || ''));
+    meta.rangeMonths = periodValue;
+    meta.referenceReportId = referenceReportId;
+    meta.generationMode = generationMode;
     rows.push([
       ts,
       String(normalized),
@@ -3036,7 +3199,10 @@ function persistAiReportsBatch_(patientId, rangeLabel, summaries){
       audienceMeta.key,
       text,
       status,
-      specialText
+      specialText,
+      periodValue,
+      referenceReportId,
+      generationMode
     ]);
     const savedMeta = Object.assign({}, meta, {
       rangeLabel: rangeText,
@@ -3102,7 +3268,22 @@ function fetchReportHistoryForPid_(normalized){
     const text = row[5] != null ? String(row[5]) : (disp[5] || '');
     const status = row[6] != null ? String(row[6]) : (disp[6] || '');
     const special = parseReportSpecialText_(row[7] != null ? row[7] : disp[7]);
+    const periodRaw = row.length > 8 && row[8] != null ? row[8] : (disp.length > 8 ? disp[8] : '');
+    const periodMonths = periodRaw != null && periodRaw !== '' ? String(periodRaw) : '';
+    const referenceRaw = row.length > 9 && row[9] != null ? row[9] : (disp.length > 9 ? disp[9] : '');
+    const referenceReportId = referenceRaw != null && referenceRaw !== '' ? String(referenceRaw) : '';
+    const modeRaw = row.length > 10 && row[10] != null ? row[10] : (disp.length > 10 ? disp[10] : '');
     const parsedStatus = parseReportStatusMeta_(status);
+    const generationMode = modeRaw != null && modeRaw !== ''
+      ? String(modeRaw)
+      : (parsedStatus.usedAi === false ? 'ローカル整形' : 'AI');
+    const derivedRangeKey = periodMonths
+      ? (periodMonths === 'all'
+        ? 'all'
+        : periodMonths === 'custom'
+          ? 'custom'
+          : `${periodMonths}m`)
+      : '';
     rows.push({
       rowNumber: sheetRow,
       ts,
@@ -3117,11 +3298,29 @@ function fetchReportHistoryForPid_(normalized){
       meta: {
         rangeLabel,
         noteCount: parsedStatus.noteCount,
-        handoverCount: parsedStatus.handoverCount
+        handoverCount: parsedStatus.handoverCount,
+        rangeMonths: periodMonths,
+        rangeKey: derivedRangeKey,
+        referenceReportId,
+        generationMode: generationMode || (parsedStatus.usedAi === false ? 'ローカル整形' : 'AI')
       }
     });
   }
   return rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+
+function findLatestDoctorReportEntry_(patientId){
+  const normalized = normId_(patientId);
+  if (!normalized) return null;
+  const history = fetchReportHistoryForPid_(normalized);
+  if (!Array.isArray(history) || !history.length) return null;
+  for (let i = 0; i < history.length; i++) {
+    const entry = history[i];
+    if (entry && entry.audience === 'doctor' && entry.text && String(entry.text).trim()) {
+      return entry;
+    }
+  }
+  return null;
 }
 
 function listPatientReports(patientId) {
@@ -3213,6 +3412,13 @@ function updateAiReportEntry(payload) {
     statusRange.setValue(updatedStatus);
   }
 
+  const generationRange = sheet.getRange(rowNumber, 11);
+  try {
+    generationRange.setValue('編集反映');
+  } catch (err) {
+    Logger.log('[updateAiReportEntry] failed to set generation mode: ' + (err && err.message ? err.message : err));
+  }
+
   invalidatePatientCaches_(pid, { reports: true });
 
   return {
@@ -3264,6 +3470,10 @@ function duplicateAiReportEntry(payload) {
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
   const now = new Date();
 
+  const periodValue = values.length > 8 ? values[8] : '';
+  const referenceId = values.length > 9 ? values[9] : '';
+  const generationMode = '再生成';
+
   sheet.appendRow([
     now,
     pid,
@@ -3272,7 +3482,10 @@ function duplicateAiReportEntry(payload) {
     audienceMeta.key,
     text,
     status,
-    sourceSpecial
+    sourceSpecial,
+    periodValue,
+    referenceId,
+    generationMode
   ]);
 
   invalidatePatientCaches_(pid, { reports: true });
@@ -3403,7 +3616,7 @@ function buildAudienceNarrative_(audienceMeta, header, range, source, sections){
  * 3種類まとめて生成（doctor / caremanager / family）
  */
 function generateAllAiSummariesServer(patientId, rangeKey) {
-  const range = resolveIcfSummaryRange_(rangeKey || 'all');
+  const range = resolveIcfSummaryRange_(rangeKey);
   const source = buildIcfSource_(patientId, range);
 
   if (!source.patientFound) {
@@ -3421,20 +3634,57 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
     consentText: source.consent,
     frequencyLabel: source.frequencyLabel,
     rangeLabel: range.label,
+    range,
     notes: source.notes,
     handovers: source.handovers
   };
 
-  const doctorRes = composeAiReportViaOpenAI_(header, context, 'doctor') || {};
+  const timezone = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const formatDate = (date) => {
+    if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+    return Utilities.formatDate(date, timezone, 'yyyy-MM-dd');
+  };
+
+  const baseMeta = {
+    patientFound: true,
+    rangeLabel: range.label,
+    rangeKey: range.key,
+    rangeMonths: range.months,
+    rangeStart: formatDate(range.startDate),
+    rangeEnd: formatDate(range.endDate),
+    noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
+    handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
+    generationMode: 'AI'
+  };
+
+  const doctorContext = Object.assign({}, context);
+  const previousDoctorReport = findLatestDoctorReportEntry_(header.patientId);
+  if (previousDoctorReport && previousDoctorReport.text) {
+    doctorContext.previousDoctorReport = {
+      text: previousDoctorReport.text,
+      when: previousDoctorReport.when,
+      ts: previousDoctorReport.ts,
+      rangeLabel: previousDoctorReport.rangeLabel,
+      rowNumber: previousDoctorReport.rowNumber
+    };
+  }
+
+  const doctorRes = composeAiReportViaOpenAI_(header, doctorContext, 'doctor') || {};
   const caremanagerRes = composeAiReportViaOpenAI_(header, context, 'caremanager') || {};
   const familyRes = composeAiReportViaOpenAI_(header, context, 'family') || {};
 
-  const sharedMeta = {
-    patientFound: true,
-    rangeLabel: range.label,
-    noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
-    handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0
-  };
+  const doctorMeta = Object.assign({}, baseMeta, {
+    generationMode: !(doctorRes && doctorRes.via === 'local') ? 'AI' : 'ローカル整形'
+  });
+  if (previousDoctorReport && previousDoctorReport.rowNumber != null) {
+    doctorMeta.referenceReportId = String(previousDoctorReport.rowNumber);
+  }
+  const caremanagerMeta = Object.assign({}, baseMeta, {
+    generationMode: !(caremanagerRes && caremanagerRes.via === 'local') ? 'AI' : 'ローカル整形'
+  });
+  const familyMeta = Object.assign({}, baseMeta, {
+    generationMode: !(familyRes && familyRes.via === 'local') ? 'AI' : 'ローカル整形'
+  });
 
   const reports = {
     doctor: {
@@ -3444,7 +3694,7 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
       audienceLabel: getIcfAudienceLabel_('doctor'),
       text: typeof doctorRes === 'object' ? (doctorRes.text || '') : String(doctorRes || ''),
       special: typeof doctorRes === 'object' ? doctorRes.special : undefined,
-      meta: Object.assign({}, sharedMeta)
+      meta: doctorMeta
     },
     caremanager: {
       ok: true,
@@ -3453,7 +3703,7 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
       audienceLabel: getIcfAudienceLabel_('caremanager'),
       text: typeof caremanagerRes === 'object' ? (caremanagerRes.text || '') : String(caremanagerRes || ''),
       special: typeof caremanagerRes === 'object' ? caremanagerRes.special : undefined,
-      meta: Object.assign({}, sharedMeta)
+      meta: caremanagerMeta
     },
     family: {
       ok: true,
@@ -3462,7 +3712,7 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
       audienceLabel: getIcfAudienceLabel_('family'),
       text: typeof familyRes === 'object' ? (familyRes.text || '') : String(familyRes || ''),
       special: typeof familyRes === 'object' ? familyRes.special : undefined,
-      meta: Object.assign({}, sharedMeta)
+      meta: familyMeta
     }
   };
 
@@ -3484,7 +3734,7 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
     usedAi: true,
     reports,
     rangeLabel: range.label,
-    meta: sharedMeta
+    meta: baseMeta
   };
 }
 
@@ -3522,9 +3772,10 @@ function generateAiReport(payload) {
     };
   }
 
-  const rangeKeyRaw = payload.range || payload.rangeKey || 'all';
-  const rangeKey = normalizeAudienceRange_(rangeKeyRaw);
-  return generateAiSummaryServer(patientId, rangeKey, meta.key);
+  const rangeInput = payload && payload.range != null
+    ? payload.range
+    : (payload && payload.rangeKey != null ? payload.rangeKey : 'all');
+  return generateAiSummaryServer(patientId, rangeInput, meta.key);
 }
 
 /**

@@ -62,6 +62,10 @@
   .icf-range-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center }
   .icf-range-row label{ font-weight:600; font-size:0.95rem }
   .icf-range-row select{ max-width:220px }
+  .icf-custom-range{ display:none; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+  .icf-custom-range.active{ display:flex; }
+  .icf-custom-range input{ border:1px solid #d1d5db; border-radius:8px; padding:6px 10px; font-size:0.95rem; }
+  .icf-range-separator{ color:#6b7280; font-size:0.9rem; }
   .icf-actions{ display:flex; flex-wrap:wrap; gap:8px }
   .icf-status-text{ margin-bottom:12px; white-space:pre-line }
   .ai-report-actions{ display:flex; flex-wrap:wrap; gap:6px }
@@ -205,6 +209,11 @@
             <div class="icf-range-row">
               <label for="icfRange">対象期間</label>
               <select id="icfRange" onchange="onIcfRangeChange(this)"></select>
+            </div>
+            <div id="icfCustomRangeFields" class="icf-custom-range">
+              <input type="date" id="icfRangeStart" onchange="onIcfCustomRangeChange()" />
+              <span class="icf-range-separator">〜</span>
+              <input type="date" id="icfRangeEnd" onchange="onIcfCustomRangeChange()" />
             </div>
             <div class="icf-actions">
               <button class="btn ghost" data-icf-audience="doctor" onclick="generateAiSummary('doctor')">医師向け報告書</button>
@@ -1232,9 +1241,11 @@ let _doctorReportReminderInFlight = false;
 let _aiReportEditorContext = null;
 const ICF_RANGE_OPTIONS = [
   { key: '1m', label: '直近1か月' },
-  { key: '2m', label: '直近2か月' },
   { key: '3m', label: '直近3か月' },
-  { key: 'all', label: '全期間' }
+  { key: '6m', label: '直近6か月' },
+  { key: '12m', label: '直近12か月' },
+  { key: 'all', label: '全期間' },
+  { key: 'custom', label: 'カスタム期間' }
 ];
 const ICF_AUDIENCE_LABELS = {
   doctor: '医師向け報告書',
@@ -1242,7 +1253,7 @@ const ICF_AUDIENCE_LABELS = {
   family: '家族向けサマリ'
 };
 const ICF_REPORT_HISTORY_LIMIT = 10;
-let _icfSummaryState = { range: '1m', results: {}, doctorPdf: null };
+let _icfSummaryState = { range: '6m', customStart: '', customEnd: '', results: {}, doctorPdf: null };
 let _icfReportHistoryState = { loading: false, rows: [], error: null };
 
 function resetFlags(){
@@ -1267,6 +1278,7 @@ function setupIcfSummaryUI(){
     select.value = hasDefault ? defaultKey : ICF_RANGE_OPTIONS[0].key;
     _icfSummaryState.range = select.value;
   }
+  updateIcfCustomRangeVisibility();
   resetIcfSummaries();
 }
 
@@ -1274,6 +1286,7 @@ function onIcfRangeChange(sel){
   if (!sel) return;
   const key = sel.value || 'all';
   _icfSummaryState.range = key;
+  updateIcfCustomRangeVisibility();
   resetIcfSummaries('対象期間を変更しました。サマリを生成してください。');
 }
 
@@ -1292,6 +1305,49 @@ function resetIcfSummaries(message){
   }
 }
 
+function onIcfCustomRangeChange(){
+  const startInput = q('icfRangeStart');
+  const endInput = q('icfRangeEnd');
+  _icfSummaryState.customStart = startInput ? startInput.value.trim() : '';
+  _icfSummaryState.customEnd = endInput ? endInput.value.trim() : '';
+}
+
+function updateIcfCustomRangeVisibility(){
+  const container = q('icfCustomRangeFields');
+  const startInput = q('icfRangeStart');
+  const endInput = q('icfRangeEnd');
+  if (!container) return;
+  const show = (_icfSummaryState.range || 'all') === 'custom';
+  container.classList.toggle('active', !!show);
+  if (show) {
+    if (startInput) startInput.value = _icfSummaryState.customStart || '';
+    if (endInput) endInput.value = _icfSummaryState.customEnd || '';
+  }
+}
+
+function ensureValidRangeSelection(rangeKey){
+  if (rangeKey !== 'custom') return true;
+  onIcfCustomRangeChange();
+  if (!_icfSummaryState.customStart || !_icfSummaryState.customEnd) {
+    alert('カスタム期間を選択した場合は開始日と終了日を入力してください。');
+    updateIcfSummaryStatus('カスタム期間の開始日と終了日を入力してください。');
+    return false;
+  }
+  return true;
+}
+
+function buildIcfRangePayload(rangeKey){
+  if (rangeKey === 'custom') {
+    onIcfCustomRangeChange();
+    return {
+      key: 'custom',
+      start: (_icfSummaryState.customStart || '').trim(),
+      end: (_icfSummaryState.customEnd || '').trim()
+    };
+  }
+  return { key: rangeKey };
+}
+
 function updateIcfSummaryStatus(message){
   const el = q('icfSummaryStatus');
   if (!el) return;
@@ -1307,11 +1363,39 @@ function buildIcfMetaText(data){
   const meta = data.meta || {};
   const parts = [];
   if (meta.rangeLabel) parts.push(meta.rangeLabel);
+
   const counts = [];
   if (meta.noteCount != null) counts.push(`施術録 ${meta.noteCount}件`);
   if (meta.handoverCount != null) counts.push(`申し送り ${meta.handoverCount}件`);
   if (counts.length) parts.push(counts.join('・'));
-  parts.push(data.usedAi ? 'AI整形' : 'ローカル整形');
+
+  if (meta.referenceReportId) {
+    parts.push(`参照: #${meta.referenceReportId}`);
+  }
+
+  const modeRaw = typeof meta.generationMode === 'string' ? meta.generationMode.trim() : '';
+  let modeLabel = '';
+  switch (modeRaw) {
+    case 'AI':
+      modeLabel = data.usedAi === false ? 'ローカル整形' : 'AI整形';
+      break;
+    case 'ローカル整形':
+    case 'local':
+    case 'LOCAL':
+      modeLabel = 'ローカル整形';
+      break;
+    case '再生成':
+    case '編集反映':
+      modeLabel = modeRaw;
+      break;
+    case 'コピー複製':
+      modeLabel = '複製保存';
+      break;
+    default:
+      modeLabel = modeRaw || (data.usedAi === false ? 'ローカル整形' : 'AI整形');
+  }
+  if (modeLabel) parts.push(modeLabel);
+
   return parts.filter(Boolean).join(' ｜ ');
 }
 
@@ -1846,20 +1930,22 @@ function submitAiReportEditor(){
 }
 
 function callGenerateAiSummary(pidValue, rangeKey, audience){
+  const rangePayload = buildIcfRangePayload(rangeKey);
   return new Promise((resolve, reject)=>{
     google.script.run
       .withSuccessHandler(resolve)
       .withFailureHandler(err => reject(err))
-      .generateAiSummaryServer(pidValue, rangeKey, audience); // 新しいサーバー関数
+      .generateAiSummaryServer(pidValue, rangePayload, audience); // 新しいサーバー関数
   });
 }
 
-function callGenerateAllAiSummaries(pidValue, rangeLabel){
+function callGenerateAllAiSummaries(pidValue, rangeKey){
+  const rangePayload = buildIcfRangePayload(rangeKey);
   return new Promise((resolve, reject)=>{
     google.script.run
       .withSuccessHandler(resolve)
       .withFailureHandler(err => reject(err))
-      .generateAllAiSummariesServer(pidValue, rangeLabel); // 新しいサーバー関数
+      .generateAllAiSummariesServer(pidValue, rangePayload); // 新しいサーバー関数
   });
 }
 
@@ -1868,6 +1954,9 @@ async function generateAiSummary(audience, options){
   const p = pid();
   if(!p){ alert('患者IDを入力してください'); return false; }
   const rangeKey = opts.rangeKey || _icfSummaryState.range || 'all';
+  if (!ensureValidRangeSelection(rangeKey)) {
+    return false;
+  }
   const label = getIcfAudienceLabel(audience);
   const disableButtons = opts.disableButtons !== false;
   if (disableButtons) setIcfButtonsDisabled(true);
@@ -1921,12 +2010,13 @@ async function generateAllAiSummaries(){
   const p = pid();
   if(!p){ alert('患者IDを入力してください'); return; }
   const rangeKey = _icfSummaryState.range || 'all';
-  const rangeOption = ICF_RANGE_OPTIONS.find(opt => opt.key === rangeKey);
-  const rangeLabel = rangeOption ? rangeOption.label : rangeKey;
+  if (!ensureValidRangeSelection(rangeKey)) {
+    return;
+  }
   setIcfButtonsDisabled(true);
   updateIcfSummaryStatus('3種類のサマリを生成しています…');
   try {
-    const res = await callGenerateAllAiSummaries(p, rangeLabel);
+    const res = await callGenerateAllAiSummaries(p, rangeKey);
     if (!res || !res.ok){
       alert('サマリ生成に失敗しました。');
       return;
@@ -1942,12 +2032,13 @@ async function generateAllAiSummaries(){
 }
 
 
-function callGetReportsForUI(pidValue, rangeLabel){
+function callGetReportsForUI(pidValue, rangeKey){
+  const rangePayload = buildIcfRangePayload(rangeKey);
   return new Promise((resolve, reject)=>{
     google.script.run
       .withSuccessHandler(resolve)
       .withFailureHandler(err => reject(err))
-      .generateAllAiSummariesServer(pidValue, rangeLabel);
+      .generateAllAiSummariesServer(pidValue, rangePayload);
   });
 }
 
@@ -2001,12 +2092,13 @@ async function generateAllIcfSummaries(){
   const p = pid();
   if(!p){ alert('患者IDを入力してください'); return; }
   const rangeKey = _icfSummaryState.range || 'all';
-  const rangeOption = ICF_RANGE_OPTIONS.find(opt => opt.key === rangeKey);
-  const rangeLabel = rangeOption ? rangeOption.label : rangeKey;
+  if (!ensureValidRangeSelection(rangeKey)) {
+    return;
+  }
   setIcfButtonsDisabled(true);
   updateIcfSummaryStatus('3種類のサマリを生成しています…');
   try {
-    const res = await callGetReportsForUI(p, rangeLabel);
+    const res = await callGetReportsForUI(p, rangeKey);
     const aggregated = res && res.reports ? res.reports : null;
     if (!res || !res.ok || !aggregated || !aggregated.ok){
       const message = res && res.rangeLabel ? `${res.rangeLabel}のサマリ生成に失敗しました。` : 'サマリ生成に失敗しました。';
@@ -3100,7 +3192,7 @@ function handleDoctorReportReminder(index){
     alert('患者IDを入力してください');
     return;
   }
-  const rangeKey = '3m';
+  const rangeKey = '6m';
   const rangeSelect = q('icfRange');
   if (rangeSelect) {
     if (rangeSelect.value !== rangeKey) {
@@ -3109,6 +3201,7 @@ function handleDoctorReportReminder(index){
     }
   } else {
     _icfSummaryState.range = rangeKey;
+    updateIcfCustomRangeVisibility();
   }
   highlightElement('icfSummaryBox', { scrollIntoView: true });
   const payload = {

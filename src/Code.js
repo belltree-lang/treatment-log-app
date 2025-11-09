@@ -20,12 +20,15 @@ const CLINICAL_METRICS = [
   { id: 'walk_distance', label: '歩行距離（6MWT）', unit: 'm',   min: 0,   max: 600, step: 5,   description: '6分間歩行距離などの歩行パフォーマンス' },
 ];
 
+const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special'];
+
 const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202501';
 const PATIENT_CACHE_TTL_SECONDS = 90;
 const PATIENT_CACHE_KEYS = {
   header: pid => 'patient:header:' + normId_(pid),
   news: pid => 'patient:news:' + normId_(pid),
   treatments: pid => 'patient:treatments:' + normId_(pid),
+  reports: pid => 'patient:reports:' + normId_(pid),
 };
 const GLOBAL_NEWS_CACHE_KEY = 'patient:news:__global__';
 
@@ -99,6 +102,7 @@ function collectPatientCacheKeys_(pid, scope){
   if (applyAll || scope.header) keys.push(PATIENT_CACHE_KEYS.header(normalized));
   if (applyAll || scope.news) keys.push(PATIENT_CACHE_KEYS.news(normalized));
   if (applyAll || scope.treatments) keys.push(PATIENT_CACHE_KEYS.treatments(normalized));
+  if (applyAll || scope.reports) keys.push(PATIENT_CACHE_KEYS.reports(normalized));
   return keys;
 }
 
@@ -232,12 +236,13 @@ function ensureAuxSheets_(options) {
 
     upgradeHeader('施術録', ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
     upgradeHeader('News',   ['TS','患者ID','種別','メッセージ','cleared','meta']);
+    upgradeHeader('AI報告書', AI_REPORT_SHEET_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
     ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
     ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
     ensureHeader('定型文',   ['カテゴリ','ラベル','文章']);
     ensureHeader('添付索引', ['TS','患者ID','月','ファイル名','FileId','種別','登録者']);
-    ensureHeader('AI報告書', ['TS','患者ID','範囲','対象','status','special']);
+    ensureHeader('AI報告書', AI_REPORT_SHEET_HEADER);
 
     // 年次確認タブ（未作成時はヘッダだけ用意）
     ensureHeader('年次確認', ['患者ID','年','確認日','担当者メール']);
@@ -311,8 +316,18 @@ function ensureAiReportSheet_(){
   if (!sheet) {
     sheet = wb.insertSheet('AI報告書');
   }
+  const needed = AI_REPORT_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
   if (sheet.getLastRow() === 0) {
-    sheet.appendRow(['TS','患者ID','範囲','対象','status','special']);
+    sheet.getRange(1, 1, 1, needed).setValues([AI_REPORT_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || AI_REPORT_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([AI_REPORT_SHEET_HEADER]);
   }
   return sheet;
 }
@@ -2216,14 +2231,7 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
     };
   }
 
-  const header = {
-    hospital: source.hospital,
-    doctor: source.doctor,
-    name: source.name,
-    birth: source.birth,
-    patientId: patientId
-  };
-
+  const header = Object.assign({ patientId }, source.header || {});
   const context = {
     consentText: source.consent,
     frequencyLabel: source.frequencyLabel,
@@ -2234,16 +2242,16 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
     metrics: source.metrics
   };
 
-  // ★ AIに直接投げる
-  const aiResult = composeAiReportViaOpenAI_(header, context, audienceMeta.key);
-  const text = (aiResult && typeof aiResult === 'object') ? aiResult.text : String(aiResult || '');
+  const aiRes = composeAiReportViaOpenAI_(header, context, audienceMeta.key) || {};
+  const text = typeof aiRes === 'object' ? (aiRes.text || '') : String(aiRes || '');
+  const usedAi = !(aiRes && aiRes.via === 'local');
 
-  return {
+  const result = {
     ok: true,
-    usedAi: true,
+    usedAi,
     audience: audienceMeta.key,
     audienceLabel: audienceMeta.label,
-    text: text,
+    text,
     meta: {
       patientFound: true,
       rangeLabel: range.label,
@@ -2252,6 +2260,18 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
       metricCount: source.metrics?.metrics?.length || 0
     }
   };
+
+  if (aiRes && typeof aiRes === 'object' && aiRes.special != null) {
+    result.special = aiRes.special;
+  }
+
+  const saved = persistAiReportsBatch_(header.patientId, range.label, [result]);
+  if (saved && saved.length) {
+    result.savedAt = saved[0].ts;
+    result.persisted = true;
+  }
+
+  return result;
 }
 /***** OpenAI で AI レポート生成 *****/
 function composeAiReportViaOpenAI_(header, context, audienceKey) {
@@ -2346,29 +2366,233 @@ function normalizeReportSpecial_(special){
     .filter(Boolean);
 }
 
-function recordAiReportOutcome_(header, range, audienceMeta, outcome, final){
-  if (!header || !header.patientId) return;
+function parseReportSpecialText_(value){
+  return normalizeReportSpecial_(value);
+}
+
+function parseReportStatusMeta_(status){
+  const meta = {
+    usedAi: null,
+    noteCount: null,
+    handoverCount: null,
+    metricCount: null
+  };
+  const text = String(status || '').trim();
+  if (!text) return meta;
+  text.split('|')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .forEach(part => {
+      const [rawKey, rawValue] = part.split('=');
+      const key = (rawKey || '').trim().toLowerCase();
+      const value = (rawValue || '').trim();
+      if (!key) return;
+      if (key === 'via') {
+        meta.usedAi = value !== 'local';
+        return;
+      }
+      const num = Number(value);
+      if (Number.isFinite(num)) {
+        if (key === 'notes') meta.noteCount = num;
+        if (key === 'handovers') meta.handoverCount = num;
+        if (key === 'metrics') meta.metricCount = num;
+      }
+    });
+  return meta;
+}
+
+function resolveAudienceKeyFromAny_(keyCandidate, labelCandidate){
+  const normalizedKey = String(keyCandidate || '').trim();
+  if (normalizedKey) {
+    const meta = resolveAudienceMeta_(normalizedKey);
+    if (meta && meta.key) {
+      return meta.key;
+    }
+  }
+  const label = String(labelCandidate || '').trim();
+  if (!label) {
+    return normalizedKey.toLowerCase();
+  }
+  if (label === '医師向け報告書') return 'doctor';
+  if (label === 'ケアマネ向けサマリ') return 'caremanager';
+  if (label === '家族向けサマリ') return 'family';
+  return normalizedKey.toLowerCase();
+}
+
+function persistAiReportsBatch_(patientId, rangeLabel, summaries){
+  const normalized = normId_(patientId);
+  if (!normalized || !Array.isArray(summaries) || !summaries.length) {
+    return [];
+  }
+
   const sheet = ensureAiReportSheet_();
-  const statusParts = [];
-  statusParts.push(outcome.usedAi ? 'via=ai' : 'via=local');
-  const meta = outcome.meta || {};
-  if (meta.noteCount != null) statusParts.push(`notes=${meta.noteCount}`);
-  if (meta.handoverCount != null) statusParts.push(`handovers=${meta.handoverCount}`);
-  if (meta.metricCount != null) statusParts.push(`metrics=${meta.metricCount}`);
-  if (final && final.httpCode) statusParts.push(`http=${final.httpCode}`);
-  if (final && typeof final.responseLength === 'number') statusParts.push(`len=${final.responseLength}`);
-  const status = statusParts.join(' | ');
-  const specialText = Array.isArray(outcome.special)
-    ? outcome.special.join('\n')
-    : String(outcome.special || '');
-  sheet.appendRow([
-    new Date(),
-    String(header.patientId || ''),
-    range && range.label ? range.label : '',
-    audienceMeta && audienceMeta.label ? audienceMeta.label : audienceMeta.key || '',
-    status,
-    specialText
-  ]);
+  const rows = [];
+  const saved = [];
+  const timezone = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const label = String(rangeLabel || '');
+
+  summaries.forEach(summary => {
+    if (!summary || summary.ok === false) return;
+    const audienceMeta = resolveAudienceMeta_(summary.audience || '');
+    const meta = summary.meta || {};
+    const statusParts = [];
+    statusParts.push(summary.usedAi === false ? 'via=local' : 'via=ai');
+    if (meta.noteCount != null) statusParts.push(`notes=${meta.noteCount}`);
+    if (meta.handoverCount != null) statusParts.push(`handovers=${meta.handoverCount}`);
+    if (meta.metricCount != null) statusParts.push(`metrics=${meta.metricCount}`);
+    const status = statusParts.join(' | ');
+    const text = summary.text != null ? String(summary.text) : '';
+    const specialList = normalizeReportSpecial_(summary.special);
+    const specialText = specialList.join('\n');
+    const ts = new Date();
+    const rangeText = label || String(meta.rangeLabel || '');
+    rows.push([
+      ts,
+      String(normalized),
+      rangeText,
+      audienceMeta.label,
+      audienceMeta.key,
+      text,
+      status,
+      specialText
+    ]);
+    saved.push({
+      ts: ts.getTime(),
+      when: Utilities.formatDate(ts, timezone, 'yyyy-MM-dd HH:mm'),
+      rangeLabel: rangeText,
+      audience: audienceMeta.key,
+      audienceLabel: audienceMeta.label,
+      text,
+      status,
+      special: specialList,
+      usedAi: summary.usedAi === false ? false : true,
+      meta: {
+        rangeLabel: rangeText,
+        noteCount: meta.noteCount != null ? Number(meta.noteCount) : null,
+        handoverCount: meta.handoverCount != null ? Number(meta.handoverCount) : null,
+        metricCount: meta.metricCount != null ? Number(meta.metricCount) : null
+      }
+    });
+  });
+
+  if (!rows.length) {
+    return [];
+  }
+
+  const start = sheet.getLastRow() + 1;
+  sheet.getRange(start, 1, rows.length, AI_REPORT_SHEET_HEADER.length).setValues(rows);
+  invalidatePatientCaches_(normalized, { reports: true });
+  return saved;
+}
+
+function fetchReportHistoryForPid_(normalized){
+  if (!normalized) return [];
+  const sheet = ensureAiReportSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const width = Math.max(sheet.getLastColumn(), AI_REPORT_SHEET_HEADER.length);
+  const range = sheet.getRange(2, 1, lastRow - 1, width);
+  const values = range.getValues();
+  const displays = range.getDisplayValues();
+  const timezone = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const rows = [];
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const disp = displays[i];
+    const pidRaw = row[1] != null && row[1] !== '' ? row[1] : disp[1];
+    const pid = normId_(pidRaw);
+    if (pid !== normalized) continue;
+    const tsRaw = row[0];
+    let ts = 0;
+    if (tsRaw instanceof Date) {
+      ts = tsRaw.getTime();
+    } else if (typeof tsRaw === 'number') {
+      ts = tsRaw;
+    } else if (tsRaw) {
+      const parsed = new Date(tsRaw);
+      if (!isNaN(parsed.getTime())) ts = parsed.getTime();
+    }
+    const whenText = disp[0] || (ts ? Utilities.formatDate(new Date(ts), timezone, 'yyyy-MM-dd HH:mm') : '');
+    const rangeLabel = disp[2] || row[2] || '';
+    const audienceLabel = disp[3] || row[3] || '';
+    const audienceKey = resolveAudienceKeyFromAny_(row[4] || '', audienceLabel);
+    const text = row[5] != null ? String(row[5]) : (disp[5] || '');
+    const status = row[6] != null ? String(row[6]) : (disp[6] || '');
+    const special = parseReportSpecialText_(row[7] != null ? row[7] : disp[7]);
+    const parsedStatus = parseReportStatusMeta_(status);
+    rows.push({
+      ts,
+      when: whenText,
+      rangeLabel,
+      audience: audienceKey,
+      audienceLabel: audienceLabel || getIcfAudienceLabel_(audienceKey),
+      text,
+      status,
+      special,
+      usedAi: parsedStatus.usedAi == null ? true : !!parsedStatus.usedAi,
+      meta: {
+        rangeLabel,
+        noteCount: parsedStatus.noteCount,
+        handoverCount: parsedStatus.handoverCount,
+        metricCount: parsedStatus.metricCount
+      }
+    });
+  }
+  return rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+
+function listPatientReports(patientId) {
+  const normalized = normId_(patientId);
+  if (!normalized) {
+    return { ok: false, message: '患者IDが指定されていません。', reports: [] };
+  }
+  const reports = cacheFetch_(PATIENT_CACHE_KEYS.reports(normalized), () => fetchReportHistoryForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
+  return { ok: true, patientId: normalized, reports };
+}
+
+function getSavedReportsForUI(patientId) {
+  const normalized = normId_(patientId);
+  if (!normalized) {
+    return { ok: false, message: '患者IDが指定されていません。', reports: {} };
+  }
+  const history = cacheFetch_(PATIENT_CACHE_KEYS.reports(normalized), () => fetchReportHistoryForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
+  const latestByAudience = {};
+  history.forEach(entry => {
+    if (!entry || !entry.audience) return;
+    const current = latestByAudience[entry.audience];
+    if (!current || (entry.ts || 0) > (current.ts || 0)) {
+      latestByAudience[entry.audience] = entry;
+    }
+  });
+  const reports = {};
+  let latestTs = 0;
+  Object.keys(latestByAudience).forEach(key => {
+    const entry = latestByAudience[key];
+    reports[key] = {
+      text: entry.text || '',
+      audience: entry.audience,
+      audienceLabel: entry.audienceLabel,
+      when: entry.when,
+      ts: entry.ts,
+      rangeLabel: entry.rangeLabel,
+      meta: entry.meta,
+      usedAi: entry.usedAi,
+      special: entry.special
+    };
+    if ((entry.ts || 0) > latestTs) {
+      latestTs = entry.ts || 0;
+    }
+  });
+  const timezone = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const latestWhen = latestTs ? Utilities.formatDate(new Date(latestTs), timezone, 'yyyy-MM-dd HH:mm') : '';
+  const representative = Object.values(reports)[0];
+  return {
+    ok: true,
+    patientId: normalized,
+    reports,
+    rangeLabel: representative ? (representative.rangeLabel || '') : '',
+    latestWhen
+  };
 }
 
 function buildIcfSource_(pid, range){
@@ -2466,68 +2690,6 @@ function buildAudienceNarrative_(audienceMeta, header, range, source, sections){
 }
 
 /**
- * 単一オーディエンス用：医師／ケアマネ／家族 向けサマリを生成
- */
-function generateAiSummaryServer(patientId, rangeKey, audience) {
-  const range = resolveIcfSummaryRange_(rangeKey || 'all');
-  const source = buildIcfSource_(patientId, range);
-  const audienceMeta = resolveAudienceMeta_(audience);
-
-  if (!source.patientFound) {
-    return {
-      ok: false,
-      usedAi: true,
-      audience: audienceMeta.key,
-      audienceLabel: audienceMeta.label,
-      text: '患者が見つかりませんでした。',
-      meta: { patientFound: false, rangeLabel: range.label }
-    };
-  }
-
-
-const patientInfo = getPatientHeader(patientId);  // ← patientId を使う
-
-const header = {
-  hospital: patientInfo?.hospital || '—',
-  doctor:   patientInfo?.doctor   || '—',
-  name:     patientInfo?.name     || '—',
-  birth:    patientInfo?.birth    || '—',
-  consent:  patientInfo?.consent  || '—',
-  patientId: patientId
-};
-
-  // コンテキスト情報
-  const context = {
-    consentText: source.consent,
-    frequencyLabel: source.frequencyLabel,
-    rangeLabel: range.label,
-    metricsDigest: source.metricsDigest,
-    notes: source.notes,
-    handovers: source.handovers,
-    metrics: source.metrics
-  };
-
-  // ★ AIに直接投げる
-  const aiRes = composeAiReportViaOpenAI_(header, context, audienceMeta.key);
-  const text = aiRes && aiRes.text ? aiRes.text : '';
-
-  return {
-    ok: true,
-    usedAi: true,
-    audience: audienceMeta.key,
-    audienceLabel: audienceMeta.label,
-    text: text,
-    meta: {
-      patientFound: true,
-      rangeLabel: range.label,
-      noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
-      handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
-      metricCount: source.metrics?.metrics?.length || 0
-    }
-  };
-}
-
-/**
  * 3種類まとめて生成（doctor / caremanager / family）
  */
 function generateAllAiSummariesServer(patientId, rangeKey) {
@@ -2543,16 +2705,8 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
     };
   }
 
-  // ヘッダ情報
-  const header = {
-    hospital: source.hospital,
-    doctor: source.doctor,
-    name: source.name,
-    birth: source.birth,
-    patientId: patientId
-  };
+  const header = Object.assign({ patientId }, source.header || {});
 
-  // コンテキスト情報
   const context = {
     consentText: source.consent,
     frequencyLabel: source.frequencyLabel,
@@ -2563,47 +2717,68 @@ function generateAllAiSummariesServer(patientId, rangeKey) {
     metrics: source.metrics
   };
 
-  // 3種類まとめて生成
-  const doctor = composeAiReportViaOpenAI_(header, context, 'doctor')?.text || '';
-  const caremanager = composeAiReportViaOpenAI_(header, context, 'caremanager')?.text || '';
-  const family = composeAiReportViaOpenAI_(header, context, 'family')?.text || '';
+  const doctorRes = composeAiReportViaOpenAI_(header, context, 'doctor') || {};
+  const caremanagerRes = composeAiReportViaOpenAI_(header, context, 'caremanager') || {};
+  const familyRes = composeAiReportViaOpenAI_(header, context, 'family') || {};
 
-
-return {
-  ok: true,
-  usedAi: true,
-  reports: {
-    doctor: {
-      ok: true,
-      usedAi: true,
-      audience: 'doctor',
-      audienceLabel: getIcfAudienceLabel_('doctor'),
-      text: (doctor && typeof doctor === 'object') ? doctor.text : String(doctor || '')
-    },
-    caremanager: {
-      ok: true,
-      usedAi: true,
-      audience: 'caremanager',
-      audienceLabel: getIcfAudienceLabel_('caremanager'),
-      text: (caremanager && typeof caremanager === 'object') ? caremanager.text : String(caremanager || '')
-    },
-    family: {
-      ok: true,
-      usedAi: true,
-      audience: 'family',
-      audienceLabel: getIcfAudienceLabel_('family'),
-      text: (family && typeof family === 'object') ? family.text : String(family || '')
-    }
-  },
-  meta: {
+  const sharedMeta = {
     patientFound: true,
     rangeLabel: range.label,
     noteCount: Array.isArray(source.notes) ? source.notes.length : 0,
     handoverCount: Array.isArray(source.handovers) ? source.handovers.length : 0,
     metricCount: source.metrics?.metrics?.length || 0
-  }
-};
+  };
 
+  const reports = {
+    doctor: {
+      ok: true,
+      usedAi: !(doctorRes && doctorRes.via === 'local'),
+      audience: 'doctor',
+      audienceLabel: getIcfAudienceLabel_('doctor'),
+      text: typeof doctorRes === 'object' ? (doctorRes.text || '') : String(doctorRes || ''),
+      special: typeof doctorRes === 'object' ? doctorRes.special : undefined,
+      meta: Object.assign({}, sharedMeta)
+    },
+    caremanager: {
+      ok: true,
+      usedAi: !(caremanagerRes && caremanagerRes.via === 'local'),
+      audience: 'caremanager',
+      audienceLabel: getIcfAudienceLabel_('caremanager'),
+      text: typeof caremanagerRes === 'object' ? (caremanagerRes.text || '') : String(caremanagerRes || ''),
+      special: typeof caremanagerRes === 'object' ? caremanagerRes.special : undefined,
+      meta: Object.assign({}, sharedMeta)
+    },
+    family: {
+      ok: true,
+      usedAi: !(familyRes && familyRes.via === 'local'),
+      audience: 'family',
+      audienceLabel: getIcfAudienceLabel_('family'),
+      text: typeof familyRes === 'object' ? (familyRes.text || '') : String(familyRes || ''),
+      special: typeof familyRes === 'object' ? familyRes.special : undefined,
+      meta: Object.assign({}, sharedMeta)
+    }
+  };
+
+  const saved = persistAiReportsBatch_(header.patientId, range.label, Object.values(reports));
+  if (saved && saved.length) {
+    const savedMap = {};
+    saved.forEach(entry => { savedMap[entry.audience] = entry; });
+    Object.keys(reports).forEach(key => {
+      const entry = savedMap[key];
+      if (entry) {
+        reports[key].savedAt = entry.ts;
+        reports[key].persisted = true;
+      }
+    });
+  }
+
+  return {
+    ok: true,
+    usedAi: true,
+    reports,
+    rangeLabel: range.label,
+    meta: sharedMeta
+  };
 }
 
 /**
@@ -2614,7 +2789,7 @@ function getReportsForUI(patientId, rangeInput) {
   return {
     ok: !!reports.ok,
     usedAi: true,
-    rangeLabel: reports.rangeLabel,
+    rangeLabel: reports.rangeLabel || reports?.meta?.rangeLabel || '',
     doctor: reports?.reports?.doctor?.text || '',
     caremanager: reports?.reports?.caremanager?.text || '',
     family: reports?.reports?.family?.text || '',

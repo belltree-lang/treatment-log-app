@@ -5,6 +5,8 @@ const APP = {
   // 正本スプレッドシート（患者情報のブック）。空なら「現在のスプレッドシート」を使う
   SSID: '1ajnW9Fuvu0YzUUkfTmw0CrbhrM3lM5tt5OA1dK2_CoQ',
   BASE_FEE_YEN: 4170,
+  DOCTOR_REPORT_TEMPLATE_ID: '1mcphwMYaMDVBM0p9MWOv1uMaitNOMPSboi_6F483kZM',
+  DOCTOR_REPORT_ROOT_FOLDER_ID: '1CyedMU4jDHsqJqrM234tdhi33W_nn_If',
   // 社内ドメイン制限（空＝無効）
   ALLOWED_DOMAIN: '',   // 例 'belltree1102.com'
 
@@ -1770,6 +1772,225 @@ function savePdf_(pid, title, body){
   DriveApp.getFileById(docId).setTrashed(true);
 
   return { ok:true, fileId:file.getId(), name:file.getName() };
+}
+
+function ensureChildFolder_(parent, name){
+  if (!parent || !name) return null;
+  const trimmed = String(name).trim();
+  if (!trimmed) return parent;
+  const iterator = parent.getFoldersByName(trimmed);
+  if (iterator.hasNext()) {
+    return iterator.next();
+  }
+  return parent.createFolder(trimmed);
+}
+
+function parseDoctorReportTextSections_(text){
+  const lines = String(text || '').split(/\r?\n/);
+  const map = {};
+  let current = '';
+  lines.forEach(raw => {
+    const line = String(raw || '').trim();
+    if (!line) {
+      current = '';
+      return;
+    }
+    const heading = line.match(/^【([^】]+)】\s*(.*)$/);
+    if (heading) {
+      current = heading[1] ? heading[1].trim() : '';
+      if (!current) return;
+      map[current] = [];
+      const rest = heading[2] != null ? heading[2].trim() : '';
+      if (rest) map[current].push(rest);
+      return;
+    }
+    if (!current) return;
+    if (!map[current]) map[current] = [];
+    map[current].push(line);
+  });
+  const normalized = {};
+  Object.keys(map).forEach(key => {
+    const joined = map[key]
+      .map(part => String(part || '').trim())
+      .filter(Boolean)
+      .join('\n');
+    if (joined) {
+      normalized[key] = joined;
+    }
+  });
+  return normalized;
+}
+
+function buildDoctorReportPdfData_(patientId){
+  const header = getPatientHeader(patientId);
+  if (!header) {
+    return { ok: false, code: 'patient_not_found', message: '患者情報が見つかりません。' };
+  }
+
+  const history = fetchReportHistoryForPid_(header.patientId);
+  const entry = Array.isArray(history)
+    ? history.find(item => item && item.audience === 'doctor')
+    : null;
+  if (!entry) {
+    return { ok: false, code: 'report_not_found', message: '医師向け報告書が保存されていません。' };
+  }
+
+  const sections = parseDoctorReportTextSections_(entry.text || '');
+  const consent = sections['同意内容'] || getConsentContentForPatient_(header.patientId) || '';
+  const frequency = sections['施術頻度']
+    || sections['施術の内容・頻度']
+    || determineTreatmentFrequencyLabel_(countTreatmentsInRecentMonth_(header.patientId, new Date()));
+  const treatmentLines = [];
+  if (consent) treatmentLines.push('同意内容：' + consent);
+  if (frequency) treatmentLines.push('施術頻度：' + frequency);
+  let treatmentSummary = treatmentLines.join('\n');
+  if (!treatmentSummary) {
+    treatmentSummary = '施術頻度：情報不足';
+  }
+
+  const reportSummary = sections['患者の状態・経過'] || sections['報告内容'] || String(entry.text || '');
+  let plan = sections['今後の方針'] || '';
+  if (!plan) {
+    const safety = sections['特記すべき事項'] || '';
+    if (safety && safety.indexOf('同意内容に沿った施術を継続') >= 0) {
+      plan = '同意内容に沿った施術を継続しております。';
+    }
+  }
+  if (!plan) {
+    plan = '同意内容に沿った施術を継続してまいります。';
+  }
+
+  let remarks = sections['特記すべき事項'] || '';
+  if (!remarks) {
+    const specialList = Array.isArray(entry.special) ? entry.special.filter(Boolean) : [];
+    if (specialList.length) {
+      remarks = specialList.join('\n');
+    }
+  }
+  if (!remarks) {
+    remarks = '特記すべき事項はありません。';
+  }
+
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const todayText = Utilities.formatDate(new Date(), tz, 'yyyy年MM月dd日');
+
+  return {
+    ok: true,
+    patientId: header.patientId,
+    rangeLabel: entry.rangeLabel || '',
+    data: {
+      hospitalName: header.hospital || '',
+      doctorName: header.doctor || '',
+      patientName: header.name || '',
+      birthDate: header.birth || '',
+      treatmentSummary,
+      reportSummary,
+      plan,
+      remarks,
+      createdDate: todayText
+    }
+  };
+}
+
+function createDoctorReportPdfFile_(prepared){
+  if (!prepared || !prepared.data) {
+    throw new Error('PDF生成に必要な情報が不足しています。');
+  }
+  if (!APP.DOCTOR_REPORT_TEMPLATE_ID || !APP.DOCTOR_REPORT_ROOT_FOLDER_ID) {
+    throw new Error('医師向け報告書のテンプレートまたは保存先が設定されていません。');
+  }
+
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const todayText = prepared.data.createdDate || Utilities.formatDate(new Date(), tz, 'yyyy年MM月dd日');
+  const root = DriveApp.getFolderById(APP.DOCTOR_REPORT_ROOT_FOLDER_ID);
+  const pdfRoot = ensureChildFolder_(root, '報告書PDF');
+  if (!pdfRoot) {
+    throw new Error('報告書PDFフォルダを取得できません。');
+  }
+  const doctorFolder = ensureChildFolder_(pdfRoot, '医師');
+  if (!doctorFolder) {
+    throw new Error('医師向け報告書の保存先を取得できません。');
+  }
+  const baseName = `医師報告書_${prepared.data.patientName || prepared.patientId || '不明'}_${todayText}`;
+  const template = DriveApp.getFileById(APP.DOCTOR_REPORT_TEMPLATE_ID);
+  const copy = template.makeCopy(baseName, doctorFolder);
+  const doc = DocumentApp.openById(copy.getId());
+  const body = doc.getBody();
+  const replacements = {
+    '{{病院名}}': prepared.data.hospitalName || '',
+    '{{医師}}': prepared.data.doctorName || '',
+    '{{患者名}}': prepared.data.patientName || '',
+    '{{生年月日}}': prepared.data.birthDate || '',
+    '{{施術の内容・頻度}}': prepared.data.treatmentSummary || '',
+    '{{報告内容}}': prepared.data.reportSummary || '',
+    '{{今後の方針}}': prepared.data.plan || '',
+    '{{特記事項}}': prepared.data.remarks || '',
+    '{{作成日}}': todayText
+  };
+  Object.keys(replacements).forEach(key => {
+    try {
+      body.replaceText(key, replacements[key]);
+    } catch (err) {
+      Logger.log(`[createDoctorReportPdfFile_] replace failed for ${key}: ` + (err && err.message ? err.message : err));
+    }
+  });
+  doc.saveAndClose();
+
+  const pdfBlob = copy.getAs(MimeType.PDF);
+  const pdfName = baseName + '.pdf';
+  pdfBlob.setName(pdfName);
+  const pdfFile = doctorFolder.createFile(pdfBlob);
+  copy.setTrashed(true);
+
+  const createdAt = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm');
+  try {
+    sh('添付索引').appendRow([
+      new Date(),
+      String(prepared.patientId || ''),
+      Utilities.formatDate(new Date(), tz, 'yyyy-MM'),
+      pdfFile.getName(),
+      pdfFile.getId(),
+      'pdf',
+      (Session.getActiveUser() || {}).getEmail()
+    ]);
+  } catch (indexErr) {
+    Logger.log('[createDoctorReportPdfFile_] failed to append index: ' + (indexErr && indexErr.message ? indexErr.message : indexErr));
+  }
+
+  return {
+    file: pdfFile,
+    createdAt
+  };
+}
+
+function generateDoctorReportPdf(payload){
+  assertDomain_();
+  const idInput = payload && (payload.patientId || payload.pid || payload.id || payload.patientID);
+  const patientId = normId_(idInput);
+  if (!patientId) {
+    throw new Error('患者IDが指定されていません。');
+  }
+
+  const prepared = buildDoctorReportPdfData_(patientId);
+  if (!prepared.ok) {
+    return {
+      ok: false,
+      code: prepared.code,
+      message: prepared.message
+    };
+  }
+
+  const result = createDoctorReportPdfFile_(prepared);
+  const file = result.file;
+  return {
+    ok: true,
+    patientId: prepared.patientId,
+    rangeLabel: prepared.rangeLabel,
+    fileId: file.getId(),
+    name: file.getName(),
+    url: file.getUrl(),
+    createdAt: result.createdAt
+  };
 }
 
 /***** 文章整形（OpenAI → ローカルフォールバック） *****/

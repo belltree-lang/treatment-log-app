@@ -66,6 +66,9 @@
   .icf-status-text{ margin-bottom:12px; white-space:pre-line }
   .ai-report-actions{ display:flex; flex-wrap:wrap; gap:6px }
   .ai-report-actions .btn{ padding:6px 12px; font-size:12px }
+  .ai-report-pdf{ margin-top:8px; font-size:12px; color:var(--muted); display:flex; flex-wrap:wrap; gap:4px; align-items:center }
+  .ai-report-pdf a{ color:var(--brand); text-decoration:underline; }
+  .ai-report-pdf .ai-report-pdf-meta{ color:var(--muted); font-size:11px }
   .ai-report-preview{ margin-top:12px; display:flex; flex-direction:column; gap:12px }
   .ai-report-block{ background:#f8fafc; border-radius:12px; padding:12px; border:1px solid #e5e7eb }
   .ai-report-heading{ display:flex; align-items:center; justify-content:space-between; gap:8px }
@@ -1239,7 +1242,7 @@ const ICF_AUDIENCE_LABELS = {
   family: '家族向けサマリ'
 };
 const ICF_REPORT_HISTORY_LIMIT = 10;
-let _icfSummaryState = { range: '1m', results: {} };
+let _icfSummaryState = { range: '1m', results: {}, doctorPdf: null };
 let _icfReportHistoryState = { loading: false, rows: [], error: null };
 
 function resetFlags(){
@@ -1276,6 +1279,7 @@ function onIcfRangeChange(sel){
 
 function resetIcfSummaries(message){
   _icfSummaryState.results = {};
+  _icfSummaryState.doctorPdf = null;
   renderIcfSummaryResults();
   if (message) {
     updateIcfSummaryStatus(message);
@@ -1457,6 +1461,7 @@ function integrateHistoryIntoSummaries(rows, options){
   const entries = Array.isArray(rows) ? rows : [];
   if (!entries.length) {
     _icfSummaryState.results = {};
+    _icfSummaryState.doctorPdf = null;
     renderIcfSummaryResults();
     if (opts.setStatus) {
       updateIcfSummaryStatus('保存済みの報告書はまだありません。');
@@ -1488,6 +1493,7 @@ function integrateHistoryIntoSummaries(rows, options){
     };
   });
   _icfSummaryState.results = results;
+  _icfSummaryState.doctorPdf = null;
   renderIcfSummaryResults();
   if (opts.setStatus) {
     updateIcfSummaryStatus('保存済みの報告書を表示しています。');
@@ -1582,6 +1588,15 @@ function renderIcfSummaryResults(){
     regenBtn.onclick = ()=> generateIcfSummary(key);
     actions.appendChild(regenBtn);
 
+    if (key === 'doctor') {
+      const pdfBtn = document.createElement('button');
+      pdfBtn.type = 'button';
+      pdfBtn.className = 'btn ghost';
+      pdfBtn.textContent = 'PDF出力';
+      pdfBtn.onclick = () => exportDoctorReportPdf();
+      actions.appendChild(pdfBtn);
+    }
+
     heading.appendChild(actions);
     block.appendChild(heading);
 
@@ -1589,6 +1604,30 @@ function renderIcfSummaryResults(){
     meta.className = 'icf-meta';
     meta.textContent = buildIcfMetaText(data);
     block.appendChild(meta);
+
+    if (key === 'doctor' && _icfSummaryState.doctorPdf && _icfSummaryState.doctorPdf.url) {
+      const pdfInfo = document.createElement('div');
+      pdfInfo.className = 'ai-report-pdf';
+      const link = document.createElement('a');
+      link.href = _icfSummaryState.doctorPdf.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = _icfSummaryState.doctorPdf.name || 'PDFを開く';
+      pdfInfo.appendChild(link);
+      if (_icfSummaryState.doctorPdf.rangeLabel) {
+        const range = document.createElement('span');
+        range.className = 'ai-report-pdf-meta';
+        range.textContent = `対象: ${_icfSummaryState.doctorPdf.rangeLabel}`;
+        pdfInfo.appendChild(range);
+      }
+      if (_icfSummaryState.doctorPdf.createdAt) {
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'ai-report-pdf-meta';
+        metaSpan.textContent = `作成: ${_icfSummaryState.doctorPdf.createdAt}`;
+        pdfInfo.appendChild(metaSpan);
+      }
+      block.appendChild(pdfInfo);
+    }
 
     const text = document.createElement('div');
     text.className = 'ai-report-text';
@@ -1641,6 +1680,48 @@ function fallbackCopy(text, successMessage){
     console.error('[fallbackCopy]', err);
     alert('コピーに失敗しました。');
   }
+}
+
+function exportDoctorReportPdf(){
+  const patientId = pid();
+  if (!patientId){
+    alert('患者IDを入力してください');
+    return;
+  }
+  showGlobalLoading('医師向け報告書をPDF出力しています…');
+  google.script.run
+    .withSuccessHandler(res => {
+      hideGlobalLoading();
+      if (!res || !res.ok){
+        const msg = res && res.message ? res.message : '医師向け報告書のPDF出力に失敗しました。';
+        alert(`医師向け報告書のPDF出力に失敗しました：${msg}`);
+        return;
+      }
+      _icfSummaryState.doctorPdf = {
+        url: res.url || '',
+        name: res.name || '医師向け報告書.pdf',
+        createdAt: res.createdAt || '',
+        rangeLabel: res.rangeLabel || ''
+      };
+      renderIcfSummaryResults();
+      toast('医師向け報告書のPDFを作成しました。');
+      if (res.url){
+        try {
+          const win = window.open(res.url, '_blank');
+          if (win) {
+            try { win.opener = null; } catch (openerErr) { /* ignore */ }
+          }
+        } catch (err) {
+          console.warn('[exportDoctorReportPdf] window open failed', err);
+        }
+      }
+    })
+    .withFailureHandler(err => {
+      hideGlobalLoading();
+      const msg = err && err.message ? err.message : '医師向け報告書のPDF出力に失敗しました。';
+      alert(`医師向け報告書のPDF出力に失敗しました：${msg}`);
+    })
+    .generateDoctorReportPdf({ patientId });
 }
 
 function openAiReportEditor(entry, mode){
@@ -1801,6 +1882,9 @@ async function generateAiSummary(audience, options){
     const res = await callGenerateAiSummary(p, rangeKey, audience);
     ok = handleIcfSummaryResponse(res, audience);
     if (ok) {
+      if (audience === 'doctor') {
+        _icfSummaryState.doctorPdf = null;
+      }
       if (!opts.skipStatusUpdate) {
         updateIcfSummaryStatus(`${label}を更新しました。`);
       }
@@ -1848,6 +1932,7 @@ async function generateAllAiSummaries(){
       return;
     }
     _icfSummaryState.results = res.reports;
+    _icfSummaryState.doctorPdf = null;
     renderIcfSummaryResults();
     updateIcfSummaryStatus('3種類のサマリを更新しました。');
     await refreshReportHistory({ patientId: p, setStatus: false });
@@ -1878,6 +1963,9 @@ function handleIcfSummaryResponse(res, fallbackAudience){
     return false;
   }
   _icfSummaryState.results[key] = res;
+  if (key === 'doctor') {
+    _icfSummaryState.doctorPdf = null;
+  }
   renderIcfSummaryResults();
   return true;
 }

@@ -1602,13 +1602,16 @@ function listTreatmentsForCurrentMonth(pid){
       const d = ts instanceof Date ? ts : new Date(ts);
       if (isNaN(d.getTime())) continue;
       if (d < start || d > end) continue;
-      const category = width >= 8 ? String(r[7] || '') : '';
+      const categoryCell = width >= 8 ? r[7] : '';
+      const categoryLabel = String(categoryCell || '');
+      const categoryKey = mapTreatmentCategoryCellToKey_(categoryLabel);
       out.push({
         row: 2 + i,
         when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
         note: String(r[2] || ''),
         email: String(r[3] || ''),
-        category
+        category: categoryLabel,
+        categoryKey
       });
     }
     return out.reverse();
@@ -4739,8 +4742,19 @@ function submitTreatment(payload) {
     markTiming('prepared');
     const s = sh('施術録');
     const categoryInfo = resolveTreatmentCategoryFromPayload_(payload);
+    const categoryKey = categoryInfo.key || '';
+    const categoryLabel = categoryInfo.label || '';
+    if (!categoryKey) {
+      throw new Error('施術区分を特定できませんでした。画面を再読み込みしてから再度お試しください。');
+    }
     pid = String(payload?.patientId || '').trim();
-    if (!pid && !categoryInfo.allowEmptyPatientId) throw new Error('patientIdが空です');
+    if (pid && categoryKey === 'new') {
+      throw new Error('「新規」区分では患者IDを空のまま保存してください。');
+    }
+    if (!pid && !categoryInfo.allowEmptyPatientId) {
+      const labelText = categoryLabel || '施術録';
+      throw new Error(`${labelText}を保存するには患者IDを入力してください。`);
+    }
 
     const user = (Session.getActiveUser() || {}).getEmail() || '';
 
@@ -4799,8 +4813,8 @@ function submitTreatment(payload) {
 
     const treatmentId = incomingTreatmentId || Utilities.getUuid();
     treatmentIdForLog = treatmentId;
-    const treatmentCategoryLabel = categoryInfo.label || '';
-    const treatmentCategoryKey = categoryInfo.key || '';
+    const treatmentCategoryLabel = categoryLabel;
+    const treatmentCategoryKey = categoryKey;
     const attendanceMetrics = resolveTreatmentAttendanceMetrics_(categoryInfo);
     const row = [
       now,

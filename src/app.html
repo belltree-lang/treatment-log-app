@@ -25,6 +25,14 @@
   .btn.warn{ background:var(--warn) }
   .muted{ color:var(--muted); font-size:.9rem }
   .badge{ display:inline-block; padding:4px 10px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px }
+  .treatment-tag{ display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; background:#e5e7eb; color:#1f2937; }
+  .treatment-tag-wrap{ display:flex; flex-wrap:wrap; gap:6px; }
+  .treatment-tag--insurance{ background:#dcfce7; color:#166534; }
+  .treatment-tag--self30{ background:#ede9fe; color:#5b21b6; }
+  .treatment-tag--self60{ background:#dbeafe; color:#1d4ed8; }
+  .treatment-tag--mixed{ background:#ffedd5; color:#9a3412; }
+  .treatment-tag--new{ background:#fee2e2; color:#b91c1c; }
+  .treatment-tag--unknown{ background:#e5e7eb; color:#374151; }
   .news-item{ border-left:4px solid #d1d5db; padding:6px 8px; margin:6px 0; background:#fafafa; border-radius:8px }
   .news-item[data-type="予定"]{ background-color:#e3f2fd; }
   .news-item[data-type="警告"],
@@ -42,6 +50,9 @@
   th,td{ border-bottom:1px solid #eee; padding:8px 6px; text-align:left; vertical-align:top }
   .actions button{ margin-right:6px }
   .right{ text-align:right }
+  .treatment-note{ margin-top:0; line-height:1.6; }
+  .treatment-tag-wrap + .treatment-note{ margin-top:6px; }
+  .treatment-meta{ margin-top:6px; color:var(--muted); font-size:12px; }
 
   /* モーダル（通院予定） */
   .modal{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999 }
@@ -337,6 +348,13 @@ const TREATMENT_CATEGORY_DEFINITIONS = {
   self60:      { key: 'self60',      label: '60分施術（完全自費）', requiresPatientId: true },
   mixed:       { key: 'mixed',       label: '60分施術（保険＋自費）', requiresPatientId: true },
   new:         { key: 'new',         label: '新規', requiresPatientId: false }
+};
+const TREATMENT_CATEGORY_TAGS = {
+  insurance30: { text: '保険', className: 'treatment-tag--insurance' },
+  self30:      { text: '自費30', className: 'treatment-tag--self30' },
+  self60:      { text: '自費60', className: 'treatment-tag--self60' },
+  mixed:       { text: '混合', className: 'treatment-tag--mixed' },
+  new:         { text: '新規', className: 'treatment-tag--new' }
 };
 let _lastSaveKind = SAVE_KIND_DEFAULT;
 
@@ -2777,27 +2795,45 @@ function save(ev){
       return;
     }
     const requestedKind = resolveSaveKind(ev);
-    const categoryMeta = getTreatmentCategoryMeta(requestedKind) || getTreatmentCategoryMeta(SAVE_KIND_DEFAULT);
-    const effectiveKind = categoryMeta ? categoryMeta.key : SAVE_KIND_DEFAULT;
+    const requestedMeta = getTreatmentCategoryMeta(requestedKind);
+    const fallbackMeta = requestedMeta ? requestedMeta : getTreatmentCategoryMeta(SAVE_KIND_DEFAULT);
+    if (!fallbackMeta) {
+      alert('施術区分の情報を取得できませんでした。画面を再読み込みしてから再度お試しください。');
+      return;
+    }
+    const categoryMeta = fallbackMeta;
+    const effectiveKind = categoryMeta.key;
     _lastSaveKind = effectiveKind;
 
-    const requiresPatientId = !categoryMeta || categoryMeta.requiresPatientId !== false;
+    const requiresPatientId = categoryMeta.requiresPatientId !== false;
     const p = pid();
+    if (effectiveKind === 'new' && p) {
+      alert('「新規」区分を保存するときは患者ID欄を空のままにしてください。');
+      focusPatientIdInput();
+      highlightElement('pid', { scrollIntoView: true });
+      return;
+    }
     if (requiresPatientId) {
-      if(!p){
-        if (_patientIdList.length){
-          alert('患者IDを候補から選択してください');
-        } else {
-          alert('患者IDを入力');
-        }
+      if (!p) {
+        const message = _patientIdList.length
+          ? `${categoryMeta.label}を保存するには、候補から患者IDを選択してください。`
+          : `${categoryMeta.label}を保存するには患者IDを入力してください。`;
+        alert(message);
+        focusPatientIdInput();
+        highlightElement('pid', { scrollIntoView: true });
         return;
       }
-      if (_patientIdList.length && !_patientIdIndex[p]){
-        alert('⚠️ リストに存在しない患者は登録できません。');
+      if (_patientIdList.length && !_patientIdIndex[p]) {
+        alert('⚠️ リストに存在しない患者IDは保存できません。');
+        focusPatientIdInput();
+        highlightElement('pid', { scrollIntoView: true });
         return;
       }
     } else if (p && _patientIdList.length && !_patientIdIndex[p]) {
-      console.warn('[save] patientId not found in cache for optional entry', p);
+      alert('⚠️ リストに存在しない患者IDは保存できません。');
+      focusPatientIdInput();
+      highlightElement('pid', { scrollIntoView: true });
+      return;
     }
     _saveInFlight = true;
 
@@ -3053,20 +3089,37 @@ function loadThisMonth(patientId, next){
         if (done) done();
         return;
       }
-    el.innerHTML = `<table>
-      <thead><tr><th style="width:150px">日時</th><th>所見</th><th style="width:140px">操作</th></tr></thead>
-      <tbody>
-        ${rows.map(r=>`
+    const rowsHtml = rows.map(r => {
+      const whenText = String(r.when || '');
+      const whenHtml = escapeHtml(whenText);
+      const isoWhen = whenText.replace(' ', 'T');
+      const rawNote = String(r.note || '');
+      const hasNote = rawNote.trim().length > 0;
+      const noteHtml = hasNote ? escapeHtml(rawNote).replace(/\n/g,'<br>') : '<span class="muted">（所見なし）</span>';
+      const tagHtml = renderTreatmentCategoryTag(r);
+      const tagBlock = tagHtml ? `<div class="treatment-tag-wrap">${tagHtml}</div>` : '';
+      const emailHtml = r.email ? `<div class="treatment-meta">登録者：${escapeHtml(r.email)}</div>` : '';
+      const noteForEdit = JSON.stringify(r.note || '').replace(/"/g,'&quot;');
+      return `
           <tr>
-            <td>${r.when}</td>
-            <td>${escapeHtml(r.note).replace(/\n/g,'<br>')}</td>
+            <td>${whenHtml}</td>
+            <td>
+              ${tagBlock}
+              <div class="treatment-note">${noteHtml}</div>
+              ${emailHtml}
+            </td>
             <td class="actions">
-              <button class="btn ghost" onclick="editRow(${r.row}, ${JSON.stringify(r.note).replace(/"/g,'&quot;')})">編集</button>
-              <button class="btn ghost" onclick="editRowTime(${r.row}, '${r.when.replace(' ','T')}')">日時</button>
+              <button class="btn ghost" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
+              <button class="btn ghost" onclick="editRowTime(${r.row}, '${isoWhen}')">日時</button>
               <button class="btn warn" onclick="delRow(${r.row})">削除</button>
 
             </td>
-          </tr>`).join('')}
+          </tr>`;
+    }).join('');
+    el.innerHTML = `<table>
+      <thead><tr><th style="width:150px">日時</th><th>所見</th><th style="width:140px">操作</th></tr></thead>
+      <tbody>
+        ${rowsHtml}
       </tbody>
     </table>`;
     if (done) done();
@@ -3090,6 +3143,29 @@ function delRow(row){
   google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).deleteTreatmentRow(row);
 }
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+function renderTreatmentCategoryTag(row){
+  if (!row || typeof row !== 'object') return '';
+  const key = row.categoryKey || '';
+  const label = row.category != null ? String(row.category) : '';
+  const def = key ? TREATMENT_CATEGORY_TAGS[key] : null;
+  let text = def ? def.text : '';
+  let className = def ? def.className : '';
+  if (!def) {
+    if (label) {
+      text = label;
+      className = 'treatment-tag--unknown';
+    } else {
+      text = '区分未設定';
+      className = 'treatment-tag--unknown';
+    }
+  }
+  if (!text) return '';
+  const classes = ['treatment-tag'];
+  if (className) classes.push(className);
+  const titleAttr = label && label !== text ? ` title="${escapeHtml(label)}"` : '';
+  return `<span class="${classes.join(' ')}"${titleAttr}>${escapeHtml(text)}</span>`;
+}
 
 function getNewsMetaType(news){
   if(!news || typeof news !== 'object') return '';

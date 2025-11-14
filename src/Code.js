@@ -111,6 +111,27 @@ const TREATMENT_CATEGORY_ATTENDANCE_METRICS = {
   new:         { convertedCount: 1, newPatientCount: 1 }
 };
 
+const TREATMENT_CATEGORY_LABEL_TO_KEY = Object.keys(TREATMENT_CATEGORY_DEFINITIONS).reduce((map, key) => {
+  const def = TREATMENT_CATEGORY_DEFINITIONS[key];
+  if (def && def.label) {
+    map[def.label] = key;
+  }
+  return map;
+}, {});
+
+const TREATMENT_CATEGORY_ATTENDANCE_GROUP = {
+  insurance30: 'insurance',
+  self30: 'self',
+  self60: 'self',
+  mixed: 'mixed',
+  new: 'new'
+};
+
+const VISIT_ATTENDANCE_SHEET_NAME = 'VisitAttendance';
+const VISIT_ATTENDANCE_SHEET_HEADER = ['日付','メール','出勤','退勤','勤務時間','休憩','種別内訳','自動反映フラグ'];
+const VISIT_ATTENDANCE_AUTO_FLAG_VALUE = 'auto';
+const VISIT_ATTENDANCE_WORK_START_MINUTES = 9 * 60;
+
 function getScriptCache_(){
   try {
     return CacheService.getScriptCache();
@@ -289,7 +310,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書'];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -318,6 +339,7 @@ function ensureAuxSheets_(options) {
     upgradeHeader('施術録', TREATMENT_SHEET_HEADER);
     upgradeHeader('News',   ['TS','患者ID','種別','メッセージ','cleared','meta']);
     upgradeHeader('AI報告書', AI_REPORT_SHEET_HEADER);
+    upgradeHeader(VISIT_ATTENDANCE_SHEET_NAME, VISIT_ATTENDANCE_SHEET_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
     ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
     ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
@@ -361,6 +383,29 @@ function ensureAiReportSheet_(){
   const mismatch = current.length < needed || AI_REPORT_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
   if (mismatch) {
     sheet.getRange(1, 1, 1, needed).setValues([AI_REPORT_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
+function ensureVisitAttendanceSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(VISIT_ATTENDANCE_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(VISIT_ATTENDANCE_SHEET_NAME);
+  }
+  const needed = VISIT_ATTENDANCE_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || VISIT_ATTENDANCE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_SHEET_HEADER]);
   }
   return sheet;
 }
@@ -5068,6 +5113,297 @@ function resolveTreatmentAttendanceMetrics_(categoryInfo){
     newPatientCount: hasNewCount ? newCount : '',
     totalCount: resolvedTotal
   };
+}
+
+function mapTreatmentCategoryCellToKey_(value){
+  const label = String(value || '').trim();
+  if (!label) return '';
+  if (TREATMENT_CATEGORY_LABEL_TO_KEY[label]) {
+    return TREATMENT_CATEGORY_LABEL_TO_KEY[label];
+  }
+  const normalized = label.replace(/\s+/g, '');
+  const matched = Object.keys(TREATMENT_CATEGORY_DEFINITIONS).find(key => {
+    const def = TREATMENT_CATEGORY_DEFINITIONS[key];
+    if (!def || !def.label) return false;
+    return def.label.replace(/\s+/g, '') === normalized;
+  });
+  return matched || '';
+}
+
+function formatMinutesAsTimeText_(minutes){
+  if (!Number.isFinite(minutes) || minutes < 0) minutes = 0;
+  const total = Math.round(minutes);
+  const hours = Math.floor(total / 60);
+  const mins = Math.abs(total % 60);
+  return String(hours).padStart(2, '0') + ':' + String(mins).padStart(2, '0');
+}
+
+function formatDateKeyFromValue_(value, tz){
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, tz, 'yyyy-MM-dd');
+  }
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const parsed = new Date(text);
+  if (isNaN(parsed.getTime())) return '';
+  return Utilities.formatDate(parsed, tz, 'yyyy-MM-dd');
+}
+
+function createDateFromKey_(key){
+  const parts = String(key || '').split('-');
+  if (parts.length !== 3) return null;
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  return new Date(year, month - 1, day);
+}
+
+function buildVisitAttendanceBreakdown_(counts){
+  if (!counts) return '';
+  const parts = [];
+  const insurance = counts.insurance || 0;
+  const self30 = counts.self30 || 0;
+  const self60 = counts.self60 || 0;
+  const mixed = counts.mixed || 0;
+  const newcomer = counts.new || 0;
+  if (insurance) {
+    parts.push('保険:' + insurance);
+  }
+  const selfTotal = self30 + self60;
+  if (selfTotal) {
+    const details = [];
+    if (self30) details.push('30=' + self30);
+    if (self60) details.push('60=' + self60);
+    const detailText = details.length ? '(' + details.join(',') + ')' : '';
+    parts.push('自費:' + selfTotal + detailText);
+  }
+  if (mixed) {
+    parts.push('混合:' + mixed);
+  }
+  if (newcomer) {
+    parts.push('新規:' + newcomer);
+  }
+  return parts.join(' / ');
+}
+
+function readVisitAttendanceExistingMap_(sheet, tz){
+  const result = new Map();
+  const lr = sheet.getLastRow();
+  if (lr < 2) return result;
+  const width = Math.min(VISIT_ATTENDANCE_SHEET_HEADER.length, sheet.getMaxColumns());
+  const rows = sheet.getRange(2, 1, lr - 1, width).getValues();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const dateKey = formatDateKeyFromValue_(row[0], tz);
+    const email = String(row[1] || '').trim().toLowerCase();
+    if (!dateKey || !email) continue;
+    const key = dateKey + '||' + email;
+    const flag = String(row[7] || '').trim().toLowerCase();
+    const entry = {
+      rowNumber: i + 2,
+      auto: flag === VISIT_ATTENDANCE_AUTO_FLAG_VALUE || flag === '1' || flag === '自動',
+      rawFlag: flag,
+      row
+    };
+    if (!result.has(key)) {
+      result.set(key, entry);
+    } else {
+      const existing = result.get(key);
+      if (existing.auto && !entry.auto) {
+        result.set(key, entry);
+      } else if (!existing.auto && entry.auto) {
+        // keep manual entry preference
+      }
+    }
+  }
+  return result;
+}
+
+function syncVisitAttendance(options){
+  ensureVisitAttendanceSheet_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const treatmentSheet = sh('施術録');
+  const width = Math.min(TREATMENT_SHEET_HEADER.length, treatmentSheet.getMaxColumns());
+  const lastRow = treatmentSheet.getLastRow();
+  const summary = {
+    targetedRows: 0,
+    appended: 0,
+    updated: 0,
+    manualSkipped: 0,
+    errors: 0
+  };
+  if (lastRow < 2) {
+    return summary;
+  }
+  const rows = treatmentSheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const pending = new Map();
+  const flagUpdates = [];
+
+  const ensureNumber = value => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    const text = String(value || '').trim();
+    if (!text) return 0;
+    const num = Number(text.replace(/,/g, ''));
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  rows.forEach((row, idx) => {
+    const rowNumber = idx + 2;
+    const existingFlag = width >= 12 ? String(row[11] || '').trim() : '';
+    if (existingFlag) {
+      return;
+    }
+    const email = String(row[3] || '').trim();
+    if (!email) {
+      flagUpdates.push({ rowNumber, value: '要修正:メール未設定' });
+      summary.errors++;
+      return;
+    }
+    const ts = normalizeTreatmentTimestamp_(row[0], tz);
+    if (!ts) {
+      flagUpdates.push({ rowNumber, value: '要修正:日付不正' });
+      summary.errors++;
+      return;
+    }
+    const dateKey = Utilities.formatDate(ts, tz, 'yyyy-MM-dd');
+    const key = dateKey + '||' + email.toLowerCase();
+    const categoryKey = mapTreatmentCategoryCellToKey_(width >= 8 ? row[7] : '');
+    const pendingEntry = pending.get(key) || {
+      dateKey,
+      email,
+      totalConverted: 0,
+      recordCount: 0,
+      counts: { insurance: 0, self30: 0, self60: 0, mixed: 0, new: 0 },
+      rowNumbers: []
+    };
+    pendingEntry.totalConverted += ensureNumber(width >= 11 ? row[10] : 0);
+    pendingEntry.recordCount += 1;
+    if (categoryKey) {
+      const group = TREATMENT_CATEGORY_ATTENDANCE_GROUP[categoryKey];
+      if (group === 'insurance') pendingEntry.counts.insurance += 1;
+      if (group === 'self') {
+        if (categoryKey === 'self30') pendingEntry.counts.self30 += 1;
+        else if (categoryKey === 'self60') pendingEntry.counts.self60 += 1;
+        else pendingEntry.counts.self30 += 1;
+      }
+      if (group === 'mixed') pendingEntry.counts.mixed += 1;
+      if (group === 'new') pendingEntry.counts.new += 1;
+    }
+    pendingEntry.rowNumbers.push(rowNumber);
+    pending.set(key, pendingEntry);
+    summary.targetedRows += 1;
+  });
+
+  if (!pending.size) {
+    if (flagUpdates.length) {
+      flagUpdates.forEach(update => {
+        treatmentSheet.getRange(update.rowNumber, 12).setValue(update.value);
+      });
+    }
+    return summary;
+  }
+
+  const attendanceSheet = ensureVisitAttendanceSheet_();
+  const existingMap = readVisitAttendanceExistingMap_(attendanceSheet, tz);
+  const updates = [];
+  const appends = [];
+
+  pending.forEach((entry, key) => {
+    const workMinutes = Math.max(0, Math.round(entry.totalConverted * 60));
+    const breakMinutes = entry.recordCount >= 7 ? 60 : 0;
+    const endMinutes = VISIT_ATTENDANCE_WORK_START_MINUTES + workMinutes + breakMinutes;
+    const breakdown = buildVisitAttendanceBreakdown_(entry.counts);
+    const dateCell = createDateFromKey_(entry.dateKey) || entry.dateKey;
+    const rowValues = [
+      dateCell,
+      entry.email,
+      formatMinutesAsTimeText_(VISIT_ATTENDANCE_WORK_START_MINUTES),
+      formatMinutesAsTimeText_(endMinutes),
+      formatMinutesAsTimeText_(workMinutes),
+      formatMinutesAsTimeText_(breakMinutes),
+      breakdown,
+      VISIT_ATTENDANCE_AUTO_FLAG_VALUE
+    ];
+
+    const existing = existingMap.get(key);
+    if (existing && !existing.auto) {
+      entry.rowNumbers.forEach(rowNumber => {
+        flagUpdates.push({ rowNumber, value: '手動調整済' });
+      });
+      summary.manualSkipped += entry.rowNumbers.length;
+      return;
+    }
+
+    if (existing && existing.auto) {
+      updates.push({ rowNumber: existing.rowNumber, values: rowValues });
+      entry.rowNumbers.forEach(rowNumber => {
+        flagUpdates.push({ rowNumber, value: '済' });
+      });
+      summary.updated += entry.rowNumbers.length;
+      return;
+    }
+
+    appends.push(rowValues);
+    entry.rowNumbers.forEach(rowNumber => {
+      flagUpdates.push({ rowNumber, value: '済' });
+    });
+    summary.appended += entry.rowNumbers.length;
+  });
+
+  updates.sort((a, b) => a.rowNumber - b.rowNumber).forEach(update => {
+    attendanceSheet.getRange(update.rowNumber, 1, 1, VISIT_ATTENDANCE_SHEET_HEADER.length).setValues([update.values]);
+  });
+
+  if (appends.length) {
+    const startRow = attendanceSheet.getLastRow() + 1;
+    attendanceSheet.getRange(startRow, 1, appends.length, VISIT_ATTENDANCE_SHEET_HEADER.length).setValues(appends);
+  }
+
+  flagUpdates.forEach(update => {
+    treatmentSheet.getRange(update.rowNumber, 12).setValue(update.value);
+  });
+
+  return summary;
+}
+
+function runVisitAttendanceSyncJob(){
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    Logger.log('[runVisitAttendanceSyncJob] ロック取得に失敗しました');
+    return null;
+  }
+  try {
+    const summary = syncVisitAttendance();
+    Logger.log('[runVisitAttendanceSyncJob] ' + JSON.stringify(summary));
+    return summary;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function ensureVisitAttendanceSyncTrigger(){
+  const handler = 'runVisitAttendanceSyncJob';
+  const triggers = ScriptApp.getProjectTriggers();
+  let hasClockTrigger = false;
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === handler) {
+      if (trigger.getEventType() === ScriptApp.EventType.CLOCK) {
+        hasClockTrigger = true;
+      } else {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    }
+  });
+  if (!hasClockTrigger) {
+    ScriptApp.newTrigger(handler)
+      .timeBased()
+      .everyDays(1)
+      .atHour(0)
+      .create();
+    Logger.log('[ensureVisitAttendanceSyncTrigger] 新規トリガーを作成しました (00:00 JST)');
+  }
+  return true;
 }
 
 function normalizeTreatmentTimestamp_(value, tz) {

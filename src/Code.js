@@ -103,6 +103,14 @@ const TREATMENT_CATEGORY_DEFINITIONS = {
   new:         { label: '新規', allowEmptyPatientId: true }
 };
 
+const TREATMENT_CATEGORY_ATTENDANCE_METRICS = {
+  insurance30: { convertedCount: 1, newPatientCount: 0 },
+  self30:      { convertedCount: 1, newPatientCount: 0 },
+  self60:      { convertedCount: 2, newPatientCount: 0 },
+  mixed:       { convertedCount: 1.5, newPatientCount: 0 },
+  new:         { convertedCount: 1, newPatientCount: 1 }
+};
+
 function getScriptCache_(){
   try {
     return CacheService.getScriptCache();
@@ -4748,7 +4756,21 @@ function submitTreatment(payload) {
     treatmentIdForLog = treatmentId;
     const treatmentCategoryLabel = categoryInfo.label || '';
     const treatmentCategoryKey = categoryInfo.key || '';
-    const row = [now, pid, merged, user, '', '', treatmentId, treatmentCategoryLabel];
+    const attendanceMetrics = resolveTreatmentAttendanceMetrics_(categoryInfo);
+    const row = [
+      now,
+      pid,
+      merged,
+      user,
+      '',
+      '',
+      treatmentId,
+      treatmentCategoryLabel,
+      attendanceMetrics.convertedCount,
+      attendanceMetrics.newPatientCount,
+      attendanceMetrics.totalCount,
+      ''
+    ];
     s.appendRow(row);
     markTiming('appendRow');
 
@@ -4994,6 +5016,57 @@ function resolveTreatmentCategoryFromPayload_(payload){
     key: normalizedKey || '',
     label,
     allowEmptyPatientId: definition ? definition.allowEmptyPatientId === true : false
+  };
+}
+
+function resolveTreatmentAttendanceMetrics_(categoryInfo){
+  const key = categoryInfo && categoryInfo.key ? String(categoryInfo.key).trim() : '';
+  const label = categoryInfo && categoryInfo.label ? String(categoryInfo.label).trim() : '';
+
+  const metricsFromKey = key ? TREATMENT_CATEGORY_ATTENDANCE_METRICS[key] : null;
+  let metrics = metricsFromKey;
+  if (!metrics && label) {
+    const matchedKey = Object.keys(TREATMENT_CATEGORY_DEFINITIONS).find(candidateKey => {
+      const definition = TREATMENT_CATEGORY_DEFINITIONS[candidateKey];
+      return definition && definition.label === label;
+    });
+    metrics = matchedKey ? TREATMENT_CATEGORY_ATTENDANCE_METRICS[matchedKey] : null;
+  }
+
+  if (!metrics) {
+    return { convertedCount: '', newPatientCount: '', totalCount: '' };
+  }
+
+  let converted = metrics.convertedCount;
+  let newCount = metrics.newPatientCount;
+
+  if (typeof converted === 'string') {
+    const parsed = Number(converted);
+    converted = Number.isFinite(parsed) ? parsed : '';
+  } else if (typeof converted !== 'number' || !Number.isFinite(converted)) {
+    converted = '';
+  }
+
+  if (typeof newCount === 'string') {
+    const parsed = Number(newCount);
+    newCount = Number.isFinite(parsed) ? parsed : '';
+  } else if (typeof newCount !== 'number' || !Number.isFinite(newCount)) {
+    newCount = '';
+  }
+
+  const hasConverted = typeof converted === 'number' && Number.isFinite(converted);
+  const hasNewCount = typeof newCount === 'number' && Number.isFinite(newCount);
+
+  let resolvedTotal = '';
+  if (hasConverted || hasNewCount) {
+    const total = (hasConverted ? converted : 0) + (hasNewCount ? newCount : 0);
+    resolvedTotal = Number.isFinite(total) ? total : '';
+  }
+
+  return {
+    convertedCount: hasConverted ? converted : '',
+    newPatientCount: hasNewCount ? newCount : '',
+    totalCount: resolvedTotal
   };
 }
 

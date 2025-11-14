@@ -159,11 +159,11 @@
         <!-- 保存行＋外部向けレポート -->
         <div class="save-button-group" style="margin-top:8px">
           <div class="save-button-row btnrow">
-            <button id="saveBtn" class="btn ok" data-save-kind="insurance30" type="button" onclick="save()">保存（施術録）</button>
-            <button id="saveSelf30Btn" class="btn ghost" data-save-kind="self30" type="button" onclick="save()">保存（自費30）</button>
-            <button id="saveSelf60Btn" class="btn ghost" data-save-kind="self60" type="button" onclick="save()">保存（自費60）</button>
-            <button id="saveMixedBtn" class="btn ghost" data-save-kind="mixed" type="button" onclick="save()">保存（混合）</button>
-            <button id="saveNewBtn" class="btn ghost" data-save-kind="new" type="button" onclick="save()">保存（新規）</button>
+            <button id="saveBtn" class="btn ok" data-save-kind="insurance30" type="button" onclick="save(event)">保存（施術録）</button>
+            <button id="saveSelf30Btn" class="btn ghost" data-save-kind="self30" type="button" onclick="save(event)">保存（自費30）</button>
+            <button id="saveSelf60Btn" class="btn ghost" data-save-kind="self60" type="button" onclick="save(event)">保存（自費60）</button>
+            <button id="saveMixedBtn" class="btn ghost" data-save-kind="mixed" type="button" onclick="save(event)">保存（混合）</button>
+            <button id="saveNewBtn" class="btn ghost" data-save-kind="new" type="button" onclick="save(event)">保存（新規）</button>
           </div>
         </div>
       </div>
@@ -330,6 +330,44 @@ function hideGlobalLoading(){
 }
 
 const SAVE_BUTTON_SELECTOR = '[data-save-kind]';
+const SAVE_KIND_DEFAULT = 'insurance30';
+const TREATMENT_CATEGORY_DEFINITIONS = {
+  insurance30: { key: 'insurance30', label: '30分施術（保険）', requiresPatientId: true },
+  self30:      { key: 'self30',      label: '30分施術（自費）', requiresPatientId: true },
+  self60:      { key: 'self60',      label: '60分施術（完全自費）', requiresPatientId: true },
+  mixed:       { key: 'mixed',       label: '60分施術（保険＋自費）', requiresPatientId: true },
+  new:         { key: 'new',         label: '新規', requiresPatientId: false }
+};
+let _lastSaveKind = SAVE_KIND_DEFAULT;
+
+function getTreatmentCategoryMeta(kind){
+  if (!kind) return null;
+  return Object.prototype.hasOwnProperty.call(TREATMENT_CATEGORY_DEFINITIONS, kind)
+    ? TREATMENT_CATEGORY_DEFINITIONS[kind]
+    : null;
+}
+
+function resolveSaveKind(input){
+  if (typeof input === 'string' && input) {
+    return input;
+  }
+  if (input && typeof input === 'object') {
+    if (input.saveKind && typeof input.saveKind === 'string' && input.saveKind) {
+      return input.saveKind;
+    }
+    const target = input.currentTarget || input.target;
+    if (target && target.dataset && target.dataset.saveKind) {
+      return target.dataset.saveKind;
+    }
+  }
+  return _lastSaveKind || SAVE_KIND_DEFAULT;
+}
+
+function buildTreatmentCategoryPayload(kind){
+  const meta = getTreatmentCategoryMeta(kind);
+  if (!meta) return null;
+  return { key: meta.key, label: meta.label };
+}
 
 function getSaveButtons(){
   if (typeof document === 'undefined') return [];
@@ -2725,7 +2763,7 @@ function scheduleRefresh(delayMs){
   }, ms);
 }
 
-function save(){
+function save(ev){
   let endTiming = () => {};
   const finalizeSave = () => {
     hideGlobalLoading();
@@ -2738,18 +2776,28 @@ function save(){
       toast('保存処理中です。完了までお待ちください');
       return;
     }
+    const requestedKind = resolveSaveKind(ev);
+    const categoryMeta = getTreatmentCategoryMeta(requestedKind) || getTreatmentCategoryMeta(SAVE_KIND_DEFAULT);
+    const effectiveKind = categoryMeta ? categoryMeta.key : SAVE_KIND_DEFAULT;
+    _lastSaveKind = effectiveKind;
+
+    const requiresPatientId = !categoryMeta || categoryMeta.requiresPatientId !== false;
     const p = pid();
-    if(!p){
-      if (_patientIdList.length){
-        alert('患者IDを候補から選択してください');
-      } else {
-        alert('患者IDを入力');
+    if (requiresPatientId) {
+      if(!p){
+        if (_patientIdList.length){
+          alert('患者IDを候補から選択してください');
+        } else {
+          alert('患者IDを入力');
+        }
+        return;
       }
-      return;
-    }
-    if (_patientIdList.length && !_patientIdIndex[p]){
-      alert('⚠️ リストに存在しない患者は登録できません。');
-      return;
+      if (_patientIdList.length && !_patientIdIndex[p]){
+        alert('⚠️ リストに存在しない患者は登録できません。');
+        return;
+      }
+    } else if (p && _patientIdList.length && !_patientIdIndex[p]) {
+      console.warn('[save] patientId not found in cache for optional entry', p);
     }
     _saveInFlight = true;
 
@@ -2758,12 +2806,17 @@ function save(){
 
     // 送信ペイロード
     const payload={
-      patientId: p,
+      patientId: p || '',
       presetLabel: detectPresetLabelFromNote(),
       burdenShare: val('burden')||null,
       notesParts:{ note: val('obs') },
       actions: Object.assign({}, window._actions || {})
     };
+    const treatmentCategory = buildTreatmentCategoryPayload(effectiveKind);
+    if (treatmentCategory) {
+      payload.treatmentCategory = treatmentCategory;
+    }
+    payload.saveKind = effectiveKind;
     const requestId = _pendingSaveRequestId || generateSaveRequestId();
     _pendingSaveRequestId = requestId;
     payload.treatmentId = requestId;

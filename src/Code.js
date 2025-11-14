@@ -69,7 +69,7 @@ const SystemPrompt_DoctorReport_JP = [
 ].join('\n');
 const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special','期間（月）','参照元レポートID','生成方式'];
 
-const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202501';
+const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202502';
 const PATIENT_CACHE_TTL_SECONDS = 90;
 const PATIENT_CACHE_KEYS = {
   header: pid => 'patient:header:' + normId_(pid),
@@ -79,6 +79,29 @@ const PATIENT_CACHE_KEYS = {
 };
 const GLOBAL_NEWS_CACHE_KEY = 'patient:news:__global__';
 const DOCTOR_REPORT_HANDOVER_WINDOW_DAYS = 30;
+
+const TREATMENT_SHEET_HEADER = [
+  'タイムスタンプ',
+  '施術録番号',
+  '所見',
+  'メール',
+  '最終確認',
+  '名前',
+  'treatmentId',
+  '施術時間区分',
+  '換算人数',
+  '新規対応人数',
+  '総換算人数',
+  '勤怠反映フラグ'
+];
+
+const TREATMENT_CATEGORY_DEFINITIONS = {
+  insurance30: { label: '30分施術（保険）', allowEmptyPatientId: false },
+  self30:      { label: '30分施術（自費）', allowEmptyPatientId: false },
+  self60:      { label: '60分施術（完全自費）', allowEmptyPatientId: false },
+  mixed:       { label: '60分施術（保険＋自費）', allowEmptyPatientId: false },
+  new:         { label: '新規', allowEmptyPatientId: true }
+};
 
 function getScriptCache_(){
   try {
@@ -267,7 +290,7 @@ function ensureAuxSheets_(options) {
     };
 
     // 既存タブ
-    ensureHeader('施術録',   ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
+    ensureHeader('施術録',   TREATMENT_SHEET_HEADER);
     ensureHeader('News',     ['TS','患者ID','種別','メッセージ','cleared','meta']);
 
     const upgradeHeader = (sheetName, header) => {
@@ -284,7 +307,7 @@ function ensureAuxSheets_(options) {
       }
     };
 
-    upgradeHeader('施術録', ['タイムスタンプ','施術録番号','所見','メール','最終確認','名前','treatmentId']);
+    upgradeHeader('施術録', TREATMENT_SHEET_HEADER);
     upgradeHeader('News',   ['TS','患者ID','種別','メッセージ','cleared','meta']);
     upgradeHeader('AI報告書', AI_REPORT_SHEET_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
@@ -1510,8 +1533,8 @@ function listTreatmentsForCurrentMonth(pid){
     const s = sh('施術録');
     const lr = s.getLastRow();
     if (lr < 2) return [];
-    const width = Math.min(7, s.getMaxColumns());
-    const vals = s.getRange(2, 1, lr - 1, width).getValues(); // A..G
+    const width = Math.min(TREATMENT_SHEET_HEADER.length, s.getMaxColumns());
+    const vals = s.getRange(2, 1, lr - 1, width).getValues();
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
@@ -1526,11 +1549,13 @@ function listTreatmentsForCurrentMonth(pid){
       const d = ts instanceof Date ? ts : new Date(ts);
       if (isNaN(d.getTime())) continue;
       if (d < start || d > end) continue;
+      const category = width >= 8 ? String(r[7] || '') : '';
       out.push({
         row: 2 + i,
         when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
         note: String(r[2] || ''),
-        email: String(r[3] || '')
+        email: String(r[3] || ''),
+        category
       });
     }
     return out.reverse();
@@ -1568,7 +1593,7 @@ function deleteTreatmentRow(row){
   const s=sh('施術録'); const lr = s.getLastRow();
   if(row<=1 || row>lr) throw new Error('行が不正です');
   const maxCols = s.getMaxColumns();
-  const width = Math.min(7, maxCols);
+  const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
   const rowVals = s.getRange(row, 1, 1, width).getValues()[0];
   const treatmentId = width >= 7 ? String(rowVals[6] || '').trim() : '';
   const pid = String(rowVals[1] || '').trim();
@@ -4660,8 +4685,9 @@ function submitTreatment(payload) {
     ensureAuxSheets_();
     markTiming('prepared');
     const s = sh('施術録');
+    const categoryInfo = resolveTreatmentCategoryFromPayload_(payload);
     pid = String(payload?.patientId || '').trim();
-    if (!pid) throw new Error('patientIdが空です');
+    if (!pid && !categoryInfo.allowEmptyPatientId) throw new Error('patientIdが空です');
 
     const user = (Session.getActiveUser() || {}).getEmail() || '';
 
@@ -4720,11 +4746,22 @@ function submitTreatment(payload) {
 
     const treatmentId = incomingTreatmentId || Utilities.getUuid();
     treatmentIdForLog = treatmentId;
-    const row = [now, pid, merged, user, '', '', treatmentId];
+    const treatmentCategoryLabel = categoryInfo.label || '';
+    const treatmentCategoryKey = categoryInfo.key || '';
+    const row = [now, pid, merged, user, '', '', treatmentId, treatmentCategoryLabel];
     s.appendRow(row);
     markTiming('appendRow');
 
-    const job = { patientId: pid, treatmentId, treatmentTimestamp: now };
+    const job = { treatmentId, treatmentTimestamp: now };
+    if (pid) {
+      job.patientId = pid;
+    }
+    if (treatmentCategoryKey) {
+      job.treatmentCategoryKey = treatmentCategoryKey;
+    }
+    if (treatmentCategoryLabel) {
+      job.treatmentCategoryLabel = treatmentCategoryLabel;
+    }
     let hasFollowUp = false;
 
     const presetLabel = String(payload?.presetLabel || '').trim();
@@ -4754,16 +4791,20 @@ function submitTreatment(payload) {
       hasFollowUp = true;
     }
 
-    if (hasFollowUp) {
+    if (hasFollowUp && pid) {
       queueAfterTreatmentJob(job);
       markTiming('queueJob');
+    } else if (hasFollowUp && !pid) {
+      Logger.log('[submitTreatment] Follow-up skipped because patientId is empty');
     }
 
     markTiming('done');
     logSubmitTreatmentTimings_(pid, treatmentId, 'ok', timings);
     timingLogged = true;
 
-    invalidatePatientCaches_(pid, { header: true, treatments: true });
+    if (pid) {
+      invalidatePatientCaches_(pid, { header: true, treatments: true });
+    }
     return { ok: true, wroteTo: s.getName(), row, treatmentId };
   } finally {
     lock.releaseLock();
@@ -4920,6 +4961,40 @@ function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTr
     }
   }
   return null;
+}
+
+function resolveTreatmentCategoryFromPayload_(payload){
+  const raw = payload && payload.treatmentCategory;
+  const keyCandidates = [];
+  if (raw && typeof raw === 'object') {
+    if (raw.key != null) keyCandidates.push(String(raw.key).trim());
+    if (raw.kind != null) keyCandidates.push(String(raw.kind).trim());
+    if (raw.saveKind != null) keyCandidates.push(String(raw.saveKind).trim());
+  }
+  if (payload && payload.saveKind != null) {
+    keyCandidates.push(String(payload.saveKind).trim());
+  }
+  const normalizedKey = keyCandidates.find(key => key && TREATMENT_CATEGORY_DEFINITIONS[key]);
+  const definition = normalizedKey ? TREATMENT_CATEGORY_DEFINITIONS[normalizedKey] : null;
+  let label = '';
+  if (definition) {
+    label = definition.label;
+  } else if (raw != null) {
+    if (typeof raw === 'string') {
+      label = String(raw).trim();
+    } else if (typeof raw === 'object') {
+      if (raw.label != null) {
+        label = String(raw.label).trim();
+      } else if (raw.tag != null) {
+        label = String(raw.tag).trim();
+      }
+    }
+  }
+  return {
+    key: normalizedKey || '',
+    label,
+    allowEmptyPatientId: definition ? definition.allowEmptyPatientId === true : false
+  };
 }
 
 function normalizeTreatmentTimestamp_(value, tz) {

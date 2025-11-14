@@ -85,6 +85,11 @@
   .ai-report-history-meta{ font-size:0.85rem; color:var(--muted); margin-top:4px }
   .ai-report-special ul{ margin:4px 0 0 16px; padding:0 }
   .ai-report-special li{ margin:2px 0 }
+  .consent-block{ margin-top:12px; display:flex; gap:12px; padding:12px; border:1px solid #e5e7eb; border-radius:12px; background:#f9fafb; align-items:flex-start }
+  .consent-icon{ font-size:20px; line-height:1 }
+  .consent-body{ display:flex; flex-direction:column; gap:4px; min-width:0 }
+  .consent-title{ font-weight:600; font-size:0.95rem; color:#1f2937 }
+  .consent-text{ color:#1f2937; font-size:0.95rem; line-height:1.6; word-break:break-word; white-space:pre-line; max-height:3.2em; overflow:hidden; }
   .loading-overlay{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.76); z-index:10000; color:#1f2937; font-weight:600; font-size:1.05rem; backdrop-filter:blur(2px); }
   .loading-overlay.hidden{ display:none; }
   .loading-overlay .loading-box{ background:rgba(255,255,255,0.92); border-radius:14px; padding:16px 22px; box-shadow:0 14px 38px rgba(15,23,42,0.14); display:flex; align-items:center; gap:12px; }
@@ -2852,6 +2857,8 @@ function loadHeader(patientId, next){
       const status = h.status==='active'? '🟢稼働中' : h.status==='suspended'? '🟡休止' : '🔴中止';
       const estCur = h.monthly.current.est? '約'+h.monthly.current.est.toLocaleString()+'円' : '—';
       const estPrev = h.monthly.previous.est? '約'+h.monthly.previous.est.toLocaleString()+'円' : '—';
+      const consentText = (h.consentContent || '').trim();
+      const consentDisplay = consentText ? escapeHtml(consentText) : '—';
       q('hdr').innerHTML = `
         <div class="row">
           <div>
@@ -2864,6 +2871,13 @@ function loadHeader(patientId, next){
             <div>${status} ${h.pauseUntil? '（ミュート:'+h.pauseUntil+'まで）':''}</div>
             <div class="muted">当月: ${h.monthly.current.count}回 / ${estCur}　｜　前月: ${h.monthly.previous.count}回 / ${estPrev}</div>
             <div class="muted">最終施術: ${h.recent.lastTreat||'—'}　最終同意: ${h.recent.lastConsent||'—'}　直近担当: ${h.recent.lastStaff||'—'}</div>
+          </div>
+        </div>
+        <div class="consent-block">
+          <div class="consent-icon" aria-hidden="true">🩺</div>
+          <div class="consent-body">
+            <div class="consent-title">同意内容</div>
+            <div class="consent-text">${consentDisplay}</div>
           </div>
         </div>`;
       setPatientIdInputDisplay(h.patientId, h.name);

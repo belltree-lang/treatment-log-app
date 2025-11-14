@@ -151,6 +151,7 @@ const LABELS = {
   birth:     ['生年月日','誕生日','生年','生年月'],
   consent:   ['同意年月日','同意日','同意開始日','同意開始'],
   consentHandout: ['配布','配布欄','配布状況','配布日','配布（同意書）'],
+  consentContent: ['同意症状','同意内容','施術対象疾患','対象疾患','対象症状','同意書内容','同意記載内容'],
   share:     ['負担割合','負担','自己負担','負担率','負担割','負担%','負担％'],
   phone:     ['電話','電話番号','TEL','Tel']
 };
@@ -165,6 +166,7 @@ const PATIENT_COLS_FIXED = {
   doctor:  26,   // 医師
   consent: 28,   // 同意年月日
   consentHandout: 54, // 配布（同意書取得日）
+  consentContent: 25, // 同意症状（Y列）
   phone:   32,   // 電話
   share:   47    // 負担割合
 };
@@ -1228,6 +1230,7 @@ function getPatientHeader(pid){
     const cConsHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
     const cShare= getColFlexible_(head, LABELS.share,    PATIENT_COLS_FIXED.share,    '負担割合');
     const cTel  = getColFlexible_(head, LABELS.phone,    PATIENT_COLS_FIXED.phone,    '電話');
+    const cConsentContent = getColFlexible_(head, LABELS.consentContent, PATIENT_COLS_FIXED.consentContent, '同意症状');
 
     // 年齢
     const bd = parseDateFlexible_(rowV[cBirth-1]||'');
@@ -1264,6 +1267,7 @@ function getPatientHeader(pid){
       consentDate: consent || '',
       consentHandoutDate: consentHandout || '',
       consentExpiry: expiry,
+      consentContent: cConsentContent ? String(rowV[cConsentContent-1] || '').trim() : '',
       burden: shareDisp || '',
       monthly, recent,
       status: stat.status,
@@ -2356,34 +2360,12 @@ function determineTreatmentFrequencyLabel_(count){
 
 function getConsentContentForPatient_(pid){
   try {
-    const wb = ss();
-    const sheet = wb.getSheetByName('同意書');
-    if (!sheet) return '';
-    const lr = sheet.getLastRow();
-    if (lr < 2) return '';
-    const lc = sheet.getLastColumn();
-    const headers = sheet.getRange(1, 1, 1, lc).getDisplayValues()[0].map(h => String(h || '').trim());
-
-    const findCol = (predicate) => {
-      for (let i = 0; i < headers.length; i++) {
-        if (predicate(headers[i])) return i + 1;
-      }
-      return null;
-    };
-
-    const pidCol = findCol(h => /患者|施術録|ID|番号/.test(h));
-    const contentCol = findCol(h => h.indexOf('同意') >= 0 && (h.indexOf('内容') >= 0 || h.indexOf('事項') >= 0 || h.indexOf('概要') >= 0 || h.indexOf('文') >= 0));
-    if (!pidCol || !contentCol) return '';
-
-    const vals = sheet.getRange(2, 1, lr - 1, lc).getDisplayValues();
-    const target = String(normId_(pid));
-    for (let i = 0; i < vals.length; i++) {
-      const row = vals[i];
-      if (String(normId_(row[pidCol - 1])) === target) {
-        return String(row[contentCol - 1] || '').trim();
-      }
-    }
-    return '';
+    const hit = findPatientRow_(pid);
+    if (!hit) return '';
+    const { head, rowValues } = hit;
+    const cConsentContent = getColFlexible_(head, LABELS.consentContent, PATIENT_COLS_FIXED.consentContent, '同意症状');
+    if (!cConsentContent) return '';
+    return String(rowValues[cConsentContent - 1] || '').trim();
   } catch (err) {
     Logger.log('getConsentContentForPatient_ error: ' + err);
     return '';

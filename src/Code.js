@@ -3531,13 +3531,22 @@ function buildIcfSource_(pid, range){
   if (!header) {
     return { patientFound: false };
   }
+  const consentText = (header && typeof header.consentContent === 'string')
+    ? header.consentContent.trim()
+    : getConsentContentForPatient_(pid);
+  const effectiveEndDate = range && range.endDate instanceof Date ? range.endDate : new Date();
+  const frequencyLabel = determineTreatmentFrequencyLabel_(
+    countTreatmentsInRecentMonth_(pid, effectiveEndDate)
+  );
   const notes = getTreatmentNotesInRange_(pid, range.startDate, range.endDate);
   const handovers = getHandoversInRange_(pid, range.startDate, range.endDate);
   return {
     patientFound: true,
     header,
     notes,
-    handovers
+    handovers,
+    consent: consentText || '',
+    frequencyLabel
   };
 }
 

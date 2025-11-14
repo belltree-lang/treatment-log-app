@@ -35,6 +35,9 @@
   .news-item[data-status="consent-doctor-report"]{ background:#ede9fe; border-left-color:#7c3aed; }
   .section-title{ font-weight:700; margin:8px 0 }
   .btnrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  .save-button-group{ display:flex; flex-direction:column; gap:8px; }
+  .save-button-row{ display:flex; flex-wrap:wrap; gap:8px; }
+  .save-button-row .btn{ white-space:nowrap; }
   table{ width:100%; border-collapse:collapse; font-size:14px }
   th,td{ border-bottom:1px solid #eee; padding:8px 6px; text-align:left; vertical-align:top }
   .actions button{ margin-right:6px }
@@ -154,8 +157,14 @@
         </div>
 
         <!-- 保存行＋外部向けレポート -->
-        <div class="btnrow" style="margin-top:8px">
-          <button id="saveBtn" class="btn ok" onclick="save()">保存（施術録）</button>
+        <div class="save-button-group" style="margin-top:8px">
+          <div class="save-button-row btnrow">
+            <button id="saveBtn" class="btn ok" data-save-kind="insurance30" type="button" onclick="save()">保存（施術録）</button>
+            <button id="saveSelf30Btn" class="btn ghost" data-save-kind="self30" type="button" onclick="save()">保存（自費30）</button>
+            <button id="saveSelf60Btn" class="btn ghost" data-save-kind="self60" type="button" onclick="save()">保存（自費60）</button>
+            <button id="saveMixedBtn" class="btn ghost" data-save-kind="mixed" type="button" onclick="save()">保存（混合）</button>
+            <button id="saveNewBtn" class="btn ghost" data-save-kind="new" type="button" onclick="save()">保存（新規）</button>
+          </div>
         </div>
       </div>
 
@@ -318,6 +327,21 @@ function hideGlobalLoading(){
   if (overlay) {
     overlay.classList.add('hidden');
   }
+}
+
+const SAVE_BUTTON_SELECTOR = '[data-save-kind]';
+
+function getSaveButtons(){
+  if (typeof document === 'undefined') return [];
+  return Array.from(document.querySelectorAll(SAVE_BUTTON_SELECTOR));
+}
+
+function setSaveButtonsDisabled(disabled){
+  const buttons = getSaveButtons();
+  buttons.forEach(btn => {
+    if (!btn) return;
+    btn.disabled = !!disabled;
+  });
 }
 
 function highlightElement(target, options){
@@ -2702,11 +2726,10 @@ function scheduleRefresh(delayMs){
 }
 
 function save(){
-  const saveBtn = document.getElementById('saveBtn');
   let endTiming = () => {};
   const finalizeSave = () => {
     hideGlobalLoading();
-    if (saveBtn) saveBtn.disabled = false;
+    setSaveButtonsDisabled(false);
   };
   try{
     console.log('[save] start');
@@ -2730,7 +2753,7 @@ function save(){
     }
     _saveInFlight = true;
 
-    if (saveBtn) saveBtn.disabled = true;
+    setSaveButtonsDisabled(true);
     showGlobalLoading('保存中です…');
 
     // 送信ペイロード

@@ -131,6 +131,25 @@ const VISIT_ATTENDANCE_SHEET_NAME = 'VisitAttendance';
 const VISIT_ATTENDANCE_SHEET_HEADER = ['日付','メール','出勤','退勤','勤務時間','休憩','種別内訳','自動反映フラグ'];
 const VISIT_ATTENDANCE_AUTO_FLAG_VALUE = 'auto';
 const VISIT_ATTENDANCE_WORK_START_MINUTES = 9 * 60;
+const VISIT_ATTENDANCE_WORK_END_LIMIT_MINUTES = 18 * 60;
+const VISIT_ATTENDANCE_ROUNDING_MINUTES = 15;
+const VISIT_ATTENDANCE_REQUEST_SHEET_NAME = 'VisitAttendanceRequests';
+const VISIT_ATTENDANCE_REQUEST_SHEET_HEADER = [
+  'ID',
+  'TS',
+  '申請者',
+  '対象メール',
+  '対象日',
+  '出勤',
+  '退勤',
+  '休憩(分)',
+  '申請メモ',
+  '状態',
+  '状態更新',
+  '対応者',
+  '対応メモ',
+  '原データ'
+];
 
 function getScriptCache_(){
   try {
@@ -406,6 +425,29 @@ function ensureVisitAttendanceSheet_(){
   const mismatch = current.length < needed || VISIT_ATTENDANCE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
   if (mismatch) {
     sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
+function ensureVisitAttendanceRequestSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(VISIT_ATTENDANCE_REQUEST_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(VISIT_ATTENDANCE_REQUEST_SHEET_NAME);
+  }
+  const needed = VISIT_ATTENDANCE_REQUEST_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_REQUEST_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || VISIT_ATTENDANCE_REQUEST_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_REQUEST_SHEET_HEADER]);
   }
   return sheet;
 }
@@ -3902,6 +3944,7 @@ function doGet(e) {
     case 'visit':        templateFile = 'intake'; break;
     case 'intake_list':  templateFile = 'intake_list'; break;
     case 'admin':        templateFile = 'admin'; break;
+    case 'attendance':   templateFile = 'attendance'; break;
     case 'vacancy':      templateFile = 'vacancy'; break;
     case 'record':       templateFile = 'app'; break;   // ★ app.html を record として表示
     case 'report':       templateFile = 'report'; break;
@@ -4087,6 +4130,18 @@ const STAFF_SHIFT_RULES = [
   createStaffShiftRule_('makishima@', { displayName: 'makishima@', workDays: [4,6], skipHolidays: true }),
   createStaffShiftRule_('urano@', { displayName: 'urano@', workDays: [1,2,4,5,6], skipHolidays: true })
 ];
+
+function resolveStaffDisplayName_(email){
+  const normalized = normalizeEmailKey_(email);
+  if (!normalized) return '';
+  for (let i = 0; i < STAFF_SHIFT_RULES.length; i++) {
+    const rule = STAFF_SHIFT_RULES[i];
+    if (rule && typeof rule.matches === 'function' && rule.matches(normalized)) {
+      return rule.displayName || normalized;
+    }
+  }
+  return normalized.split('@')[0] || normalized;
+}
 
 function isJapaneseHoliday_(date){
   if (!(date instanceof Date) || isNaN(date.getTime())) return false;
@@ -5152,6 +5207,81 @@ function formatMinutesAsTimeText_(minutes){
   return String(hours).padStart(2, '0') + ':' + String(mins).padStart(2, '0');
 }
 
+function formatDurationText_(minutes){
+  if (!Number.isFinite(minutes) || minutes <= 0) return '0時間';
+  const total = Math.round(minutes);
+  const hours = Math.floor(total / 60);
+  const mins = Math.abs(total % 60);
+  if (mins === 0) {
+    return hours + '時間';
+  }
+  if (hours === 0) {
+    return mins + '分';
+  }
+  return hours + '時間' + mins + '分';
+}
+
+function parseTimeTextToMinutes_(value){
+  if (value == null || value === '') return NaN;
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.getHours() * 60 + value.getMinutes();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 0 && value <= 1) {
+      return Math.round(value * 24 * 60);
+    }
+    return Math.round(value);
+  }
+  const text = String(value).trim();
+  if (!text) return NaN;
+  const normalized = text.replace(/[時h]/gi, ':').replace(/分/g, '');
+  const m = normalized.match(/^(\d{1,2})(?::?(\d{2}))?$/);
+  if (m) {
+    const h = Number(m[1]);
+    const mi = Number(m[2] || '0');
+    if (Number.isFinite(h) && Number.isFinite(mi)) {
+      return h * 60 + mi;
+    }
+  }
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) {
+    return Math.round(numeric);
+  }
+  return NaN;
+}
+
+function resolveTimeTextFromCell_(value, displayValue, tz){
+  const timezone = tz || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, timezone, 'HH:mm');
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 0 && value <= 1) {
+      return formatMinutesAsTimeText_(Math.round(value * 24 * 60));
+    }
+    return formatMinutesAsTimeText_(value);
+  }
+  const display = String(displayValue || '').trim();
+  if (display) {
+    const m = display.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) {
+      const h = String(m[1]).padStart(2, '0');
+      const mi = String(m[2]).padStart(2, '0');
+      return h + ':' + mi;
+    }
+    return display;
+  }
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const m = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (m) {
+    const h = String(m[1]).padStart(2, '0');
+    const mi = String(m[2]).padStart(2, '0');
+    return h + ':' + mi;
+  }
+  return text;
+}
+
 function formatDateKeyFromValue_(value, tz){
   if (value instanceof Date && !isNaN(value.getTime())) {
     return Utilities.formatDate(value, tz, 'yyyy-MM-dd');
@@ -5379,6 +5509,446 @@ function syncVisitAttendance(options){
   });
 
   return summary;
+}
+
+function readVisitAttendanceRecordsForEmail_(email, options){
+  const normalizedEmail = normalizeEmailKey_(email);
+  if (!normalizedEmail) return [];
+  const opts = options || {};
+  const tz = opts.tz || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const startDate = opts.startDate instanceof Date ? new Date(opts.startDate.getFullYear(), opts.startDate.getMonth(), opts.startDate.getDate()) : null;
+  const endDate = opts.endDate instanceof Date ? new Date(opts.endDate.getFullYear(), opts.endDate.getMonth(), opts.endDate.getDate()) : null;
+  const startMs = startDate ? startDate.getTime() : null;
+  const endMs = endDate ? endDate.getTime() : null;
+  const sheet = ensureVisitAttendanceSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const width = Math.min(VISIT_ATTENDANCE_SHEET_HEADER.length, sheet.getMaxColumns());
+  const range = sheet.getRange(2, 1, lastRow - 1, width);
+  const values = range.getValues();
+  const displays = range.getDisplayValues();
+  const weekdays = ['日','月','火','水','木','金','土'];
+  const results = [];
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const display = displays[i];
+    const rowEmail = normalizeEmailKey_(row[1] || display[1]);
+    if (!rowEmail || rowEmail !== normalizedEmail) continue;
+    let dateObj = row[0];
+    if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) {
+      const key = formatDateKeyFromValue_(row[0], tz) || formatDateKeyFromValue_(display[0], tz);
+      dateObj = createDateFromKey_(key || '');
+    }
+    if (!dateObj) continue;
+    const day = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+    const dayMs = day.getTime();
+    if (startMs != null && dayMs < startMs) continue;
+    if (endMs != null && dayMs > endMs) continue;
+
+    const startText = resolveTimeTextFromCell_(row[2], display[2], tz);
+    const endText = resolveTimeTextFromCell_(row[3], display[3], tz);
+    let workText = resolveTimeTextFromCell_(row[4], display[4], tz);
+    let breakText = resolveTimeTextFromCell_(row[5], display[5], tz);
+    const startMinutes = parseTimeTextToMinutes_(startText);
+    const endMinutes = parseTimeTextToMinutes_(endText);
+    let workMinutes = parseTimeTextToMinutes_(workText);
+    let breakMinutes = parseTimeTextToMinutes_(breakText);
+    if (!Number.isFinite(breakMinutes)) breakMinutes = 0;
+    if (!Number.isFinite(workMinutes) && Number.isFinite(startMinutes) && Number.isFinite(endMinutes)) {
+      workMinutes = Math.max(0, endMinutes - startMinutes - breakMinutes);
+      workText = formatMinutesAsTimeText_(workMinutes);
+    }
+    if (!workText && Number.isFinite(workMinutes)) {
+      workText = formatMinutesAsTimeText_(workMinutes);
+    }
+    if (!breakText && Number.isFinite(breakMinutes)) {
+      breakText = formatMinutesAsTimeText_(breakMinutes);
+    }
+
+    const breakdown = String(display[6] || row[6] || '').trim();
+    const flagRaw = String(display[7] || row[7] || '').trim();
+    const auto = flagRaw.toLowerCase() === VISIT_ATTENDANCE_AUTO_FLAG_VALUE || flagRaw === '自動';
+
+    results.push({
+      date: Utilities.formatDate(day, tz, 'yyyy-MM-dd'),
+      displayDate: Utilities.formatDate(day, tz, 'M/d'),
+      weekday: weekdays[day.getDay()] || '',
+      start: startText || (Number.isFinite(startMinutes) ? formatMinutesAsTimeText_(startMinutes) : ''),
+      end: endText || (Number.isFinite(endMinutes) ? formatMinutesAsTimeText_(endMinutes) : ''),
+      work: workText || '',
+      break: breakText || '',
+      startMinutes: Number.isFinite(startMinutes) ? startMinutes : null,
+      endMinutes: Number.isFinite(endMinutes) ? endMinutes : null,
+      workMinutes: Number.isFinite(workMinutes) ? workMinutes : null,
+      breakMinutes: Number.isFinite(breakMinutes) ? breakMinutes : 0,
+      breakdown,
+      flag: flagRaw,
+      auto,
+      sourceLabel: auto ? '自動反映' : (flagRaw ? flagRaw : '手動入力'),
+      rowNumber: i + 2
+    });
+  }
+  results.sort((a, b) => a.date.localeCompare(b.date));
+  return results;
+}
+
+function readVisitAttendanceRequests_(options){
+  const opts = options || {};
+  const tz = opts.tz || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const sheet = ensureVisitAttendanceRequestSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const width = Math.min(VISIT_ATTENDANCE_REQUEST_SHEET_HEADER.length, sheet.getMaxColumns());
+  const range = sheet.getRange(2, 1, lastRow - 1, width);
+  const values = range.getValues();
+  const displays = range.getDisplayValues();
+  const normalizedEmail = normalizeEmailKey_(opts.email);
+  const statusFilter = opts.status ? (Array.isArray(opts.status) ? opts.status : [opts.status]) : null;
+  const statusSet = statusFilter ? new Set(statusFilter.map(v => String(v || '').toLowerCase())) : null;
+  const idFilter = opts.id ? String(opts.id).trim() : '';
+  const startDate = opts.startDate instanceof Date ? new Date(opts.startDate.getFullYear(), opts.startDate.getMonth(), opts.startDate.getDate()) : null;
+  const endDate = opts.endDate instanceof Date ? new Date(opts.endDate.getFullYear(), opts.endDate.getMonth(), opts.endDate.getDate()) : null;
+  const startMs = startDate ? startDate.getTime() : null;
+  const endMs = endDate ? endDate.getTime() : null;
+  const weekdays = ['日','月','火','水','木','金','土'];
+  const results = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const display = displays[i];
+    const id = String(row[0] || display[0] || '').trim();
+    if (idFilter && id !== idFilter) continue;
+
+    const applicantEmail = normalizeEmailKey_(row[2] || display[2]);
+    const targetEmail = normalizeEmailKey_(row[3] || display[3] || applicantEmail);
+    if (normalizedEmail && targetEmail !== normalizedEmail) continue;
+
+    let targetDate = row[4];
+    if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
+      const key = formatDateKeyFromValue_(row[4], tz) || formatDateKeyFromValue_(display[4], tz);
+      targetDate = createDateFromKey_(key || '');
+    }
+    if (!targetDate) continue;
+    const day = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+    const dayMs = day.getTime();
+    if (startMs != null && dayMs < startMs) continue;
+    if (endMs != null && dayMs > endMs) continue;
+
+    const statusRaw = String(row[9] || display[9] || 'pending').trim().toLowerCase() || 'pending';
+    if (statusSet && !statusSet.has(statusRaw)) continue;
+
+    const createdAt = row[1] instanceof Date && !isNaN(row[1].getTime()) ? row[1] : null;
+    const statusUpdatedAt = row[10] instanceof Date && !isNaN(row[10].getTime()) ? row[10] : null;
+    const breakMinutes = parseTimeTextToMinutes_(row[7] != null && row[7] !== '' ? row[7] : display[7]);
+    const startText = String(row[5] || display[5] || '').trim();
+    const endText = String(row[6] || display[6] || '').trim();
+    const startMinutes = parseTimeTextToMinutes_(startText);
+    const endMinutes = parseTimeTextToMinutes_(endText);
+
+    let originalData = null;
+    const originalRaw = row[13] != null && row[13] !== '' ? row[13] : display[13];
+    if (originalRaw != null && originalRaw !== '') {
+      const text = String(originalRaw);
+      try {
+        originalData = JSON.parse(text);
+      } catch (err) {
+        originalData = text;
+      }
+    }
+
+    results.push({
+      id,
+      rowNumber: i + 2,
+      applicantEmail: applicantEmail || '',
+      targetEmail: targetEmail || '',
+      targetDate: Utilities.formatDate(day, tz, 'yyyy-MM-dd'),
+      targetWeekday: weekdays[day.getDay()] || '',
+      monthKey: Utilities.formatDate(day, tz, 'yyyy-MM'),
+      createdAt: createdAt ? createdAt.toISOString() : '',
+      createdAtText: createdAt ? Utilities.formatDate(createdAt, tz, 'yyyy-MM-dd HH:mm') : String(display[1] || ''),
+      start: startText,
+      end: endText,
+      startMinutes: Number.isFinite(startMinutes) ? startMinutes : null,
+      endMinutes: Number.isFinite(endMinutes) ? endMinutes : null,
+      breakMinutes: Number.isFinite(breakMinutes) ? breakMinutes : 0,
+      breakText: formatMinutesAsTimeText_(Number.isFinite(breakMinutes) ? breakMinutes : 0),
+      note: String(row[8] || display[8] || '').trim(),
+      status: statusRaw,
+      statusLabel: statusRaw === 'approved' ? '承認済み' : statusRaw === 'rejected' ? '差し戻し' : '申請中',
+      statusUpdatedAt: statusUpdatedAt ? statusUpdatedAt.toISOString() : '',
+      statusUpdatedAtText: statusUpdatedAt ? Utilities.formatDate(statusUpdatedAt, tz, 'yyyy-MM-dd HH:mm') : String(display[10] || ''),
+      statusBy: String(row[11] || display[11] || '').trim(),
+      statusNote: String(row[12] || display[12] || '').trim(),
+      originalData
+    });
+  }
+
+  results.sort((a, b) => {
+    if (a.targetDate === b.targetDate) {
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    }
+    return b.targetDate.localeCompare(a.targetDate);
+  });
+  return results;
+}
+
+function buildVisitAttendancePortalMonths_(tz, now, count){
+  const list = [];
+  const base = new Date(now.getFullYear(), now.getMonth(), 1);
+  const total = Math.max(1, Number(count) || 12);
+  for (let i = 0; i < total; i++) {
+    const date = new Date(base.getFullYear(), base.getMonth() - i, 1);
+    list.push({
+      key: Utilities.formatDate(date, tz, 'yyyy-MM'),
+      label: Utilities.formatDate(date, tz, 'yyyy年M月'),
+      requestable: date.getTime() < base.getTime()
+    });
+  }
+  return list;
+}
+
+function resolveVisitAttendanceMonthRange_(monthKey, tz, now){
+  const currentStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  if (monthKey && typeof monthKey === 'string') {
+    const text = monthKey.trim();
+    const m = text.match(/^(\d{4})[\/-](\d{1,2})$/);
+    if (m) {
+      const year = Number(m[1]);
+      const monthIndex = Number(m[2]) - 1;
+      if (Number.isFinite(year) && Number.isFinite(monthIndex) && monthIndex >= 0 && monthIndex < 12) {
+        const start = new Date(year, monthIndex, 1);
+        const end = new Date(year, monthIndex + 1, 0);
+        return {
+          key: Utilities.formatDate(start, tz, 'yyyy-MM'),
+          start,
+          end,
+          isCurrent: start.getTime() === currentStart.getTime()
+        };
+      }
+    }
+  }
+  const start = new Date(currentStart.getTime());
+  const end = new Date(currentStart.getFullYear(), currentStart.getMonth() + 1, 0);
+  return {
+    key: Utilities.formatDate(start, tz, 'yyyy-MM'),
+    start,
+    end,
+    isCurrent: true
+  };
+}
+
+function getVisitAttendancePortalData(options){
+  assertDomain_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const email = (Session.getActiveUser() || {}).getEmail() || '';
+  const normalizedEmail = normalizeEmailKey_(email);
+  if (!normalizedEmail) {
+    throw new Error('勤怠ビューを利用するには Google アカウントでログインしてください');
+  }
+  const now = new Date();
+  const range = resolveVisitAttendanceMonthRange_(options && options.month, tz, now);
+  const attendance = readVisitAttendanceRecordsForEmail_(normalizedEmail, { startDate: range.start, endDate: range.end, tz });
+  const requests = readVisitAttendanceRequests_({ email: normalizedEmail, startDate: range.start, endDate: range.end, tz });
+  const requestMap = new Map();
+  requests.forEach(req => {
+    if (!requestMap.has(req.targetDate)) {
+      requestMap.set(req.targetDate, req);
+    }
+  });
+  attendance.forEach(record => {
+    const req = requestMap.get(record.date);
+    if (req) {
+      record.request = req;
+    }
+  });
+  const totalWork = attendance.reduce((sum, r) => sum + (Number.isFinite(r.workMinutes) ? r.workMinutes : 0), 0);
+  const totalBreak = attendance.reduce((sum, r) => sum + (Number.isFinite(r.breakMinutes) ? r.breakMinutes : 0), 0);
+  const firstOfCurrent = new Date(now.getFullYear(), now.getMonth(), 1);
+  const canRequest = range.start.getTime() < firstOfCurrent.getTime();
+  const isAdmin = !!isAdminUser_();
+  const adminData = isAdmin ? {
+    pendingRequests: readVisitAttendanceRequests_({ status: 'pending', tz })
+  } : null;
+
+  return {
+    ok: true,
+    user: {
+      email: normalizedEmail,
+      displayName: resolveStaffDisplayName_(normalizedEmail),
+      isAdmin
+    },
+    timezone: tz,
+    month: {
+      key: range.key,
+      label: Utilities.formatDate(range.start, tz, 'yyyy年M月'),
+      start: Utilities.formatDate(range.start, tz, 'yyyy-MM-dd'),
+      end: Utilities.formatDate(range.end, tz, 'yyyy-MM-dd'),
+      isCurrent: !!range.isCurrent,
+      canRequest
+    },
+    months: buildVisitAttendancePortalMonths_(tz, now, 12),
+    attendance,
+    requests,
+    totals: {
+      days: attendance.length,
+      workMinutes: totalWork,
+      workText: formatDurationText_(totalWork),
+      breakMinutes: totalBreak,
+      breakText: formatDurationText_(totalBreak)
+    },
+    policy: {
+      workStart: formatMinutesAsTimeText_(VISIT_ATTENDANCE_WORK_START_MINUTES),
+      workEndLimit: formatMinutesAsTimeText_(VISIT_ATTENDANCE_WORK_END_LIMIT_MINUTES),
+      roundingMinutes: VISIT_ATTENDANCE_ROUNDING_MINUTES
+    },
+    admin: adminData
+  };
+}
+
+function submitVisitAttendanceRequest(payload){
+  assertDomain_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const email = (Session.getActiveUser() || {}).getEmail() || '';
+  const normalizedEmail = normalizeEmailKey_(email);
+  if (!normalizedEmail) {
+    throw new Error('ログインユーザーを特定できませんでした');
+  }
+  const data = payload || {};
+  let targetDate = data.targetDate;
+  if (targetDate instanceof Date && !isNaN(targetDate.getTime())) {
+    targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  } else {
+    const raw = String(targetDate || data.date || '').trim();
+    if (!raw) {
+      throw new Error('対象日を指定してください');
+    }
+    const normalized = raw.replace(/[\.\/]/g, '-');
+    const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!m) {
+      throw new Error('対象日の形式が不正です (YYYY-MM-DD)');
+    }
+    const year = Number(m[1]);
+    const monthIndex = Number(m[2]) - 1;
+    const day = Number(m[3]);
+    targetDate = new Date(year, monthIndex, day);
+  }
+  if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
+    throw new Error('対象日の解析に失敗しました');
+  }
+  const today = new Date();
+  const firstOfCurrent = new Date(today.getFullYear(), today.getMonth(), 1);
+  const targetDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  if (targetDay.getTime() >= firstOfCurrent.getTime()) {
+    throw new Error('当月分の勤怠は修正申請できません（前月分まで）');
+  }
+
+  const startMinutes = VISIT_ATTENDANCE_WORK_START_MINUTES;
+  let endMinutes = parseTimeTextToMinutes_(data.endTime != null ? data.endTime : data.end);
+  if (!Number.isFinite(endMinutes)) {
+    endMinutes = parseTimeTextToMinutes_(data.endMinutes);
+  }
+  if (!Number.isFinite(endMinutes)) {
+    throw new Error('退勤時刻を HH:MM 形式で入力してください');
+  }
+  if (endMinutes <= startMinutes) {
+    throw new Error('退勤時刻は出勤以降で指定してください');
+  }
+  if (endMinutes > VISIT_ATTENDANCE_WORK_END_LIMIT_MINUTES) {
+    throw new Error('退勤は18:00までにしてください');
+  }
+  if (endMinutes % VISIT_ATTENDANCE_ROUNDING_MINUTES !== 0) {
+    throw new Error('退勤時刻は15分単位で入力してください');
+  }
+
+  let breakMinutes = parseTimeTextToMinutes_(data.breakMinutes != null ? data.breakMinutes : data.break);
+  if (!Number.isFinite(breakMinutes)) {
+    breakMinutes = parseTimeTextToMinutes_(data.restMinutes != null ? data.restMinutes : data.rest);
+  }
+  if (!Number.isFinite(breakMinutes) || breakMinutes < 0) {
+    breakMinutes = 0;
+  }
+  if (breakMinutes % VISIT_ATTENDANCE_ROUNDING_MINUTES !== 0) {
+    throw new Error('休憩時間は15分単位で入力してください');
+  }
+  if (breakMinutes > endMinutes - startMinutes) {
+    throw new Error('休憩時間が長すぎます');
+  }
+
+  const note = String(data.note || data.reason || '').trim();
+  if (!note) {
+    throw new Error('申請理由を入力してください');
+  }
+
+  const pending = readVisitAttendanceRequests_({ email: normalizedEmail, startDate: targetDay, endDate: targetDay, status: 'pending', tz });
+  if (pending.length) {
+    throw new Error('同じ日の申請が既に登録されています。管理者の対応をお待ちください。');
+  }
+
+  const original = readVisitAttendanceRecordsForEmail_(normalizedEmail, { startDate: targetDay, endDate: targetDay, tz });
+  const sheet = ensureVisitAttendanceRequestSheet_();
+  const row = [
+    Utilities.getUuid(),
+    new Date(),
+    normalizedEmail,
+    normalizedEmail,
+    targetDay,
+    formatMinutesAsTimeText_(startMinutes),
+    formatMinutesAsTimeText_(endMinutes),
+    breakMinutes,
+    note,
+    'pending',
+    '',
+    '',
+    '',
+    original && original.length ? JSON.stringify(original[0]) : ''
+  ];
+  sheet.appendRow(row);
+
+  return { ok: true };
+}
+
+function updateVisitAttendanceRequestStatus(payload){
+  assertDomain_();
+  if (!isAdminUser_()) {
+    throw new Error('管理者権限が必要です');
+  }
+  const data = payload || {};
+  const id = String(data.id || data.requestId || '').trim();
+  if (!id) {
+    throw new Error('申請IDが不正です');
+  }
+  const statusRaw = String(data.status || '').trim().toLowerCase();
+  if (!statusRaw) {
+    throw new Error('状態を指定してください');
+  }
+  if (['pending','approved','rejected'].indexOf(statusRaw) === -1) {
+    throw new Error('状態は pending / approved / rejected のいずれかです');
+  }
+  const note = String(data.note || '').trim();
+  const sheet = ensureVisitAttendanceRequestSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    throw new Error('申請が見つかりません');
+  }
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  let targetRow = -1;
+  for (let i = 0; i < ids.length; i++) {
+    const value = String(ids[i][0] || '').trim();
+    if (value === id) {
+      targetRow = i + 2;
+      break;
+    }
+  }
+  if (targetRow === -1) {
+    throw new Error('対象の申請が見つかりません');
+  }
+  const now = new Date();
+  const actor = (Session.getActiveUser() || {}).getEmail() || '';
+  sheet.getRange(targetRow, 10).setValue(statusRaw);
+  sheet.getRange(targetRow, 11).setValue(now);
+  sheet.getRange(targetRow, 12).setValue(actor);
+  sheet.getRange(targetRow, 13).setValue(note);
+  return { ok: true };
 }
 
 function runVisitAttendanceSyncJob(){

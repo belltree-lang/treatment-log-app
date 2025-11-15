@@ -58,6 +58,20 @@
   .custom-input-row{ display:flex; gap:8px; }
   .custom-input-row input{ flex:1; }
   .break-note{ font-size:0.85rem; color:var(--muted); }
+  .monthly-card{ display:flex; flex-direction:column; gap:16px; }
+  .monthly-header{ display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .monthly-nav{ display:flex; align-items:center; gap:8px; font-size:0.9rem; }
+  .monthly-nav button{ border:0; background:#e5e7eb; color:#1f2937; border-radius:999px; padding:6px 12px; font-size:0.85rem; cursor:pointer; transition:background .15s ease; }
+  .monthly-nav button:hover{ background:#d1d5db; }
+  .monthly-nav button:disabled{ opacity:.5; cursor:not-allowed; }
+  .monthly-totals{ display:flex; flex-wrap:wrap; gap:12px; }
+  .monthly-totals .metric{ background:#f1f5f9; border-radius:12px; padding:10px 14px; display:flex; flex-direction:column; gap:6px; min-width:120px; }
+  .monthly-totals .metric span{ color:var(--muted); font-size:0.8rem; }
+  .monthly-totals .metric strong{ font-size:1.05rem; }
+  .table-scroll{ overflow-x:auto; }
+  .monthly-table{ width:100%; border-collapse:collapse; font-size:0.85rem; }
+  .monthly-table th, .monthly-table td{ border:1px solid #e5e7eb; padding:8px 10px; text-align:left; white-space:nowrap; }
+  .monthly-table tbody tr:nth-child(even){ background:#f9fafb; }
   .loading{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.78); z-index:1500; }
   .loading.hidden{ display:none; }
   .loading-box{ display:flex; align-items:center; gap:12px; background:#fff; padding:14px 18px; border-radius:14px; box-shadow:0 18px 40px rgba(15,23,42,0.2); font-weight:600; }
@@ -149,6 +163,34 @@
       <div id="breakNotice" class="break-note"></div>
     </div>
   </section>
+
+  <section id="monthlyCard" class="card monthly-card" hidden>
+    <div class="monthly-header">
+      <h2>月別サマリー</h2>
+      <div class="monthly-nav">
+        <button id="monthlyPrev" type="button">前月</button>
+        <span id="monthlyLabel" class="muted"></span>
+        <button id="monthlyNext" type="button">翌月</button>
+      </div>
+    </div>
+    <div id="monthlyTotals" class="monthly-totals"></div>
+    <div class="table-scroll">
+      <table class="monthly-table">
+        <thead>
+          <tr>
+            <th>日付</th>
+            <th>出勤</th>
+            <th>退勤</th>
+            <th>休憩</th>
+            <th>勤務</th>
+            <th>備考</th>
+            <th>補正</th>
+          </tr>
+        </thead>
+        <tbody id="monthlyTableBody"></tbody>
+      </table>
+    </div>
+  </section>
 </div>
 
 <div id="loading" class="loading hidden" role="status" aria-live="polite">
@@ -157,6 +199,16 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
+function escapeHtml(value){
+  if (value == null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const SESSION_STORAGE_KEY = 'albyte.session.v1';
 const STATUS_LABELS = { idle: '未出勤', working: '勤務中', completed: '退勤済み' };
 const STATUS_CLASS = { idle: 'status-idle', working: 'status-working', completed: 'status-completed' };
@@ -185,18 +237,28 @@ const breakNotice = document.getElementById('breakNotice');
 const loadingOverlay = document.getElementById('loading');
 const loadingText = document.getElementById('loadingText');
 const toast = document.getElementById('toast');
+const monthlyCard = document.getElementById('monthlyCard');
+const monthlyLabel = document.getElementById('monthlyLabel');
+const monthlyTotals = document.getElementById('monthlyTotals');
+const monthlyTableBody = document.getElementById('monthlyTableBody');
+const monthlyPrevButton = document.getElementById('monthlyPrev');
+const monthlyNextButton = document.getElementById('monthlyNext');
 
 let sessionState = null;
 let portalState = null;
 let toastTimer = null;
+let monthlyState = null;
+let monthlyLoading = false;
 
 function setView(view){
   if (view === 'portal') {
     portalView.hidden = false;
     loginView.hidden = true;
+    ensureMonthlySummary();
   } else {
     portalView.hidden = true;
     loginView.hidden = false;
+    resetMonthlySummary();
   }
 }
 
@@ -219,6 +281,154 @@ function showToast(message){
   toastTimer = setTimeout(() => {
     toast.classList.remove('show');
   }, 2600);
+}
+
+function resetMonthlySummary(){
+  monthlyState = null;
+  monthlyLoading = false;
+  if (monthlyCard) {
+    monthlyCard.hidden = true;
+  }
+  if (monthlyPrevButton) monthlyPrevButton.disabled = false;
+  if (monthlyNextButton) monthlyNextButton.disabled = false;
+  if (monthlyLabel) monthlyLabel.textContent = '';
+  if (monthlyTotals) monthlyTotals.innerHTML = '';
+  if (monthlyTableBody) monthlyTableBody.innerHTML = '';
+}
+
+function getPortalMonthTarget(){
+  if (portalState && portalState.today && portalState.today.date) {
+    const parts = String(portalState.today.date).split('-');
+    if (parts.length >= 2) {
+      const y = Number(parts[0]);
+      const m = Number(parts[1]);
+      if (Number.isFinite(y) && Number.isFinite(m)) {
+        return { year: y, month: m };
+      }
+    }
+  }
+  const now = new Date();
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+}
+
+function renderMonthlySummary(){
+  if (!monthlyCard) return;
+  if (!monthlyState) {
+    resetMonthlySummary();
+    return;
+  }
+  monthlyCard.hidden = false;
+  const summary = monthlyState;
+  const totals = summary.totals || {};
+  if (monthlyLabel) {
+    monthlyLabel.textContent = summary.year + '年' + summary.month + '月';
+  }
+  if (monthlyTotals) {
+    const metrics = [];
+    const workText = escapeHtml(totals.durationText || totals.workText || '--');
+    const breakText = escapeHtml(totals.breakText || '--');
+    const workingDays = totals.workingDays != null ? escapeHtml(totals.workingDays) : escapeHtml('--');
+    metrics.push(`<div class="metric"><span>勤務時間</span><strong>${workText}</strong></div>`);
+    metrics.push(`<div class="metric"><span>休憩</span><strong>${breakText}</strong></div>`);
+    metrics.push(`<div class="metric"><span>勤務日数</span><strong>${workingDays}</strong></div>`);
+    if (totals.estimatedWage != null) {
+      metrics.push(`<div class="metric"><span>概算給与</span><strong>¥${escapeHtml(totals.estimatedWage.toLocaleString())}</strong></div>`);
+    }
+    monthlyTotals.innerHTML = metrics.join('');
+  }
+  if (monthlyTableBody) {
+    const rows = Array.isArray(summary.records) ? summary.records : [];
+    if (!rows.length) {
+      monthlyTableBody.innerHTML = '<tr><td colspan="7">データがありません</td></tr>';
+    } else {
+      monthlyTableBody.innerHTML = rows.map(row => {
+        const note = escapeHtml(row.note || '');
+        const auto = escapeHtml(row.autoFlag || '');
+        const date = escapeHtml(row.date || '');
+        const clockIn = escapeHtml(row.clockIn || '');
+        const clockOut = escapeHtml(row.clockOut || '');
+        const breakText = escapeHtml(row.breakText || '');
+        const workText = escapeHtml(row.workText || '');
+        return `<tr>
+          <td>${date}</td>
+          <td>${clockIn}</td>
+          <td>${clockOut}</td>
+          <td>${breakText}</td>
+          <td>${workText}</td>
+          <td>${note}</td>
+          <td>${auto}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+}
+
+function loadMonthlySummary(year, month){
+  if (!sessionState || !sessionState.token || monthlyLoading) return;
+  monthlyLoading = true;
+  if (monthlyPrevButton) monthlyPrevButton.disabled = true;
+  if (monthlyNextButton) monthlyNextButton.disabled = true;
+  const target = {};
+  if (Number.isFinite(year) && Number.isFinite(month)) {
+    target.year = year;
+    target.month = month;
+  }
+  if (monthlyTotals) {
+    monthlyTotals.innerHTML = '<div class="metric"><span>読み込み中</span><strong>…</strong></div>';
+  }
+  const request = Object.assign({ token: sessionState.token }, target);
+  google.script.run
+    .withSuccessHandler(res => {
+      monthlyLoading = false;
+      if (monthlyPrevButton) monthlyPrevButton.disabled = false;
+      if (monthlyNextButton) monthlyNextButton.disabled = false;
+      if (!res || res.ok !== true || !res.summary) {
+        if (res && res.message) {
+          showToast(res.message);
+        }
+        return;
+      }
+      monthlyState = res.summary;
+      renderMonthlySummary();
+    })
+    .withFailureHandler(err => {
+      monthlyLoading = false;
+      if (monthlyPrevButton) monthlyPrevButton.disabled = false;
+      if (monthlyNextButton) monthlyNextButton.disabled = false;
+      if (monthlyTotals) {
+        monthlyTotals.innerHTML = '<div class="metric"><span>エラー</span><strong>--</strong></div>';
+      }
+      showToast(err && err.message ? err.message : '月次データの取得に失敗しました。');
+    })
+    .albyteGetMonthlySummary(request);
+}
+
+function ensureMonthlySummary(){
+  if (!sessionState || !sessionState.token) {
+    resetMonthlySummary();
+    return;
+  }
+  const target = monthlyState ? { year: monthlyState.year, month: monthlyState.month } : getPortalMonthTarget();
+  if (!monthlyState || monthlyState.year !== target.year || monthlyState.month !== target.month) {
+    loadMonthlySummary(target.year, target.month);
+  } else {
+    renderMonthlySummary();
+  }
+}
+
+function changeMonthlySummary(delta){
+  if (!monthlyState || monthlyLoading) return;
+  let year = monthlyState.year;
+  let month = monthlyState.month + delta;
+  while (month <= 0) {
+    month += 12;
+    year -= 1;
+  }
+  while (month > 12) {
+    month -= 12;
+    year += 1;
+  }
+  loadMonthlySummary(year, month);
 }
 
 function loadSession(){
@@ -323,6 +533,13 @@ function handlePortalResponse(res, options){
 
   portalState = res.portal;
   renderPortal();
+  if (res && res.ok) {
+    if (monthlyState) {
+      loadMonthlySummary(monthlyState.year, monthlyState.month);
+    } else {
+      ensureMonthlySummary();
+    }
+  }
   if (options && options.toast) {
     showToast(options.toast);
   }
@@ -527,6 +744,12 @@ function bootstrap(){
     showToast('ログアウトしました。');
   });
   breakCustomForm.addEventListener('submit', submitCustomBreak);
+  if (monthlyPrevButton) {
+    monthlyPrevButton.addEventListener('click', () => changeMonthlySummary(-1));
+  }
+  if (monthlyNextButton) {
+    monthlyNextButton.addEventListener('click', () => changeMonthlySummary(1));
+  }
 
   sessionState = loadSession();
   if (sessionState && sessionState.token){

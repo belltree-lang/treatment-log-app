@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>アルバイト勤怠 管理者</title>
+<style>
+  :root{
+    --bg:#f8fafc;
+    --fg:#1f2937;
+    --card:#fff;
+    --border:#e5e7eb;
+    --muted:#6b7280;
+    --brand:#2563eb;
+    --danger:#ef4444;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap{ max-width:1080px; margin:0 auto; padding:32px 16px 72px; display:flex; flex-direction:column; gap:24px; }
+  .header h1{ margin:0 0 4px; font-size:1.6rem; }
+  .header p{ margin:0; color:var(--muted); }
+  .card{ background:var(--card); border-radius:18px; padding:24px; box-shadow:0 12px 36px rgba(15,23,42,0.08); display:flex; flex-direction:column; gap:16px; }
+  .section-header{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; }
+  .section-header h2{ margin:0; font-size:1.2rem; }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:8px 16px; background:var(--brand); color:#fff; font-size:0.9rem; font-weight:600; cursor:pointer; }
+  .btn.ghost{ background:#e5e7eb; color:var(--fg); }
+  .btn.danger{ background:var(--danger); color:#fff; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .filters{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .filters input[type="month"], .filters select{ padding:6px 10px; border:1px solid var(--border); border-radius:8px; font-size:0.9rem; }
+  table{ width:100%; border-collapse:collapse; font-size:0.85rem; }
+  th,td{ border:1px solid var(--border); padding:8px 10px; text-align:left; }
+  th{ background:#f3f4f6; font-weight:600; }
+  .table-scroll{ overflow-x:auto; }
+  .form-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  .form-grid label{ display:flex; flex-direction:column; gap:6px; font-size:0.85rem; }
+  .form-grid input, .form-grid select, .form-grid textarea{ padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:0.9rem; }
+  textarea{ min-height:64px; resize:vertical; }
+  .form-actions{ display:flex; gap:12px; justify-content:flex-end; }
+  .tag{ display:inline-flex; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:0.75rem; }
+  .toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 18px; border-radius:999px; font-size:0.9rem; opacity:0; transition:opacity .25s ease; pointer-events:none; }
+  .toast.show{ opacity:1; }
+  @media (max-width:720px){
+    .form-actions{ flex-direction:column; }
+    .form-actions .btn{ width:100%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="header">
+    <h1>アルバイト勤怠（管理者）</h1>
+    <p>打刻データ・シフト・スタッフ情報の管理ツールです。</p>
+  </header>
+
+  <section class="card" aria-labelledby="staff-heading">
+    <div class="section-header">
+      <h2 id="staff-heading">スタッフ</h2>
+      <button id="staffNewButton" type="button" class="btn">新規スタッフ</button>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>名前</th><th>PIN</th><th>ロック</th><th>最終ログイン</th><th>更新</th><th></th></tr>
+        </thead>
+        <tbody id="staffTableBody"><tr><td colspan="6">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+    <form id="staffForm" autocomplete="off">
+      <input type="hidden" id="staffId" />
+      <div class="form-grid">
+        <label>名前
+          <input id="staffName" type="text" required />
+        </label>
+        <label>PIN（4桁）
+          <input id="staffPin" type="text" pattern="\d{4}" maxlength="4" />
+        </label>
+        <label>ロック
+          <select id="staffLocked">
+            <option value="false">ロック解除</option>
+            <option value="true">ロック中</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">保存</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card" aria-labelledby="attendance-heading">
+    <div class="section-header">
+      <h2 id="attendance-heading">勤怠データ</h2>
+      <div class="filters">
+        <input id="attendanceMonth" type="month" />
+        <select id="attendanceStaffFilter"></select>
+        <button id="attendanceReload" type="button" class="btn ghost">再読み込み</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>日付</th><th>スタッフ</th><th>出勤</th><th>退勤</th><th>休憩</th><th>勤務</th><th>補正</th><th>備考</th><th></th></tr>
+        </thead>
+        <tbody id="attendanceTableBody"><tr><td colspan="9">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+    <form id="attendanceForm" autocomplete="off">
+      <input type="hidden" id="attendanceId" />
+      <div class="form-grid">
+        <label>日付
+          <input id="attendanceDate" type="date" required />
+        </label>
+        <label>スタッフ
+          <select id="attendanceStaff" required></select>
+        </label>
+        <label>出勤
+          <input id="attendanceClockIn" type="time" />
+        </label>
+        <label>退勤
+          <input id="attendanceClockOut" type="time" />
+        </label>
+        <label>休憩（分）
+          <input id="attendanceBreak" type="number" min="0" max="180" step="15" />
+        </label>
+        <label style="grid-column:1/-1">備考
+          <textarea id="attendanceNote"></textarea>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">勤怠を保存</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card" aria-labelledby="shift-heading">
+    <div class="section-header">
+      <h2 id="shift-heading">シフト</h2>
+      <div class="filters">
+        <input id="shiftMonth" type="month" />
+        <select id="shiftStaffFilter"></select>
+        <button id="shiftReload" type="button" class="btn ghost">再読み込み</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>日付</th><th>スタッフ</th><th>開始</th><th>終了</th><th>メモ</th><th></th></tr>
+        </thead>
+        <tbody id="shiftTableBody"><tr><td colspan="6">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+    <form id="shiftForm" autocomplete="off">
+      <input type="hidden" id="shiftId" />
+      <div class="form-grid">
+        <label>日付
+          <input id="shiftDate" type="date" required />
+        </label>
+        <label>スタッフ
+          <select id="shiftStaff" required></select>
+        </label>
+        <label>開始
+          <input id="shiftStart" type="time" />
+        </label>
+        <label>終了
+          <input id="shiftEnd" type="time" />
+        </label>
+        <label style="grid-column:1/-1">メモ
+          <textarea id="shiftNote"></textarea>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">シフトを保存</button>
+        <button type="button" id="shiftDeleteButton" class="btn danger" disabled>シフトを削除</button>
+      </div>
+    </form>
+  </section>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+function escapeHtml(value){
+  if (value == null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const state = {
+  staff: [],
+  attendance: [],
+  shifts: [],
+  attendanceFilter: { year: null, month: null, staffId: '' },
+  shiftFilter: { year: null, month: null, staffId: '' }
+};
+let toastTimer = null;
+
+function showToast(message){
+  if (!message) return;
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function formatIsoDate(value){
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString('ja-JP', { hour12:false });
+}
+
+function populateStaffSelect(select, includeEmpty){
+  if (!select) return;
+  const current = select.value;
+  const options = includeEmpty ? ['<option value="">すべて</option>'] : [];
+  state.staff.forEach(st => {
+    const id = escapeHtml(st.id || '');
+    const name = escapeHtml(st.name || '');
+    options.push(`<option value="${id}">${name}</option>`);
+  });
+  select.innerHTML = options.join('');
+  if (current) {
+    select.value = current;
+  }
+}
+
+function renderStaffTable(){
+  const tbody = document.getElementById('staffTableBody');
+  if (!tbody) return;
+  if (!state.staff.length){
+    tbody.innerHTML = '<tr><td colspan="6">スタッフが登録されていません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = state.staff.map(st => {
+    const locked = st.locked ? '<span class="tag">LOCK</span>' : '';
+    const name = escapeHtml(st.name || '');
+    const pin = escapeHtml(st.pin || '');
+    const lastLogin = st.lastLogin ? escapeHtml(formatIsoDate(st.lastLogin)) : '';
+    const updatedAt = st.updatedAt ? escapeHtml(formatIsoDate(st.updatedAt)) : '';
+    const id = escapeHtml(st.id || '');
+    return `<tr>
+      <td>${name}</td>
+      <td>${pin}</td>
+      <td>${locked}</td>
+      <td>${lastLogin}</td>
+      <td>${updatedAt}</td>
+      <td><button type="button" class="btn ghost" data-staff-edit="${id}">編集</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function setStaffForm(record){
+  document.getElementById('staffId').value = record ? record.id : '';
+  document.getElementById('staffName').value = record ? record.name : '';
+  document.getElementById('staffPin').value = record ? (record.pin || '') : '';
+  document.getElementById('staffLocked').value = record && record.locked ? 'true' : 'false';
+}
+
+function fetchStaff(){
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : 'スタッフ一覧の取得に失敗しました');
+        return;
+      }
+      state.staff = res.staff || [];
+      renderStaffTable();
+      populateStaffSelect(document.getElementById('attendanceStaff'), false);
+      populateStaffSelect(document.getElementById('attendanceStaffFilter'), true);
+      populateStaffSelect(document.getElementById('shiftStaff'), false);
+      populateStaffSelect(document.getElementById('shiftStaffFilter'), true);
+    })
+    .withFailureHandler(err => showToast(err && err.message ? err.message : 'スタッフ一覧の取得に失敗しました'))
+    .albyteAdminListStaff();
+}
+
+function parseMonthInput(value){
+  if (!value) return { year: null, month: null };
+  const parts = value.split('-');
+  if (parts.length !== 2) return { year: null, month: null };
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return { year: null, month: null };
+  return { year, month };
+}
+
+function renderAttendanceTable(){
+  const tbody = document.getElementById('attendanceTableBody');
+  if (!tbody) return;
+  if (!state.attendance.length){
+    tbody.innerHTML = '<tr><td colspan="9">データがありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = state.attendance.map(rec => {
+    const note = escapeHtml(rec.note || '');
+    const auto = escapeHtml(rec.autoFlag || '');
+    const date = escapeHtml(rec.date || '');
+    const staffName = escapeHtml(rec.staffName || '');
+    const clockIn = escapeHtml(rec.clockIn || '');
+    const clockOut = escapeHtml(rec.clockOut || '');
+    const breakText = escapeHtml(rec.breakText || '');
+    const workText = escapeHtml(rec.workText || '');
+    const id = escapeHtml(rec.id || '');
+    return `<tr>
+      <td>${date}</td>
+      <td>${staffName}</td>
+      <td>${clockIn}</td>
+      <td>${clockOut}</td>
+      <td>${breakText}</td>
+      <td>${workText}</td>
+      <td>${auto}</td>
+      <td>${note}</td>
+      <td><button type="button" class="btn ghost" data-attendance-edit="${id}">編集</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function setAttendanceForm(record){
+  document.getElementById('attendanceId').value = record ? record.id : '';
+  document.getElementById('attendanceDate').value = record ? record.date : '';
+  document.getElementById('attendanceStaff').value = record ? record.staffId : '';
+  document.getElementById('attendanceClockIn').value = record && record.clockIn ? record.clockIn : '';
+  document.getElementById('attendanceClockOut').value = record && record.clockOut ? record.clockOut : '';
+  document.getElementById('attendanceBreak').value = record && Number.isFinite(record.breakMinutes) ? record.breakMinutes : '';
+  document.getElementById('attendanceNote').value = record ? record.note || '' : '';
+}
+
+function fetchAttendance(){
+  const monthInput = document.getElementById('attendanceMonth').value;
+  const { year, month } = parseMonthInput(monthInput);
+  const staffId = document.getElementById('attendanceStaffFilter').value;
+  state.attendanceFilter = { year, month, staffId };
+  const params = { year, month };
+  if (staffId) params.staffId = staffId;
+  const tbody = document.getElementById('attendanceTableBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9">読み込み中…</td></tr>';
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '勤怠データの取得に失敗しました');
+        return;
+      }
+      state.attendance = res.records || [];
+      renderAttendanceTable();
+    })
+    .withFailureHandler(err => showToast(err && err.message ? err.message : '勤怠データの取得に失敗しました'))
+    .albyteAdminListAttendance(params);
+}
+
+function renderShiftTable(){
+  const tbody = document.getElementById('shiftTableBody');
+  if (!tbody) return;
+  if (!state.shifts.length){
+    tbody.innerHTML = '<tr><td colspan="6">データがありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = state.shifts.map(shift => {
+    const note = escapeHtml(shift.note || '');
+    const date = escapeHtml(shift.date || '');
+    const staffName = escapeHtml(shift.staffName || '');
+    const start = escapeHtml(shift.start || '');
+    const end = escapeHtml(shift.end || '');
+    const id = escapeHtml(shift.id || '');
+    return `<tr>
+      <td>${date}</td>
+      <td>${staffName}</td>
+      <td>${start}</td>
+      <td>${end}</td>
+      <td>${note}</td>
+      <td>
+        <button type="button" class="btn ghost" data-shift-edit="${id}">編集</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function setShiftForm(record){
+  document.getElementById('shiftId').value = record ? record.id : '';
+  document.getElementById('shiftDate').value = record ? record.date : '';
+  document.getElementById('shiftStaff').value = record ? record.staffId || '' : '';
+  document.getElementById('shiftStart').value = record ? record.start || '' : '';
+  document.getElementById('shiftEnd').value = record ? record.end || '' : '';
+  document.getElementById('shiftNote').value = record ? record.note || '' : '';
+  const deleteButton = document.getElementById('shiftDeleteButton');
+  if (deleteButton) {
+    deleteButton.disabled = !record || !record.id;
+  }
+}
+
+function fetchShifts(){
+  const monthInput = document.getElementById('shiftMonth').value;
+  const { year, month } = parseMonthInput(monthInput);
+  const staffId = document.getElementById('shiftStaffFilter').value;
+  state.shiftFilter = { year, month, staffId };
+  const params = { year, month };
+  if (staffId) params.staffId = staffId;
+  const tbody = document.getElementById('shiftTableBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="6">読み込み中…</td></tr>';
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : 'シフトの取得に失敗しました');
+        return;
+      }
+      state.shifts = res.shifts || [];
+      renderShiftTable();
+    })
+    .withFailureHandler(err => showToast(err && err.message ? err.message : 'シフトの取得に失敗しました'))
+    .albyteAdminListShifts(params);
+}
+
+function initMonthInputs(){
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const attendanceMonth = document.getElementById('attendanceMonth');
+  const shiftMonth = document.getElementById('shiftMonth');
+  if (attendanceMonth && !attendanceMonth.value) attendanceMonth.value = ym;
+  if (shiftMonth && !shiftMonth.value) shiftMonth.value = ym;
+}
+
+function findStaffById(id){
+  return state.staff.find(st => st.id === id) || null;
+}
+
+function findAttendanceById(id){
+  return state.attendance.find(rec => rec.id === id) || null;
+}
+
+function findShiftById(id){
+  return state.shifts.find(rec => rec.id === id) || null;
+}
+
+function attachEventHandlers(){
+  document.getElementById('staffTableBody').addEventListener('click', event => {
+    const btn = event.target.closest('[data-staff-edit]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-staff-edit');
+    const record = findStaffById(id);
+    if (record) setStaffForm(record);
+  });
+
+  document.getElementById('staffNewButton').addEventListener('click', () => setStaffForm(null));
+
+  document.getElementById('staffForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const payload = {
+      id: document.getElementById('staffId').value || null,
+      name: document.getElementById('staffName').value.trim(),
+      pin: document.getElementById('staffPin').value.trim(),
+      locked: document.getElementById('staffLocked').value === 'true'
+    };
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res || res.ok !== true) {
+          showToast(res && res.message ? res.message : 'スタッフの保存に失敗しました');
+          return;
+        }
+        showToast('スタッフを保存しました');
+        fetchStaff();
+        setStaffForm(null);
+      })
+      .withFailureHandler(err => showToast(err && err.message ? err.message : 'スタッフの保存に失敗しました'))
+      .albyteAdminSaveStaff(payload);
+  });
+
+  document.getElementById('attendanceTableBody').addEventListener('click', event => {
+    const btn = event.target.closest('[data-attendance-edit]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-attendance-edit');
+    const record = findAttendanceById(id);
+    if (record) setAttendanceForm(record);
+  });
+
+  document.getElementById('attendanceReload').addEventListener('click', fetchAttendance);
+  document.getElementById('attendanceStaffFilter').addEventListener('change', fetchAttendance);
+  document.getElementById('attendanceMonth').addEventListener('change', fetchAttendance);
+
+  document.getElementById('attendanceForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const payload = {
+      id: document.getElementById('attendanceId').value || null,
+      date: document.getElementById('attendanceDate').value,
+      staffId: document.getElementById('attendanceStaff').value,
+      clockIn: document.getElementById('attendanceClockIn').value,
+      clockOut: document.getElementById('attendanceClockOut').value,
+      breakMinutes: document.getElementById('attendanceBreak').value,
+      note: document.getElementById('attendanceNote').value
+    };
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res || res.ok !== true) {
+          showToast(res && res.message ? res.message : '勤怠の保存に失敗しました');
+          return;
+        }
+        showToast('勤怠を保存しました');
+        setAttendanceForm(null);
+        fetchAttendance();
+        fetchShifts();
+      })
+      .withFailureHandler(err => showToast(err && err.message ? err.message : '勤怠の保存に失敗しました'))
+      .albyteAdminSaveAttendance(payload);
+  });
+
+  document.getElementById('shiftTableBody').addEventListener('click', event => {
+    const btn = event.target.closest('[data-shift-edit]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-shift-edit');
+    const record = findShiftById(id);
+    if (record) setShiftForm(record);
+  });
+
+  document.getElementById('shiftReload').addEventListener('click', fetchShifts);
+  document.getElementById('shiftStaffFilter').addEventListener('change', fetchShifts);
+  document.getElementById('shiftMonth').addEventListener('change', fetchShifts);
+
+  document.getElementById('shiftForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const payload = {
+      id: document.getElementById('shiftId').value || null,
+      date: document.getElementById('shiftDate').value,
+      staffId: document.getElementById('shiftStaff').value,
+      start: document.getElementById('shiftStart').value,
+      end: document.getElementById('shiftEnd').value,
+      note: document.getElementById('shiftNote').value
+    };
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res || res.ok !== true) {
+          showToast(res && res.message ? res.message : 'シフトの保存に失敗しました');
+          return;
+        }
+        showToast('シフトを保存しました');
+        setShiftForm(null);
+        fetchShifts();
+        fetchAttendance();
+      })
+      .withFailureHandler(err => showToast(err && err.message ? err.message : 'シフトの保存に失敗しました'))
+      .albyteAdminSaveShift(payload);
+  });
+
+  document.getElementById('shiftDeleteButton').addEventListener('click', () => {
+    const id = document.getElementById('shiftId').value;
+    if (!id) return;
+    if (!confirm('このシフトを削除しますか？')) return;
+    google.script.run
+      .withSuccessHandler(res => {
+        if (!res || res.ok !== true) {
+          showToast(res && res.message ? res.message : 'シフトの削除に失敗しました');
+          return;
+        }
+        showToast('シフトを削除しました');
+        setShiftForm(null);
+        fetchShifts();
+        fetchAttendance();
+      })
+      .withFailureHandler(err => showToast(err && err.message ? err.message : 'シフトの削除に失敗しました'))
+      .albyteAdminDeleteShift({ id });
+  });
+}
+
+(function init(){
+  initMonthInputs();
+  attachEventHandlers();
+  fetchStaff();
+  fetchAttendance();
+  fetchShifts();
+})();
+</script>
+</body>
+</html>

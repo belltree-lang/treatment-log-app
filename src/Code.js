@@ -175,12 +175,15 @@ const ALBYTE_ATTENDANCE_SHEET_HEADER = [
   '作成TS',
   '更新TS'
 ];
+const ALBYTE_SHIFT_SHEET_NAME = 'AlbyteShifts';
+const ALBYTE_SHIFT_SHEET_HEADER = ['ID','日付','スタッフID','スタッフ名','開始','終了','メモ','更新TS'];
 const ALBYTE_MAX_PIN_ATTEMPTS = 5;
 const ALBYTE_SESSION_SECRET_PROPERTY_KEY = 'ALBYTE_SESSION_SECRET';
 const ALBYTE_SESSION_TTL_MILLIS = 1000 * 60 * 60 * 12;
 const ALBYTE_BREAK_MINUTES_PRESETS = Object.freeze([30, 45, 60, 90, 120, 180]);
 const ALBYTE_BREAK_STEP_MINUTES = 15;
 const ALBYTE_MAX_BREAK_MINUTES = 180;
+const ALBYTE_HOURLY_WAGE_PROPERTY_KEYS = Object.freeze(['ALBYTE_HOURLY_WAGE', 'albyteHourlyWage']);
 
 const ALBYTE_STAFF_COLUMNS = Object.freeze({
   id: 0,
@@ -216,6 +219,35 @@ const ALBYTE_ATTENDANCE_COLUMN_INDEX = Object.freeze(Object.keys(ALBYTE_ATTENDAN
   map[key] = ALBYTE_ATTENDANCE_COLUMNS[key] + 1;
   return map;
 }, {}));
+
+const ALBYTE_SHIFT_COLUMNS = Object.freeze({
+  id: 0,
+  date: 1,
+  staffId: 2,
+  staffName: 3,
+  start: 4,
+  end: 5,
+  note: 6,
+  updatedAt: 7
+});
+
+const ALBYTE_SHIFT_COLUMN_INDEX = Object.freeze(Object.keys(ALBYTE_SHIFT_COLUMNS).reduce((map, key) => {
+  map[key] = ALBYTE_SHIFT_COLUMNS[key] + 1;
+  return map;
+}, {}));
+
+function getAlbyteHourlyWage_(){
+  for (let i = 0; i < ALBYTE_HOURLY_WAGE_PROPERTY_KEYS.length; i++) {
+    const key = ALBYTE_HOURLY_WAGE_PROPERTY_KEYS[i];
+    const raw = getConfig(key);
+    if (raw == null || raw === '') continue;
+    const value = Number(raw);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
 
 function getScriptCache_(){
   try {
@@ -675,6 +707,29 @@ function ensureAlbyteAttendanceSheet_(){
   return sheet;
 }
 
+function ensureAlbyteShiftSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(ALBYTE_SHIFT_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(ALBYTE_SHIFT_SHEET_NAME);
+  }
+  const needed = ALBYTE_SHIFT_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([ALBYTE_SHIFT_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || ALBYTE_SHIFT_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([ALBYTE_SHIFT_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
 function parseDateValue_(value){
   if (value instanceof Date) return value;
   if (value == null || value === '') return null;
@@ -845,6 +900,273 @@ function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
     return parsed;
   }
   return null;
+}
+
+function getAlbyteAttendanceById_(id, options){
+  const sheet = options && options.sheet ? options.sheet : ensureAlbyteAttendanceSheet_();
+  const target = String(id || '').trim();
+  if (!target) return { sheet, record: null };
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { sheet, record: null };
+  const width = ALBYTE_ATTENDANCE_SHEET_HEADER.length;
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const parsed = parseAlbyteAttendanceRow_(row, i + 2);
+    if (parsed && parsed.id === target) {
+      return { sheet, record: parsed };
+    }
+  }
+  return { sheet, record: null };
+}
+
+function normalizeDateKey_(value, tz){
+  if (!value && value !== 0) return '';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, tz || getConfig('timezone') || 'Asia/Tokyo', 'yyyy-MM-dd');
+  }
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const direct = new Date(text);
+  if (!isNaN(direct.getTime())) {
+    return Utilities.formatDate(direct, tz || getConfig('timezone') || 'Asia/Tokyo', 'yyyy-MM-dd');
+  }
+  return text;
+}
+
+function readAlbyteShiftRecords_(){
+  const sheet = ensureAlbyteShiftSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = ALBYTE_SHIFT_SHEET_HEADER.length;
+  const records = [];
+  if (lastRow >= 2) {
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) continue;
+      const rowIndex = i + 2;
+      let id = String(row[ALBYTE_SHIFT_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(rowIndex, ALBYTE_SHIFT_COLUMN_INDEX.id).setValue(id);
+      }
+      const dateKey = normalizeDateKey_(row[ALBYTE_SHIFT_COLUMNS.date], tz);
+      const staffId = String(row[ALBYTE_SHIFT_COLUMNS.staffId] || '').trim();
+      const staffName = String(row[ALBYTE_SHIFT_COLUMNS.staffName] || '').trim();
+      const normalizedName = normalizeAlbyteName_(staffName);
+      const startMinutes = parseTimeTextToMinutes_(row[ALBYTE_SHIFT_COLUMNS.start]);
+      const endMinutes = parseTimeTextToMinutes_(row[ALBYTE_SHIFT_COLUMNS.end]);
+      const note = String(row[ALBYTE_SHIFT_COLUMNS.note] || '').trim();
+      const updatedAt = parseDateValue_(row[ALBYTE_SHIFT_COLUMNS.updatedAt]);
+      const record = {
+        rowIndex,
+        id,
+        dateKey,
+        staffId,
+        staffName,
+        normalizedName,
+        startMinutes: Number.isFinite(startMinutes) ? startMinutes : NaN,
+        endMinutes: Number.isFinite(endMinutes) ? endMinutes : NaN,
+        startText: Number.isFinite(startMinutes) ? formatMinutesAsTimeText_(startMinutes) : '',
+        endText: Number.isFinite(endMinutes) ? formatMinutesAsTimeText_(endMinutes) : '',
+        note,
+        updatedAt
+      };
+      records.push(record);
+    }
+  }
+  return { sheet: ensureAlbyteShiftSheet_(), records };
+}
+
+function getAlbyteShiftById_(id, context){
+  const ctx = context || readAlbyteShiftRecords_();
+  const target = String(id || '').trim();
+  if (!target) return { sheet: ctx.sheet, record: null };
+  for (let i = 0; i < ctx.records.length; i++) {
+    const record = ctx.records[i];
+    if (record && record.id === target) {
+      return { sheet: ctx.sheet, record };
+    }
+  }
+  return { sheet: ctx.sheet, record: null };
+}
+
+function findAlbyteShiftFor_(staffRecord, dateKey, options){
+  const targetDate = String(dateKey || '').trim();
+  if (!targetDate) return null;
+  const context = options && options.context ? options.context : readAlbyteShiftRecords_();
+  const normalizedName = staffRecord && staffRecord.normalizedName
+    ? staffRecord.normalizedName
+    : normalizeAlbyteName_(staffRecord && staffRecord.name);
+  for (let i = 0; i < context.records.length; i++) {
+    const record = context.records[i];
+    if (!record || record.dateKey !== targetDate) continue;
+    if (staffRecord && record.staffId && staffRecord.id && record.staffId === staffRecord.id) {
+      return record;
+    }
+    if (normalizedName && record.normalizedName && normalizedName === record.normalizedName) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function resolveAlbyteWorkMinutes_(clockInText, clockOutText, breakMinutes){
+  const startMinutes = parseTimeTextToMinutes_(clockInText);
+  const endMinutes = parseTimeTextToMinutes_(clockOutText);
+  const breakValue = Number(breakMinutes) || 0;
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) return NaN;
+  return Math.max(0, endMinutes - startMinutes - breakValue);
+}
+
+function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
+  if (!attendanceRecord || !attendanceRecord.rowIndex) {
+    return { record: attendanceRecord, autoAdjusted: false, shift: null, workMinutes: resolveAlbyteWorkMinutes_(attendanceRecord && attendanceRecord.clockIn, attendanceRecord && attendanceRecord.clockOut, attendanceRecord && attendanceRecord.breakMinutes) };
+  }
+  const sheet = options && options.sheet ? options.sheet : ensureAlbyteAttendanceSheet_();
+  const staff = options && options.staff ? options.staff : {
+    id: attendanceRecord.staffId,
+    name: attendanceRecord.staffName,
+    normalizedName: normalizeAlbyteName_(attendanceRecord.staffName)
+  };
+  const shiftContext = options && options.shiftContext ? options.shiftContext : readAlbyteShiftRecords_();
+  const shift = findAlbyteShiftFor_(staff, attendanceRecord.date, { context: shiftContext });
+  const breakMinutes = Number(attendanceRecord.breakMinutes) || 0;
+
+  let clockInMinutes = parseTimeTextToMinutes_(attendanceRecord.clockIn);
+  let clockOutMinutes = parseTimeTextToMinutes_(attendanceRecord.clockOut);
+  let adjustedClockIn = Number.isFinite(clockInMinutes) ? formatMinutesAsTimeText_(clockInMinutes) : '';
+  let adjustedClockOut = Number.isFinite(clockOutMinutes) ? formatMinutesAsTimeText_(clockOutMinutes) : '';
+  const messages = [];
+
+  if (shift && Number.isFinite(shift.startMinutes) && Number.isFinite(clockInMinutes)) {
+    if (clockInMinutes < shift.startMinutes) {
+      clockInMinutes = shift.startMinutes;
+      adjustedClockIn = formatMinutesAsTimeText_(shift.startMinutes);
+      messages.push('出勤:シフト開始');
+    }
+  }
+
+  if (shift && Number.isFinite(shift.endMinutes) && Number.isFinite(clockOutMinutes)) {
+    if (clockOutMinutes > shift.endMinutes) {
+      clockOutMinutes = shift.endMinutes;
+      adjustedClockOut = formatMinutesAsTimeText_(shift.endMinutes);
+      messages.push('退勤:シフト終了');
+    }
+  }
+
+  const autoFlag = messages.length ? messages.join(' / ') : '';
+  const now = new Date();
+  let touched = false;
+  if (adjustedClockIn !== attendanceRecord.clockIn) {
+    sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.clockIn).setValue(adjustedClockIn);
+    touched = true;
+  }
+  if (adjustedClockOut !== attendanceRecord.clockOut) {
+    sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.clockOut).setValue(adjustedClockOut);
+    touched = true;
+  }
+  if (autoFlag !== (attendanceRecord.autoFlag || '')) {
+    sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.autoFlag).setValue(autoFlag);
+    touched = true;
+  }
+  if (touched) {
+    sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
+  }
+
+  const finalClockInMinutes = Number.isFinite(clockInMinutes) ? clockInMinutes : parseTimeTextToMinutes_(adjustedClockIn);
+  const finalClockOutMinutes = Number.isFinite(clockOutMinutes) ? clockOutMinutes : parseTimeTextToMinutes_(adjustedClockOut);
+  const workMinutes = (Number.isFinite(finalClockInMinutes) && Number.isFinite(finalClockOutMinutes))
+    ? Math.max(0, finalClockOutMinutes - finalClockInMinutes - breakMinutes)
+    : NaN;
+
+  const updatedRecord = Object.assign({}, attendanceRecord, {
+    clockIn: adjustedClockIn,
+    clockOut: adjustedClockOut,
+    autoFlag,
+    updatedAt: touched ? now : attendanceRecord.updatedAt
+  });
+
+  return {
+    record: updatedRecord,
+    autoAdjusted: messages.length > 0,
+    shift,
+    workMinutes
+  };
+}
+
+function readAlbyteAttendanceRecords_(options){
+  const sheet = ensureAlbyteAttendanceSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = ALBYTE_ATTENDANCE_SHEET_HEADER.length;
+  const records = [];
+  const fromKey = options && options.fromDateKey ? String(options.fromDateKey) : '';
+  const toKey = options && options.toDateKey ? String(options.toDateKey) : '';
+  const staffId = options && options.staffId ? String(options.staffId) : '';
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      const parsed = parseAlbyteAttendanceRow_(row, i + 2);
+      if (!parsed || !parsed.date) continue;
+      if (fromKey && parsed.date < fromKey) continue;
+      if (toKey && parsed.date > toKey) continue;
+      if (staffId && parsed.staffId !== staffId) continue;
+      records.push(parsed);
+    }
+  }
+  return { sheet, records };
+}
+
+function resolveMonthlyRangeKeys_(year, month){
+  const y = Number(year);
+  const m = Number(month);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return { from: '', to: '' };
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const start = new Date(y, m - 1, 1);
+  const end = new Date(y, m, 0);
+  return {
+    from: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
+    to: Utilities.formatDate(end, tz, 'yyyy-MM-dd')
+  };
+}
+
+function buildAlbyteAttendanceView_(record, options){
+  if (!record) return null;
+  const shiftContext = options && options.shiftContext ? options.shiftContext : readAlbyteShiftRecords_();
+  const staff = options && options.staff ? options.staff : {
+    id: record.staffId,
+    name: record.staffName,
+    normalizedName: normalizeAlbyteName_(record.staffName)
+  };
+  const shift = findAlbyteShiftFor_(staff, record.date, { context: shiftContext });
+  const breakMinutes = Number(record.breakMinutes) || 0;
+  const workMinutes = resolveAlbyteWorkMinutes_(record.clockIn, record.clockOut, breakMinutes);
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  return {
+    id: record.id,
+    rowIndex: record.rowIndex,
+    staffId: record.staffId,
+    staffName: record.staffName,
+    date: record.date,
+    clockIn: record.clockIn || '',
+    clockOut: record.clockOut || '',
+    breakMinutes,
+    breakText: formatMinutesAsTimeText_(breakMinutes),
+    workMinutes: Number.isFinite(workMinutes) ? workMinutes : 0,
+    workText: Number.isFinite(workMinutes) ? formatMinutesAsTimeText_(workMinutes) : '00:00',
+    durationText: Number.isFinite(workMinutes) ? formatDurationText_(workMinutes) : '0時間',
+    note: record.note || '',
+    autoFlag: record.autoFlag || '',
+    log: record.log || [],
+    createdAt: record.createdAt ? formatIsoStringWithOffset_(record.createdAt, tz) : null,
+    updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null,
+    shiftStart: shift && shift.startText ? shift.startText : '',
+    shiftEnd: shift && shift.endText ? shift.endText : '',
+    shiftNote: shift && shift.note ? shift.note : ''
+  };
 }
 
 function buildAlbytePortalState_(staffRecord){
@@ -1055,6 +1377,11 @@ function albyteClockIn(payload){
         }
       }
 
+      const refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      if (refreshed) {
+        applyAlbyteAutoAdjustmentsForRow_(refreshed, { sheet, staff });
+      }
+
       return buildAlbyteSuccessResponse_(staff, {});
     });
   });
@@ -1092,6 +1419,11 @@ function albyteClockOut(payload){
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.clockOut).setValue(timeStr);
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
+
+      const refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      if (refreshed) {
+        applyAlbyteAutoAdjustmentsForRow_(refreshed, { sheet, staff });
+      }
 
       return buildAlbyteSuccessResponse_(staff, {});
     });
@@ -1147,8 +1479,534 @@ function albyteUpdateBreak(payload){
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
 
+      const refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      if (refreshed) {
+        applyAlbyteAutoAdjustmentsForRow_(refreshed, { sheet, staff });
+      }
+
       return buildAlbyteSuccessResponse_(staff, {});
     });
+  });
+}
+
+function albyteGetMonthlySummary(payload){
+  return wrapAlbyteResponse_('albyteGetMonthlySummary', () => {
+    const token = payload && payload.token;
+    if (!token) {
+      return { ok: false, reason: 'session_invalid', message: 'セッションが無効です。再度ログインしてください。' };
+    }
+    const session = resolveAlbyteSession_(token);
+    if (!session.ok) {
+      return session;
+    }
+
+    const staff = session.staff;
+    let year = Number(payload && payload.year);
+    let month = Number(payload && payload.month);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      const now = new Date();
+      year = now.getFullYear();
+      month = now.getMonth() + 1;
+    }
+    const { from, to } = resolveMonthlyRangeKeys_(year, month);
+    const shiftContext = readAlbyteShiftRecords_();
+    const { records } = readAlbyteAttendanceRecords_({ fromDateKey: from, toDateKey: to, staffId: staff.id });
+    const list = records.map(record => buildAlbyteAttendanceView_(record, { shiftContext, staff }));
+    let totalWork = 0;
+    let totalBreak = 0;
+    let workingDays = 0;
+    list.forEach(item => {
+      if (!item) return;
+      if (item.workMinutes > 0) {
+        workingDays += 1;
+      } else if ((item.clockIn && item.clockOut) || item.clockIn || item.clockOut) {
+        workingDays += 1;
+      }
+      totalWork += Number.isFinite(item.workMinutes) ? item.workMinutes : 0;
+      totalBreak += Number.isFinite(item.breakMinutes) ? item.breakMinutes : 0;
+    });
+
+    const hourlyWage = getAlbyteHourlyWage_();
+    const estimatedWage = hourlyWage != null ? Math.round((totalWork / 60) * hourlyWage) : null;
+
+    return {
+      ok: true,
+      staff: { id: staff.id, name: staff.name },
+      summary: {
+        year,
+        month,
+        range: { from, to },
+        records: list,
+        totals: {
+          workMinutes: totalWork,
+          workText: formatMinutesAsTimeText_(totalWork),
+          breakMinutes: totalBreak,
+          breakText: formatMinutesAsTimeText_(totalBreak),
+          workingDays,
+          durationText: formatDurationText_(totalWork),
+          estimatedWage,
+          hourlyWage
+        }
+      }
+    };
+  });
+}
+
+function albyteAdminListStaff(){
+  return wrapAlbyteResponse_('albyteAdminListStaff', () => {
+    const context = readAlbyteStaffRecords_();
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const staff = context.records.map(rec => ({
+      id: rec.id,
+      name: rec.name,
+      pin: rec.pin,
+      locked: !!rec.locked,
+      failCount: rec.failCount || 0,
+      lastLogin: rec.lastLogin ? formatIsoStringWithOffset_(rec.lastLogin, tz) : null,
+      updatedAt: rec.updatedAt ? formatIsoStringWithOffset_(rec.updatedAt, tz) : null
+    }));
+    return { ok: true, staff };
+  });
+}
+
+function albyteAdminSaveStaff(payload){
+  return wrapAlbyteResponse_('albyteAdminSaveStaff', () => {
+    const rawName = payload && payload.name;
+    const pinRaw = payload && payload.pin;
+    const normalized = normalizeAlbyteName_(rawName);
+    if (!normalized) {
+      return { ok: false, reason: 'validation', message: '名前を入力してください。' };
+    }
+    const pinText = String(pinRaw != null ? pinRaw : '').trim();
+    if (pinText && !/^\d{4}$/.test(pinText)) {
+      return { ok: false, reason: 'validation', message: 'PINは4桁の数字で入力してください。' };
+    }
+    const locked = !!(payload && payload.locked);
+
+    return withAlbyteLock_(() => {
+      const context = readAlbyteStaffRecords_();
+      const sheet = context.sheet;
+      const tz = getConfig('timezone') || 'Asia/Tokyo';
+      const now = new Date();
+      const idRaw = payload && payload.id;
+      let record = idRaw ? context.mapById.get(String(idRaw)) : null;
+      let targetId = idRaw ? String(idRaw) : '';
+
+      if (record) {
+        const rowIndex = record.rowIndex;
+        const failCount = locked ? Math.max(record.failCount || 0, ALBYTE_MAX_PIN_ATTEMPTS) : 0;
+        sheet.getRange(rowIndex, ALBYTE_STAFF_COLUMN_INDEX.name, 1, 5)
+          .setValues([[rawName, pinText, locked, failCount, record.lastLogin || '']]);
+        sheet.getRange(rowIndex, ALBYTE_STAFF_COLUMN_INDEX.updatedAt).setValue(now);
+      } else {
+        const id = Utilities.getUuid();
+        const failCount = locked ? ALBYTE_MAX_PIN_ATTEMPTS : 0;
+        sheet.appendRow([id, rawName, pinText, locked, failCount, '', now]);
+        targetId = id;
+      }
+
+      const refreshed = readAlbyteStaffRecords_();
+      const updated = targetId
+        ? refreshed.mapById.get(targetId)
+        : refreshed.mapByName.get(normalized);
+      if (!updated) {
+        return { ok: true, staff: null };
+      }
+      return {
+        ok: true,
+        staff: {
+          id: updated.id,
+          name: updated.name,
+          pin: updated.pin,
+          locked: !!updated.locked,
+          failCount: updated.failCount || 0,
+          lastLogin: updated.lastLogin ? formatIsoStringWithOffset_(updated.lastLogin, tz) : null,
+          updatedAt: updated.updatedAt ? formatIsoStringWithOffset_(updated.updatedAt, tz) : null
+        }
+      };
+    });
+  });
+}
+
+function albyteAdminListAttendance(payload){
+  return wrapAlbyteResponse_('albyteAdminListAttendance', () => {
+    let year = Number(payload && payload.year);
+    let month = Number(payload && payload.month);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      const now = new Date();
+      year = now.getFullYear();
+      month = now.getMonth() + 1;
+    }
+    const staffId = payload && payload.staffId ? String(payload.staffId).trim() : '';
+    const { from, to } = resolveMonthlyRangeKeys_(year, month);
+    const staffContext = readAlbyteStaffRecords_();
+    const shiftContext = readAlbyteShiftRecords_();
+    const { records } = readAlbyteAttendanceRecords_({ fromDateKey: from, toDateKey: to, staffId });
+    const list = records.map(record => {
+      const staff = staffContext.mapById.get(record.staffId) || {
+        id: record.staffId,
+        name: record.staffName,
+        normalizedName: normalizeAlbyteName_(record.staffName)
+      };
+      return buildAlbyteAttendanceView_(record, { shiftContext, staff });
+    });
+    let totalWork = 0;
+    let totalBreak = 0;
+    list.forEach(item => {
+      if (!item) return;
+      totalWork += Number.isFinite(item.workMinutes) ? item.workMinutes : 0;
+      totalBreak += Number.isFinite(item.breakMinutes) ? item.breakMinutes : 0;
+    });
+    return {
+      ok: true,
+      filter: { year, month, from, to, staffId },
+      records: list,
+      totals: {
+        workMinutes: totalWork,
+        workText: formatMinutesAsTimeText_(totalWork),
+        breakMinutes: totalBreak,
+        breakText: formatMinutesAsTimeText_(totalBreak)
+      }
+    };
+  });
+}
+
+function albyteAdminSaveAttendance(payload){
+  return wrapAlbyteResponse_('albyteAdminSaveAttendance', () => {
+    const staffId = String(payload && payload.staffId || '').trim();
+    if (!staffId) {
+      return { ok: false, reason: 'validation', message: 'スタッフを指定してください。' };
+    }
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const dateKey = normalizeDateKey_(payload && payload.date, tz);
+    if (!dateKey) {
+      return { ok: false, reason: 'validation', message: '日付を指定してください。' };
+    }
+
+    let breakMinutes = Number(payload && payload.breakMinutes);
+    if (!Number.isFinite(breakMinutes) || breakMinutes < 0) breakMinutes = 0;
+    if (breakMinutes > ALBYTE_MAX_BREAK_MINUTES) {
+      return { ok: false, reason: 'validation', message: '休憩時間は最大180分までです。' };
+    }
+    const startMinutes = parseTimeTextToMinutes_(payload && (payload.clockIn != null ? payload.clockIn : payload.start));
+    const endMinutes = parseTimeTextToMinutes_(payload && (payload.clockOut != null ? payload.clockOut : payload.end));
+    if (Number.isFinite(startMinutes) && Number.isFinite(endMinutes) && endMinutes < startMinutes) {
+      return { ok: false, reason: 'validation', message: '退勤は出勤より後の時刻を指定してください。' };
+    }
+    const clockInText = Number.isFinite(startMinutes) ? formatMinutesAsTimeText_(startMinutes) : '';
+    const clockOutText = Number.isFinite(endMinutes) ? formatMinutesAsTimeText_(endMinutes) : '';
+    const noteText = String(payload && payload.note != null ? payload.note : '').trim();
+
+    return withAlbyteLock_(() => {
+      const staffContext = readAlbyteStaffRecords_();
+      const staff = staffContext.mapById.get(staffId);
+      if (!staff) {
+        return { ok: false, reason: 'not_found', message: 'スタッフが見つかりません。' };
+      }
+
+      const sheet = ensureAlbyteAttendanceSheet_();
+      const now = new Date();
+      let target;
+      if (payload && payload.id) {
+        target = getAlbyteAttendanceById_(payload.id, { sheet }).record;
+      }
+      if (!target) {
+        target = readAlbyteAttendanceRowFor_(staffId, dateKey, { sheet });
+      }
+
+      const actor = (Session.getEffectiveUser && Session.getEffectiveUser().getEmail && Session.getEffectiveUser().getEmail()) || '';
+      const logEntry = {
+        type: target ? 'adminUpdate' : 'adminCreate',
+        at: formatIsoStringWithOffset_(now, tz),
+        by: actor,
+        payload: {
+          clockIn: clockInText,
+          clockOut: clockOutText,
+          breakMinutes,
+          note: noteText
+        }
+      };
+
+      if (target) {
+        const rowIndex = target.rowIndex;
+        const log = appendAlbyteAttendanceLog_(target.log, logEntry);
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.staffId, 1, 7)
+          .setValues([[staff.id, staff.name, dateKey, clockInText, clockOutText, breakMinutes, noteText]]);
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.autoFlag).setValue('');
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
+        if (!target.createdAt) {
+          sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.createdAt).setValue(now);
+        }
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
+      } else {
+        const id = Utilities.getUuid();
+        const log = serializeAlbyteAttendanceLog_([logEntry]);
+        sheet.appendRow([
+          id,
+          staff.id,
+          staff.name,
+          dateKey,
+          clockInText,
+          clockOutText,
+          breakMinutes,
+          noteText,
+          '',
+          log,
+          now,
+          now
+        ]);
+      }
+
+      const refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      if (refreshed) {
+        applyAlbyteAutoAdjustmentsForRow_(refreshed, { sheet, staff });
+      }
+      const updated = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      const shiftContext = readAlbyteShiftRecords_();
+      const view = updated ? buildAlbyteAttendanceView_(updated, { shiftContext, staff }) : null;
+
+      return { ok: true, record: view };
+    });
+  });
+}
+
+function albyteAdminListShifts(payload){
+  return wrapAlbyteResponse_('albyteAdminListShifts', () => {
+    let year = Number(payload && payload.year);
+    let month = Number(payload && payload.month);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      const now = new Date();
+      year = now.getFullYear();
+      month = now.getMonth() + 1;
+    }
+    const { from, to } = resolveMonthlyRangeKeys_(year, month);
+    const staffContext = readAlbyteStaffRecords_();
+    const context = readAlbyteShiftRecords_();
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const staffId = payload && payload.staffId ? String(payload.staffId).trim() : '';
+    const shifts = context.records
+      .filter(record => (!from || record.dateKey >= from) && (!to || record.dateKey <= to) && (!staffId || record.staffId === staffId))
+      .map(record => ({
+        id: record.id,
+        date: record.dateKey,
+        staffId: record.staffId,
+        staffName: record.staffName || (staffContext.mapById.get(record.staffId) ? staffContext.mapById.get(record.staffId).name : ''),
+        start: record.startText || '',
+        end: record.endText || '',
+        note: record.note || '',
+        updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
+      }));
+    return { ok: true, filter: { year, month, from, to, staffId }, shifts };
+  });
+}
+
+function albyteAdminSaveShift(payload){
+  return wrapAlbyteResponse_('albyteAdminSaveShift', () => {
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const dateKey = normalizeDateKey_(payload && payload.date, tz);
+    if (!dateKey) {
+      return { ok: false, reason: 'validation', message: '日付を指定してください。' };
+    }
+    const staffId = payload && payload.staffId ? String(payload.staffId).trim() : '';
+    const staffContext = readAlbyteStaffRecords_();
+    let staff = staffId ? staffContext.mapById.get(staffId) : null;
+    let staffName = payload && payload.staffName ? String(payload.staffName).trim() : '';
+    if (!staff && staffName) {
+      staff = staffContext.mapByName.get(normalizeAlbyteName_(staffName)) || null;
+    }
+    if (staff) {
+      staffName = staff.name;
+    }
+    if (!staff && !staffName) {
+      return { ok: false, reason: 'validation', message: 'スタッフを指定してください。' };
+    }
+
+    const startMinutes = parseTimeTextToMinutes_(payload && (payload.start != null ? payload.start : payload.shiftStart));
+    const endMinutes = parseTimeTextToMinutes_(payload && (payload.end != null ? payload.end : payload.shiftEnd));
+    if (Number.isFinite(startMinutes) && Number.isFinite(endMinutes) && endMinutes <= startMinutes) {
+      return { ok: false, reason: 'validation', message: 'シフト終了はシフト開始より後の時刻を指定してください。' };
+    }
+    const startText = Number.isFinite(startMinutes) ? formatMinutesAsTimeText_(startMinutes) : '';
+    const endText = Number.isFinite(endMinutes) ? formatMinutesAsTimeText_(endMinutes) : '';
+    const noteText = String(payload && payload.note != null ? payload.note : '').trim();
+
+    return withAlbyteLock_(() => {
+      const context = readAlbyteShiftRecords_();
+      const sheet = context.sheet;
+      const now = new Date();
+      let entry;
+      if (payload && payload.id) {
+        entry = getAlbyteShiftById_(payload.id, context).record;
+      }
+      if (!entry && staff) {
+        entry = findAlbyteShiftFor_(staff, dateKey, { context });
+      }
+
+      if (entry) {
+        const rowIndex = entry.rowIndex;
+        sheet.getRange(rowIndex, ALBYTE_SHIFT_COLUMN_INDEX.date, 1, 6)
+          .setValues([[dateKey, staff ? staff.id : entry.staffId, staffName || entry.staffName, startText, endText, noteText]]);
+        sheet.getRange(rowIndex, ALBYTE_SHIFT_COLUMN_INDEX.updatedAt).setValue(now);
+      } else {
+        const id = Utilities.getUuid();
+        sheet.appendRow([
+          id,
+          dateKey,
+          staff ? staff.id : '',
+          staffName,
+          startText,
+          endText,
+          noteText,
+          now
+        ]);
+      }
+
+      const refreshedContext = readAlbyteShiftRecords_();
+      const saved = payload && payload.id
+        ? getAlbyteShiftById_(payload.id, refreshedContext).record
+        : findAlbyteShiftFor_(staff || { id: staffId, name: staffName, normalizedName: normalizeAlbyteName_(staffName) }, dateKey, { context: refreshedContext });
+
+      const staffForAuto = staff
+        || (saved && saved.staffId ? staffContext.mapById.get(saved.staffId) : null)
+        || (entry && entry.staffId ? staffContext.mapById.get(entry.staffId) : null);
+      if (staffForAuto) {
+        const attendance = readAlbyteAttendanceRowFor_(staffForAuto.id, dateKey);
+        if (attendance) {
+          applyAlbyteAutoAdjustmentsForRow_(attendance, { sheet: ensureAlbyteAttendanceSheet_(), staff: staffForAuto, shiftContext: refreshedContext });
+        }
+      }
+
+      return {
+        ok: true,
+        shift: saved ? {
+          id: saved.id,
+          date: saved.dateKey,
+          staffId: saved.staffId,
+          staffName: saved.staffName,
+          start: saved.startText,
+          end: saved.endText,
+          note: saved.note,
+          updatedAt: saved.updatedAt ? formatIsoStringWithOffset_(saved.updatedAt, tz) : null
+        } : null
+      };
+    });
+  });
+}
+
+function albyteAdminDeleteShift(payload){
+  return wrapAlbyteResponse_('albyteAdminDeleteShift', () => {
+    const id = payload && payload.id;
+    if (!id) {
+      return { ok: false, reason: 'validation', message: '削除するシフトを指定してください。' };
+    }
+    return withAlbyteLock_(() => {
+      const context = readAlbyteShiftRecords_();
+      const { sheet, record } = getAlbyteShiftById_(id, context);
+      if (!record) {
+        return { ok: false, reason: 'not_found', message: '対象のシフトが見つかりません。' };
+      }
+      sheet.deleteRow(record.rowIndex);
+
+      const refreshedContext = readAlbyteShiftRecords_();
+      if (record.staffId) {
+        const staffContext = readAlbyteStaffRecords_();
+        const staff = staffContext.mapById.get(record.staffId);
+        if (staff) {
+          const attendance = readAlbyteAttendanceRowFor_(staff.id, record.dateKey);
+          if (attendance) {
+            applyAlbyteAutoAdjustmentsForRow_(attendance, { sheet: ensureAlbyteAttendanceSheet_(), staff, shiftContext: refreshedContext });
+          }
+        }
+      }
+
+      return { ok: true };
+    });
+  });
+}
+
+function albyteGetMonthlyReport(payload){
+  return wrapAlbyteResponse_('albyteGetMonthlyReport', () => {
+    let year = Number(payload && payload.year);
+    let month = Number(payload && payload.month);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      const now = new Date();
+      year = now.getFullYear();
+      month = now.getMonth() + 1;
+    }
+    const { from, to } = resolveMonthlyRangeKeys_(year, month);
+    const staffContext = readAlbyteStaffRecords_();
+    const shiftContext = readAlbyteShiftRecords_();
+    const { records } = readAlbyteAttendanceRecords_({ fromDateKey: from, toDateKey: to });
+    const hourlyWage = getAlbyteHourlyWage_();
+
+    const summaryMap = new Map();
+    records.forEach(record => {
+      const staff = staffContext.mapById.get(record.staffId) || {
+        id: record.staffId,
+        name: record.staffName,
+        normalizedName: normalizeAlbyteName_(record.staffName)
+      };
+      const view = buildAlbyteAttendanceView_(record, { shiftContext, staff });
+      if (!view) return;
+      const key = staff.id || staff.name;
+      if (!summaryMap.has(key)) {
+        summaryMap.set(key, {
+          staffId: staff.id,
+          staffName: staff.name,
+          workMinutes: 0,
+          breakMinutes: 0,
+          workingDays: 0,
+          records: 0
+        });
+      }
+      const entry = summaryMap.get(key);
+      entry.workMinutes += Number.isFinite(view.workMinutes) ? view.workMinutes : 0;
+      entry.breakMinutes += Number.isFinite(view.breakMinutes) ? view.breakMinutes : 0;
+      if ((view.clockIn && view.clockOut) || view.workMinutes > 0) {
+        entry.workingDays += 1;
+      }
+      entry.records += 1;
+    });
+
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const rows = Array.from(summaryMap.values()).map(entry => ({
+      staffId: entry.staffId,
+      staffName: entry.staffName,
+      workMinutes: entry.workMinutes,
+      workText: formatMinutesAsTimeText_(entry.workMinutes),
+      breakMinutes: entry.breakMinutes,
+      breakText: formatMinutesAsTimeText_(entry.breakMinutes),
+      workingDays: entry.workingDays,
+      records: entry.records,
+      durationText: formatDurationText_(entry.workMinutes),
+      estimatedWage: hourlyWage != null ? Math.round((entry.workMinutes / 60) * hourlyWage) : null
+    }));
+
+    let totalWork = 0;
+    let totalBreak = 0;
+    rows.forEach(entry => {
+      totalWork += Number.isFinite(entry.workMinutes) ? entry.workMinutes : 0;
+      totalBreak += Number.isFinite(entry.breakMinutes) ? entry.breakMinutes : 0;
+    });
+
+    return {
+      ok: true,
+      report: {
+        year,
+        month,
+        range: { from, to },
+        hourlyWage,
+        staff: rows,
+        totals: {
+          workMinutes: totalWork,
+          workText: formatMinutesAsTimeText_(totalWork),
+          breakMinutes: totalBreak,
+          breakText: formatMinutesAsTimeText_(totalBreak),
+          durationText: formatDurationText_(totalWork),
+          estimatedWage: hourlyWage != null ? Math.round((totalWork / 60) * hourlyWage) : null
+        }
+      }
+    };
   });
 }
 
@@ -4647,6 +5505,8 @@ function doGet(e) {
     case 'attendance':   templateFile = 'attendance'; break;
     case 'vacancy':      templateFile = 'vacancy'; break;
     case 'albyte':       templateFile = 'albyte'; break;
+    case 'albyte_admin': templateFile = 'albyte_admin'; break;
+    case 'albyte_report':templateFile = 'albyte_report'; break;
     case 'record':       templateFile = 'app'; break;   // ★ app.html を record として表示
     case 'report':       templateFile = 'report'; break;
     default:             templateFile = 'welcome'; break;

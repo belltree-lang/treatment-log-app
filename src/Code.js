@@ -160,7 +160,7 @@ const PAID_LEAVE_DEFAULT_WORK_MINUTES = 8 * 60;
 
 const ALBYTE_STAFF_SHEET_NAME = 'AlbyteStaff';
 const ALBYTE_ATTENDANCE_SHEET_NAME = 'AlbyteAttendance';
-const ALBYTE_STAFF_SHEET_HEADER = ['ID','名前','PIN','ロック中','連続失敗','最終ログイン','更新TS'];
+const ALBYTE_STAFF_SHEET_HEADER = ['ID','名前','PIN','ロック中','連続失敗','最終ログイン','更新TS','スタッフ種別','基準退勤'];
 const ALBYTE_ATTENDANCE_SHEET_HEADER = [
   'ID',
   'スタッフID',
@@ -183,6 +183,7 @@ const ALBYTE_SESSION_TTL_MILLIS = 1000 * 60 * 60 * 12;
 const ALBYTE_BREAK_MINUTES_PRESETS = Object.freeze([30, 45, 60, 90, 120, 180]);
 const ALBYTE_BREAK_STEP_MINUTES = 15;
 const ALBYTE_MAX_BREAK_MINUTES = 180;
+const ALBYTE_DAILY_OVERTIME_ROUNDING_MINUTES = 15;
 const ALBYTE_HOURLY_WAGE_PROPERTY_KEYS = Object.freeze(['ALBYTE_HOURLY_WAGE', 'albyteHourlyWage']);
 
 const ALBYTE_STAFF_COLUMNS = Object.freeze({
@@ -192,7 +193,9 @@ const ALBYTE_STAFF_COLUMNS = Object.freeze({
   locked: 3,
   failCount: 4,
   lastLogin: 5,
-  updatedAt: 6
+  updatedAt: 6,
+  staffType: 7,
+  shiftEndTime: 8
 });
 
 const ALBYTE_STAFF_COLUMN_INDEX = Object.freeze(Object.keys(ALBYTE_STAFF_COLUMNS).reduce((map, key) => {
@@ -766,6 +769,11 @@ function readAlbyteStaffRecords_(){
       const failCount = Number(row[ALBYTE_STAFF_COLUMNS.failCount]) || 0;
       const lastLogin = parseDateValue_(row[ALBYTE_STAFF_COLUMNS.lastLogin]);
       const updatedAt = parseDateValue_(row[ALBYTE_STAFF_COLUMNS.updatedAt]);
+      const staffTypeRaw = String(row[ALBYTE_STAFF_COLUMNS.staffType] || '').trim().toLowerCase();
+      const staffType = staffTypeRaw === 'daily' ? 'daily' : 'hourly';
+      const shiftEndRaw = String(row[ALBYTE_STAFF_COLUMNS.shiftEndTime] || '').trim();
+      const shiftEndMinutes = parseTimeTextToMinutes_(shiftEndRaw);
+      const normalizedShiftEnd = Number.isFinite(shiftEndMinutes) ? formatMinutesAsTimeText_(shiftEndMinutes) : '';
       const record = {
         rowIndex,
         id,
@@ -775,8 +783,14 @@ function readAlbyteStaffRecords_(){
         locked,
         failCount,
         lastLogin,
-        updatedAt
+        updatedAt,
+        staffType,
+        shiftEndTime: normalizedShiftEnd,
+        shiftEndMinutes: Number.isFinite(shiftEndMinutes) ? shiftEndMinutes : NaN
       };
+      if (normalizedShiftEnd !== shiftEndRaw) {
+        sheet.getRange(rowIndex, ALBYTE_STAFF_COLUMN_INDEX.shiftEndTime).setValue(normalizedShiftEnd);
+      }
       records.push(record);
       if (normalizedName) {
         mapByName.set(normalizedName, record);
@@ -1013,12 +1027,60 @@ function findAlbyteShiftFor_(staffRecord, dateKey, options){
   return null;
 }
 
+function resolveStaffShiftEndMinutes_(staff, shift){
+  if (staff && Number.isFinite(staff.shiftEndMinutes)) {
+    return staff.shiftEndMinutes;
+  }
+  if (shift && Number.isFinite(shift.endMinutes)) {
+    return shift.endMinutes;
+  }
+  return NaN;
+}
+
+function roundUpMinutes_(value, unit){
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (!Number.isFinite(unit) || unit <= 0) return Math.max(0, Math.round(value));
+  return Math.ceil(value / unit) * unit;
+}
+
 function resolveAlbyteWorkMinutes_(clockInText, clockOutText, breakMinutes){
   const startMinutes = parseTimeTextToMinutes_(clockInText);
   const endMinutes = parseTimeTextToMinutes_(clockOutText);
   const breakValue = Number(breakMinutes) || 0;
   if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) return NaN;
   return Math.max(0, endMinutes - startMinutes - breakValue);
+}
+
+function computeAlbyteWorkMetrics_(record, staff, shift){
+  const staffType = staff && staff.staffType ? staff.staffType : 'hourly';
+  const isDailyStaff = staffType === 'daily';
+  const breakMinutesRaw = Number(record && record.breakMinutes) || 0;
+  const breakMinutes = isDailyStaff ? 0 : breakMinutesRaw;
+  const clockInText = record && record.clockIn ? record.clockIn : '';
+  const clockOutText = record && record.clockOut ? record.clockOut : '';
+  const clockInMinutes = parseTimeTextToMinutes_(clockInText);
+  const clockOutMinutes = parseTimeTextToMinutes_(clockOutText);
+  const baseShiftEndMinutes = resolveStaffShiftEndMinutes_(staff, shift);
+  const baseShiftEndText = Number.isFinite(baseShiftEndMinutes) ? formatMinutesAsTimeText_(baseShiftEndMinutes) : '';
+  const resolvedWork = resolveAlbyteWorkMinutes_(clockInText, clockOutText, breakMinutes);
+  let workMinutes = Number.isFinite(resolvedWork) ? resolvedWork : NaN;
+  let overtimeMinutes = 0;
+  if (isDailyStaff && Number.isFinite(clockOutMinutes) && Number.isFinite(baseShiftEndMinutes)) {
+    const diff = clockOutMinutes - baseShiftEndMinutes;
+    if (diff > 0) {
+      overtimeMinutes = roundUpMinutes_(diff, ALBYTE_DAILY_OVERTIME_ROUNDING_MINUTES);
+    }
+    workMinutes = overtimeMinutes;
+  }
+  return {
+    staffType,
+    isDailyStaff,
+    breakMinutes,
+    workMinutes,
+    overtimeMinutes,
+    baseShiftEndMinutes,
+    baseShiftEndText
+  };
 }
 
 function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
@@ -1029,11 +1091,13 @@ function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
   const staff = options && options.staff ? options.staff : {
     id: attendanceRecord.staffId,
     name: attendanceRecord.staffName,
-    normalizedName: normalizeAlbyteName_(attendanceRecord.staffName)
+    normalizedName: normalizeAlbyteName_(attendanceRecord.staffName),
+    staffType: 'hourly'
   };
   const shiftContext = options && options.shiftContext ? options.shiftContext : readAlbyteShiftRecords_();
   const shift = findAlbyteShiftFor_(staff, attendanceRecord.date, { context: shiftContext });
-  const breakMinutes = Number(attendanceRecord.breakMinutes) || 0;
+  const isDailyStaff = staff && staff.staffType === 'daily';
+  let breakMinutes = Number(attendanceRecord.breakMinutes) || 0;
 
   let clockInMinutes = parseTimeTextToMinutes_(attendanceRecord.clockIn);
   let clockOutMinutes = parseTimeTextToMinutes_(attendanceRecord.clockOut);
@@ -1049,12 +1113,17 @@ function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
     }
   }
 
-  if (shift && Number.isFinite(shift.endMinutes) && Number.isFinite(clockOutMinutes)) {
+  if (shift && Number.isFinite(shift.endMinutes) && Number.isFinite(clockOutMinutes) && !isDailyStaff) {
     if (clockOutMinutes > shift.endMinutes) {
       clockOutMinutes = shift.endMinutes;
       adjustedClockOut = formatMinutesAsTimeText_(shift.endMinutes);
       messages.push('退勤:シフト終了');
     }
+  }
+
+  if (isDailyStaff && breakMinutes !== 0) {
+    breakMinutes = 0;
+    messages.push('休憩:日給スタッフは休憩入力なし');
   }
 
   const autoFlag = messages.length ? messages.join(' / ') : '';
@@ -1068,6 +1137,10 @@ function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
     sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.clockOut).setValue(adjustedClockOut);
     touched = true;
   }
+  if ((attendanceRecord.breakMinutes || 0) !== breakMinutes) {
+    sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.breakMinutes).setValue(breakMinutes);
+    touched = true;
+  }
   if (autoFlag !== (attendanceRecord.autoFlag || '')) {
     sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.autoFlag).setValue(autoFlag);
     touched = true;
@@ -1076,18 +1149,16 @@ function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
     sheet.getRange(attendanceRecord.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
   }
 
-  const finalClockInMinutes = Number.isFinite(clockInMinutes) ? clockInMinutes : parseTimeTextToMinutes_(adjustedClockIn);
-  const finalClockOutMinutes = Number.isFinite(clockOutMinutes) ? clockOutMinutes : parseTimeTextToMinutes_(adjustedClockOut);
-  const workMinutes = (Number.isFinite(finalClockInMinutes) && Number.isFinite(finalClockOutMinutes))
-    ? Math.max(0, finalClockOutMinutes - finalClockInMinutes - breakMinutes)
-    : NaN;
-
   const updatedRecord = Object.assign({}, attendanceRecord, {
     clockIn: adjustedClockIn,
     clockOut: adjustedClockOut,
+    breakMinutes,
     autoFlag,
     updatedAt: touched ? now : attendanceRecord.updatedAt
   });
+
+  const metrics = computeAlbyteWorkMetrics_(updatedRecord, staff, shift);
+  const workMinutes = Number.isFinite(metrics.workMinutes) ? metrics.workMinutes : NaN;
 
   return {
     record: updatedRecord,
@@ -1142,8 +1213,10 @@ function buildAlbyteAttendanceView_(record, options){
     normalizedName: normalizeAlbyteName_(record.staffName)
   };
   const shift = findAlbyteShiftFor_(staff, record.date, { context: shiftContext });
-  const breakMinutes = Number(record.breakMinutes) || 0;
-  const workMinutes = resolveAlbyteWorkMinutes_(record.clockIn, record.clockOut, breakMinutes);
+  const metrics = computeAlbyteWorkMetrics_(record, staff, shift);
+  const breakMinutes = Number.isFinite(metrics.breakMinutes) ? metrics.breakMinutes : 0;
+  const workMinutes = Number.isFinite(metrics.workMinutes) ? metrics.workMinutes : NaN;
+  const overtimeText = metrics.isDailyStaff ? formatMinutesAsTimeText_(metrics.overtimeMinutes || 0) : '';
   const tz = getConfig('timezone') || 'Asia/Tokyo';
   return {
     id: record.id,
@@ -1158,6 +1231,9 @@ function buildAlbyteAttendanceView_(record, options){
     workMinutes: Number.isFinite(workMinutes) ? workMinutes : 0,
     workText: Number.isFinite(workMinutes) ? formatMinutesAsTimeText_(workMinutes) : '00:00',
     durationText: Number.isFinite(workMinutes) ? formatDurationText_(workMinutes) : '0時間',
+    overtimeText,
+    staffType: metrics.staffType,
+    isDailyStaff: metrics.isDailyStaff,
     note: record.note || '',
     autoFlag: record.autoFlag || '',
     log: record.log || [],
@@ -1165,7 +1241,8 @@ function buildAlbyteAttendanceView_(record, options){
     updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null,
     shiftStart: shift && shift.startText ? shift.startText : '',
     shiftEnd: shift && shift.endText ? shift.endText : '',
-    shiftNote: shift && shift.note ? shift.note : ''
+    shiftNote: shift && shift.note ? shift.note : '',
+    baseShiftEnd: metrics.baseShiftEndText || (shift && shift.endText ? shift.endText : '')
   };
 }
 
@@ -1175,6 +1252,8 @@ function buildAlbytePortalState_(staffRecord){
   const todayKey = fmtDate(now, tz);
   const weekday = getWeekdaySymbol_(now, tz);
   const attendance = readAlbyteAttendanceRowFor_(staffRecord.id, todayKey);
+  const staffType = staffRecord && staffRecord.staffType ? staffRecord.staffType : 'hourly';
+  const baseShiftEnd = staffRecord && staffRecord.shiftEndTime ? staffRecord.shiftEndTime : '';
   const base = {
     now: {
       iso: formatIsoStringWithOffset_(now, tz),
@@ -1186,7 +1265,9 @@ function buildAlbytePortalState_(staffRecord){
       weekday,
       status: 'idle',
       breakMinutes: 0,
-      record: null
+      record: null,
+      staffType,
+      baseShiftEnd
     },
     presets: ALBYTE_BREAK_MINUTES_PRESETS.slice(),
     limits: {
@@ -1194,7 +1275,9 @@ function buildAlbytePortalState_(staffRecord){
         max: ALBYTE_MAX_BREAK_MINUTES,
         step: ALBYTE_BREAK_STEP_MINUTES
       }
-    }
+    },
+    staffType,
+    baseShiftEnd
   };
   if (attendance) {
     const hasClockIn = Boolean(attendance.clockIn);
@@ -1239,7 +1322,10 @@ function buildAlbyteSuccessResponse_(staff, options){
     ok: true,
     staff: {
       id: staff.id,
-      name: staff.name
+      name: staff.name,
+      staffType: staff.staffType || 'hourly',
+      shiftEndTime: staff.shiftEndTime || '',
+      isDailyStaff: staff.staffType === 'daily'
     },
     portal
   };
@@ -1441,6 +1527,10 @@ function albyteUpdateBreak(payload){
       return session;
     }
 
+    if (session.staff && session.staff.staffType === 'daily') {
+      return { ok: false, reason: 'not_supported', message: '日給スタッフは休憩登録を利用しません。' };
+    }
+
     const minutesRaw = payload && payload.minutes;
     const minutes = Number(minutesRaw);
     if (!isFinite(minutes)) {
@@ -1501,6 +1591,8 @@ function albyteGetMonthlySummary(payload){
     }
 
     const staff = session.staff;
+    const staffType = staff && staff.staffType ? staff.staffType : 'hourly';
+    const isDailyStaff = staffType === 'daily';
     let year = Number(payload && payload.year);
     let month = Number(payload && payload.month);
     if (!Number.isFinite(year) || !Number.isFinite(month)) {
@@ -1527,11 +1619,11 @@ function albyteGetMonthlySummary(payload){
     });
 
     const hourlyWage = getAlbyteHourlyWage_();
-    const estimatedWage = hourlyWage != null ? Math.round((totalWork / 60) * hourlyWage) : null;
+    const estimatedWage = !isDailyStaff && hourlyWage != null ? Math.round((totalWork / 60) * hourlyWage) : null;
 
     return {
       ok: true,
-      staff: { id: staff.id, name: staff.name },
+      staff: { id: staff.id, name: staff.name, staffType },
       summary: {
         year,
         month,
@@ -1546,7 +1638,8 @@ function albyteGetMonthlySummary(payload){
           durationText: formatDurationText_(totalWork),
           estimatedWage,
           hourlyWage
-        }
+        },
+        staffType
       }
     };
   });
@@ -1563,7 +1656,9 @@ function albyteAdminListStaff(){
       locked: !!rec.locked,
       failCount: rec.failCount || 0,
       lastLogin: rec.lastLogin ? formatIsoStringWithOffset_(rec.lastLogin, tz) : null,
-      updatedAt: rec.updatedAt ? formatIsoStringWithOffset_(rec.updatedAt, tz) : null
+      updatedAt: rec.updatedAt ? formatIsoStringWithOffset_(rec.updatedAt, tz) : null,
+      staffType: rec.staffType || 'hourly',
+      shiftEndTime: rec.shiftEndTime || ''
     }));
     return { ok: true, staff };
   });
@@ -1582,6 +1677,20 @@ function albyteAdminSaveStaff(payload){
       return { ok: false, reason: 'validation', message: 'PINは4桁の数字で入力してください。' };
     }
     const locked = !!(payload && payload.locked);
+    const staffTypeRaw = payload && payload.staffType ? String(payload.staffType).trim().toLowerCase() : '';
+    const staffType = staffTypeRaw === 'daily' ? 'daily' : 'hourly';
+    const shiftEndRaw = payload && payload.shiftEndTime != null ? String(payload.shiftEndTime).trim() : '';
+    const shiftEndMinutes = shiftEndRaw ? parseTimeTextToMinutes_(shiftEndRaw) : NaN;
+    let shiftEndText = '';
+    if (shiftEndRaw) {
+      if (!Number.isFinite(shiftEndMinutes)) {
+        return { ok: false, reason: 'validation', message: '基準退勤時刻はHH:MM形式で入力してください。' };
+      }
+      shiftEndText = formatMinutesAsTimeText_(shiftEndMinutes);
+    }
+    if (staffType === 'daily' && !shiftEndText) {
+      return { ok: false, reason: 'validation', message: '日給スタッフには基準退勤時刻の設定が必要です。' };
+    }
 
     return withAlbyteLock_(() => {
       const context = readAlbyteStaffRecords_();
@@ -1595,13 +1704,19 @@ function albyteAdminSaveStaff(payload){
       if (record) {
         const rowIndex = record.rowIndex;
         const failCount = locked ? Math.max(record.failCount || 0, ALBYTE_MAX_PIN_ATTEMPTS) : 0;
-        sheet.getRange(rowIndex, ALBYTE_STAFF_COLUMN_INDEX.name, 1, 5)
-          .setValues([[rawName, pinText, locked, failCount, record.lastLogin || '']]);
-        sheet.getRange(rowIndex, ALBYTE_STAFF_COLUMN_INDEX.updatedAt).setValue(now);
+        sheet.getRange(rowIndex, ALBYTE_STAFF_COLUMN_INDEX.name, 1, 8)
+          .setValues([[rawName, pinText, locked, failCount, record.lastLogin ? record.lastLogin : '', now, staffType, shiftEndText]]);
+        record.staffType = staffType;
+        record.shiftEndTime = shiftEndText;
+        record.shiftEndMinutes = Number.isFinite(shiftEndMinutes) ? shiftEndMinutes : NaN;
+        record.pin = pinText;
+        record.locked = locked;
+        record.failCount = failCount;
+        record.updatedAt = now;
       } else {
         const id = Utilities.getUuid();
         const failCount = locked ? ALBYTE_MAX_PIN_ATTEMPTS : 0;
-        sheet.appendRow([id, rawName, pinText, locked, failCount, '', now]);
+        sheet.appendRow([id, rawName, pinText, locked, failCount, '', now, staffType, shiftEndText]);
         targetId = id;
       }
 
@@ -1621,7 +1736,9 @@ function albyteAdminSaveStaff(payload){
           locked: !!updated.locked,
           failCount: updated.failCount || 0,
           lastLogin: updated.lastLogin ? formatIsoStringWithOffset_(updated.lastLogin, tz) : null,
-          updatedAt: updated.updatedAt ? formatIsoStringWithOffset_(updated.updatedAt, tz) : null
+          updatedAt: updated.updatedAt ? formatIsoStringWithOffset_(updated.updatedAt, tz) : null,
+          staffType: updated.staffType || 'hourly',
+          shiftEndTime: updated.shiftEndTime || ''
         }
       };
     });
@@ -1646,7 +1763,8 @@ function albyteAdminListAttendance(payload){
       const staff = staffContext.mapById.get(record.staffId) || {
         id: record.staffId,
         name: record.staffName,
-        normalizedName: normalizeAlbyteName_(record.staffName)
+        normalizedName: normalizeAlbyteName_(record.staffName),
+        staffType: 'hourly'
       };
       return buildAlbyteAttendanceView_(record, { shiftContext, staff });
     });
@@ -1712,6 +1830,10 @@ function albyteAdminSaveAttendance(payload){
       }
       if (!target) {
         target = readAlbyteAttendanceRowFor_(staffId, dateKey, { sheet });
+      }
+
+      if (staff && staff.staffType === 'daily') {
+        breakMinutes = 0;
       }
 
       const actor = (Session.getEffectiveUser && Session.getEffectiveUser().getEmail && Session.getEffectiveUser().getEmail()) || '';
@@ -2094,16 +2216,18 @@ function buildUnifiedAlbyteAttendanceRecord_(record, options){
   const fallbackStaff = staff || {
     id: record.staffId || '',
     name: record.staffName || '',
-    normalizedName: staff && staff.normalizedName ? staff.normalizedName : normalizeAlbyteName_(record.staffName)
+    normalizedName: staff && staff.normalizedName ? staff.normalizedName : normalizeAlbyteName_(record.staffName),
+    staffType: staff && staff.staffType ? staff.staffType : 'hourly'
   };
   const view = buildAlbyteAttendanceView_(record, { shiftContext, staff: fallbackStaff });
   if (!view) return null;
   const workMinutes = Number.isFinite(view.workMinutes) ? view.workMinutes : 0;
   const breakMinutes = Number.isFinite(view.breakMinutes) ? view.breakMinutes : 0;
+  const unifiedStaffType = view.isDailyStaff ? 'daily' : 'partTime';
   return {
     system: 'albyte',
     systemLabel: 'AlbyteAttendance',
-    staffType: 'partTime',
+    staffType: unifiedStaffType,
     staffId: view.staffId || fallbackStaff.id || '',
     staffName: view.staffName || fallbackStaff.name || '',
     date: view.date || record.date || '',
@@ -2124,7 +2248,11 @@ function buildUnifiedAlbyteAttendanceRecord_(record, options){
       rowIndex: Number.isFinite(view.rowIndex) ? view.rowIndex : null,
       recordId: view.id || record.id || '',
       rawStaffId: record.staffId || '',
-      rawStaffName: record.staffName || ''
+      rawStaffName: record.staffName || '',
+      isDailyStaff: !!view.isDailyStaff,
+      overtimeMinutes: view.isDailyStaff ? view.workMinutes : 0,
+      overtimeText: view.isDailyStaff ? (view.overtimeText || view.workText || formatMinutesAsTimeText_(workMinutes)) : '',
+      baseShiftEnd: view.baseShiftEnd || ''
     }
   };
 }

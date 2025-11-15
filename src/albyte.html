@@ -182,7 +182,7 @@
             <th>出勤</th>
             <th>退勤</th>
             <th>休憩</th>
-            <th>勤務</th>
+            <th>勤務/延長</th>
             <th>備考</th>
             <th>補正</th>
           </tr>
@@ -234,6 +234,7 @@ const breakPresetGroup = document.getElementById('breakPresetGroup');
 const breakCustomForm = document.getElementById('breakCustomForm');
 const breakCustomInput = document.getElementById('breakCustomInput');
 const breakNotice = document.getElementById('breakNotice');
+const breakCard = document.querySelector('.break-card');
 const loadingOverlay = document.getElementById('loading');
 const loadingText = document.getElementById('loadingText');
 const toast = document.getElementById('toast');
@@ -320,15 +321,16 @@ function renderMonthlySummary(){
   monthlyCard.hidden = false;
   const summary = monthlyState;
   const totals = summary.totals || {};
+  const isDailySummary = summary.staffType === 'daily';
   if (monthlyLabel) {
     monthlyLabel.textContent = summary.year + '年' + summary.month + '月';
   }
   if (monthlyTotals) {
     const metrics = [];
     const workText = escapeHtml(totals.durationText || totals.workText || '--');
-    const breakText = escapeHtml(totals.breakText || '--');
+    const breakText = isDailySummary ? '--' : escapeHtml(totals.breakText || '--');
     const workingDays = totals.workingDays != null ? escapeHtml(totals.workingDays) : escapeHtml('--');
-    metrics.push(`<div class="metric"><span>勤務時間</span><strong>${workText}</strong></div>`);
+    metrics.push(`<div class="metric"><span>${isDailySummary ? '延長時間' : '勤務時間'}</span><strong>${workText}</strong></div>`);
     metrics.push(`<div class="metric"><span>休憩</span><strong>${breakText}</strong></div>`);
     metrics.push(`<div class="metric"><span>勤務日数</span><strong>${workingDays}</strong></div>`);
     if (totals.estimatedWage != null) {
@@ -347,8 +349,10 @@ function renderMonthlySummary(){
         const date = escapeHtml(row.date || '');
         const clockIn = escapeHtml(row.clockIn || '');
         const clockOut = escapeHtml(row.clockOut || '');
-        const breakText = escapeHtml(row.breakText || '');
-        const workText = escapeHtml(row.workText || '');
+        const breakText = row.isDailyStaff ? '--' : escapeHtml(row.breakText || '');
+        const workText = row.isDailyStaff
+          ? `延長 ${escapeHtml(row.overtimeText || row.workText || '')}`
+          : escapeHtml(row.workText || '');
         return `<tr>
           <td>${date}</td>
           <td>${clockIn}</td>
@@ -552,6 +556,7 @@ function renderPortal(){
   staffNameLabel.textContent = sessionState.staff ? sessionState.staff.name + ' さん' : '';
   portalNow.textContent = portal.now && portal.now.display ? portal.now.display : '';
   todayDisplay.textContent = portal.today.display || '';
+  const isDailyStaff = portal.staffType === 'daily' || (sessionState.staff && sessionState.staff.staffType === 'daily');
 
   const status = portal.today.status || 'idle';
   statusBadge.textContent = STATUS_LABELS[status] || STATUS_LABELS.idle;
@@ -561,7 +566,7 @@ function renderPortal(){
   clockInValue.textContent = record && record.clockIn ? record.clockIn : '--:--';
   clockOutValue.textContent = record && record.clockOut ? record.clockOut : '--:--';
   const breakMinutes = portal.today.breakMinutes != null ? portal.today.breakMinutes : 0;
-  breakValue.textContent = breakMinutes + '分';
+  breakValue.textContent = isDailyStaff ? '対象外' : (breakMinutes + '分');
 
   if (record && record.updatedAt) {
     const updated = formatUpdatedAt(record.updatedAt);
@@ -575,11 +580,21 @@ function renderPortal(){
   clockInButton.disabled = !canClockIn;
   clockOutButton.disabled = !canClockOut;
 
-  const canSetBreak = Boolean(record && record.clockIn);
-  renderBreakPresets(portal.presets || [], breakMinutes, canSetBreak);
-  breakCustomInput.disabled = !canSetBreak;
-  breakCustomInput.value = '';
-  breakNotice.textContent = canSetBreak ? '' : '出勤打刻後に休憩を登録できます。';
+  const canSetBreak = !isDailyStaff && Boolean(record && record.clockIn);
+  if (breakCard) {
+    breakCard.hidden = isDailyStaff;
+  }
+  if (isDailyStaff) {
+    breakPresetGroup.innerHTML = '';
+    breakCustomInput.value = '';
+    breakCustomInput.disabled = true;
+    breakNotice.textContent = '日給スタッフは休憩登録不要です。';
+  } else {
+    renderBreakPresets(portal.presets || [], breakMinutes, canSetBreak);
+    breakCustomInput.disabled = !canSetBreak;
+    breakCustomInput.value = '';
+    breakNotice.textContent = canSetBreak ? '' : '出勤打刻後に休憩を登録できます。';
+  }
 }
 
 function renderBreakPresets(presets, currentMinutes, enabled){

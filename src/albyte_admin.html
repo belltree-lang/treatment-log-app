@@ -61,9 +61,9 @@
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>名前</th><th>PIN</th><th>ロック</th><th>最終ログイン</th><th>更新</th><th></th></tr>
+          <tr><th>名前</th><th>PIN</th><th>種別</th><th>基準退勤</th><th>ロック</th><th>最終ログイン</th><th>更新</th><th></th></tr>
         </thead>
-        <tbody id="staffTableBody"><tr><td colspan="6">読み込み中…</td></tr></tbody>
+        <tbody id="staffTableBody"><tr><td colspan="8">読み込み中…</td></tr></tbody>
       </table>
     </div>
     <form id="staffForm" autocomplete="off">
@@ -80,6 +80,15 @@
             <option value="false">ロック解除</option>
             <option value="true">ロック中</option>
           </select>
+        </label>
+        <label>種別
+          <select id="staffType">
+            <option value="hourly">時給</option>
+            <option value="daily">日給</option>
+          </select>
+        </label>
+        <label>基準退勤（HH:MM）
+          <input id="staffShiftEnd" type="time" />
         </label>
       </div>
       <div class="form-actions">
@@ -100,9 +109,9 @@
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>日付</th><th>スタッフ</th><th>出勤</th><th>退勤</th><th>休憩</th><th>勤務</th><th>補正</th><th>備考</th><th></th></tr>
+          <tr><th>日付</th><th>スタッフ</th><th>種別</th><th>出勤</th><th>退勤</th><th>基準退勤</th><th>休憩</th><th>勤務/延長</th><th>補正</th><th>備考</th><th></th></tr>
         </thead>
-        <tbody id="attendanceTableBody"><tr><td colspan="9">読み込み中…</td></tr></tbody>
+        <tbody id="attendanceTableBody"><tr><td colspan="11">読み込み中…</td></tr></tbody>
       </table>
     </div>
     <form id="attendanceForm" autocomplete="off">
@@ -234,19 +243,23 @@ function renderStaffTable(){
   const tbody = document.getElementById('staffTableBody');
   if (!tbody) return;
   if (!state.staff.length){
-    tbody.innerHTML = '<tr><td colspan="6">スタッフが登録されていません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8">スタッフが登録されていません</td></tr>';
     return;
   }
   tbody.innerHTML = state.staff.map(st => {
     const locked = st.locked ? '<span class="tag">LOCK</span>' : '';
     const name = escapeHtml(st.name || '');
     const pin = escapeHtml(st.pin || '');
+    const typeLabel = st.staffType === 'daily' ? '日給' : '時給';
+    const shiftEnd = st.shiftEndTime ? escapeHtml(st.shiftEndTime) : '';
     const lastLogin = st.lastLogin ? escapeHtml(formatIsoDate(st.lastLogin)) : '';
     const updatedAt = st.updatedAt ? escapeHtml(formatIsoDate(st.updatedAt)) : '';
     const id = escapeHtml(st.id || '');
     return `<tr>
       <td>${name}</td>
       <td>${pin}</td>
+      <td>${typeLabel}</td>
+      <td>${shiftEnd}</td>
       <td>${locked}</td>
       <td>${lastLogin}</td>
       <td>${updatedAt}</td>
@@ -260,6 +273,23 @@ function setStaffForm(record){
   document.getElementById('staffName').value = record ? record.name : '';
   document.getElementById('staffPin').value = record ? (record.pin || '') : '';
   document.getElementById('staffLocked').value = record && record.locked ? 'true' : 'false';
+  document.getElementById('staffType').value = record && record.staffType === 'daily' ? 'daily' : 'hourly';
+  document.getElementById('staffShiftEnd').value = record && record.shiftEndTime ? record.shiftEndTime : '';
+  syncStaffShiftEndField();
+}
+
+function syncStaffShiftEndField(){
+  const select = document.getElementById('staffType');
+  const input = document.getElementById('staffShiftEnd');
+  if (!select || !input) return;
+  const isDaily = select.value === 'daily';
+  input.disabled = !isDaily;
+  if (!isDaily) {
+    input.value = '';
+    input.placeholder = '日給のみ設定';
+  } else {
+    input.placeholder = '';
+  }
 }
 
 function fetchStaff(){
@@ -275,6 +305,7 @@ function fetchStaff(){
       populateStaffSelect(document.getElementById('attendanceStaffFilter'), true);
       populateStaffSelect(document.getElementById('shiftStaff'), false);
       populateStaffSelect(document.getElementById('shiftStaffFilter'), true);
+      syncAttendanceBreakField(document.getElementById('attendanceStaff').value);
     })
     .withFailureHandler(err => showToast(err && err.message ? err.message : 'スタッフ一覧の取得に失敗しました'))
     .albyteAdminListStaff();
@@ -294,7 +325,7 @@ function renderAttendanceTable(){
   const tbody = document.getElementById('attendanceTableBody');
   if (!tbody) return;
   if (!state.attendance.length){
-    tbody.innerHTML = '<tr><td colspan="9">データがありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">データがありません</td></tr>';
     return;
   }
   tbody.innerHTML = state.attendance.map(rec => {
@@ -304,16 +335,21 @@ function renderAttendanceTable(){
     const staffName = escapeHtml(rec.staffName || '');
     const clockIn = escapeHtml(rec.clockIn || '');
     const clockOut = escapeHtml(rec.clockOut || '');
-    const breakText = escapeHtml(rec.breakText || '');
-    const workText = escapeHtml(rec.workText || '');
+    const typeLabel = rec.isDailyStaff ? '日給' : '時給';
+    const baseShift = rec.baseShiftEnd ? escapeHtml(rec.baseShiftEnd) : escapeHtml(rec.shiftEnd || '');
+    const breakText = rec.isDailyStaff ? '--' : escapeHtml(rec.breakText || '');
+    const overtimeText = rec.isDailyStaff ? escapeHtml(rec.overtimeText || rec.workText || '') : '';
+    const workDisplay = rec.isDailyStaff ? (`延長 ${overtimeText || '00:00'}`) : escapeHtml(rec.workText || '');
     const id = escapeHtml(rec.id || '');
     return `<tr>
       <td>${date}</td>
       <td>${staffName}</td>
+      <td>${typeLabel}</td>
       <td>${clockIn}</td>
       <td>${clockOut}</td>
+      <td>${baseShift}</td>
       <td>${breakText}</td>
-      <td>${workText}</td>
+      <td>${workDisplay}</td>
       <td>${auto}</td>
       <td>${note}</td>
       <td><button type="button" class="btn ghost" data-attendance-edit="${id}">編集</button></td>
@@ -324,11 +360,32 @@ function renderAttendanceTable(){
 function setAttendanceForm(record){
   document.getElementById('attendanceId').value = record ? record.id : '';
   document.getElementById('attendanceDate').value = record ? record.date : '';
-  document.getElementById('attendanceStaff').value = record ? record.staffId : '';
+  const staffSelect = document.getElementById('attendanceStaff');
+  const staffId = record ? record.staffId : '';
+  staffSelect.value = staffId;
+  syncAttendanceBreakField(staffId);
   document.getElementById('attendanceClockIn').value = record && record.clockIn ? record.clockIn : '';
   document.getElementById('attendanceClockOut').value = record && record.clockOut ? record.clockOut : '';
-  document.getElementById('attendanceBreak').value = record && Number.isFinite(record.breakMinutes) ? record.breakMinutes : '';
+  const breakInput = document.getElementById('attendanceBreak');
+  if (record && Number.isFinite(record.breakMinutes) && !record.isDailyStaff) {
+    breakInput.value = record.breakMinutes;
+  } else {
+    breakInput.value = '';
+  }
   document.getElementById('attendanceNote').value = record ? record.note || '' : '';
+}
+
+function syncAttendanceBreakField(staffId){
+  const breakInput = document.getElementById('attendanceBreak');
+  if (!breakInput) return;
+  const daily = isDailyStaff(staffId);
+  breakInput.disabled = daily;
+  if (daily) {
+    breakInput.value = '';
+    breakInput.placeholder = '日給スタッフは休憩なし';
+  } else {
+    breakInput.placeholder = '';
+  }
 }
 
 function fetchAttendance(){
@@ -339,7 +396,7 @@ function fetchAttendance(){
   const params = { year, month };
   if (staffId) params.staffId = staffId;
   const tbody = document.getElementById('attendanceTableBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="9">読み込み中…</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="11">読み込み中…</td></tr>';
   google.script.run
     .withSuccessHandler(res => {
       if (!res || res.ok !== true) {
@@ -428,6 +485,11 @@ function findStaffById(id){
   return state.staff.find(st => st.id === id) || null;
 }
 
+function isDailyStaff(id){
+  const staff = findStaffById(id);
+  return !!(staff && staff.staffType === 'daily');
+}
+
 function findAttendanceById(id){
   return state.attendance.find(rec => rec.id === id) || null;
 }
@@ -447,13 +509,17 @@ function attachEventHandlers(){
 
   document.getElementById('staffNewButton').addEventListener('click', () => setStaffForm(null));
 
+  document.getElementById('staffType').addEventListener('change', syncStaffShiftEndField);
+
   document.getElementById('staffForm').addEventListener('submit', event => {
     event.preventDefault();
     const payload = {
       id: document.getElementById('staffId').value || null,
       name: document.getElementById('staffName').value.trim(),
       pin: document.getElementById('staffPin').value.trim(),
-      locked: document.getElementById('staffLocked').value === 'true'
+      locked: document.getElementById('staffLocked').value === 'true',
+      staffType: document.getElementById('staffType').value,
+      shiftEndTime: document.getElementById('staffShiftEnd').value
     };
     google.script.run
       .withSuccessHandler(res => {
@@ -480,6 +546,9 @@ function attachEventHandlers(){
   document.getElementById('attendanceReload').addEventListener('click', fetchAttendance);
   document.getElementById('attendanceStaffFilter').addEventListener('change', fetchAttendance);
   document.getElementById('attendanceMonth').addEventListener('change', fetchAttendance);
+  document.getElementById('attendanceStaff').addEventListener('change', event => {
+    syncAttendanceBreakField(event.target.value);
+  });
 
   document.getElementById('attendanceForm').addEventListener('submit', event => {
     event.preventDefault();
@@ -489,7 +558,7 @@ function attachEventHandlers(){
       staffId: document.getElementById('attendanceStaff').value,
       clockIn: document.getElementById('attendanceClockIn').value,
       clockOut: document.getElementById('attendanceClockOut').value,
-      breakMinutes: document.getElementById('attendanceBreak').value,
+      breakMinutes: document.getElementById('attendanceBreak').disabled ? '0' : document.getElementById('attendanceBreak').value,
       note: document.getElementById('attendanceNote').value
     };
     google.script.run
@@ -562,6 +631,8 @@ function attachEventHandlers(){
       .withFailureHandler(err => showToast(err && err.message ? err.message : 'シフトの削除に失敗しました'))
       .albyteAdminDeleteShift({ id });
   });
+
+  syncStaffShiftEndField();
 }
 
 (function init(){

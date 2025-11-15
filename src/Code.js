@@ -2010,6 +2010,252 @@ function albyteGetMonthlyReport(payload){
   });
 }
 
+function resolveUnifiedAttendanceRange_(payload){
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  let fromKey = normalizeDateKey_(payload && payload.from, tz);
+  let toKey = normalizeDateKey_(payload && payload.to, tz);
+
+  if (!fromKey || !toKey) {
+    let year = Number(payload && payload.year);
+    let month = Number(payload && payload.month);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      const monthKeyText = String((payload && (payload.monthKey || payload.month)) || '').trim();
+      if (/^\d{4}-\d{1,2}$/.test(monthKeyText)) {
+        const parts = monthKeyText.split('-');
+        year = Number(parts[0]);
+        month = Number(parts[1]);
+      }
+    }
+    if (Number.isFinite(year) && Number.isFinite(month)) {
+      const resolved = resolveMonthlyRangeKeys_(year, month);
+      fromKey = resolved.from;
+      toKey = resolved.to;
+    }
+  }
+
+  if (!fromKey || !toKey) {
+    const now = new Date();
+    const resolved = resolveMonthlyRangeKeys_(now.getFullYear(), now.getMonth() + 1);
+    fromKey = resolved.from;
+    toKey = resolved.to;
+  }
+
+  if (fromKey > toKey) {
+    const tmp = fromKey;
+    fromKey = toKey;
+    toKey = tmp;
+  }
+
+  const fromDate = createDateFromKey_(fromKey);
+  const toDate = createDateFromKey_(toKey);
+  return { tz, fromKey, toKey, fromDate, toDate };
+}
+
+function buildUnifiedVisitAttendanceRecord_(record){
+  if (!record) return null;
+  const workMinutes = Number.isFinite(record.workMinutes) ? record.workMinutes : 0;
+  const breakMinutes = Number.isFinite(record.breakMinutes) ? record.breakMinutes : 0;
+  return {
+    system: 'visit',
+    systemLabel: 'VisitAttendance',
+    staffType: 'employee',
+    staffId: record.email || '',
+    staffName: record.staffName || record.email || '',
+    date: record.date || '',
+    clockIn: record.start || '',
+    clockOut: record.end || '',
+    breakMinutes,
+    breakText: record.break || formatMinutesAsTimeText_(breakMinutes),
+    workMinutes,
+    workText: record.work || formatMinutesAsTimeText_(workMinutes),
+    durationText: formatDurationText_(workMinutes),
+    note: record.breakdown || '',
+    metadata: {
+      weekday: record.weekday || '',
+      breakdown: record.breakdown || '',
+      flag: record.flag || '',
+      sourceLabel: record.sourceLabel || '',
+      leaveType: record.leaveType || '',
+      isHourlyStaff: !!record.isHourlyStaff,
+      isDailyStaff: !!record.isDailyStaff,
+      autoAdjustedEnd: !!record.autoAdjustedEnd,
+      autoAdjustmentMessage: record.autoAdjustmentMessage || '',
+      rowNumber: Number.isFinite(record.rowNumber) ? record.rowNumber : null,
+      originalEndMinutes: Number.isFinite(record.originalEndMinutes) ? record.originalEndMinutes : null
+    }
+  };
+}
+
+function buildUnifiedAlbyteAttendanceRecord_(record, options){
+  if (!record) return null;
+  const staffContext = options && options.staffContext;
+  const shiftContext = options && options.shiftContext;
+  const staff = staffContext && staffContext.mapById ? staffContext.mapById.get(record.staffId) : null;
+  const fallbackStaff = staff || {
+    id: record.staffId || '',
+    name: record.staffName || '',
+    normalizedName: staff && staff.normalizedName ? staff.normalizedName : normalizeAlbyteName_(record.staffName)
+  };
+  const view = buildAlbyteAttendanceView_(record, { shiftContext, staff: fallbackStaff });
+  if (!view) return null;
+  const workMinutes = Number.isFinite(view.workMinutes) ? view.workMinutes : 0;
+  const breakMinutes = Number.isFinite(view.breakMinutes) ? view.breakMinutes : 0;
+  return {
+    system: 'albyte',
+    systemLabel: 'AlbyteAttendance',
+    staffType: 'partTime',
+    staffId: view.staffId || fallbackStaff.id || '',
+    staffName: view.staffName || fallbackStaff.name || '',
+    date: view.date || record.date || '',
+    clockIn: view.clockIn || '',
+    clockOut: view.clockOut || '',
+    breakMinutes,
+    breakText: view.breakText || formatMinutesAsTimeText_(breakMinutes),
+    workMinutes,
+    workText: view.workText || formatMinutesAsTimeText_(workMinutes),
+    durationText: view.durationText || formatDurationText_(workMinutes),
+    note: view.note || '',
+    metadata: {
+      autoFlag: view.autoFlag || '',
+      log: Array.isArray(view.log) ? view.log : [],
+      shiftStart: view.shiftStart || '',
+      shiftEnd: view.shiftEnd || '',
+      shiftNote: view.shiftNote || '',
+      rowIndex: Number.isFinite(view.rowIndex) ? view.rowIndex : null,
+      recordId: view.id || record.id || '',
+      rawStaffId: record.staffId || '',
+      rawStaffName: record.staffName || ''
+    }
+  };
+}
+
+function getUnifiedAttendanceDataset(payload){
+  const tag = 'getUnifiedAttendanceDataset';
+  try {
+    const range = resolveUnifiedAttendanceRange_(payload);
+    const visitRecords = readVisitAttendanceRecords_({
+      startDate: range.fromDate,
+      endDate: range.toDate,
+      tz: range.tz
+    });
+    const visitUnified = visitRecords.map(buildUnifiedVisitAttendanceRecord_).filter(Boolean);
+
+    const staffContext = readAlbyteStaffRecords_();
+    const shiftContext = readAlbyteShiftRecords_();
+    const { records: albyteRecords } = readAlbyteAttendanceRecords_({ fromDateKey: range.fromKey, toDateKey: range.toKey });
+    const albyteUnified = albyteRecords.map(record => buildUnifiedAlbyteAttendanceRecord_(record, { staffContext, shiftContext })).filter(Boolean);
+
+    const records = visitUnified.concat(albyteUnified);
+    records.sort((a, b) => {
+      const dateDiff = (a.date || '').localeCompare(b.date || '');
+      if (dateDiff !== 0) return dateDiff;
+      const typeDiff = (a.staffType || '').localeCompare(b.staffType || '');
+      if (typeDiff !== 0) return typeDiff;
+      const nameDiff = (a.staffName || '').localeCompare(b.staffName || '');
+      if (nameDiff !== 0) return nameDiff;
+      const startDiff = (a.clockIn || '').localeCompare(b.clockIn || '');
+      if (startDiff !== 0) return startDiff;
+      return (a.system || '').localeCompare(b.system || '');
+    });
+
+    let totalWork = 0;
+    let totalBreak = 0;
+    const systemMap = new Map();
+    const staffSummaryMap = new Map();
+
+    const ensureSystemEntry = (key, label) => {
+      if (!systemMap.has(key)) {
+        systemMap.set(key, { system: key, label: label || key, workMinutes: 0, breakMinutes: 0, records: 0 });
+      }
+      return systemMap.get(key);
+    };
+
+    records.forEach(record => {
+      const work = Number.isFinite(record.workMinutes) ? record.workMinutes : 0;
+      const breakMinutes = Number.isFinite(record.breakMinutes) ? record.breakMinutes : 0;
+      totalWork += work;
+      totalBreak += breakMinutes;
+
+      const systemEntry = ensureSystemEntry(record.system || 'unknown', record.systemLabel || record.system || '');
+      systemEntry.workMinutes += work;
+      systemEntry.breakMinutes += breakMinutes;
+      systemEntry.records += 1;
+
+      const staffKey = (record.staffType || '') + '::' + (record.staffId || record.staffName || '');
+      if (!staffSummaryMap.has(staffKey)) {
+        staffSummaryMap.set(staffKey, {
+          staffType: record.staffType || '',
+          staffId: record.staffId || '',
+          staffName: record.staffName || '',
+          workMinutes: 0,
+          breakMinutes: 0,
+          workingDays: 0,
+          systems: new Set()
+        });
+      }
+      const summary = staffSummaryMap.get(staffKey);
+      summary.workMinutes += work;
+      summary.breakMinutes += breakMinutes;
+      if ((record.clockIn && record.clockOut) || work > 0) {
+        summary.workingDays += 1;
+      }
+      if (record.system) {
+        summary.systems.add(record.system);
+      }
+    });
+
+    const systemSummaries = Array.from(systemMap.values()).map(entry => ({
+      system: entry.system,
+      label: entry.label,
+      workMinutes: entry.workMinutes,
+      workText: formatMinutesAsTimeText_(entry.workMinutes),
+      breakMinutes: entry.breakMinutes,
+      breakText: formatMinutesAsTimeText_(entry.breakMinutes),
+      durationText: formatDurationText_(entry.workMinutes),
+      records: entry.records
+    })).sort((a, b) => (a.system || '').localeCompare(b.system || ''));
+
+    const staffSummaries = Array.from(staffSummaryMap.values()).map(entry => ({
+      staffType: entry.staffType,
+      staffId: entry.staffId,
+      staffName: entry.staffName,
+      workMinutes: entry.workMinutes,
+      workText: formatMinutesAsTimeText_(entry.workMinutes),
+      breakMinutes: entry.breakMinutes,
+      breakText: formatMinutesAsTimeText_(entry.breakMinutes),
+      durationText: formatDurationText_(entry.workMinutes),
+      workingDays: entry.workingDays,
+      systems: Array.from(entry.systems).sort()
+    })).sort((a, b) => {
+      const typeDiff = (a.staffType || '').localeCompare(b.staffType || '');
+      if (typeDiff !== 0) return typeDiff;
+      return (a.staffName || '').localeCompare(b.staffName || '');
+    });
+
+    return {
+      ok: true,
+      dataset: {
+        range: { from: range.fromKey, to: range.toKey },
+        timezone: range.tz,
+        totals: {
+          workMinutes: totalWork,
+          workText: formatMinutesAsTimeText_(totalWork),
+          breakMinutes: totalBreak,
+          breakText: formatMinutesAsTimeText_(totalBreak),
+          durationText: formatDurationText_(totalWork)
+        },
+        systems: systemSummaries,
+        staff: staffSummaries,
+        records
+      }
+    };
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    Logger.log('[' + tag + '] ' + (err && err.stack ? err.stack : message));
+    return { ok: false, message };
+  }
+}
+
 function init_(){ ensureAuxSheets_(); }
 
 /***** ログ・News *****/
@@ -7206,15 +7452,14 @@ function calculatePaidLeaveUsageForYear_(email, year, tz){
   return { usedDays: usedRecords.length, records: usedRecords };
 }
 
-function readVisitAttendanceRecordsForEmail_(email, options){
-  const normalizedEmail = normalizeEmailKey_(email);
-  if (!normalizedEmail) return [];
+function readVisitAttendanceRecords_(options){
   const opts = options || {};
   const tz = opts.tz || Session.getScriptTimeZone() || 'Asia/Tokyo';
   const startDate = opts.startDate instanceof Date ? new Date(opts.startDate.getFullYear(), opts.startDate.getMonth(), opts.startDate.getDate()) : null;
   const endDate = opts.endDate instanceof Date ? new Date(opts.endDate.getFullYear(), opts.endDate.getMonth(), opts.endDate.getDate()) : null;
   const startMs = startDate ? startDate.getTime() : null;
   const endMs = endDate ? endDate.getTime() : null;
+  const emailFilter = normalizeEmailKey_(opts.email);
   const sheet = ensureVisitAttendanceSheet_();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -7223,12 +7468,15 @@ function readVisitAttendanceRecordsForEmail_(email, options){
   const values = range.getValues();
   const displays = range.getDisplayValues();
   const weekdays = ['日','月','火','水','木','金','土'];
+  const staffSettings = opts.staffSettings instanceof Map ? opts.staffSettings : readVisitAttendanceStaffSettings_();
   const results = [];
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
     const display = displays[i];
-    const rowEmail = normalizeEmailKey_(row[1] || display[1]);
-    if (!rowEmail || rowEmail !== normalizedEmail) continue;
+    const normalizedEmail = normalizeEmailKey_(row[1] || display[1]);
+    if (!normalizedEmail) continue;
+    if (emailFilter && normalizedEmail !== emailFilter) continue;
+
     let dateObj = row[0];
     if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) {
       const key = formatDateKeyFromValue_(row[0], tz) || formatDateKeyFromValue_(display[0], tz);
@@ -7321,8 +7569,14 @@ function readVisitAttendanceRecordsForEmail_(email, options){
       ? formatMinutesAsTimeText_(finalEndMinutes)
       : (endText || (Number.isFinite(endMinutes) ? formatMinutesAsTimeText_(endMinutes) : ''));
     const autoAdjustmentMessage = autoAdjustedEnd ? '自動補正：退勤は18:00に調整されました' : '';
+    const staffSetting = staffSettings.get(normalizedEmail);
+    const displayName = staffSetting && staffSetting.displayName
+      ? staffSetting.displayName
+      : resolveStaffDisplayName_(normalizedEmail);
 
     results.push({
+      email: normalizedEmail,
+      staffName: displayName || normalizedEmail,
       date: Utilities.formatDate(day, tz, 'yyyy-MM-dd'),
       displayDate: Utilities.formatDate(day, tz, 'M/d'),
       weekday: weekdays[day.getDay()] || '',
@@ -7348,10 +7602,25 @@ function readVisitAttendanceRecordsForEmail_(email, options){
       autoAdjustmentMessage
     });
   }
-  results.sort((a, b) => a.date.localeCompare(b.date));
+  results.sort((a, b) => {
+    const dateDiff = a.date.localeCompare(b.date);
+    if (dateDiff !== 0) return dateDiff;
+    const nameDiff = (a.staffName || '').localeCompare(b.staffName || '');
+    if (nameDiff !== 0) return nameDiff;
+    const startDiff = (a.start || '').localeCompare(b.start || '');
+    if (startDiff !== 0) return startDiff;
+    return (a.email || '').localeCompare(b.email || '');
+  });
   return results;
 }
 
+
+function readVisitAttendanceRecordsForEmail_(email, options){
+  const normalizedEmail = normalizeEmailKey_(email);
+  if (!normalizedEmail) return [];
+  const opts = Object.assign({}, options || {}, { email: normalizedEmail });
+  return readVisitAttendanceRecords_(opts);
+}
 function readVisitAttendanceRequests_(options){
   const opts = options || {};
   const tz = opts.tz || Session.getScriptTimeZone() || 'Asia/Tokyo';

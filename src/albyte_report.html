@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>アルバイト勤怠 月次レポート</title>
+<style>
+  :root{
+    --bg:#f8fafc;
+    --fg:#1f2937;
+    --card:#fff;
+    --border:#e5e7eb;
+    --muted:#6b7280;
+    --brand:#2563eb;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap{ max-width:960px; margin:0 auto; padding:32px 16px 72px; display:flex; flex-direction:column; gap:24px; }
+  h1{ margin:0; font-size:1.6rem; }
+  p{ margin:0; color:var(--muted); }
+  .card{ background:var(--card); border-radius:18px; padding:24px; box-shadow:0 12px 36px rgba(15,23,42,0.08); display:flex; flex-direction:column; gap:16px; }
+  .filters{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  input[type="month"]{ padding:8px 10px; border:1px solid var(--border); border-radius:10px; font-size:0.95rem; }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:8px 16px; background:var(--brand); color:#fff; font-weight:600; cursor:pointer; }
+  .metrics{ display:flex; flex-wrap:wrap; gap:12px; }
+  .metric{ background:#f1f5f9; border-radius:12px; padding:12px 18px; display:flex; flex-direction:column; gap:6px; min-width:140px; }
+  .metric span{ color:var(--muted); font-size:0.8rem; }
+  .metric strong{ font-size:1.1rem; }
+  .table-scroll{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:0.9rem; }
+  th,td{ border:1px solid var(--border); padding:8px 10px; text-align:left; }
+  th{ background:#f3f4f6; font-weight:600; }
+  tbody tr:nth-child(even){ background:#f9fafb; }
+  .toast{ position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 18px; border-radius:999px; font-size:0.9rem; opacity:0; transition:opacity .25s ease; pointer-events:none; }
+  .toast.show{ opacity:1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>アルバイト勤怠 月次レポート</h1>
+    <p>スタッフ別の勤務時間・休憩時間を一覧表示します。</p>
+  </header>
+
+  <section class="card">
+    <div class="filters">
+      <input id="reportMonth" type="month" />
+      <button id="reportReload" type="button" class="btn">再読み込み</button>
+    </div>
+    <div id="reportMetrics" class="metrics"></div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>スタッフ</th><th>勤務時間</th><th>休憩</th><th>勤務日数</th><th>概算給与</th></tr>
+        </thead>
+        <tbody id="reportTableBody"><tr><td colspan="5">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+function escapeHtml(value){
+  if (value == null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+let reportState = null;
+let toastTimer = null;
+
+function showToast(message){
+  if (!message) return;
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+}
+
+function formatCurrency(value){
+  if (value == null) return '--';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '--';
+  return '¥' + Math.round(num).toLocaleString();
+}
+
+function parseMonth(value){
+  if (!value) return { year:null, month:null };
+  const parts = value.split('-');
+  if (parts.length !== 2) return { year:null, month:null };
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return { year:null, month:null };
+  return { year, month };
+}
+
+function renderReport(){
+  const metrics = document.getElementById('reportMetrics');
+  const tbody = document.getElementById('reportTableBody');
+  if (!reportState) {
+    metrics.innerHTML = '';
+    tbody.innerHTML = '<tr><td colspan="5">データがありません</td></tr>';
+    return;
+  }
+  const totals = reportState.totals || {};
+  const workText = escapeHtml(totals.durationText || totals.workText || '--');
+  const breakText = escapeHtml(totals.breakText || '--');
+  const wageText = escapeHtml(formatCurrency(totals.estimatedWage));
+  metrics.innerHTML = [
+    `<div class="metric"><span>勤務時間</span><strong>${workText}</strong></div>`,
+    `<div class="metric"><span>休憩</span><strong>${breakText}</strong></div>`,
+    `<div class="metric"><span>概算給与</span><strong>${wageText}</strong></div>`
+  ].join('');
+  const rows = Array.isArray(reportState.staff) ? reportState.staff : [];
+  if (!rows.length){
+    tbody.innerHTML = '<tr><td colspan="5">データがありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(row => {
+    const name = escapeHtml(row.staffName || '');
+    const duration = escapeHtml(row.durationText || row.workText || '');
+    const breakText = escapeHtml(row.breakText || '');
+    const workingDays = row.workingDays != null ? escapeHtml(row.workingDays) : '';
+    const estimated = escapeHtml(formatCurrency(row.estimatedWage));
+    return `
+    <tr>
+      <td>${name}</td>
+      <td>${duration}</td>
+      <td>${breakText}</td>
+      <td>${workingDays}</td>
+      <td>${estimated}</td>
+    </tr>`;
+  }).join('');
+}
+
+function fetchReport(){
+  const monthValue = document.getElementById('reportMonth').value;
+  const { year, month } = parseMonth(monthValue);
+  const tbody = document.getElementById('reportTableBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5">読み込み中…</td></tr>';
+  const params = { year, month };
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : 'レポートの取得に失敗しました');
+        tbody.innerHTML = '<tr><td colspan="5">エラー</td></tr>';
+        return;
+      }
+      reportState = res.report || null;
+      renderReport();
+    })
+    .withFailureHandler(err => {
+      showToast(err && err.message ? err.message : 'レポートの取得に失敗しました');
+      tbody.innerHTML = '<tr><td colspan="5">エラー</td></tr>';
+    })
+    .albyteGetMonthlyReport(params);
+}
+
+(function init(){
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const monthInput = document.getElementById('reportMonth');
+  if (monthInput && !monthInput.value) monthInput.value = ym;
+  document.getElementById('reportReload').addEventListener('click', fetchReport);
+  monthInput.addEventListener('change', fetchReport);
+  fetchReport();
+})();
+</script>
+</body>
+</html>

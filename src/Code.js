@@ -128,7 +128,7 @@ const TREATMENT_CATEGORY_ATTENDANCE_GROUP = {
 };
 
 const VISIT_ATTENDANCE_SHEET_NAME = 'VisitAttendance';
-const VISIT_ATTENDANCE_SHEET_HEADER = ['日付','メール','出勤','退勤','勤務時間','休憩','種別内訳','自動反映フラグ'];
+const VISIT_ATTENDANCE_SHEET_HEADER = ['日付','メール','出勤','退勤','勤務時間','休憩','種別内訳','自動反映フラグ','leaveType','isHourlyStaff','isDailyStaff','source'];
 const VISIT_ATTENDANCE_AUTO_FLAG_VALUE = 'auto';
 const VISIT_ATTENDANCE_WORK_START_MINUTES = 9 * 60;
 const VISIT_ATTENDANCE_WORK_END_LIMIT_MINUTES = 18 * 60;
@@ -148,8 +148,15 @@ const VISIT_ATTENDANCE_REQUEST_SHEET_HEADER = [
   '状態更新',
   '対応者',
   '対応メモ',
-  '原データ'
+  '原データ',
+  '申請種別'
 ];
+const VISIT_ATTENDANCE_REQUEST_TYPE_CORRECTION = 'correction';
+const VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE = 'paidLeave';
+const VISIT_ATTENDANCE_STAFF_SHEET_NAME = 'VisitAttendanceStaff';
+const VISIT_ATTENDANCE_STAFF_SHEET_HEADER = ['メール','表示名','年間有給付与日数'];
+const DEFAULT_ANNUAL_PAID_LEAVE_DAYS = 10;
+const PAID_LEAVE_DEFAULT_WORK_MINUTES = 8 * 60;
 
 function getScriptCache_(){
   try {
@@ -448,6 +455,29 @@ function ensureVisitAttendanceRequestSheet_(){
   const mismatch = current.length < needed || VISIT_ATTENDANCE_REQUEST_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
   if (mismatch) {
     sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_REQUEST_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
+function ensureVisitAttendanceStaffSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(VISIT_ATTENDANCE_STAFF_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(VISIT_ATTENDANCE_STAFF_SHEET_NAME);
+  }
+  const needed = VISIT_ATTENDANCE_STAFF_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_STAFF_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || VISIT_ATTENDANCE_STAFF_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_STAFF_SHEET_HEADER]);
   }
   return sheet;
 }
@@ -5471,7 +5501,11 @@ function syncVisitAttendance(options){
       formatMinutesAsTimeText_(workMinutes),
       formatMinutesAsTimeText_(breakMinutes),
       breakdown,
-      VISIT_ATTENDANCE_AUTO_FLAG_VALUE
+      VISIT_ATTENDANCE_AUTO_FLAG_VALUE,
+      '',
+      '',
+      '',
+      'auto'
     ];
 
     const existing = existingMap.get(key);
@@ -5513,6 +5547,68 @@ function syncVisitAttendance(options){
   });
 
   return summary;
+}
+
+function toBoolean_(value){
+  if (value === true) return true;
+  if (value === false) return false;
+  const text = String(value || '').trim().toLowerCase();
+  return text === 'true' || text === '1' || text === 'yes';
+}
+
+function readVisitAttendanceStaffSettings_(){
+  const sheet = ensureVisitAttendanceStaffSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return new Map();
+  const width = Math.min(VISIT_ATTENDANCE_STAFF_SHEET_HEADER.length, sheet.getMaxColumns());
+  const range = sheet.getRange(2, 1, lastRow - 1, width);
+  const values = range.getValues();
+  const map = new Map();
+  values.forEach(row => {
+    const email = normalizeEmailKey_(row[0]);
+    if (!email) return;
+    const quotaRaw = row[2];
+    let quota = Number(quotaRaw);
+    if (!Number.isFinite(quota) || quota < 0) {
+      const text = String(quotaRaw || '').trim();
+      if (text) {
+        const parsed = Number(text.replace(/[^0-9.-]/g, ''));
+        if (Number.isFinite(parsed)) quota = parsed;
+      }
+    }
+    if (!Number.isFinite(quota) || quota < 0) {
+      quota = DEFAULT_ANNUAL_PAID_LEAVE_DAYS;
+    }
+    map.set(email, {
+      email,
+      displayName: String(row[1] || '').trim(),
+      quotaDays: quota
+    });
+  });
+  return map;
+}
+
+function resolveAnnualPaidLeaveQuota_(email){
+  const normalized = normalizeEmailKey_(email);
+  if (!normalized) return DEFAULT_ANNUAL_PAID_LEAVE_DAYS;
+  const settings = readVisitAttendanceStaffSettings_();
+  const entry = settings.get(normalized);
+  if (entry && Number.isFinite(entry.quotaDays)) {
+    return entry.quotaDays;
+  }
+  return DEFAULT_ANNUAL_PAID_LEAVE_DAYS;
+}
+
+function calculatePaidLeaveUsageForYear_(email, year, tz){
+  const normalized = normalizeEmailKey_(email);
+  if (!normalized) {
+    return { usedDays: 0, records: [] };
+  }
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  const records = readVisitAttendanceRecordsForEmail_(normalized, { startDate: start, endDate: end, tz });
+  const usedRecords = records.filter(record => (record.leaveType || '').toLowerCase() === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE);
+  return { usedDays: usedRecords.length, records: usedRecords };
 }
 
 function readVisitAttendanceRecordsForEmail_(email, options){
@@ -5572,6 +5668,28 @@ function readVisitAttendanceRecordsForEmail_(email, options){
     const breakdown = String(display[6] || row[6] || '').trim();
     const flagRaw = String(display[7] || row[7] || '').trim();
     const auto = flagRaw.toLowerCase() === VISIT_ATTENDANCE_AUTO_FLAG_VALUE || flagRaw === '自動';
+    const leaveType = String((row[8] != null && row[8] !== '') ? row[8] : (display[8] != null ? display[8] : '')).trim();
+    const hourlyRaw = row[9] != null && row[9] !== '' ? row[9] : display[9];
+    const dailyRaw = row[10] != null && row[10] !== '' ? row[10] : display[10];
+    const sourceRaw = String((row[11] != null && row[11] !== '') ? row[11] : (display[11] != null ? display[11] : '')).trim();
+    const isHourlyStaff = toBoolean_(hourlyRaw);
+    const isDailyStaff = toBoolean_(dailyRaw);
+
+    let sourceLabel = auto ? '自動反映' : (flagRaw ? flagRaw : '手動入力');
+    if (sourceRaw) {
+      if (sourceRaw === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE || sourceRaw.toLowerCase() === 'paidleave') {
+        sourceLabel = '有給';
+      } else if (sourceRaw === 'auto') {
+        sourceLabel = '自動反映';
+      } else if (sourceRaw === 'manual') {
+        sourceLabel = '手動入力';
+      } else {
+        sourceLabel = sourceRaw;
+      }
+    }
+    if (leaveType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE) {
+      sourceLabel = '有給';
+    }
 
     results.push({
       date: Utilities.formatDate(day, tz, 'yyyy-MM-dd'),
@@ -5588,7 +5706,11 @@ function readVisitAttendanceRecordsForEmail_(email, options){
       breakdown,
       flag: flagRaw,
       auto,
-      sourceLabel: auto ? '自動反映' : (flagRaw ? flagRaw : '手動入力'),
+      sourceLabel,
+      leaveType,
+      isHourlyStaff,
+      isDailyStaff,
+      source: sourceRaw,
       rowNumber: i + 2
     });
   }
@@ -5660,6 +5782,9 @@ function readVisitAttendanceRequests_(options){
       }
     }
 
+    const typeRaw = String((row[14] != null && row[14] !== '') ? row[14] : (display[14] != null ? display[14] : '')).trim().toLowerCase();
+    const requestType = typeRaw || VISIT_ATTENDANCE_REQUEST_TYPE_CORRECTION;
+
     results.push({
       id,
       rowNumber: i + 2,
@@ -5683,7 +5808,9 @@ function readVisitAttendanceRequests_(options){
       statusUpdatedAtText: statusUpdatedAt ? Utilities.formatDate(statusUpdatedAt, tz, 'yyyy-MM-dd HH:mm') : String(display[10] || ''),
       statusBy: String(row[11] || display[11] || '').trim(),
       statusNote: String(row[12] || display[12] || '').trim(),
-      originalData
+      originalData,
+      type: requestType,
+      typeLabel: requestType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE ? '有給申請' : '勤怠修正申請'
     });
   }
 
@@ -5770,9 +5897,23 @@ function getVisitAttendancePortalData(options){
   const firstOfCurrent = new Date(now.getFullYear(), now.getMonth(), 1);
   const canRequest = range.start.getTime() < firstOfCurrent.getTime();
   const isAdmin = !!isAdminUser_();
+  const pendingForAdmin = isAdmin ? readVisitAttendanceRequests_({ status: 'pending', tz }) : [];
   const adminData = isAdmin ? {
-    pendingRequests: readVisitAttendanceRequests_({ status: 'pending', tz })
+    correctionRequests: pendingForAdmin.filter(req => req.type !== VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE),
+    paidLeaveRequests: pendingForAdmin.filter(req => req.type === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE)
   } : null;
+
+  const currentYear = now.getFullYear();
+  const quotaDays = resolveAnnualPaidLeaveQuota_(normalizedEmail);
+  const usage = calculatePaidLeaveUsageForYear_(normalizedEmail, currentYear, tz);
+  const remainingDays = Math.max(0, quotaDays - (usage.usedDays || 0));
+  const paidLeaveSummary = {
+    year: currentYear,
+    quotaDays,
+    usedDays: usage.usedDays || 0,
+    remainingDays,
+    requiredDays: 5
+  };
 
   return {
     ok: true,
@@ -5805,8 +5946,85 @@ function getVisitAttendancePortalData(options){
       workEndLimit: formatMinutesAsTimeText_(VISIT_ATTENDANCE_WORK_END_LIMIT_MINUTES),
       roundingMinutes: VISIT_ATTENDANCE_ROUNDING_MINUTES
     },
-    admin: adminData
+    admin: adminData,
+    paidLeave: paidLeaveSummary
   };
+}
+
+function submitPaidLeaveRequest(payload){
+  assertDomain_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const email = (Session.getActiveUser() || {}).getEmail() || '';
+  const normalizedEmail = normalizeEmailKey_(email);
+  if (!normalizedEmail) {
+    throw new Error('ログインユーザーを特定できませんでした');
+  }
+
+  const data = payload || {};
+  let targetDate = data.date || data.targetDate;
+  if (targetDate instanceof Date && !isNaN(targetDate.getTime())) {
+    targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  } else {
+    const raw = String(targetDate || '').trim();
+    if (!raw) {
+      throw new Error('有給申請の日付を指定してください');
+    }
+    const normalized = raw.replace(/[\.\/]/g, '-');
+    const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!m) {
+      throw new Error('日付の形式が不正です (YYYY-MM-DD)');
+    }
+    const year = Number(m[1]);
+    const monthIndex = Number(m[2]) - 1;
+    const day = Number(m[3]);
+    targetDate = new Date(year, monthIndex, day);
+  }
+  if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
+    throw new Error('日付の解析に失敗しました');
+  }
+
+  const today = new Date();
+  const firstOfCurrent = new Date(today.getFullYear(), today.getMonth(), 1);
+  const targetDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  if (targetDay.getTime() < firstOfCurrent.getTime()) {
+    throw new Error('有給申請は当月以降の日付のみ指定できます');
+  }
+
+  const pendingOrExisting = readVisitAttendanceRequests_({ email: normalizedEmail, startDate: targetDay, endDate: targetDay, tz });
+  const duplicate = pendingOrExisting.some(req => req.type === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE && req.status !== 'rejected');
+  if (duplicate) {
+    throw new Error('同じ日の有給申請が既に登録されています');
+  }
+
+  const existingAttendance = readVisitAttendanceRecordsForEmail_(normalizedEmail, { startDate: targetDay, endDate: targetDay, tz });
+  const hasPaidLeaveRecord = existingAttendance.some(record => (record.leaveType || '').toLowerCase() === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE);
+  if (hasPaidLeaveRecord) {
+    throw new Error('この日は既に有給として登録されています');
+  }
+
+  const note = String(data.note || data.reason || '').trim();
+
+  const sheet = ensureVisitAttendanceRequestSheet_();
+  const row = [
+    Utilities.getUuid(),
+    new Date(),
+    normalizedEmail,
+    normalizedEmail,
+    targetDay,
+    '有給',
+    '有給',
+    0,
+    note,
+    'pending',
+    '',
+    '',
+    '',
+    '',
+    VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE
+  ];
+  sheet.appendRow(row);
+
+  return { ok: true };
 }
 
 function submitVisitAttendanceRequest(payload){
@@ -5904,11 +6122,160 @@ function submitVisitAttendanceRequest(payload){
     '',
     '',
     '',
-    original && original.length ? JSON.stringify(original[0]) : ''
+    original && original.length ? JSON.stringify(original[0]) : '',
+    VISIT_ATTENDANCE_REQUEST_TYPE_CORRECTION
   ];
   sheet.appendRow(row);
 
   return { ok: true };
+}
+
+function createVisitAttendanceRecord(payload){
+  assertDomain_();
+  if (!isAdminUser_()) {
+    throw new Error('管理者権限が必要です');
+  }
+  const data = payload || {};
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+
+  const normalizedEmail = normalizeEmailKey_(data.email || data.targetEmail || data.userEmail);
+  if (!normalizedEmail) {
+    throw new Error('スタッフのメールアドレスを指定してください');
+  }
+
+  let dateValue = data.date || data.targetDate;
+  if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
+    dateValue = new Date(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
+  } else {
+    const rawDate = String(dateValue || '').trim();
+    if (!rawDate) {
+      throw new Error('対象日を指定してください');
+    }
+    const normalizedDate = rawDate.replace(/[\.\/]/g, '-');
+    const match = normalizedDate.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!match) {
+      throw new Error('対象日の形式が不正です (YYYY-MM-DD)');
+    }
+    const year = Number(match[1]);
+    const monthIndex = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    dateValue = new Date(year, monthIndex, day);
+  }
+  if (!(dateValue instanceof Date) || isNaN(dateValue.getTime())) {
+    throw new Error('対象日の解析に失敗しました');
+  }
+  const targetDay = new Date(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
+  const dateKey = Utilities.formatDate(targetDay, tz, 'yyyy-MM-dd');
+
+  const resolveMinutes = values => {
+    for (let i = 0; i < values.length; i++) {
+      const minutes = parseTimeTextToMinutes_(values[i]);
+      if (Number.isFinite(minutes)) {
+        return minutes;
+      }
+    }
+    return NaN;
+  };
+
+  let startMinutes = resolveMinutes([data.start, data.startTime, data.startMinutes]);
+  if (!Number.isFinite(startMinutes)) {
+    startMinutes = VISIT_ATTENDANCE_WORK_START_MINUTES;
+  }
+
+  let restMinutes = resolveMinutes([data.breakMinutes, data.break, data.restMinutes, data.rest]);
+  if (!Number.isFinite(restMinutes) || restMinutes < 0) {
+    restMinutes = 0;
+  }
+
+  let workMinutes = resolveMinutes([data.workMinutes, data.work, data.durationMinutes]);
+  if (!Number.isFinite(workMinutes)) {
+    const endResolved = resolveMinutes([data.end, data.endTime, data.endMinutes]);
+    if (Number.isFinite(endResolved)) {
+      workMinutes = Math.max(0, endResolved - startMinutes - restMinutes);
+    }
+  }
+  if (!Number.isFinite(workMinutes) || workMinutes <= 0) {
+    throw new Error('勤務時間（workMinutes）を指定してください');
+  }
+
+  const endMinutes = startMinutes + restMinutes + workMinutes;
+
+  const rounding = VISIT_ATTENDANCE_ROUNDING_MINUTES;
+  if (startMinutes % rounding !== 0 || restMinutes % rounding !== 0 || endMinutes % rounding !== 0) {
+    throw new Error('時間は15分単位で指定してください');
+  }
+  if (endMinutes > VISIT_ATTENDANCE_WORK_END_LIMIT_MINUTES) {
+    throw new Error('退勤時刻が制限を超えています');
+  }
+  if (endMinutes <= startMinutes) {
+    throw new Error('退勤時刻は出勤以降で指定してください');
+  }
+  if (restMinutes > endMinutes - startMinutes) {
+    throw new Error('休憩時間が長すぎます');
+  }
+
+  const breakdown = String(data.breakdown || (data.leaveType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE ? '有給' : '') || '').trim();
+  const leaveType = String(data.leaveType || '').trim();
+  const isHourlyStaff = toBoolean_(data.isHourlyStaff);
+  const isDailyStaff = toBoolean_(data.isDailyStaff);
+  const sourceRaw = String(data.source || '').trim();
+  const source = sourceRaw || (leaveType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE ? VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE : 'manual');
+
+  let flagValue = String(data.flag || '').trim();
+  if (!flagValue) {
+    if (source === VISIT_ATTENDANCE_AUTO_FLAG_VALUE) {
+      flagValue = VISIT_ATTENDANCE_AUTO_FLAG_VALUE;
+    } else if (leaveType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE || source === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE) {
+      flagValue = VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE;
+    } else {
+      flagValue = 'manual';
+    }
+  }
+
+  const sheet = ensureVisitAttendanceSheet_();
+  const width = Math.min(VISIT_ATTENDANCE_SHEET_HEADER.length, sheet.getMaxColumns());
+  const existingMap = readVisitAttendanceExistingMap_(sheet, tz);
+  const key = dateKey + '||' + normalizedEmail;
+
+  const rowValues = [
+    targetDay,
+    normalizedEmail,
+    formatMinutesAsTimeText_(startMinutes),
+    formatMinutesAsTimeText_(endMinutes),
+    formatMinutesAsTimeText_(workMinutes),
+    formatMinutesAsTimeText_(restMinutes),
+    breakdown,
+    flagValue,
+    leaveType,
+    isHourlyStaff,
+    isDailyStaff,
+    source
+  ];
+
+  let rowNumber = null;
+  if (existingMap.has(key)) {
+    const entry = existingMap.get(key);
+    rowNumber = entry.rowNumber;
+  }
+
+  if (rowNumber) {
+    sheet.getRange(rowNumber, 1, 1, width).setValues([rowValues]);
+  } else {
+    rowNumber = sheet.getLastRow() + 1;
+    sheet.getRange(rowNumber, 1, 1, width).setValues([rowValues]);
+  }
+
+  const actor = (Session.getActiveUser() || {}).getEmail() || '';
+  log_('勤怠レコード作成', normalizedEmail, JSON.stringify({ date: dateKey, leaveType, source, actor }));
+
+  return {
+    ok: true,
+    date: dateKey,
+    email: normalizedEmail,
+    rowNumber,
+    workMinutes,
+    restMinutes
+  };
 }
 
 function updateVisitAttendanceRecord(payload){
@@ -6039,6 +6406,13 @@ function updateVisitAttendanceRecord(payload){
 
   const existingEmail = targetRow.values[1] || targetRow.displays[1] || normalizedEmail;
   const breakdownCell = targetRow.values[6] != null && targetRow.values[6] !== '' ? targetRow.values[6] : targetRow.displays[6];
+  const leaveTypeCell = targetRow.values[8] != null && targetRow.values[8] !== '' ? targetRow.values[8] : (targetRow.displays[8] || '');
+  const hourlyCellRaw = targetRow.values[9] != null && targetRow.values[9] !== '' ? targetRow.values[9] : targetRow.displays[9];
+  const dailyCellRaw = targetRow.values[10] != null && targetRow.values[10] !== '' ? targetRow.values[10] : targetRow.displays[10];
+  const sourceCellRaw = targetRow.values[11] != null && targetRow.values[11] !== '' ? targetRow.values[11] : targetRow.displays[11];
+  const hourlyCell = toBoolean_(hourlyCellRaw) ? true : '';
+  const dailyCell = toBoolean_(dailyCellRaw) ? true : '';
+  const sourceCell = String(sourceCellRaw || '').trim() || 'manual';
 
   const newRow = [
     targetDay,
@@ -6048,7 +6422,11 @@ function updateVisitAttendanceRecord(payload){
     workText,
     breakText,
     breakdownCell,
-    'manual'
+    'manual',
+    leaveTypeCell,
+    hourlyCell,
+    dailyCell,
+    sourceCell
   ];
 
   sheet.getRange(targetRow.rowNumber, 1, 1, width).setValues([newRow]);
@@ -6121,27 +6499,49 @@ function updateVisitAttendanceRequestStatus(payload){
   const requestRow = requestRange.getValues()[0];
   const requestDisplay = requestRange.getDisplayValues()[0];
 
+  const requestTypeRaw = String((requestRow[14] != null && requestRow[14] !== '') ? requestRow[14] : (requestDisplay[14] || '')).trim().toLowerCase();
+  const requestType = requestTypeRaw || VISIT_ATTENDANCE_REQUEST_TYPE_CORRECTION;
+
+  const targetEmail = normalizeEmailKey_(requestRow[3] || requestDisplay[3] || requestRow[2] || requestDisplay[2]);
+  if (!targetEmail) {
+    throw new Error('対象メールを特定できませんでした');
+  }
+
+  let targetDate = requestRow[4];
+  if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
+    const key = formatDateKeyFromValue_(requestRow[4], tz) || formatDateKeyFromValue_(requestDisplay[4], tz);
+    targetDate = createDateFromKey_(key || '');
+  }
+  if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
+    throw new Error('対象日を解析できませんでした');
+  }
+  const targetDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  const dateKey = Utilities.formatDate(targetDay, tz, 'yyyy-MM-dd');
+
   if (statusRaw === 'approved') {
-    const attendanceSheet = ensureVisitAttendanceSheet_();
-    const attendanceWidth = Math.min(VISIT_ATTENDANCE_SHEET_HEADER.length, attendanceSheet.getMaxColumns());
+    if (requestType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE) {
+      let workMinutes = Number(data.workMinutes);
+      if (!Number.isFinite(workMinutes) || workMinutes <= 0) {
+        workMinutes = PAID_LEAVE_DEFAULT_WORK_MINUTES;
+      }
+      createVisitAttendanceRecord({
+        email: targetEmail,
+        date: targetDay,
+        startMinutes: VISIT_ATTENDANCE_WORK_START_MINUTES,
+        workMinutes,
+        restMinutes: 0,
+        leaveType: VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE,
+        source: VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE,
+        flag: VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE,
+        breakdown: '有給',
+        isHourlyStaff: false,
+        isDailyStaff: false
+      });
+    } else {
+      const attendanceSheet = ensureVisitAttendanceSheet_();
+      const attendanceWidth = Math.min(VISIT_ATTENDANCE_SHEET_HEADER.length, attendanceSheet.getMaxColumns());
 
-    const targetEmail = normalizeEmailKey_(requestRow[3] || requestDisplay[3] || requestRow[2] || requestDisplay[2]);
-    if (!targetEmail) {
-      throw new Error('対象メールを特定できませんでした');
-    }
-
-    let targetDate = requestRow[4];
-    if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
-      const key = formatDateKeyFromValue_(requestRow[4], tz) || formatDateKeyFromValue_(requestDisplay[4], tz);
-      targetDate = createDateFromKey_(key || '');
-    }
-    if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
-      throw new Error('対象日を解析できませんでした');
-    }
-    const targetDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
-    const dateKey = Utilities.formatDate(targetDay, tz, 'yyyy-MM-dd');
-
-    let endMinutes = parseTimeTextToMinutes_(requestRow[6] != null && requestRow[6] !== '' ? requestRow[6] : requestDisplay[6]);
+      let endMinutes = parseTimeTextToMinutes_(requestRow[6] != null && requestRow[6] !== '' ? requestRow[6] : requestDisplay[6]);
     if (!Number.isFinite(endMinutes)) {
       endMinutes = parseTimeTextToMinutes_(payload.endMinutes != null ? payload.endMinutes : payload.end);
     }
@@ -6219,6 +6619,13 @@ function updateVisitAttendanceRequestStatus(payload){
     const emailCell = attendanceRow.values[1] || attendanceRow.displays[1] || requestRow[3] || requestDisplay[3] || requestRow[2] || requestDisplay[2] || '';
     const breakdownCell = attendanceRow.values[6] != null && attendanceRow.values[6] !== '' ? attendanceRow.values[6] : attendanceRow.displays[6];
     const flagCell = attendanceRow.values[7] != null && attendanceRow.values[7] !== '' ? attendanceRow.values[7] : attendanceRow.displays[7];
+    const leaveTypeCell = attendanceRow.values[8] != null && attendanceRow.values[8] !== '' ? attendanceRow.values[8] : (attendanceRow.displays[8] || '');
+    const hourlyCellRaw = attendanceRow.values[9] != null && attendanceRow.values[9] !== '' ? attendanceRow.values[9] : attendanceRow.displays[9];
+    const dailyCellRaw = attendanceRow.values[10] != null && attendanceRow.values[10] !== '' ? attendanceRow.values[10] : attendanceRow.displays[10];
+    const sourceCellRaw = attendanceRow.values[11] != null && attendanceRow.values[11] !== '' ? attendanceRow.values[11] : attendanceRow.displays[11];
+    const hourlyCell = toBoolean_(hourlyCellRaw) ? true : '';
+    const dailyCell = toBoolean_(dailyCellRaw) ? true : '';
+    const sourceCell = String(sourceCellRaw || '').trim() || (String(flagCell || '').trim().toLowerCase() === VISIT_ATTENDANCE_AUTO_FLAG_VALUE ? 'auto' : 'manual');
 
     const newRowValues = [
       targetDay,
@@ -6228,7 +6635,11 @@ function updateVisitAttendanceRequestStatus(payload){
       formatMinutesAsTimeText_(workMinutes),
       formatMinutesAsTimeText_(breakMinutes),
       breakdownCell,
-      flagCell
+      flagCell,
+      leaveTypeCell,
+      hourlyCell,
+      dailyCell,
+      sourceCell
     ];
 
     attendanceSheet.getRange(attendanceRow.rowNumber, 1, 1, attendanceWidth).setValues([newRowValues]);
@@ -6241,6 +6652,35 @@ function updateVisitAttendanceRequestStatus(payload){
   sheet.getRange(targetRow, 12).setValue(actor);
   sheet.getRange(targetRow, 13).setValue(note);
   return { ok: true };
+}
+
+function approvePaidLeaveRequest(payload){
+  assertDomain_();
+  if (!isAdminUser_()) {
+    throw new Error('管理者権限が必要です');
+  }
+  const data = payload || {};
+  const id = String(data.id || data.requestId || '').trim();
+  if (!id) {
+    throw new Error('申請IDが不正です');
+  }
+  const workMinutes = Number(data.workMinutes);
+  const note = String(data.note || '').trim();
+  return updateVisitAttendanceRequestStatus({ id, status: 'approved', note, workMinutes });
+}
+
+function rejectPaidLeaveRequest(payload){
+  assertDomain_();
+  if (!isAdminUser_()) {
+    throw new Error('管理者権限が必要です');
+  }
+  const data = payload || {};
+  const id = String(data.id || data.requestId || '').trim();
+  if (!id) {
+    throw new Error('申請IDが不正です');
+  }
+  const note = String(data.note || '').trim();
+  return updateVisitAttendanceRequestStatus({ id, status: 'rejected', note });
 }
 
 function runVisitAttendanceSyncJob(){

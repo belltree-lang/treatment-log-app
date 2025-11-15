@@ -22,6 +22,10 @@
   .header{ display:flex; flex-direction:column; gap:16px; }
   .header-main{ display:flex; flex-direction:column; gap:4px; }
   .header-controls{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .header-actions{ display:flex; align-items:center; gap:12px; margin-left:auto; flex-wrap:wrap; }
+  .paid-leave-widget{ background:rgba(37,99,235,0.08); border-radius:12px; padding:8px 12px; font-size:0.9rem; color:#1f2937; display:flex; flex-direction:column; gap:2px; min-width:160px; }
+  .paid-leave-widget strong{ color:#2563eb; font-size:1.05rem; }
+  .paid-leave-widget-meta{ font-size:0.8rem; color:var(--muted); }
   .control{ display:flex; flex-direction:column; gap:6px; font-size:0.95rem; }
   select,input,textarea{ padding:8px 10px; border:1px solid var(--border); border-radius:10px; font-size:0.95rem; background:#fff; color:inherit; }
   textarea{ resize:vertical; min-height:96px; }
@@ -48,6 +52,11 @@
   .history-meta{ display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; font-size:0.85rem; color:var(--muted); }
   .history-note{ margin-top:8px; white-space:pre-wrap; font-size:0.95rem; }
   .admin-table textarea{ width:100%; min-height:60px; }
+  .admin-section{ display:flex; flex-direction:column; gap:8px; margin-top:16px; }
+  .admin-section:first-of-type{ margin-top:0; }
+  .admin-section h3{ margin:0; font-size:1rem; }
+  .admin-actions{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .admin-paidleave-note{ width:100%; min-height:60px; }
   .modal{ position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none; align-items:center; justify-content:center; padding:16px; z-index:1000; }
   .modal.open{ display:flex; }
   .dialog{ background:#fff; border-radius:16px; padding:20px; width:min(480px, 92vw); box-shadow:0 18px 48px rgba(15,23,42,0.25); display:flex; flex-direction:column; gap:16px; }
@@ -64,6 +73,8 @@
     th,td{ font-size:0.85rem; padding:8px 6px; }
     .btn{ padding:7px 12px; font-size:0.85rem; }
     .header-controls{ flex-direction:column; align-items:flex-start; }
+    .header-actions{ width:100%; justify-content:flex-start; }
+    .paid-leave-widget{ width:100%; }
   }
 </style>
 </head>
@@ -80,6 +91,10 @@
         <select id="monthSelect" aria-label="対象月"></select>
       </label>
       <div id="summary" class="muted"></div>
+      <div class="header-actions">
+        <button id="openPaidLeaveButton" class="btn" type="button">有給申請</button>
+        <div id="paidLeaveWidget" class="paid-leave-widget" hidden></div>
+      </div>
     </div>
   </header>
 
@@ -99,7 +114,14 @@
 
   <section class="card" id="adminPanel" hidden>
     <h2>管理者：申請承認</h2>
-    <div id="adminRequests" class="muted">読み込み中…</div>
+    <div class="admin-section">
+      <h3>勤怠修正申請</h3>
+      <div id="adminCorrectionRequests" class="muted">読み込み中…</div>
+    </div>
+    <div class="admin-section">
+      <h3>有給申請</h3>
+      <div id="adminPaidLeaveRequests" class="muted">読み込み中…</div>
+    </div>
   </section>
 </div>
 
@@ -131,6 +153,26 @@
   </div>
 </div>
 
+<div id="paidLeaveModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="paidLeaveModalTitle">
+  <div class="dialog">
+    <h3 id="paidLeaveModalTitle">有給申請</h3>
+    <form id="paidLeaveForm">
+      <div class="form-row">
+        <label for="paidLeaveDate">取得日</label>
+        <input id="paidLeaveDate" type="date" required />
+      </div>
+      <div class="form-row">
+        <label for="paidLeaveReason">理由（任意）</label>
+        <textarea id="paidLeaveReason" placeholder="任意で記入できます"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="closePaidLeaveModal()">キャンセル</button>
+        <button type="submit" class="btn">申請を送信</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="loading" class="loading hidden" role="status" aria-live="polite">
   <div class="loading-box"><span class="spinner" aria-hidden="true"></span><span id="loadingText">読み込み中…</span></div>
 </div>
@@ -139,7 +181,7 @@
 <script>
 const MONTH_STORAGE_KEY = 'visitAttendance.selectedMonth';
 
-let state = { data: null, selectedMonth: null, requestDate: null };
+let state = { data: null, selectedMonth: null, requestDate: null, paidLeaveDate: null };
 
 function getSavedMonthKey(){
   try {
@@ -226,6 +268,19 @@ document.getElementById('modalForm').addEventListener('submit', event => {
   submitRequest();
 });
 
+const paidLeaveForm = document.getElementById('paidLeaveForm');
+if (paidLeaveForm) {
+  paidLeaveForm.addEventListener('submit', event => {
+    event.preventDefault();
+    submitPaidLeave();
+  });
+}
+
+const paidLeaveButton = document.getElementById('openPaidLeaveButton');
+if (paidLeaveButton) {
+  paidLeaveButton.addEventListener('click', openPaidLeaveModal);
+}
+
 function loadMonth(monthKey){
   setLoading(true, '読み込み中…');
   google.script.run
@@ -255,6 +310,7 @@ function renderAll(){
   renderUser();
   renderMonthSelect();
   renderSummary();
+  renderPaidLeaveWidget();
   renderAttendance();
   renderHistory();
   renderAdmin();
@@ -282,6 +338,34 @@ function renderSummary(){
   const work = totals.workText || '-';
   const rest = totals.breakText || '-';
   el.textContent = `稼働日数: ${days} / 勤務時間: ${work} / 休憩: ${rest}`;
+}
+
+function renderPaidLeaveWidget(){
+  const widget = document.getElementById('paidLeaveWidget');
+  if (!widget) return;
+  const info = state.data.paidLeave;
+  if (!info) {
+    widget.hidden = true;
+    widget.innerHTML = '';
+    return;
+  }
+  widget.hidden = false;
+  const remainingRaw = Number(info.remainingDays);
+  const remaining = Number.isFinite(remainingRaw) ? remainingRaw : (Number(info.remaining) || 0);
+  const usedRaw = Number(info.usedDays);
+  const used = Number.isFinite(usedRaw) ? usedRaw : 0;
+  const quotaRaw = Number(info.quotaDays);
+  const quota = Number.isFinite(quotaRaw) ? quotaRaw : used + remaining;
+  const remainingDisplay = Math.max(0, Math.round(remaining));
+  const usedDisplay = Math.max(0, Math.round(used));
+  const quotaDisplay = Math.max(0, Math.round(quota));
+  const year = info.year || new Date().getFullYear();
+  const required = info.requiredDays != null ? Number(info.requiredDays) : null;
+  widget.innerHTML = `
+    <div>有給残：<strong>${remainingDisplay}</strong>日</div>
+    <div class="paid-leave-widget-meta">取得 ${usedDisplay}日 / 付与 ${quotaDisplay}日（${year}年）</div>
+    ${required != null ? `<div class="paid-leave-widget-meta">義務取得 ${required}日</div>` : ''}
+  `;
 }
 
 function renderAttendance(){
@@ -336,15 +420,28 @@ function renderHistory(){
   const items = requests.map(req => {
     const badgeClass = `badge status-badge--${req.status}`;
     const adminNote = req.statusNote ? `<div class="history-note muted">対応メモ: ${escapeHtml(req.statusNote)}</div>` : '';
+    const isPaidLeave = req.type === 'paidLeave' || req.type === 'paidleave';
+    const typeLabel = req.typeLabel || (isPaidLeave ? '有給申請' : '勤怠修正申請');
+    const detail = isPaidLeave
+      ? '有給（全日）'
+      : `退勤 ${req.end || '-'} / 休憩 ${req.breakText || '-'}`;
+    const weekday = req.targetWeekday || '';
+    let noteContent = '';
+    if (req.note) {
+      noteContent = `<div class="history-note">${escapeHtml(req.note)}</div>`;
+    } else if (isPaidLeave) {
+      noteContent = '<div class="history-note muted">申請理由なし</div>';
+    }
     return `<div class="history-item">
-      <strong>${req.targetDate} (${req.targetWeekday||''})</strong>
+      <strong>${req.targetDate} ${weekday ? '（' + weekday + '）' : ''}</strong>
       <div class="history-meta">
         <span class="${badgeClass}">${req.statusLabel}</span>
-        <span>退勤 ${req.end || '-'} / 休憩 ${req.breakText || '-'}</span>
+        <span>${escapeHtml(typeLabel)}</span>
+        <span>${escapeHtml(detail)}</span>
         <span>申請日時: ${req.createdAtText || '-'}</span>
         ${req.statusUpdatedAtText ? `<span>最終更新: ${req.statusUpdatedAtText}</span>` : ''}
       </div>
-      <div class="history-note">${escapeHtml(req.note || '')}</div>
+      ${noteContent}
       ${adminNote}
     </div>`;
   }).join('');
@@ -353,25 +450,33 @@ function renderHistory(){
 
 function renderAdmin(){
   const panel = document.getElementById('adminPanel');
-  const container = document.getElementById('adminRequests');
   const admin = state.data.admin;
-  if (!admin || !Array.isArray(admin.pendingRequests)){
+  const correctionContainer = document.getElementById('adminCorrectionRequests');
+  const paidLeaveContainer = document.getElementById('adminPaidLeaveRequests');
+  if (!panel || !correctionContainer || !paidLeaveContainer) return;
+  if (!admin) {
     panel.hidden = true;
     return;
   }
   panel.hidden = false;
-  const pending = admin.pendingRequests;
-  if (!pending.length){
+  renderAdminCorrectionRequests(admin.correctionRequests || []);
+  renderAdminPaidLeaveRequests(admin.paidLeaveRequests || []);
+}
+
+function renderAdminCorrectionRequests(requests){
+  const container = document.getElementById('adminCorrectionRequests');
+  if (!container) return;
+  if (!Array.isArray(requests) || !requests.length){
     container.innerHTML = '<div class="muted">保留中の申請はありません。</div>';
     return;
   }
-  const rows = pending.map(req => {
+  const rows = requests.map(req => {
     const selectId = `status-${req.id}`;
     const noteId = `note-${req.id}`;
     return `<tr>
-      <td>${req.targetDate}<div class="muted">${req.targetWeekday||''}</div></td>
-      <td>${req.targetEmail}</td>
-      <td>退勤 ${req.end || '-'}<br>休憩 ${req.breakText || '-'}</td>
+      <td>${escapeHtml(req.targetDate)}<div class="muted">${escapeHtml(req.targetWeekday||'')}</div></td>
+      <td>${escapeHtml(req.targetEmail || '')}</td>
+      <td>退勤 ${escapeHtml(req.end || '-')}<br>休憩 ${escapeHtml(req.breakText || '-')}</td>
       <td>${escapeHtml(req.note || '')}</td>
       <td><select id="${selectId}">
         <option value="pending" ${req.status==='pending'?'selected':''}>申請中</option>
@@ -385,6 +490,35 @@ function renderAdmin(){
   }).join('');
   container.innerHTML = `<div class="table-wrapper admin-table"><table>
     <thead><tr><th>対象日</th><th>スタッフ</th><th>希望内容</th><th>申請理由</th><th>対応</th><th>操作</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+function renderAdminPaidLeaveRequests(requests){
+  const container = document.getElementById('adminPaidLeaveRequests');
+  if (!container) return;
+  if (!Array.isArray(requests) || !requests.length){
+    container.innerHTML = '<div class="muted">保留中の有給申請はありません。</div>';
+    return;
+  }
+  const rows = requests.map(req => {
+    const noteId = `paidleave-note-${req.id}`;
+    const reason = req.note ? escapeHtml(req.note) : '<span class="muted">理由なし</span>';
+    return `<tr>
+      <td>${escapeHtml(req.targetDate)}<div class="muted">${escapeHtml(req.targetWeekday||'')}</div></td>
+      <td>${escapeHtml(req.targetEmail || '')}</td>
+      <td>${reason}</td>
+      <td>
+        <textarea id="${noteId}" class="admin-paidleave-note" placeholder="対応メモ"></textarea>
+        <div class="admin-actions">
+          <button class="btn" onclick="handlePaidLeaveApprove('${req.id}')">承認</button>
+          <button class="btn ghost" onclick="handlePaidLeaveReject('${req.id}')">却下</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  container.innerHTML = `<div class="table-wrapper admin-table"><table>
+    <thead><tr><th>対象日</th><th>スタッフ</th><th>申請理由</th><th>対応</th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -445,6 +579,63 @@ function submitRequest(){
     .submitVisitAttendanceRequest({ targetDate: state.requestDate, endTime: endValue, breakMinutes: breakValue, note });
 }
 
+function openPaidLeaveModal(){
+  const modal = document.getElementById('paidLeaveModal');
+  if (!modal) return;
+  const dateInput = document.getElementById('paidLeaveDate');
+  const reasonInput = document.getElementById('paidLeaveReason');
+  const today = new Date();
+  const minDate = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (dateInput) {
+    dateInput.min = formatDateInput(minDate);
+    let defaultDate = today;
+    if (state.paidLeaveDate) {
+      const saved = new Date(state.paidLeaveDate);
+      if (!isNaN(saved.getTime())) {
+        defaultDate = saved;
+      }
+    }
+    dateInput.value = formatDateInput(defaultDate);
+  }
+  if (reasonInput) {
+    reasonInput.value = '';
+  }
+  modal.classList.add('open');
+}
+
+function closePaidLeaveModal(){
+  const modal = document.getElementById('paidLeaveModal');
+  if (modal) {
+    modal.classList.remove('open');
+  }
+}
+
+function submitPaidLeave(){
+  const dateInput = document.getElementById('paidLeaveDate');
+  if (!dateInput) return;
+  const dateValue = dateInput.value;
+  if (!dateValue) {
+    alert('有給申請の日付を選択してください');
+    return;
+  }
+  const reasonInput = document.getElementById('paidLeaveReason');
+  const reason = reasonInput ? reasonInput.value.trim() : '';
+  state.paidLeaveDate = dateValue;
+  setLoading(true, '有給申請を送信中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      setLoading(false);
+      closePaidLeaveModal();
+      showToast('有給申請を受け付けました');
+      loadMonth(state.selectedMonth);
+    })
+    .withFailureHandler(err => {
+      setLoading(false);
+      alert(err && err.message ? err.message : err);
+    })
+    .submitPaidLeaveRequest({ date: dateValue, note: reason });
+}
+
 function handleAdminUpdate(id){
   const select = document.getElementById(`status-${id}`);
   const note = document.getElementById(`note-${id}`);
@@ -464,6 +655,36 @@ function handleAdminUpdate(id){
     .updateVisitAttendanceRequestStatus({ id, status, note: note ? note.value : '' });
 }
 
+function handlePaidLeaveApprove(id){
+  handlePaidLeaveAction(id, 'approve');
+}
+
+function handlePaidLeaveReject(id){
+  handlePaidLeaveAction(id, 'reject');
+}
+
+function handlePaidLeaveAction(id, action){
+  if (!id) return;
+  const noteField = document.getElementById(`paidleave-note-${id}`);
+  const note = noteField ? noteField.value.trim() : '';
+  setLoading(true, '更新中…');
+  const runner = google.script.run
+    .withSuccessHandler(() => {
+      setLoading(false);
+      showToast(action === 'approve' ? '有給申請を承認しました' : '有給申請を却下しました');
+      loadMonth(state.selectedMonth);
+    })
+    .withFailureHandler(err => {
+      setLoading(false);
+      alert(err && err.message ? err.message : err);
+    });
+  if (action === 'approve') {
+    runner.approvePaidLeaveRequest({ id, note });
+  } else {
+    runner.rejectPaidLeaveRequest({ id, note });
+  }
+}
+
 function escapeHtml(str){
   return String(str || '')
     .replace(/&/g, '&amp;')
@@ -471,6 +692,14 @@ function escapeHtml(str){
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function formatDateInput(date){
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function formatMinutes(minutes){

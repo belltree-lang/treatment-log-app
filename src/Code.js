@@ -3979,6 +3979,10 @@ function onOpen(){
   ui.createMenu('請求集計')
     .addItem('請求月を指定して集計','promptBillingAggregation')
     .addToUi();
+  ui.createMenu('勤怠管理')
+    .addItem('勤怠データを今すぐ同期','runVisitAttendanceSyncJobFromMenu')
+    .addItem('日次同期トリガーを確認','ensureVisitAttendanceSyncTriggerFromMenu')
+    .addToUi();
 }
 
 function notifyChat_(message){
@@ -6276,6 +6280,49 @@ function ensureVisitAttendanceSyncTrigger(){
     Logger.log('[ensureVisitAttendanceSyncTrigger] 新規トリガーを作成しました (00:00 JST)');
   }
   return true;
+}
+
+function formatVisitAttendanceSyncSummary_(summary){
+  if (!summary) {
+    return '勤怠データの同期は実行されませんでした。';
+  }
+  const lines = [
+    '勤怠データの同期を実行しました。',
+    '対象行: ' + (summary.targetedRows || 0),
+    '新規追加: ' + (summary.appended || 0),
+    '更新: ' + (summary.updated || 0),
+    '手動調整のためスキップ: ' + (summary.manualSkipped || 0),
+    'エラー: ' + (summary.errors || 0)
+  ];
+  return lines.join('\n');
+}
+
+function runVisitAttendanceSyncJobFromMenu(){
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const summary = runVisitAttendanceSyncJob();
+    if (summary === null) {
+      ui.alert('別の同期処理が実行中のため、今回の実行はスキップされました。');
+      return;
+    }
+    ui.alert(formatVisitAttendanceSyncSummary_(summary));
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    Logger.log('[runVisitAttendanceSyncJobFromMenu] ' + message);
+    ui.alert('勤怠同期でエラーが発生しました: ' + message);
+  }
+}
+
+function ensureVisitAttendanceSyncTriggerFromMenu(){
+  const ui = SpreadsheetApp.getUi();
+  try {
+    ensureVisitAttendanceSyncTrigger();
+    ui.alert('日次トリガーを確認しました（未設定の場合は新規作成されました）。');
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    Logger.log('[ensureVisitAttendanceSyncTriggerFromMenu] ' + message);
+    ui.alert('トリガーの確認に失敗しました: ' + message);
+  }
 }
 
 function normalizeTreatmentTimestamp_(value, tz) {

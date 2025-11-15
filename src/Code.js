@@ -158,6 +158,65 @@ const VISIT_ATTENDANCE_STAFF_SHEET_HEADER = ['メール','表示名','年間有�
 const DEFAULT_ANNUAL_PAID_LEAVE_DAYS = 10;
 const PAID_LEAVE_DEFAULT_WORK_MINUTES = 8 * 60;
 
+const ALBYTE_STAFF_SHEET_NAME = 'AlbyteStaff';
+const ALBYTE_ATTENDANCE_SHEET_NAME = 'AlbyteAttendance';
+const ALBYTE_STAFF_SHEET_HEADER = ['ID','名前','PIN','ロック中','連続失敗','最終ログイン','更新TS'];
+const ALBYTE_ATTENDANCE_SHEET_HEADER = [
+  'ID',
+  'スタッフID',
+  'スタッフ名',
+  '日付',
+  '出勤',
+  '退勤',
+  '休憩(分)',
+  '備考',
+  '自動補正',
+  '打刻ログ',
+  '作成TS',
+  '更新TS'
+];
+const ALBYTE_MAX_PIN_ATTEMPTS = 5;
+const ALBYTE_SESSION_SECRET_PROPERTY_KEY = 'ALBYTE_SESSION_SECRET';
+const ALBYTE_SESSION_TTL_MILLIS = 1000 * 60 * 60 * 12;
+const ALBYTE_BREAK_MINUTES_PRESETS = Object.freeze([30, 45, 60, 90, 120, 180]);
+const ALBYTE_BREAK_STEP_MINUTES = 15;
+const ALBYTE_MAX_BREAK_MINUTES = 180;
+
+const ALBYTE_STAFF_COLUMNS = Object.freeze({
+  id: 0,
+  name: 1,
+  pin: 2,
+  locked: 3,
+  failCount: 4,
+  lastLogin: 5,
+  updatedAt: 6
+});
+
+const ALBYTE_STAFF_COLUMN_INDEX = Object.freeze(Object.keys(ALBYTE_STAFF_COLUMNS).reduce((map, key) => {
+  map[key] = ALBYTE_STAFF_COLUMNS[key] + 1;
+  return map;
+}, {}));
+
+const ALBYTE_ATTENDANCE_COLUMNS = Object.freeze({
+  id: 0,
+  staffId: 1,
+  staffName: 2,
+  date: 3,
+  clockIn: 4,
+  clockOut: 5,
+  breakMinutes: 6,
+  note: 7,
+  autoFlag: 8,
+  log: 9,
+  createdAt: 10,
+  updatedAt: 11
+});
+
+const ALBYTE_ATTENDANCE_COLUMN_INDEX = Object.freeze(Object.keys(ALBYTE_ATTENDANCE_COLUMNS).reduce((map, key) => {
+  map[key] = ALBYTE_ATTENDANCE_COLUMNS[key] + 1;
+  return map;
+}, {}));
+
 function getScriptCache_(){
   try {
     return CacheService.getScriptCache();
@@ -336,7 +395,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -366,6 +425,8 @@ function ensureAuxSheets_(options) {
     upgradeHeader('News',   ['TS','患者ID','種別','メッセージ','cleared','meta']);
     upgradeHeader('AI報告書', AI_REPORT_SHEET_HEADER);
     upgradeHeader(VISIT_ATTENDANCE_SHEET_NAME, VISIT_ATTENDANCE_SHEET_HEADER);
+    upgradeHeader(ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_HEADER);
+    upgradeHeader(ALBYTE_STAFF_SHEET_NAME, ALBYTE_STAFF_SHEET_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
     ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
     ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
@@ -480,6 +541,615 @@ function ensureVisitAttendanceStaffSheet_(){
     sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_STAFF_SHEET_HEADER]);
   }
   return sheet;
+}
+
+/***** アルバイト勤怠：共通ユーティリティ *****/
+function normalizeAlbyteName_(name){
+  return String(name || '').replace(/\u3000/g, ' ').trim();
+}
+
+function ensureAlbyteSessionSecret_(){
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty(ALBYTE_SESSION_SECRET_PROPERTY_KEY);
+  if (secret) return secret;
+
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try {
+    locked = lock.tryLock(3000);
+  } catch (err) {
+    locked = false;
+  }
+
+  try {
+    secret = props.getProperty(ALBYTE_SESSION_SECRET_PROPERTY_KEY);
+    if (!secret) {
+      secret = Utilities.getUuid().replace(/-/g, '');
+      props.setProperty(ALBYTE_SESSION_SECRET_PROPERTY_KEY, secret);
+    }
+  } finally {
+    if (locked) {
+      lock.releaseLock();
+    }
+  }
+  return secret;
+}
+
+function createAlbyteSessionToken_(staffId){
+  const issuedAt = Date.now();
+  const payload = String(staffId || '') + '.' + issuedAt;
+  const secret = ensureAlbyteSessionSecret_();
+  const sigBytes = Utilities.computeHmacSha256Signature(payload, secret);
+  const signature = Utilities.base64EncodeWebSafe(sigBytes);
+  return payload + '.' + signature;
+}
+
+function validateAlbyteSessionToken_(token){
+  const raw = String(token || '').trim();
+  if (!raw) return null;
+  const parts = raw.split('.');
+  if (parts.length !== 3) return null;
+  const staffId = parts[0];
+  const issuedAtStr = parts[1];
+  const signature = parts[2];
+  if (!staffId || !issuedAtStr || !signature) return null;
+  const payload = staffId + '.' + issuedAtStr;
+  const secret = ensureAlbyteSessionSecret_();
+  const expected = Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(payload, secret));
+  if (expected !== signature) return null;
+  const issuedAt = Number(issuedAtStr);
+  if (!isFinite(issuedAt)) return null;
+  if (Date.now() - issuedAt > ALBYTE_SESSION_TTL_MILLIS) return null;
+  return { staffId, issuedAt };
+}
+
+function withAlbyteLock_(callback){
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try {
+    locked = lock.tryLock(5000);
+    if (!locked) {
+      throw new Error('現在システムが混み合っています。数秒後に再度お試しください。');
+    }
+    return callback();
+  } finally {
+    if (locked) {
+      lock.releaseLock();
+    }
+  }
+}
+
+function wrapAlbyteResponse_(tag, fn){
+  try {
+    return fn();
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    Logger.log('[%s] %s', tag, err && err.stack ? err.stack : message);
+    return { ok: false, reason: 'system_error', message: message || 'エラーが発生しました。' };
+  }
+}
+
+function ensureAlbyteStaffSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(ALBYTE_STAFF_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(ALBYTE_STAFF_SHEET_NAME);
+  }
+  const needed = ALBYTE_STAFF_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([ALBYTE_STAFF_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || ALBYTE_STAFF_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([ALBYTE_STAFF_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
+function ensureAlbyteAttendanceSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(ALBYTE_ATTENDANCE_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(ALBYTE_ATTENDANCE_SHEET_NAME);
+  }
+  const needed = ALBYTE_ATTENDANCE_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([ALBYTE_ATTENDANCE_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || ALBYTE_ATTENDANCE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([ALBYTE_ATTENDANCE_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
+function parseDateValue_(value){
+  if (value instanceof Date) return value;
+  if (value == null || value === '') return null;
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function readAlbyteStaffRecords_(){
+  const sheet = ensureAlbyteStaffSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = ALBYTE_STAFF_SHEET_HEADER.length;
+  const records = [];
+  const mapByName = new Map();
+  const mapById = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    for (let i = 0; i < values.length; i++) {
+      const row = values[i];
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) {
+        continue;
+      }
+      const rowIndex = i + 2;
+      let id = String(row[ALBYTE_STAFF_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(rowIndex, ALBYTE_STAFF_COLUMN_INDEX.id).setValue(id);
+      }
+      const name = String(row[ALBYTE_STAFF_COLUMNS.name] || '').trim();
+      const normalizedName = normalizeAlbyteName_(name);
+      const pin = String(row[ALBYTE_STAFF_COLUMNS.pin] || '').trim();
+      const lockedRaw = row[ALBYTE_STAFF_COLUMNS.locked];
+      const locked = lockedRaw === true || String(lockedRaw || '').toLowerCase() === 'true' || String(lockedRaw || '').trim().toUpperCase() === 'LOCKED' || String(lockedRaw || '').trim() === '1';
+      const failCount = Number(row[ALBYTE_STAFF_COLUMNS.failCount]) || 0;
+      const lastLogin = parseDateValue_(row[ALBYTE_STAFF_COLUMNS.lastLogin]);
+      const updatedAt = parseDateValue_(row[ALBYTE_STAFF_COLUMNS.updatedAt]);
+      const record = {
+        rowIndex,
+        id,
+        name,
+        normalizedName,
+        pin,
+        locked,
+        failCount,
+        lastLogin,
+        updatedAt
+      };
+      records.push(record);
+      if (normalizedName) {
+        mapByName.set(normalizedName, record);
+      }
+      if (id) {
+        mapById.set(id, record);
+      }
+    }
+  }
+  return { sheet, records, mapByName, mapById };
+}
+
+function getAlbyteStaffByName_(name){
+  const normalized = normalizeAlbyteName_(name);
+  if (!normalized) return { sheet: ensureAlbyteStaffSheet_(), record: null };
+  const context = readAlbyteStaffRecords_();
+  return { sheet: context.sheet, record: context.mapByName.get(normalized) || null };
+}
+
+function getAlbyteStaffById_(id){
+  const context = readAlbyteStaffRecords_();
+  return { sheet: context.sheet, record: context.mapById.get(String(id || '').trim()) || null };
+}
+
+function formatTimezoneSuffix_(offset){
+  const text = String(offset || '').trim();
+  if (!text) return '';
+  if (text.length === 5) {
+    return text.slice(0, 3) + ':' + text.slice(3);
+  }
+  return text;
+}
+
+function formatIsoStringWithOffset_(date, tz){
+  const iso = Utilities.formatDate(date, tz, "yyyy-MM-dd'T'HH:mm:ss");
+  const offset = formatTimezoneSuffix_(Utilities.formatDate(date, tz, 'Z'));
+  return iso + offset;
+}
+
+function getWeekdaySymbol_(date, tz){
+  const index = Number(Utilities.formatDate(date, tz, 'u'));
+  const map = { 1: '月', 2: '火', 3: '水', 4: '木', 5: '金', 6: '土', 7: '日' };
+  return map[index] || '';
+}
+
+function formatDisplayDateTime_(date, tz){
+  const day = Utilities.formatDate(date, tz, 'yyyy年M月d日');
+  const time = Utilities.formatDate(date, tz, 'HH:mm');
+  const weekday = getWeekdaySymbol_(date, tz);
+  return day + (weekday ? '(' + weekday + ')' : '') + ' ' + time;
+}
+
+function parseAlbyteAttendanceLog_(value){
+  if (!value) return [];
+  if (Array.isArray(value)) return value.slice();
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      Logger.log('[albyte] failed to parse log: %s', err && err.message ? err.message : err);
+      return [];
+    }
+  }
+  return [];
+}
+
+function serializeAlbyteAttendanceLog_(entries){
+  if (!Array.isArray(entries)) return '[]';
+  try {
+    return JSON.stringify(entries);
+  } catch (err) {
+    Logger.log('[albyte] failed to serialize log: %s', err && err.message ? err.message : err);
+    return '[]';
+  }
+}
+
+function appendAlbyteAttendanceLog_(existingLog, entry){
+  const list = parseAlbyteAttendanceLog_(existingLog);
+  list.push(entry);
+  return serializeAlbyteAttendanceLog_(list);
+}
+
+function parseAlbyteAttendanceRow_(row, rowIndex){
+  return {
+    rowIndex,
+    id: String(row[ALBYTE_ATTENDANCE_COLUMNS.id] || '').trim(),
+    staffId: String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim(),
+    staffName: String(row[ALBYTE_ATTENDANCE_COLUMNS.staffName] || '').trim(),
+    date: String(row[ALBYTE_ATTENDANCE_COLUMNS.date] || '').trim(),
+    clockIn: String(row[ALBYTE_ATTENDANCE_COLUMNS.clockIn] || '').trim(),
+    clockOut: String(row[ALBYTE_ATTENDANCE_COLUMNS.clockOut] || '').trim(),
+    breakMinutes: Number(row[ALBYTE_ATTENDANCE_COLUMNS.breakMinutes]) || 0,
+    note: String(row[ALBYTE_ATTENDANCE_COLUMNS.note] || '').trim(),
+    autoFlag: String(row[ALBYTE_ATTENDANCE_COLUMNS.autoFlag] || '').trim(),
+    log: parseAlbyteAttendanceLog_(row[ALBYTE_ATTENDANCE_COLUMNS.log]),
+    createdAt: parseDateValue_(row[ALBYTE_ATTENDANCE_COLUMNS.createdAt]),
+    updatedAt: parseDateValue_(row[ALBYTE_ATTENDANCE_COLUMNS.updatedAt])
+  };
+}
+
+function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
+  const sheet = options && options.sheet ? options.sheet : ensureAlbyteAttendanceSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const width = ALBYTE_ATTENDANCE_SHEET_HEADER.length;
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const targetId = String(staffId || '').trim();
+  const targetDate = String(dateKey || '').trim();
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    if (String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim() !== targetId) continue;
+    if (String(row[ALBYTE_ATTENDANCE_COLUMNS.date] || '').trim() !== targetDate) continue;
+    const parsed = parseAlbyteAttendanceRow_(row, i + 2);
+    if (!parsed.id) {
+      parsed.id = Utilities.getUuid();
+      sheet.getRange(parsed.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.id).setValue(parsed.id);
+    }
+    return parsed;
+  }
+  return null;
+}
+
+function buildAlbytePortalState_(staffRecord){
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const now = new Date();
+  const todayKey = fmtDate(now, tz);
+  const weekday = getWeekdaySymbol_(now, tz);
+  const attendance = readAlbyteAttendanceRowFor_(staffRecord.id, todayKey);
+  const base = {
+    now: {
+      iso: formatIsoStringWithOffset_(now, tz),
+      display: formatDisplayDateTime_(now, tz)
+    },
+    today: {
+      date: todayKey,
+      display: Utilities.formatDate(now, tz, 'yyyy年M月d日') + (weekday ? '(' + weekday + ')' : ''),
+      weekday,
+      status: 'idle',
+      breakMinutes: 0,
+      record: null
+    },
+    presets: ALBYTE_BREAK_MINUTES_PRESETS.slice(),
+    limits: {
+      break: {
+        max: ALBYTE_MAX_BREAK_MINUTES,
+        step: ALBYTE_BREAK_STEP_MINUTES
+      }
+    }
+  };
+  if (attendance) {
+    const hasClockIn = Boolean(attendance.clockIn);
+    const hasClockOut = Boolean(attendance.clockOut);
+    const status = hasClockIn ? (hasClockOut ? 'completed' : 'working') : 'idle';
+    base.today.status = status;
+    base.today.breakMinutes = attendance.breakMinutes || 0;
+    base.today.record = {
+      id: attendance.id,
+      clockIn: attendance.clockIn || '',
+      clockOut: attendance.clockOut || '',
+      breakMinutes: attendance.breakMinutes || 0,
+      note: attendance.note || '',
+      autoFlag: attendance.autoFlag || '',
+      log: attendance.log,
+      updatedAt: attendance.updatedAt ? formatIsoStringWithOffset_(attendance.updatedAt, tz) : null,
+      createdAt: attendance.createdAt ? formatIsoStringWithOffset_(attendance.createdAt, tz) : null
+    };
+  }
+  return base;
+}
+
+function resolveAlbyteSession_(token){
+  const parsed = validateAlbyteSessionToken_(token);
+  if (!parsed) {
+    return { ok: false, reason: 'session_invalid', message: 'セッションが無効です。再度ログインしてください。' };
+  }
+  const context = readAlbyteStaffRecords_();
+  const staff = context.mapById.get(parsed.staffId);
+  if (!staff) {
+    return { ok: false, reason: 'session_invalid', message: 'セッションが無効です。再度ログインしてください。' };
+  }
+  if (staff.locked) {
+    return { ok: false, reason: 'account_locked', message: 'アカウントがロックされています。管理者に連絡してください。', staff };
+  }
+  return { ok: true, staff };
+}
+
+function buildAlbyteSuccessResponse_(staff, options){
+  const portal = buildAlbytePortalState_(staff);
+  const response = {
+    ok: true,
+    staff: {
+      id: staff.id,
+      name: staff.name
+    },
+    portal
+  };
+  if (options && options.token) {
+    response.token = options.token;
+  }
+  if (options && options.renewedToken) {
+    response.renewedToken = options.renewedToken;
+  }
+  return response;
+}
+
+function albyteLogin(payload){
+  return wrapAlbyteResponse_('albyteLogin', () => {
+    const nameRaw = payload && payload.name;
+    const pinRaw = payload && payload.pin;
+    const name = normalizeAlbyteName_(nameRaw);
+    const pin = String(pinRaw || '').trim();
+    if (!name) {
+      return { ok: false, reason: 'validation', message: '名前を入力してください。' };
+    }
+    if (!/^\d{4}$/.test(pin)) {
+      return { ok: false, reason: 'validation', message: 'PINは4桁の数字で入力してください。' };
+    }
+
+    return withAlbyteLock_(() => {
+      const { sheet, record } = getAlbyteStaffByName_(name);
+      if (!record) {
+        return { ok: false, reason: 'not_found', message: 'スタッフが見つかりません。管理者に連絡してください。' };
+      }
+      if (record.locked) {
+        return { ok: false, reason: 'account_locked', message: 'アカウントがロックされています。管理者に連絡してください。' };
+      }
+
+      const storedPin = String(record.pin || '').trim();
+      if (storedPin !== pin) {
+        const nextFail = (record.failCount || 0) + 1;
+        const willLock = nextFail >= ALBYTE_MAX_PIN_ATTEMPTS;
+        const now = new Date();
+        sheet.getRange(record.rowIndex, ALBYTE_STAFF_COLUMN_INDEX.locked, 1, 4)
+          .setValues([[willLock, nextFail, record.lastLogin || '', now]]);
+        record.failCount = nextFail;
+        record.locked = willLock;
+        record.updatedAt = now;
+        return {
+          ok: false,
+          reason: willLock ? 'account_locked' : 'invalid_pin',
+          message: willLock
+            ? 'PINを5回連続で間違えたためロックされました。管理者に連絡してください。'
+            : 'PINが一致しません。',
+          remainingAttempts: willLock ? 0 : Math.max(0, ALBYTE_MAX_PIN_ATTEMPTS - nextFail)
+        };
+      }
+
+      const now = new Date();
+      sheet.getRange(record.rowIndex, ALBYTE_STAFF_COLUMN_INDEX.locked, 1, 4)
+        .setValues([[false, 0, now, now]]);
+      record.locked = false;
+      record.failCount = 0;
+      record.lastLogin = now;
+      record.updatedAt = now;
+
+      const token = createAlbyteSessionToken_(record.id);
+      return buildAlbyteSuccessResponse_(record, { token });
+    });
+  });
+}
+
+function albyteGetPortalState(payload){
+  return wrapAlbyteResponse_('albyteGetPortalState', () => {
+    const token = payload && payload.token;
+    if (!token) {
+      return { ok: false, reason: 'session_invalid', message: 'セッションが無効です。再度ログインしてください。' };
+    }
+    const session = resolveAlbyteSession_(token);
+    if (!session.ok) {
+      return session;
+    }
+    return buildAlbyteSuccessResponse_(session.staff, {});
+  });
+}
+
+function albyteClockIn(payload){
+  return wrapAlbyteResponse_('albyteClockIn', () => {
+    const token = payload && payload.token;
+    if (!token) {
+      return { ok: false, reason: 'session_invalid', message: 'セッションが無効です。再度ログインしてください。' };
+    }
+    const session = resolveAlbyteSession_(token);
+    if (!session.ok) {
+      return session;
+    }
+
+    return withAlbyteLock_(() => {
+      const staff = session.staff;
+      const tz = getConfig('timezone') || 'Asia/Tokyo';
+      const now = new Date();
+      const dateKey = fmtDate(now, tz);
+      const timeStr = Utilities.formatDate(now, tz, 'HH:mm');
+      const iso = formatIsoStringWithOffset_(now, tz);
+      const sheet = ensureAlbyteAttendanceSheet_();
+      const existing = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      if (existing && existing.clockIn) {
+        if (existing.clockOut) {
+          return { ok: false, reason: 'already_completed', message: '本日の勤怠はすでに退勤済みです。' };
+        }
+        return { ok: false, reason: 'already_clocked_in', message: 'すでに出勤打刻済みです。' };
+      }
+
+      if (!existing) {
+        const log = serializeAlbyteAttendanceLog_([{ type: 'clockIn', at: iso }]);
+        sheet.appendRow([
+          Utilities.getUuid(),
+          staff.id,
+          staff.name,
+          dateKey,
+          timeStr,
+          '',
+          0,
+          '',
+          '',
+          log,
+          now,
+          now
+        ]);
+      } else {
+        const rowIndex = existing.rowIndex;
+        const log = appendAlbyteAttendanceLog_(existing.log, { type: 'clockIn', at: iso });
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.staffName).setValue(staff.name);
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.clockIn).setValue(timeStr);
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
+        sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
+        if (!existing.createdAt) {
+          sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.createdAt).setValue(now);
+        }
+      }
+
+      return buildAlbyteSuccessResponse_(staff, {});
+    });
+  });
+}
+
+function albyteClockOut(payload){
+  return wrapAlbyteResponse_('albyteClockOut', () => {
+    const token = payload && payload.token;
+    if (!token) {
+      return { ok: false, reason: 'session_invalid', message: 'セッションが無効です。再度ログインしてください。' };
+    }
+    const session = resolveAlbyteSession_(token);
+    if (!session.ok) {
+      return session;
+    }
+
+    return withAlbyteLock_(() => {
+      const staff = session.staff;
+      const tz = getConfig('timezone') || 'Asia/Tokyo';
+      const now = new Date();
+      const dateKey = fmtDate(now, tz);
+      const timeStr = Utilities.formatDate(now, tz, 'HH:mm');
+      const iso = formatIsoStringWithOffset_(now, tz);
+      const sheet = ensureAlbyteAttendanceSheet_();
+      const existing = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      if (!existing || !existing.clockIn) {
+        return { ok: false, reason: 'not_clocked_in', message: '出勤打刻がまだ記録されていません。' };
+      }
+      if (existing.clockOut) {
+        return { ok: false, reason: 'already_clocked_out', message: 'すでに退勤打刻済みです。' };
+      }
+
+      const rowIndex = existing.rowIndex;
+      const log = appendAlbyteAttendanceLog_(existing.log, { type: 'clockOut', at: iso });
+      sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.clockOut).setValue(timeStr);
+      sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
+      sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
+
+      return buildAlbyteSuccessResponse_(staff, {});
+    });
+  });
+}
+
+function albyteUpdateBreak(payload){
+  return wrapAlbyteResponse_('albyteUpdateBreak', () => {
+    const token = payload && payload.token;
+    if (!token) {
+      return { ok: false, reason: 'session_invalid', message: 'セッションが無効です。再度ログインしてください。' };
+    }
+    const session = resolveAlbyteSession_(token);
+    if (!session.ok) {
+      return session;
+    }
+
+    const minutesRaw = payload && payload.minutes;
+    const minutes = Number(minutesRaw);
+    if (!isFinite(minutes)) {
+      return { ok: false, reason: 'validation', message: '休憩時間は15分単位で入力してください。' };
+    }
+    if (minutes < 0) {
+      return { ok: false, reason: 'validation', message: '休憩時間は0分以上で入力してください。' };
+    }
+    if (minutes > ALBYTE_MAX_BREAK_MINUTES) {
+      return { ok: false, reason: 'validation', message: '休憩時間は最大180分までです。' };
+    }
+    if (minutes % ALBYTE_BREAK_STEP_MINUTES !== 0) {
+      return { ok: false, reason: 'validation', message: '休憩時間は15分刻みで入力してください。' };
+    }
+
+    return withAlbyteLock_(() => {
+      const staff = session.staff;
+      const tz = getConfig('timezone') || 'Asia/Tokyo';
+      const now = new Date();
+      const dateKey = fmtDate(now, tz);
+      const iso = formatIsoStringWithOffset_(now, tz);
+      const sheet = ensureAlbyteAttendanceSheet_();
+      const existing = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      if (!existing) {
+        return { ok: false, reason: 'not_found', message: '本日の勤務データがまだありません。先に出勤打刻を行ってください。' };
+      }
+
+      const rowIndex = existing.rowIndex;
+      const log = appendAlbyteAttendanceLog_(existing.log, {
+        type: 'breakUpdate',
+        at: iso,
+        minutes,
+        source: payload && payload.source ? String(payload.source) : ''
+      });
+      sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.breakMinutes).setValue(minutes);
+      sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
+      sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
+
+      return buildAlbyteSuccessResponse_(staff, {});
+    });
+  });
 }
 
 function init_(){ ensureAuxSheets_(); }
@@ -3976,6 +4646,7 @@ function doGet(e) {
     case 'admin':        templateFile = 'admin'; break;
     case 'attendance':   templateFile = 'attendance'; break;
     case 'vacancy':      templateFile = 'vacancy'; break;
+    case 'albyte':       templateFile = 'albyte'; break;
     case 'record':       templateFile = 'app'; break;   // ★ app.html を record として表示
     case 'report':       templateFile = 'report'; break;
     default:             templateFile = 'welcome'; break;

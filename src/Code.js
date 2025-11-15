@@ -1191,13 +1191,33 @@ function readAlbyteAttendanceRecords_(options){
   return { sheet, records };
 }
 
-function resolveMonthlyRangeKeys_(year, month){
+function normalizeYearMonthInput_(year, month){
   const y = Number(year);
   const m = Number(month);
-  if (!Number.isFinite(y) || !Number.isFinite(m)) return { from: '', to: '' };
+  if (!Number.isFinite(y) || !Number.isFinite(m)) {
+    return null;
+  }
+  if (y <= 0 || m < 1 || m > 12) {
+    return null;
+  }
+  return { year: Math.round(y), month: Math.round(m) };
+}
+
+function resolveYearMonthOrCurrent_(year, month){
+  const normalized = normalizeYearMonthInput_(year, month);
+  if (normalized) {
+    return normalized;
+  }
+  const now = new Date();
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+}
+
+function resolveMonthlyRangeKeys_(year, month){
+  const normalized = normalizeYearMonthInput_(year, month);
+  if (!normalized) return { from: '', to: '' };
   const tz = getConfig('timezone') || 'Asia/Tokyo';
-  const start = new Date(y, m - 1, 1);
-  const end = new Date(y, m, 0);
+  const start = new Date(normalized.year, normalized.month - 1, 1);
+  const end = new Date(normalized.year, normalized.month, 0);
   return {
     from: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
     to: Utilities.formatDate(end, tz, 'yyyy-MM-dd')
@@ -1593,13 +1613,9 @@ function albyteGetMonthlySummary(payload){
     const staff = session.staff;
     const staffType = staff && staff.staffType ? staff.staffType : 'hourly';
     const isDailyStaff = staffType === 'daily';
-    let year = Number(payload && payload.year);
-    let month = Number(payload && payload.month);
-    if (!Number.isFinite(year) || !Number.isFinite(month)) {
-      const now = new Date();
-      year = now.getFullYear();
-      month = now.getMonth() + 1;
-    }
+    const resolvedMonth = resolveYearMonthOrCurrent_(payload && payload.year, payload && payload.month);
+    const year = resolvedMonth.year;
+    const month = resolvedMonth.month;
     const { from, to } = resolveMonthlyRangeKeys_(year, month);
     const shiftContext = readAlbyteShiftRecords_();
     const { records } = readAlbyteAttendanceRecords_({ fromDateKey: from, toDateKey: to, staffId: staff.id });
@@ -1747,13 +1763,9 @@ function albyteAdminSaveStaff(payload){
 
 function albyteAdminListAttendance(payload){
   return wrapAlbyteResponse_('albyteAdminListAttendance', () => {
-    let year = Number(payload && payload.year);
-    let month = Number(payload && payload.month);
-    if (!Number.isFinite(year) || !Number.isFinite(month)) {
-      const now = new Date();
-      year = now.getFullYear();
-      month = now.getMonth() + 1;
-    }
+    const resolvedMonth = resolveYearMonthOrCurrent_(payload && payload.year, payload && payload.month);
+    const year = resolvedMonth.year;
+    const month = resolvedMonth.month;
     const staffId = payload && payload.staffId ? String(payload.staffId).trim() : '';
     const { from, to } = resolveMonthlyRangeKeys_(year, month);
     const staffContext = readAlbyteStaffRecords_();
@@ -1894,13 +1906,9 @@ function albyteAdminSaveAttendance(payload){
 
 function albyteAdminListShifts(payload){
   return wrapAlbyteResponse_('albyteAdminListShifts', () => {
-    let year = Number(payload && payload.year);
-    let month = Number(payload && payload.month);
-    if (!Number.isFinite(year) || !Number.isFinite(month)) {
-      const now = new Date();
-      year = now.getFullYear();
-      month = now.getMonth() + 1;
-    }
+    const resolvedMonth = resolveYearMonthOrCurrent_(payload && payload.year, payload && payload.month);
+    const year = resolvedMonth.year;
+    const month = resolvedMonth.month;
     const { from, to } = resolveMonthlyRangeKeys_(year, month);
     const staffContext = readAlbyteStaffRecords_();
     const context = readAlbyteShiftRecords_();
@@ -2048,13 +2056,9 @@ function albyteAdminDeleteShift(payload){
 
 function albyteGetMonthlyReport(payload){
   return wrapAlbyteResponse_('albyteGetMonthlyReport', () => {
-    let year = Number(payload && payload.year);
-    let month = Number(payload && payload.month);
-    if (!Number.isFinite(year) || !Number.isFinite(month)) {
-      const now = new Date();
-      year = now.getFullYear();
-      month = now.getMonth() + 1;
-    }
+    const resolvedMonth = resolveYearMonthOrCurrent_(payload && payload.year, payload && payload.month);
+    const year = resolvedMonth.year;
+    const month = resolvedMonth.month;
     const { from, to } = resolveMonthlyRangeKeys_(year, month);
     const staffContext = readAlbyteStaffRecords_();
     const shiftContext = readAlbyteShiftRecords_();
@@ -2138,18 +2142,16 @@ function resolveUnifiedAttendanceRange_(payload){
   let toKey = normalizeDateKey_(payload && payload.to, tz);
 
   if (!fromKey || !toKey) {
-    let year = Number(payload && payload.year);
-    let month = Number(payload && payload.month);
-    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    let resolvedMonth = normalizeYearMonthInput_(payload && payload.year, payload && payload.month);
+    if (!resolvedMonth) {
       const monthKeyText = String((payload && (payload.monthKey || payload.month)) || '').trim();
       if (/^\d{4}-\d{1,2}$/.test(monthKeyText)) {
         const parts = monthKeyText.split('-');
-        year = Number(parts[0]);
-        month = Number(parts[1]);
+        resolvedMonth = normalizeYearMonthInput_(Number(parts[0]), Number(parts[1]));
       }
     }
-    if (Number.isFinite(year) && Number.isFinite(month)) {
-      const resolved = resolveMonthlyRangeKeys_(year, month);
+    if (resolvedMonth) {
+      const resolved = resolveMonthlyRangeKeys_(resolvedMonth.year, resolvedMonth.month);
       fromKey = resolved.from;
       toKey = resolved.to;
     }

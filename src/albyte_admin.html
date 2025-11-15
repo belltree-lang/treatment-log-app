@@ -393,7 +393,11 @@ function fetchAttendance(){
   const { year, month } = parseMonthInput(monthInput);
   const staffId = document.getElementById('attendanceStaffFilter').value;
   state.attendanceFilter = { year, month, staffId };
-  const params = { year, month };
+  const params = {};
+  if (Number.isFinite(year) && Number.isFinite(month)) {
+    params.year = year;
+    params.month = month;
+  }
   if (staffId) params.staffId = staffId;
   const tbody = document.getElementById('attendanceTableBody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="11">読み込み中…</td></tr>';
@@ -455,7 +459,11 @@ function fetchShifts(){
   const { year, month } = parseMonthInput(monthInput);
   const staffId = document.getElementById('shiftStaffFilter').value;
   state.shiftFilter = { year, month, staffId };
-  const params = { year, month };
+  const params = {};
+  if (Number.isFinite(year) && Number.isFinite(month)) {
+    params.year = year;
+    params.month = month;
+  }
   if (staffId) params.staffId = staffId;
   const tbody = document.getElementById('shiftTableBody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="6">読み込み中…</td></tr>';

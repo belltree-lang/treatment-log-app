@@ -5907,6 +5907,174 @@ function submitVisitAttendanceRequest(payload){
   return { ok: true };
 }
 
+function updateVisitAttendanceRecord(payload){
+  assertDomain_();
+  if (!isAdminUser_()) {
+    throw new Error('管理者権限が必要です');
+  }
+  const data = payload || {};
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+
+  const normalizedEmail = normalizeEmailKey_(data.email || data.targetEmail || data.userEmail);
+  if (!normalizedEmail) {
+    throw new Error('スタッフのメールアドレスを指定してください');
+  }
+
+  let dateValue = data.date || data.targetDate;
+  if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
+    dateValue = new Date(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
+  } else {
+    const rawDate = String(dateValue || '').trim();
+    if (!rawDate) {
+      throw new Error('対象日を指定してください');
+    }
+    const normalizedDate = rawDate.replace(/[\.\/]/g, '-');
+    const match = normalizedDate.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!match) {
+      throw new Error('対象日の形式が不正です (YYYY-MM-DD)');
+    }
+    const year = Number(match[1]);
+    const monthIndex = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    dateValue = new Date(year, monthIndex, day);
+  }
+  if (!(dateValue instanceof Date) || isNaN(dateValue.getTime())) {
+    throw new Error('対象日の解析に失敗しました');
+  }
+  const dateKey = Utilities.formatDate(dateValue, tz, 'yyyy-MM-dd');
+  const targetDay = new Date(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
+
+  const resolveMinutes = values => {
+    for (let i = 0; i < values.length; i++) {
+      const minutes = parseTimeTextToMinutes_(values[i]);
+      if (Number.isFinite(minutes)) {
+        return minutes;
+      }
+    }
+    return NaN;
+  };
+
+  const startMinutes = resolveMinutes([data.start, data.startTime, data.startMinutes]);
+  if (!Number.isFinite(startMinutes)) {
+    throw new Error('出勤時刻を HH:MM 形式で指定してください');
+  }
+
+  const endMinutes = resolveMinutes([data.end, data.endTime, data.endMinutes]);
+  if (!Number.isFinite(endMinutes)) {
+    throw new Error('退勤時刻を HH:MM 形式で指定してください');
+  }
+
+  let breakMinutes = resolveMinutes([data.breakMinutes, data.break, data.restMinutes, data.rest]);
+  if (!Number.isFinite(breakMinutes) || breakMinutes < 0) {
+    breakMinutes = 0;
+  }
+
+  const rounding = VISIT_ATTENDANCE_ROUNDING_MINUTES;
+  if (startMinutes % rounding !== 0) {
+    throw new Error('出勤時刻は15分単位で指定してください');
+  }
+  if (endMinutes % rounding !== 0) {
+    throw new Error('退勤時刻は15分単位で指定してください');
+  }
+  if (breakMinutes % rounding !== 0) {
+    throw new Error('休憩時間は15分単位で指定してください');
+  }
+  if (endMinutes <= startMinutes) {
+    throw new Error('退勤時刻は出勤以降で指定してください');
+  }
+  if (endMinutes > VISIT_ATTENDANCE_WORK_END_LIMIT_MINUTES) {
+    throw new Error('退勤は18:00までにしてください');
+  }
+  if (breakMinutes > endMinutes - startMinutes) {
+    throw new Error('休憩時間が長すぎます');
+  }
+
+  const note = String(data.note || data.reason || '').trim();
+  if (!note) {
+    throw new Error('修正理由（note）を入力してください');
+  }
+
+  const sheet = ensureVisitAttendanceSheet_();
+  const width = Math.min(VISIT_ATTENDANCE_SHEET_HEADER.length, sheet.getMaxColumns());
+  const existingMap = readVisitAttendanceExistingMap_(sheet, tz);
+  const key = dateKey + '||' + normalizedEmail;
+
+  const resolveRow = rowNumber => {
+    if (!Number.isFinite(rowNumber) || rowNumber < 2) return null;
+    const range = sheet.getRange(rowNumber, 1, 1, width);
+    const values = range.getValues()[0];
+    const displays = range.getDisplayValues()[0];
+    const rowDateKey = formatDateKeyFromValue_(values[0], tz) || formatDateKeyFromValue_(displays[0], tz);
+    const rowEmail = normalizeEmailKey_(values[1] || displays[1]);
+    if (rowDateKey === dateKey && rowEmail === normalizedEmail) {
+      return { rowNumber, values, displays };
+    }
+    return null;
+  };
+
+  let targetRow = null;
+  if (existingMap.has(key)) {
+    targetRow = resolveRow(existingMap.get(key).rowNumber);
+  }
+  if (!targetRow) {
+    const lastRow = sheet.getLastRow();
+    for (let row = 2; row <= lastRow; row++) {
+      targetRow = resolveRow(row);
+      if (targetRow) break;
+    }
+  }
+  if (!targetRow) {
+    throw new Error('VisitAttendance シートの対象行を特定できませんでした');
+  }
+
+  const startText = formatMinutesAsTimeText_(startMinutes);
+  const endText = formatMinutesAsTimeText_(endMinutes);
+  const breakText = formatMinutesAsTimeText_(breakMinutes);
+  const workMinutes = Math.max(0, endMinutes - startMinutes - breakMinutes);
+  const workText = formatMinutesAsTimeText_(workMinutes);
+
+  const existingEmail = targetRow.values[1] || targetRow.displays[1] || normalizedEmail;
+  const breakdownCell = targetRow.values[6] != null && targetRow.values[6] !== '' ? targetRow.values[6] : targetRow.displays[6];
+
+  const newRow = [
+    targetDay,
+    existingEmail,
+    startText,
+    endText,
+    workText,
+    breakText,
+    breakdownCell,
+    'manual'
+  ];
+
+  sheet.getRange(targetRow.rowNumber, 1, 1, width).setValues([newRow]);
+
+  const actor = (Session.getActiveUser() || {}).getEmail() || '';
+  const logDetail = JSON.stringify({
+    date: dateKey,
+    email: normalizedEmail,
+    start: startText,
+    end: endText,
+    break: breakText,
+    work: workText,
+    note,
+    actor
+  });
+  log_('勤怠手動修正', normalizedEmail, logDetail);
+  Logger.log('[updateVisitAttendanceRecord] ' + logDetail);
+
+  return {
+    ok: true,
+    rowNumber: targetRow.rowNumber,
+    date: dateKey,
+    email: normalizedEmail,
+    start: startText,
+    end: endText,
+    breakMinutes,
+    workMinutes
+  };
+}
+
 function updateVisitAttendanceRequestStatus(payload){
   assertDomain_();
   if (!isAdminUser_()) {

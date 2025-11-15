@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>訪問スタッフ勤怠</title>
+<style>
+  :root{
+    --bg:#f8fafc;
+    --fg:#1f2937;
+    --card:#fff;
+    --brand:#2563eb;
+    --muted:#6b7280;
+    --border:#e5e7eb;
+    --pending:#f59e0b;
+    --approved:#10b981;
+    --rejected:#ef4444;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap{ max-width:960px; margin:0 auto; padding:24px 16px 64px; display:flex; flex-direction:column; gap:24px; }
+  .header{ display:flex; flex-direction:column; gap:16px; }
+  .header-main{ display:flex; flex-direction:column; gap:4px; }
+  .header-controls{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .control{ display:flex; flex-direction:column; gap:6px; font-size:0.95rem; }
+  select,input,textarea{ padding:8px 10px; border:1px solid var(--border); border-radius:10px; font-size:0.95rem; background:#fff; color:inherit; }
+  textarea{ resize:vertical; min-height:96px; }
+  .card{ background:var(--card); border-radius:18px; padding:20px; box-shadow:0 12px 34px rgba(15,23,42,0.06); }
+  .card + .card{ margin-top:4px; }
+  .card-header{ display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px; }
+  .muted{ color:var(--muted); font-size:0.9rem; }
+  table{ width:100%; border-collapse:collapse; }
+  th,td{ text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); font-size:0.95rem; vertical-align:top; }
+  th{ font-weight:600; color:#111827; white-space:nowrap; }
+  tbody tr:hover{ background:#f1f5f9; }
+  .badge{ display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:999px; font-size:0.8rem; font-weight:600; }
+  .status-badge--pending{ background:rgba(245,158,11,0.15); color:#b45309; }
+  .status-badge--approved{ background:rgba(16,185,129,0.15); color:#047857; }
+  .status-badge--rejected{ background:rgba(239,68,68,0.15); color:#b91c1c; }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:8px 16px; background:var(--brand); color:#fff; font-size:0.9rem; font-weight:600; cursor:pointer; transition:transform .15s ease, box-shadow .15s ease; }
+  .btn:hover{ transform:translateY(-1px); box-shadow:0 10px 20px rgba(37,99,235,0.15); }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; box-shadow:none; transform:none; }
+  .btn.ghost{ background:#e5e7eb; color:#1f2937; }
+  .table-note{ margin-top:12px; font-size:0.9rem; color:var(--muted); }
+  .history-list{ display:flex; flex-direction:column; gap:12px; }
+  .history-item{ border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:#fff; }
+  .history-item strong{ font-size:1rem; }
+  .history-meta{ display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; font-size:0.85rem; color:var(--muted); }
+  .history-note{ margin-top:8px; white-space:pre-wrap; font-size:0.95rem; }
+  .admin-table textarea{ width:100%; min-height:60px; }
+  .modal{ position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none; align-items:center; justify-content:center; padding:16px; z-index:1000; }
+  .modal.open{ display:flex; }
+  .dialog{ background:#fff; border-radius:16px; padding:20px; width:min(480px, 92vw); box-shadow:0 18px 48px rgba(15,23,42,0.25); display:flex; flex-direction:column; gap:16px; }
+  .form-row{ display:flex; flex-direction:column; gap:6px; }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:12px; }
+  .loading{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.75); z-index:1500; font-weight:600; font-size:1rem; color:#1f2937; }
+  .loading.hidden{ display:none; }
+  .loading-box{ background:#fff; border-radius:14px; padding:12px 18px; display:flex; align-items:center; gap:10px; box-shadow:0 18px 40px rgba(15,23,42,0.18); }
+  .spinner{ width:18px; height:18px; border-radius:50%; border:3px solid rgba(37,99,235,0.25); border-top-color:var(--brand); animation:spin .75s linear infinite; }
+  @keyframes spin{ to { transform:rotate(360deg); } }
+  .toast{ position:fixed; left:50%; bottom:32px; transform:translateX(-50%); background:#1f2937; color:#fff; padding:10px 18px; border-radius:999px; font-size:0.9rem; box-shadow:0 12px 30px rgba(15,23,42,0.25); opacity:0; pointer-events:none; transition:opacity .3s ease; z-index:1600; }
+  .toast.show{ opacity:1; }
+  @media (max-width:640px){
+    th,td{ font-size:0.85rem; padding:8px 6px; }
+    .btn{ padding:7px 12px; font-size:0.85rem; }
+    .header-controls{ flex-direction:column; align-items:flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="header">
+    <div class="header-main">
+      <h1>訪問スタッフ勤怠</h1>
+      <div id="userInfo" class="muted"></div>
+    </div>
+    <div class="header-controls">
+      <label class="control">
+        <span>対象月</span>
+        <select id="monthSelect" aria-label="対象月"></select>
+      </label>
+      <div id="summary" class="muted"></div>
+    </div>
+  </header>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>勤怠一覧</h2>
+      <div id="monthNotice" class="muted"></div>
+    </div>
+    <div id="attendanceTable"></div>
+    <div class="table-note">退勤は18:00まで・15分単位。休憩時間も15分単位で申請してください。</div>
+  </section>
+
+  <section class="card">
+    <h2>申請履歴</h2>
+    <div id="requestHistory" class="muted">読み込み中…</div>
+  </section>
+
+  <section class="card" id="adminPanel" hidden>
+    <h2>管理者：申請承認</h2>
+    <div id="adminRequests" class="muted">読み込み中…</div>
+  </section>
+</div>
+
+<div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="dialog">
+    <h3 id="modalTitle">勤怠修正申請</h3>
+    <form id="modalForm">
+      <div class="form-row">
+        <label>対象日</label>
+        <div id="modalDate" class="muted"></div>
+      </div>
+      <div class="form-row">
+        <label for="modalEnd">退勤時刻</label>
+        <input id="modalEnd" type="time" required />
+      </div>
+      <div class="form-row">
+        <label for="modalBreak">休憩時間</label>
+        <select id="modalBreak"></select>
+      </div>
+      <div class="form-row">
+        <label for="modalNote">申請理由</label>
+        <textarea id="modalNote" placeholder="修正が必要な理由を記入してください" required></textarea>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" onclick="closeModal()">キャンセル</button>
+        <button type="submit" class="btn">申請を送信</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="loading" class="loading hidden" role="status" aria-live="polite">
+  <div class="loading-box"><span class="spinner" aria-hidden="true"></span><span id="loadingText">読み込み中…</span></div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+let state = { data: null, selectedMonth: null, requestDate: null };
+
+function setLoading(active, text){
+  const el = document.getElementById('loading');
+  const label = document.getElementById('loadingText');
+  if (text) label.textContent = text;
+  el.classList.toggle('hidden', !active);
+}
+
+function showToast(message){
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  setTimeout(()=> toast.classList.remove('show'), 2600);
+}
+
+function init(){
+  setLoading(true, '読み込み中…');
+  google.script.run
+    .withSuccessHandler(data => {
+      state.data = data;
+      state.selectedMonth = data && data.month ? data.month.key : null;
+      renderAll();
+      setLoading(false);
+    })
+    .withFailureHandler(err => {
+      setLoading(false);
+      alert(err && err.message ? err.message : err);
+    })
+    .getVisitAttendancePortalData({});
+}
+
+document.getElementById('monthSelect').addEventListener('change', event => {
+  const value = event.target.value;
+  state.selectedMonth = value;
+  loadMonth(value);
+});
+
+document.getElementById('modalForm').addEventListener('submit', event => {
+  event.preventDefault();
+  submitRequest();
+});
+
+function loadMonth(monthKey){
+  setLoading(true, '読み込み中…');
+  google.script.run
+    .withSuccessHandler(data => {
+      state.data = data;
+      state.selectedMonth = data && data.month ? data.month.key : monthKey;
+      renderAll();
+      setLoading(false);
+    })
+    .withFailureHandler(err => {
+      setLoading(false);
+      alert(err && err.message ? err.message : err);
+    })
+    .getVisitAttendancePortalData({ month: monthKey });
+}
+
+function renderAll(){
+  if (!state.data) return;
+  renderUser();
+  renderMonthSelect();
+  renderSummary();
+  renderAttendance();
+  renderHistory();
+  renderAdmin();
+}
+
+function renderUser(){
+  const info = document.getElementById('userInfo');
+  const user = state.data.user || {};
+  const name = user.displayName || '';
+  const email = user.email || '';
+  info.textContent = name && email ? `${name} (${email})` : email;
+}
+
+function renderMonthSelect(){
+  const select = document.getElementById('monthSelect');
+  const months = state.data.months || [];
+  const current = state.data.month ? state.data.month.key : state.selectedMonth;
+  select.innerHTML = months.map(m => `<option value="${m.key}" ${m.key === current ? 'selected' : ''}>${m.label}</option>`).join('');
+}
+
+function renderSummary(){
+  const el = document.getElementById('summary');
+  const totals = state.data.totals || {};
+  const days = totals.days != null ? `${totals.days}日` : '-';
+  const work = totals.workText || '-';
+  const rest = totals.breakText || '-';
+  el.textContent = `稼働日数: ${days} / 勤務時間: ${work} / 休憩: ${rest}`;
+}
+
+function renderAttendance(){
+  const container = document.getElementById('attendanceTable');
+  const monthNotice = document.getElementById('monthNotice');
+  const data = state.data;
+  const month = data.month || {};
+  const attendance = data.attendance || [];
+  monthNotice.textContent = month.canRequest ? 'この月の勤怠は修正申請できます（前月分まで）' : '当月は閲覧のみです。修正申請は前月分まで受付。';
+  if (!attendance.length){
+    container.innerHTML = '<div class="muted">対象月の勤怠データがありません。</div>';
+    return;
+  }
+    const rows = attendance.map(record => {
+      const req = record.request;
+      const status = req ? req.status : '';
+      const statusLabel = req ? req.statusLabel : '';
+      const statusClass = status ? `status-badge--${status}` : '';
+      const statusNote = req && req.statusNote ? `<div class="muted">${escapeHtml(req.statusNote)}</div>` : '';
+      const requestCell = req ? `<div class="badge ${statusClass}">${statusLabel}</div>${statusNote}` : '-';
+      const button = month.canRequest ? `<button class="btn" ${status === 'pending' ? 'disabled' : ''} data-date="${record.date}">申請</button>` : '';
+      return `<tr>
+        <td>${record.displayDate || record.date}<div class="muted">${record.weekday || ''}</div></td>
+        <td>${record.start || ''}</td>
+      <td>${record.end || ''}</td>
+      <td>${record.work || ''}</td>
+      <td>${record.break || ''}</td>
+      <td>${escapeHtml(record.breakdown || '')}</td>
+      <td>${escapeHtml(record.sourceLabel || '')}</td>
+      <td>${requestCell}</td>
+      <td>${month.canRequest ? button : ''}</td>
+    </tr>`;
+  }).join('');
+  container.innerHTML = `<div class="table-wrapper"><table>
+    <thead><tr><th>日付</th><th>出勤</th><th>退勤</th><th>勤務</th><th>休憩</th><th>種別内訳</th><th>区分</th><th>申請状況</th><th>${month.canRequest ? '操作' : ''}</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+  if (month.canRequest){
+    container.querySelectorAll('button[data-date]').forEach(btn => {
+      btn.addEventListener('click', () => openModal(btn.getAttribute('data-date')));
+    });
+  }
+}
+
+function renderHistory(){
+  const container = document.getElementById('requestHistory');
+  const requests = state.data.requests || [];
+  if (!requests.length){
+    container.innerHTML = '<div class="muted">この月の申請履歴はありません。</div>';
+    return;
+  }
+  const items = requests.map(req => {
+    const badgeClass = `badge status-badge--${req.status}`;
+    const adminNote = req.statusNote ? `<div class="history-note muted">対応メモ: ${escapeHtml(req.statusNote)}</div>` : '';
+    return `<div class="history-item">
+      <strong>${req.targetDate} (${req.targetWeekday||''})</strong>
+      <div class="history-meta">
+        <span class="${badgeClass}">${req.statusLabel}</span>
+        <span>退勤 ${req.end || '-'} / 休憩 ${req.breakText || '-'}</span>
+        <span>申請日時: ${req.createdAtText || '-'}</span>
+        ${req.statusUpdatedAtText ? `<span>最終更新: ${req.statusUpdatedAtText}</span>` : ''}
+      </div>
+      <div class="history-note">${escapeHtml(req.note || '')}</div>
+      ${adminNote}
+    </div>`;
+  }).join('');
+  container.innerHTML = `<div class="history-list">${items}</div>`;
+}
+
+function renderAdmin(){
+  const panel = document.getElementById('adminPanel');
+  const container = document.getElementById('adminRequests');
+  const admin = state.data.admin;
+  if (!admin || !Array.isArray(admin.pendingRequests)){
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  const pending = admin.pendingRequests;
+  if (!pending.length){
+    container.innerHTML = '<div class="muted">保留中の申請はありません。</div>';
+    return;
+  }
+  const rows = pending.map(req => {
+    const selectId = `status-${req.id}`;
+    const noteId = `note-${req.id}`;
+    return `<tr>
+      <td>${req.targetDate}<div class="muted">${req.targetWeekday||''}</div></td>
+      <td>${req.targetEmail}</td>
+      <td>退勤 ${req.end || '-'}<br>休憩 ${req.breakText || '-'}</td>
+      <td>${escapeHtml(req.note || '')}</td>
+      <td><select id="${selectId}">
+        <option value="pending" ${req.status==='pending'?'selected':''}>申請中</option>
+        <option value="approved">承認</option>
+        <option value="rejected">差し戻し</option>
+      </select>
+      <textarea id="${noteId}" placeholder="対応メモ"></textarea>
+      </td>
+      <td><button class="btn" onclick="handleAdminUpdate('${req.id}')">更新</button></td>
+    </tr>`;
+  }).join('');
+  container.innerHTML = `<div class="table-wrapper admin-table"><table>
+    <thead><tr><th>対象日</th><th>スタッフ</th><th>希望内容</th><th>申請理由</th><th>対応</th><th>操作</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+function openModal(date){
+  const modal = document.getElementById('modal');
+  const record = (state.data.attendance || []).find(r => r.date === date);
+  state.requestDate = date;
+  const policy = state.data.policy || {};
+  const endInput = document.getElementById('modalEnd');
+  endInput.min = policy.workStart || '09:00';
+  endInput.max = policy.workEndLimit || '18:00';
+  const step = Number(policy.roundingMinutes || 15) * 60;
+  endInput.step = step > 0 ? step : 900;
+  endInput.value = record && record.end ? record.end : (policy.workEndLimit || '18:00');
+  populateBreakOptions(record ? record.breakMinutes : 0, policy);
+  document.getElementById('modalNote').value = '';
+  const weekday = record ? record.weekday : '';
+  document.getElementById('modalDate').textContent = `${date}${weekday ? '（' + weekday + '）' : ''}`;
+  modal.classList.add('open');
+}
+
+function populateBreakOptions(currentMinutes, policy){
+  const select = document.getElementById('modalBreak');
+  let rounding = Number(policy.roundingMinutes);
+  if (!Number.isFinite(rounding) || rounding <= 0) rounding = 15;
+  const maxMinutes = 180;
+  const options = [];
+  for (let minutes = 0; minutes <= maxMinutes; minutes += rounding){
+    const label = minutes === 0 ? 'なし (0分)' : formatMinutes(minutes);
+    options.push(`<option value="${minutes}" ${minutes === Number(currentMinutes) ? 'selected' : ''}>${label}</option>`);
+  }
+  select.innerHTML = options.join('');
+}
+
+function closeModal(){
+  document.getElementById('modal').classList.remove('open');
+  state.requestDate = null;
+}
+
+function submitRequest(){
+  if (!state.requestDate) return;
+  const endValue = document.getElementById('modalEnd').value;
+  const breakValue = Number(document.getElementById('modalBreak').value || '0');
+  const note = document.getElementById('modalNote').value.trim();
+  setLoading(true, '申請を送信中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      setLoading(false);
+      closeModal();
+      showToast('申請を受け付けました');
+      loadMonth(state.selectedMonth);
+    })
+    .withFailureHandler(err => {
+      setLoading(false);
+      alert(err && err.message ? err.message : err);
+    })
+    .submitVisitAttendanceRequest({ targetDate: state.requestDate, endTime: endValue, breakMinutes: breakValue, note });
+}
+
+function handleAdminUpdate(id){
+  const select = document.getElementById(`status-${id}`);
+  const note = document.getElementById(`note-${id}`);
+  if (!select) return;
+  const status = select.value;
+  setLoading(true, '更新中…');
+  google.script.run
+    .withSuccessHandler(() => {
+      setLoading(false);
+      showToast('申請を更新しました');
+      loadMonth(state.selectedMonth);
+    })
+    .withFailureHandler(err => {
+      setLoading(false);
+      alert(err && err.message ? err.message : err);
+    })
+    .updateVisitAttendanceRequestStatus({ id, status, note: note ? note.value : '' });
+}
+
+function escapeHtml(str){
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatMinutes(minutes){
+  const total = Number(minutes) || 0;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (!h) return `${m}分`;
+  if (!m) return `${h}時間`;
+  return `${h}時間${m}分`;
+}
+
+init();
+</script>
+</body>
+</html>

@@ -69,6 +69,7 @@
   @keyframes spin{ to { transform:rotate(360deg); } }
   .toast{ position:fixed; left:50%; bottom:32px; transform:translateX(-50%); background:#1f2937; color:#fff; padding:10px 18px; border-radius:999px; font-size:0.9rem; box-shadow:0 12px 30px rgba(15,23,42,0.25); opacity:0; pointer-events:none; transition:opacity .3s ease; z-index:1600; }
   .toast.show{ opacity:1; }
+  .auto-adjust-note{ margin-top:4px; font-size:0.8rem; color:#b91c1c; }
   @media (max-width:640px){
     th,td{ font-size:0.85rem; padding:8px 6px; }
     .btn{ padding:7px 12px; font-size:0.85rem; }
@@ -387,18 +388,21 @@ function renderAttendance(){
       const statusNote = req && req.statusNote ? `<div class="muted">${escapeHtml(req.statusNote)}</div>` : '';
       const requestCell = req ? `<div class="badge ${statusClass}">${statusLabel}</div>${statusNote}` : '-';
       const button = month.canRequest ? `<button class="btn" ${status === 'pending' ? 'disabled' : ''} data-date="${record.date}">申請</button>` : '';
+      const sourceLabel = escapeHtml(record.sourceLabel || '');
+      const autoNote = record.autoAdjustmentMessage ? `<div class="auto-adjust-note">${escapeHtml(record.autoAdjustmentMessage)}</div>` : '';
+      const sourceCell = sourceLabel + autoNote;
       return `<tr>
         <td>${record.displayDate || record.date}<div class="muted">${record.weekday || ''}</div></td>
         <td>${record.start || ''}</td>
-      <td>${record.end || ''}</td>
-      <td>${record.work || ''}</td>
-      <td>${record.break || ''}</td>
-      <td>${escapeHtml(record.breakdown || '')}</td>
-      <td>${escapeHtml(record.sourceLabel || '')}</td>
-      <td>${requestCell}</td>
-      <td>${month.canRequest ? button : ''}</td>
-    </tr>`;
-  }).join('');
+        <td>${record.end || ''}</td>
+        <td>${record.work || ''}</td>
+        <td>${record.break || ''}</td>
+        <td>${escapeHtml(record.breakdown || '')}</td>
+        <td>${sourceCell}</td>
+        <td>${requestCell}</td>
+        <td>${month.canRequest ? button : ''}</td>
+      </tr>`;
+    }).join('');
   container.innerHTML = `<div class="table-wrapper"><table>
     <thead><tr><th>日付</th><th>出勤</th><th>退勤</th><th>勤務</th><th>休憩</th><th>種別内訳</th><th>区分</th><th>申請状況</th><th>${month.canRequest ? '操作' : ''}</th></tr></thead>
     <tbody>${rows}</tbody>

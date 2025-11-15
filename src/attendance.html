@@ -137,7 +137,35 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
+const MONTH_STORAGE_KEY = 'visitAttendance.selectedMonth';
+
 let state = { data: null, selectedMonth: null, requestDate: null };
+
+function getSavedMonthKey(){
+  try {
+    return localStorage.getItem(MONTH_STORAGE_KEY) || null;
+  } catch (err){
+    console.warn('[attendance] Failed to read saved month', err);
+    return null;
+  }
+}
+
+function saveSelectedMonth(key){
+  try {
+    if (key){
+      localStorage.setItem(MONTH_STORAGE_KEY, key);
+    } else {
+      localStorage.removeItem(MONTH_STORAGE_KEY);
+    }
+  } catch (err){
+    console.warn('[attendance] Failed to store month', err);
+  }
+}
+
+function isValidMonthKey(months, key){
+  if (!key || !Array.isArray(months)) return false;
+  return months.some(month => month && month.key === key);
+}
 
 function setLoading(active, text){
   const el = document.getElementById('loading');
@@ -157,10 +185,27 @@ function init(){
   setLoading(true, '読み込み中…');
   google.script.run
     .withSuccessHandler(data => {
+      const months = Array.isArray(data && data.months) ? data.months : [];
+      const defaultMonth = data && data.month ? data.month.key : null;
+      const savedMonth = getSavedMonthKey();
+      const initialMonth = isValidMonthKey(months, savedMonth) ? savedMonth : defaultMonth;
+
+      if (!isValidMonthKey(months, savedMonth) && savedMonth){
+        saveSelectedMonth(null);
+      }
+
       state.data = data;
-      state.selectedMonth = data && data.month ? data.month.key : null;
+      state.selectedMonth = initialMonth || null;
       renderAll();
       setLoading(false);
+
+      if (state.selectedMonth){
+        if (state.selectedMonth !== defaultMonth){
+          loadMonth(state.selectedMonth);
+        } else {
+          saveSelectedMonth(state.selectedMonth);
+        }
+      }
     })
     .withFailureHandler(err => {
       setLoading(false);
@@ -172,6 +217,7 @@ function init(){
 document.getElementById('monthSelect').addEventListener('change', event => {
   const value = event.target.value;
   state.selectedMonth = value;
+  saveSelectedMonth(value);
   loadMonth(value);
 });
 
@@ -185,7 +231,15 @@ function loadMonth(monthKey){
   google.script.run
     .withSuccessHandler(data => {
       state.data = data;
-      state.selectedMonth = data && data.month ? data.month.key : monthKey;
+      const months = Array.isArray(data && data.months) ? data.months : [];
+      const resolvedMonth = data && data.month ? data.month.key : monthKey;
+      if (isValidMonthKey(months, resolvedMonth)){
+        state.selectedMonth = resolvedMonth;
+        saveSelectedMonth(resolvedMonth);
+      } else {
+        state.selectedMonth = resolvedMonth;
+        saveSelectedMonth(null);
+      }
       renderAll();
       setLoading(false);
     })
@@ -217,7 +271,7 @@ function renderUser(){
 function renderMonthSelect(){
   const select = document.getElementById('monthSelect');
   const months = state.data.months || [];
-  const current = state.data.month ? state.data.month.key : state.selectedMonth;
+  const current = state.selectedMonth != null ? state.selectedMonth : (state.data.month ? state.data.month.key : null);
   select.innerHTML = months.map(m => `<option value="${m.key}" ${m.key === current ? 'selected' : ''}>${m.label}</option>`).join('');
 }
 

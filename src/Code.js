@@ -236,6 +236,10 @@ const PAYROLL_COMMISSION_LABELS = Object.freeze({
   legacy: '既存',
   horiguchi: '堀口以降'
 });
+const PAYROLL_COMMISSION_RULES = Object.freeze({
+  legacy: { monthlyThreshold: 7, amount: 1250 },
+  horiguchi: { weeklyThreshold: 30, amount: 1250 }
+});
 const PAYROLL_WITHHOLDING_LABELS = Object.freeze({
   required: 'あり',
   none: 'なし'
@@ -2341,6 +2345,163 @@ function formatPayrollCommissionLabel_(type){
   return PAYROLL_COMMISSION_LABELS[key] || PAYROLL_COMMISSION_LABELS.legacy;
 }
 
+function resolvePayrollCommissionMonthRange_(input){
+  const now = new Date();
+  let year = now.getFullYear();
+  let month = now.getMonth() + 1;
+  const text = String(input || '').trim();
+  if (text) {
+    const match = text.match(/^(\d{4})[-/](\d{1,2})$/);
+    if (match) {
+      const parsedYear = Number(match[1]);
+      const parsedMonth = Number(match[2]);
+      if (Number.isFinite(parsedYear) && Number.isFinite(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12) {
+        year = parsedYear;
+        month = parsedMonth;
+      }
+    }
+  }
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 1);
+  return { year, month, start, end };
+}
+
+function collectTreatmentCountsByStaffForRange_(startDate, endDate, tz){
+  if (!(startDate instanceof Date) || isNaN(startDate.getTime()) || !(endDate instanceof Date) || isNaN(endDate.getTime())) {
+    throw new Error('歩合計算期間が不正です。');
+  }
+  const startMs = startDate.getTime();
+  const endMs = endDate.getTime();
+  if (!(endMs > startMs)) {
+    throw new Error('歩合計算期間の指定が不正です。');
+  }
+  const sheet = sh('施術録');
+  const lastRow = sheet.getLastRow();
+  const width = Math.min(12, sheet.getMaxColumns());
+  const results = new Map();
+  if (lastRow < 2) {
+    return results;
+  }
+  const rows = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const format = 'yyyy-MM-dd';
+  const timezone = tz || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  rows.forEach(row => {
+    const ts = parseDateValue_(row[0]);
+    if (!ts) return;
+    const whenMs = ts.getTime();
+    if (whenMs < startMs || whenMs >= endMs) return;
+    const email = normalizeEmailKey_(row[3]);
+    if (!email) return;
+    const categoryLabel = width >= 8 ? String(row[7] || '').trim() : '';
+    if (!categoryLabel) return;
+    let entry = results.get(email);
+    if (!entry) {
+      entry = { totalCount: 0, byDate: new Map() };
+      results.set(email, entry);
+    }
+    entry.totalCount += 1;
+    const dateKey = Utilities.formatDate(ts, timezone, format);
+    let dayEntry = entry.byDate.get(dateKey);
+    if (!dayEntry) {
+      const dateValue = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
+      dayEntry = { count: 0, dateValue };
+      entry.byDate.set(dateKey, dayEntry);
+    }
+    dayEntry.count += 1;
+  });
+  return results;
+}
+
+function buildPayrollMonthWeekRanges_(startDate, endDate){
+  const ranges = [];
+  if (!(startDate instanceof Date) || isNaN(startDate.getTime()) || !(endDate instanceof Date) || isNaN(endDate.getTime())) {
+    return ranges;
+  }
+  let cursor = new Date(startDate.getTime());
+  while (cursor < endDate) {
+    const rangeStart = new Date(cursor.getTime());
+    const day = rangeStart.getDay();
+    const normalizedDay = day === 0 ? 7 : day;
+    const daysUntilNextMonday = 8 - normalizedDay;
+    const rangeEnd = new Date(rangeStart.getTime());
+    rangeEnd.setDate(rangeEnd.getDate() + daysUntilNextMonday);
+    if (rangeEnd > endDate) {
+      rangeEnd.setTime(endDate.getTime());
+    }
+    ranges.push({ start: rangeStart, end: new Date(rangeEnd.getTime()) });
+    cursor = rangeEnd;
+  }
+  return ranges;
+}
+
+function sumTreatmentCountsInRange_(entry, rangeStart, rangeEnd){
+  if (!entry || !entry.byDate || !(rangeStart instanceof Date) || !(rangeEnd instanceof Date)) {
+    return 0;
+  }
+  let total = 0;
+  entry.byDate.forEach(dayEntry => {
+    if (!dayEntry || !(dayEntry.dateValue instanceof Date)) return;
+    if (dayEntry.dateValue >= rangeStart && dayEntry.dateValue < rangeEnd) {
+      const value = Number(dayEntry.count) || 0;
+      total += value;
+    }
+  });
+  return total;
+}
+
+function buildPayrollCommissionBreakdown_(record, countsEntry, options){
+  const tz = (options && options.tz) || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const weekRanges = options && Array.isArray(options.weekRanges) ? options.weekRanges : [];
+  const logic = normalizePayrollCommissionLogicType_(record && record.commissionLogic);
+  const rules = PAYROLL_COMMISSION_RULES[logic] || PAYROLL_COMMISSION_RULES.legacy;
+  const totalTreatments = countsEntry ? Number(countsEntry.totalCount) || 0 : 0;
+  const base = {
+    id: record && record.id || '',
+    name: record && record.name || '',
+    email: record && record.email || '',
+    commissionLogic: logic,
+    commissionLabel: formatPayrollCommissionLabel_(logic),
+    totalTreatments
+  };
+  if (logic === 'horiguchi') {
+    const threshold = Number(rules.weeklyThreshold) || 0;
+    const weeklyDetails = weekRanges.map(range => {
+      const count = sumTreatmentCountsInRange_(countsEntry, range.start, range.end);
+      const achieved = threshold > 0 ? count >= threshold : false;
+      const endInclusive = new Date(range.end.getTime() - 1);
+      return {
+        startDate: Utilities.formatDate(range.start, tz, 'yyyy-MM-dd'),
+        endDate: Utilities.formatDate(endInclusive, tz, 'yyyy-MM-dd'),
+        count,
+        achieved
+      };
+    });
+    const achievedWeeks = weeklyDetails.filter(detail => detail.achieved).length;
+    const amountPerWeek = Number(rules.amount) || 0;
+    return {
+      ...base,
+      commissionAmount: achievedWeeks * amountPerWeek,
+      breakdown: {
+        type: 'weekly',
+        weeklyThreshold: threshold,
+        achievedWeeks,
+        weeks: weeklyDetails
+      }
+    };
+  }
+  const monthlyThreshold = Number(rules.monthlyThreshold) || 0;
+  const achieved = monthlyThreshold > 0 ? totalTreatments >= monthlyThreshold : false;
+  return {
+    ...base,
+    commissionAmount: achieved ? (Number(rules.amount) || 0) : 0,
+    breakdown: {
+      type: 'monthly',
+      monthlyThreshold,
+      achieved
+    }
+  };
+}
+
 function normalizePayrollWithholdingType_(value){
   const text = String(value || '').trim().toLowerCase();
   if (!text || text === 'none' || text === '0' || text === 'なし' || text === '無' || text === 'off') {
@@ -2704,6 +2865,35 @@ function payrollDeleteGrade(payload){
     }
     context.sheet.deleteRow(record.rowIndex);
     return { ok: true };
+  });
+}
+
+function payrollCalculateCommissionSummary(payload){
+  return wrapPayrollResponse_('payrollCalculateCommissionSummary', () => {
+    const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+    const { year, month, start, end } = resolvePayrollCommissionMonthRange_(payload && payload.month);
+    const weekRanges = buildPayrollMonthWeekRanges_(start, end);
+    const countsMap = collectTreatmentCountsByStaffForRange_(start, end, tz);
+    const employees = readPayrollEmployeeRecords_().records || [];
+    const summaries = employees.map(record => {
+      const emailKey = normalizeEmailKey_(record && record.email);
+      const countsEntry = emailKey ? countsMap.get(emailKey) : null;
+      return buildPayrollCommissionBreakdown_(record, countsEntry, { tz, weekRanges });
+    });
+    const label = Utilities.formatDate(start, tz, 'yyyy年MM月');
+    return {
+      ok: true,
+      month: { year, month, label },
+      range: {
+        startDate: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
+        endDateExclusive: Utilities.formatDate(end, tz, 'yyyy-MM-dd')
+      },
+      weeks: weekRanges.map(range => ({
+        startDate: Utilities.formatDate(range.start, tz, 'yyyy-MM-dd'),
+        endDate: Utilities.formatDate(new Date(range.end.getTime() - 1), tz, 'yyyy-MM-dd')
+      })),
+      employees: summaries
+    };
   });
 }
 

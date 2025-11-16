@@ -26,6 +26,12 @@
   .paid-leave-widget{ background:rgba(37,99,235,0.08); border-radius:12px; padding:8px 12px; font-size:0.9rem; color:#1f2937; display:flex; flex-direction:column; gap:2px; min-width:160px; }
   .paid-leave-widget strong{ color:#2563eb; font-size:1.05rem; }
   .paid-leave-widget-meta{ font-size:0.8rem; color:var(--muted); }
+  .paid-leave-type-group{ display:flex; flex-wrap:wrap; gap:8px; }
+  .paid-leave-type-option{ display:flex; align-items:center; gap:4px; padding:6px 10px; border:1px solid var(--border); border-radius:999px; font-size:0.9rem; background:#fff; }
+  .paid-leave-type-option input{ margin:0; }
+  .paid-leave-info{ background:rgba(37,99,235,0.06); border-radius:12px; padding:10px 12px; font-size:0.85rem; color:#1f2937; display:flex; flex-direction:column; gap:4px; }
+  .paid-leave-info-line{ display:flex; justify-content:space-between; gap:12px; }
+  .paid-leave-error{ color:#b91c1c; font-size:0.85rem; margin-top:6px; }
   .control{ display:flex; flex-direction:column; gap:6px; font-size:0.95rem; }
   select,input,textarea{ padding:8px 10px; border:1px solid var(--border); border-radius:10px; font-size:0.95rem; background:#fff; color:inherit; }
   textarea{ resize:vertical; min-height:96px; }
@@ -66,7 +72,10 @@
   .loading.hidden{ display:none; }
   .loading-box{ background:#fff; border-radius:14px; padding:12px 18px; display:flex; align-items:center; gap:10px; box-shadow:0 18px 40px rgba(15,23,42,0.18); }
   .spinner{ width:18px; height:18px; border-radius:50%; border:3px solid rgba(37,99,235,0.25); border-top-color:var(--brand); animation:spin .75s linear infinite; }
+  .spinner.small{ width:14px; height:14px; border-width:2px; }
   @keyframes spin{ to { transform:rotate(360deg); } }
+  .paid-leave-status{ display:flex; align-items:center; gap:8px; font-size:0.85rem; color:var(--muted); margin-top:8px; }
+  .paid-leave-type-group.disabled{ opacity:0.6; pointer-events:none; }
   .toast{ position:fixed; left:50%; bottom:32px; transform:translateX(-50%); background:#1f2937; color:#fff; padding:10px 18px; border-radius:999px; font-size:0.9rem; box-shadow:0 12px 30px rgba(15,23,42,0.25); opacity:0; pointer-events:none; transition:opacity .3s ease; z-index:1600; }
   .toast.show{ opacity:1; }
   .auto-adjust-note{ margin-top:4px; font-size:0.8rem; color:#b91c1c; }
@@ -163,6 +172,25 @@
         <input id="paidLeaveDate" type="date" required />
       </div>
       <div class="form-row">
+        <label>取得種別</label>
+        <div class="paid-leave-type-group" id="paidLeaveTypeGroup">
+          <label class="paid-leave-type-option"><input type="radio" name="paidLeaveType" value="full" checked />全日</label>
+          <label class="paid-leave-type-option"><input type="radio" name="paidLeaveType" value="amHalf" />半日（午前）</label>
+          <label class="paid-leave-type-option"><input type="radio" name="paidLeaveType" value="pmHalf" />半日（午後）</label>
+        </div>
+        <div id="paidLeaveHalfNotice" class="paid-leave-error" hidden></div>
+      </div>
+      <div id="paidLeaveInfo" class="paid-leave-info" hidden>
+        <div class="paid-leave-info-line"><span>所定勤務時間</span><strong id="paidLeaveShiftText"></strong></div>
+        <div class="paid-leave-info-line"><span>有給計上</span><strong id="paidLeaveWorkText"></strong></div>
+        <div class="paid-leave-info-line"><span>半休目安</span><strong id="paidLeaveHalfText"></strong></div>
+      </div>
+      <div id="paidLeavePlanStatus" class="paid-leave-status" hidden aria-live="polite">
+        <span class="spinner small" aria-hidden="true"></span>
+        <span>取得日の勤務時間を計算中です…</span>
+      </div>
+      <div id="paidLeavePlanError" class="paid-leave-error" hidden></div>
+      <div class="form-row">
         <label for="paidLeaveReason">理由（任意）</label>
         <textarea id="paidLeaveReason" placeholder="任意で記入できます"></textarea>
       </div>
@@ -182,7 +210,7 @@
 <script>
 const MONTH_STORAGE_KEY = 'visitAttendance.selectedMonth';
 
-let state = { data: null, selectedMonth: null, requestDate: null, paidLeaveDate: null };
+let state = { data: null, selectedMonth: null, requestDate: null, paidLeaveDate: null, paidLeavePlan: null, paidLeavePlanToken: 0 };
 
 function getSavedMonthKey(){
   try {
@@ -282,6 +310,17 @@ if (paidLeaveButton) {
   paidLeaveButton.addEventListener('click', openPaidLeaveModal);
 }
 
+const paidLeaveTypeInputs = document.querySelectorAll('input[name="paidLeaveType"]');
+if (paidLeaveTypeInputs.length) {
+  paidLeaveTypeInputs.forEach(input => {
+    input.addEventListener('change', handlePaidLeaveTypeChange);
+  });
+}
+const paidLeaveDateField = document.getElementById('paidLeaveDate');
+if (paidLeaveDateField) {
+  paidLeaveDateField.addEventListener('change', handlePaidLeaveFieldChange);
+}
+
 function loadMonth(monthKey){
   setLoading(true, '読み込み中…');
   google.script.run
@@ -322,7 +361,20 @@ function renderUser(){
   const user = state.data.user || {};
   const name = user.displayName || '';
   const email = user.email || '';
-  info.textContent = name && email ? `${name} (${email})` : email;
+  const profile = user.staffProfile || {};
+  const employmentLabel = profile.employmentLabel || user.employmentLabel || '';
+  const parts = [];
+  if (name && email) {
+    parts.push(`${name} (${email})`);
+  } else if (email) {
+    parts.push(email);
+  } else if (name) {
+    parts.push(name);
+  }
+  if (employmentLabel) {
+    parts.push(`区分: ${employmentLabel}`);
+  }
+  info.textContent = parts.join(' / ');
 }
 
 function renderMonthSelect(){
@@ -351,6 +403,9 @@ function renderPaidLeaveWidget(){
     return;
   }
   widget.hidden = false;
+  const employmentLabel = state.data.user && state.data.user.staffProfile && state.data.user.staffProfile.employmentLabel
+    ? state.data.user.staffProfile.employmentLabel
+    : '';
   const remainingRaw = Number(info.remainingDays);
   const remaining = Number.isFinite(remainingRaw) ? remainingRaw : (Number(info.remaining) || 0);
   const usedRaw = Number(info.usedDays);
@@ -365,6 +420,7 @@ function renderPaidLeaveWidget(){
   widget.innerHTML = `
     <div>有給残：<strong>${remainingDisplay}</strong>日</div>
     <div class="paid-leave-widget-meta">取得 ${usedDisplay}日 / 付与 ${quotaDisplay}日（${year}年）</div>
+    ${employmentLabel ? `<div class="paid-leave-widget-meta">勤務区分：${employmentLabel}</div>` : ''}
     ${required != null ? `<div class="paid-leave-widget-meta">義務取得 ${required}日</div>` : ''}
   `;
 }
@@ -426,10 +482,14 @@ function renderHistory(){
     const adminNote = req.statusNote ? `<div class="history-note muted">対応メモ: ${escapeHtml(req.statusNote)}</div>` : '';
     const isPaidLeave = req.type === 'paidLeave' || req.type === 'paidleave';
     const typeLabel = req.typeLabel || (isPaidLeave ? '有給申請' : '勤怠修正申請');
+    const paidLeaveDetail = req.paidLeaveDetail || null;
     const detail = isPaidLeave
-      ? '有給（全日）'
+      ? `有給（${escapeHtml(paidLeaveDetail && paidLeaveDetail.leaveLabel ? paidLeaveDetail.leaveLabel : '全日')} / ${escapeHtml(paidLeaveDetail && paidLeaveDetail.workText ? paidLeaveDetail.workText : '-')}` + '）'
       : `退勤 ${req.end || '-'} / 休憩 ${req.breakText || '-'}`;
     const weekday = req.targetWeekday || '';
+    const shiftMeta = isPaidLeave && paidLeaveDetail && paidLeaveDetail.shiftText
+      ? `<span>所定: ${escapeHtml(paidLeaveDetail.shiftText)}</span>`
+      : '';
     let noteContent = '';
     if (req.note) {
       noteContent = `<div class="history-note">${escapeHtml(req.note)}</div>`;
@@ -444,6 +504,7 @@ function renderHistory(){
         <span>${escapeHtml(detail)}</span>
         <span>申請日時: ${req.createdAtText || '-'}</span>
         ${req.statusUpdatedAtText ? `<span>最終更新: ${req.statusUpdatedAtText}</span>` : ''}
+        ${shiftMeta}
       </div>
       ${noteContent}
       ${adminNote}
@@ -508,9 +569,15 @@ function renderAdminPaidLeaveRequests(requests){
   const rows = requests.map(req => {
     const noteId = `paidleave-note-${req.id}`;
     const reason = req.note ? escapeHtml(req.note) : '<span class="muted">理由なし</span>';
+    const detail = req.paidLeaveDetail || null;
+    const leaveSummary = detail
+      ? `${escapeHtml(detail.leaveLabel || '有給')} / ${escapeHtml(detail.workText || '-')}`
+      : '有給';
+    const shiftLine = detail && detail.shiftText ? `<div class="muted">所定: ${escapeHtml(detail.shiftText)}</div>` : '';
     return `<tr>
       <td>${escapeHtml(req.targetDate)}<div class="muted">${escapeHtml(req.targetWeekday||'')}</div></td>
       <td>${escapeHtml(req.targetEmail || '')}</td>
+      <td>${leaveSummary}${shiftLine}</td>
       <td>${reason}</td>
       <td>
         <textarea id="${noteId}" class="admin-paidleave-note" placeholder="対応メモ"></textarea>
@@ -522,9 +589,191 @@ function renderAdminPaidLeaveRequests(requests){
     </tr>`;
   }).join('');
   container.innerHTML = `<div class="table-wrapper admin-table"><table>
-    <thead><tr><th>対象日</th><th>スタッフ</th><th>申請理由</th><th>対応</th></tr></thead>
+    <thead><tr><th>対象日</th><th>スタッフ</th><th>取得内容</th><th>申請理由</th><th>対応</th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
+}
+
+function getSelectedPaidLeaveType(){
+  const selected = document.querySelector('input[name="paidLeaveType"]:checked');
+  return selected ? selected.value : 'full';
+}
+
+function handlePaidLeaveTypeChange(){
+  refreshPaidLeavePreview();
+}
+
+function handlePaidLeaveFieldChange(){
+  refreshPaidLeavePreview();
+}
+
+function refreshPaidLeavePreview(){
+  const dateInput = document.getElementById('paidLeaveDate');
+  const dateValue = dateInput ? dateInput.value : '';
+  const type = getSelectedPaidLeaveType();
+  state.paidLeavePlan = null;
+  if (!dateValue) {
+    state.paidLeavePlan = null;
+    updatePaidLeaveInfo(null, { message: '取得日を選択してください' });
+    return;
+  }
+  const token = Date.now();
+  state.paidLeavePlanToken = token;
+  updatePaidLeaveInfo(null, { loading: true });
+  google.script.run
+    .withSuccessHandler(response => {
+      if (state.paidLeavePlanToken !== token) return;
+      if (!response || !response.ok) {
+        updatePaidLeaveInfo(null, { error: response && response.error ? response.error : 'プレビューに失敗しました' });
+        return;
+      }
+      state.paidLeavePlan = response.plan || null;
+      updatePaidLeaveInfo(state.paidLeavePlan, { blockedReason: response.blockedReason || '' });
+    })
+    .withFailureHandler(err => {
+      if (state.paidLeavePlanToken !== token) return;
+      state.paidLeavePlan = null;
+      updatePaidLeaveInfo(null, { error: err && err.message ? err.message : String(err) });
+    })
+    .previewPaidLeavePlan({ date: dateValue, type });
+}
+
+function updatePaidLeaveInfo(plan, options){
+  const infoBox = document.getElementById('paidLeaveInfo');
+  const shiftText = document.getElementById('paidLeaveShiftText');
+  const workText = document.getElementById('paidLeaveWorkText');
+  const halfText = document.getElementById('paidLeaveHalfText');
+  const errorBox = document.getElementById('paidLeavePlanError');
+  const halfNotice = document.getElementById('paidLeaveHalfNotice');
+  const statusBox = document.getElementById('paidLeavePlanStatus');
+  const submitButton = document.querySelector('#paidLeaveForm button[type="submit"]');
+  const isLoading = options && options.loading;
+  const errorMessage = options && options.error;
+  const helperMessage = options && options.message;
+  const blockedReason = options && options.blockedReason;
+  const dateInput = document.getElementById('paidLeaveDate');
+  const typeInputs = document.querySelectorAll('input[name="paidLeaveType"]');
+  const typeGroup = document.getElementById('paidLeaveTypeGroup');
+  const halfInputs = document.querySelectorAll('input[name="paidLeaveType"][value="amHalf"], input[name="paidLeaveType"][value="pmHalf"]');
+
+  if (submitButton) {
+    submitButton.disabled = true;
+  }
+  if (dateInput) {
+    dateInput.disabled = false;
+  }
+  typeInputs.forEach(input => {
+    input.disabled = false;
+  });
+  if (typeGroup) {
+    typeGroup.classList.remove('disabled');
+  }
+  if (infoBox) {
+    infoBox.hidden = true;
+  }
+  if (errorBox) {
+    errorBox.hidden = true;
+    errorBox.textContent = '';
+  }
+  if (halfNotice) {
+    halfNotice.hidden = true;
+    halfNotice.textContent = '';
+  }
+  if (statusBox) {
+    statusBox.hidden = true;
+  }
+  halfInputs.forEach(input => {
+    input.disabled = false;
+  });
+
+  if (isLoading) {
+    if (dateInput) {
+      dateInput.disabled = true;
+    }
+    typeInputs.forEach(input => {
+      input.disabled = true;
+    });
+    if (typeGroup) {
+      typeGroup.classList.add('disabled');
+    }
+    if (statusBox) {
+      statusBox.hidden = false;
+    }
+    if (infoBox) {
+      infoBox.hidden = true;
+    }
+    return;
+  }
+
+  if (errorMessage) {
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = errorMessage;
+    }
+    return;
+  }
+
+  if (helperMessage && !plan) {
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = helperMessage;
+    }
+    return;
+  }
+
+  if (!plan) {
+    return;
+  }
+
+  if (infoBox) {
+    infoBox.hidden = false;
+  }
+  if (shiftText) {
+    shiftText.textContent = plan.shiftText || '—';
+  }
+  if (workText) {
+    workText.textContent = plan.workText || '—';
+  }
+  if (halfText) {
+    halfText.textContent = plan.halfWorkText || '—';
+  }
+
+  const halfAllowed = !!plan.halfAvailable;
+  halfInputs.forEach(input => {
+    input.disabled = !halfAllowed;
+  });
+  if (!halfAllowed) {
+    if (halfNotice) {
+      halfNotice.hidden = false;
+      halfNotice.textContent = 'この日の所定勤務時間では半休を取得できません。';
+    }
+    const selectedType = getSelectedPaidLeaveType();
+    if (selectedType === 'amHalf' || selectedType === 'pmHalf') {
+      const fullInput = document.querySelector('input[name="paidLeaveType"][value="full"]');
+      if (fullInput) {
+        if (!fullInput.checked) {
+          fullInput.checked = true;
+          state.paidLeavePlan = null;
+          refreshPaidLeavePreview();
+          return;
+        }
+      }
+    }
+  }
+  if (blockedReason && (getSelectedPaidLeaveType() === 'amHalf' || getSelectedPaidLeaveType() === 'pmHalf')) {
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = blockedReason;
+    }
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+    return;
+  }
+
+  if (submitButton) {
+    submitButton.disabled = false;
+  }
 }
 
 function openModal(date){
@@ -590,6 +839,13 @@ function openPaidLeaveModal(){
   const reasonInput = document.getElementById('paidLeaveReason');
   const today = new Date();
   const minDate = new Date(today.getFullYear(), today.getMonth(), 1);
+  state.paidLeavePlan = null;
+  state.paidLeavePlanToken = 0;
+  const fullType = document.querySelector('input[name="paidLeaveType"][value="full"]');
+  if (fullType) {
+    fullType.checked = true;
+  }
+  updatePaidLeaveInfo(null, { message: '取得日を選択してください' });
   if (dateInput) {
     dateInput.min = formatDateInput(minDate);
     let defaultDate = today;
@@ -605,6 +861,7 @@ function openPaidLeaveModal(){
     reasonInput.value = '';
   }
   modal.classList.add('open');
+  refreshPaidLeavePreview();
 }
 
 function closePaidLeaveModal(){
@@ -612,6 +869,7 @@ function closePaidLeaveModal(){
   if (modal) {
     modal.classList.remove('open');
   }
+  state.paidLeavePlan = null;
 }
 
 function submitPaidLeave(){
@@ -620,6 +878,15 @@ function submitPaidLeave(){
   const dateValue = dateInput.value;
   if (!dateValue) {
     alert('有給申請の日付を選択してください');
+    return;
+  }
+  const selectedType = getSelectedPaidLeaveType();
+  if (!state.paidLeavePlan || state.paidLeavePlan.leaveType !== selectedType) {
+    alert('有給の計算が完了するまでお待ちください');
+    return;
+  }
+  if ((selectedType === 'amHalf' || selectedType === 'pmHalf') && !state.paidLeavePlan.halfAvailable) {
+    alert('この日の所定勤務時間では半休を取得できません');
     return;
   }
   const reasonInput = document.getElementById('paidLeaveReason');
@@ -637,7 +904,7 @@ function submitPaidLeave(){
       setLoading(false);
       alert(err && err.message ? err.message : err);
     })
-    .submitPaidLeaveRequest({ date: dateValue, note: reason });
+    .submitPaidLeaveRequest({ date: dateValue, note: reason, leaveType: selectedType });
 }
 
 function handleAdminUpdate(id){

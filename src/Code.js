@@ -154,9 +154,20 @@ const VISIT_ATTENDANCE_REQUEST_SHEET_HEADER = [
 const VISIT_ATTENDANCE_REQUEST_TYPE_CORRECTION = 'correction';
 const VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE = 'paidLeave';
 const VISIT_ATTENDANCE_STAFF_SHEET_NAME = 'VisitAttendanceStaff';
-const VISIT_ATTENDANCE_STAFF_SHEET_HEADER = ['メール','表示名','年間有給付与日数'];
+const VISIT_ATTENDANCE_STAFF_SHEET_HEADER = ['メール','表示名','年間有給付与日数','雇用区分','AlbyteスタッフID','標準勤務時間(分)'];
 const DEFAULT_ANNUAL_PAID_LEAVE_DAYS = 10;
 const PAID_LEAVE_DEFAULT_WORK_MINUTES = 8 * 60;
+const PAID_LEAVE_HALF_MINIMUM_MINUTES = 2 * 60;
+const PAID_LEAVE_EMPLOYMENT_LABELS = Object.freeze({
+  employee: '社員',
+  parttime: 'アルバイト',
+  daily: '日給'
+});
+const PAID_LEAVE_TYPE_LABELS = Object.freeze({
+  full: '全日',
+  amHalf: '半日（午前）',
+  pmHalf: '半日（午後）'
+});
 
 const ALBYTE_STAFF_SHEET_NAME = 'AlbyteStaff';
 const ALBYTE_ATTENDANCE_SHEET_NAME = 'AlbyteAttendance';
@@ -7550,19 +7561,275 @@ function readVisitAttendanceStaffSettings_(){
     if (!Number.isFinite(quota) || quota < 0) {
       quota = DEFAULT_ANNUAL_PAID_LEAVE_DAYS;
     }
+    const employmentType = normalizeEmploymentType_(row[3]);
+    const employmentLabel = getEmploymentLabel_(employmentType);
+    const albyteStaffId = String(row[4] || '').trim();
+    let defaultShiftMinutes = Number(row[5]);
+    if (!Number.isFinite(defaultShiftMinutes) || defaultShiftMinutes <= 0) {
+      const defaultText = String(row[5] || '').trim();
+      if (defaultText) {
+        const parsedDefault = Number(defaultText.replace(/[^0-9.-]/g, ''));
+        if (Number.isFinite(parsedDefault) && parsedDefault > 0) {
+          defaultShiftMinutes = parsedDefault;
+        }
+      }
+    }
+    if (!Number.isFinite(defaultShiftMinutes) || defaultShiftMinutes <= 0) {
+      defaultShiftMinutes = null;
+    }
+    const displayName = String(row[1] || '').trim() || resolveStaffDisplayName_(email) || '';
     map.set(email, {
       email,
-      displayName: String(row[1] || '').trim(),
-      quotaDays: quota
+      displayName,
+      quotaDays: quota,
+      employmentType,
+      employmentLabel,
+      albyteStaffId,
+      defaultShiftMinutes
     });
   });
   return map;
 }
 
-function resolveAnnualPaidLeaveQuota_(email){
+function normalizeEmploymentType_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return 'employee';
+  if (text === 'parttime' || text === 'part-time' || text === 'hourly' || text === 'アルバイト' || text === 'バイト') {
+    return 'partTime';
+  }
+  if (text === 'daily' || text === '日給') {
+    return 'daily';
+  }
+  return 'employee';
+}
+
+function getEmploymentLabel_(type){
+  const key = String(type || '').toLowerCase();
+  if (PAID_LEAVE_EMPLOYMENT_LABELS[key]) {
+    return PAID_LEAVE_EMPLOYMENT_LABELS[key];
+  }
+  return PAID_LEAVE_EMPLOYMENT_LABELS.employee;
+}
+
+function normalizePaidLeaveRequestType_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return 'full';
+  if (['am','amhalf','am_half','half_am','amhalfday','amhalfday'].indexOf(text) !== -1) {
+    return 'amHalf';
+  }
+  if (['pm','pmhalf','pm_half','half_pm','pmhalfday'].indexOf(text) !== -1) {
+    return 'pmHalf';
+  }
+  if (text === 'half' || text === 'halfday') {
+    return 'pmHalf';
+  }
+  return 'full';
+}
+
+function getPaidLeaveTypeLabel_(type){
+  const normalized = normalizePaidLeaveRequestType_(type);
+  return PAID_LEAVE_TYPE_LABELS[normalized] || PAID_LEAVE_TYPE_LABELS.full;
+}
+
+function roundMinutesToIncrement_(value, increment){
+  if (!Number.isFinite(value)) return NaN;
+  const unit = Number.isFinite(increment) && increment > 0 ? increment : VISIT_ATTENDANCE_ROUNDING_MINUTES;
+  return Math.round(value / unit) * unit;
+}
+
+function formatMinutesRangeText_(startMinutes, endMinutes){
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) return '';
+  return formatMinutesAsTimeText_(startMinutes) + '〜' + formatMinutesAsTimeText_(endMinutes);
+}
+
+function resolveVisitAttendanceStaffProfile_(email, options){
+  const normalized = normalizeEmailKey_(email);
+  const settings = options && options.staffSettings instanceof Map ? options.staffSettings : readVisitAttendanceStaffSettings_();
+  if (normalized && settings.has(normalized)) {
+    return settings.get(normalized);
+  }
+  return {
+    email: normalized || '',
+    displayName: resolveStaffDisplayName_(normalized) || '',
+    quotaDays: DEFAULT_ANNUAL_PAID_LEAVE_DAYS,
+    employmentType: 'employee',
+    employmentLabel: getEmploymentLabel_('employee'),
+    albyteStaffId: '',
+    defaultShiftMinutes: null
+  };
+}
+
+function resolveVisitAttendanceShiftForProfile_(profile, targetDay, options){
+  if (!profile || String(profile.employmentType || '').toLowerCase() !== 'parttime') {
+    return null;
+  }
+  const tz = (options && options.tz) || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const context = options && options.shiftContext ? options.shiftContext : readAlbyteShiftRecords_();
+  const dateKey = Utilities.formatDate(targetDay, tz, 'yyyy-MM-dd');
+  const records = Array.isArray(context && context.records) ? context.records : [];
+  let match = null;
+  if (profile.albyteStaffId) {
+    match = records.find(record => record && record.dateKey === dateKey && record.staffId === profile.albyteStaffId);
+  }
+  if (!match) {
+    const normalizedName = normalizeAlbyteName_(profile.displayName || '');
+    if (normalizedName) {
+      match = records.find(record => record && record.dateKey === dateKey && record.normalizedName === normalizedName);
+    }
+  }
+  if (!match) {
+    return null;
+  }
+  let startMinutes = Number(match.startMinutes);
+  let endMinutes = Number(match.endMinutes);
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || endMinutes <= startMinutes) {
+    return null;
+  }
+  startMinutes = roundMinutesToIncrement_(startMinutes, VISIT_ATTENDANCE_ROUNDING_MINUTES);
+  endMinutes = roundMinutesToIncrement_(endMinutes, VISIT_ATTENDANCE_ROUNDING_MINUTES);
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || endMinutes <= startMinutes) {
+    return null;
+  }
+  return {
+    startMinutes,
+    endMinutes,
+    source: 'albyte'
+  };
+}
+
+function buildPaidLeavePlan_(email, targetDay, options){
+  if (!(targetDay instanceof Date) || isNaN(targetDay.getTime())) {
+    throw new Error('対象日を解析できませんでした');
+  }
+  const normalizedEmail = normalizeEmailKey_(email);
+  if (!normalizedEmail) {
+    throw new Error('スタッフ情報を取得できませんでした');
+  }
+  const tz = (options && options.tz) || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const staffSettings = options && options.staffSettings instanceof Map ? options.staffSettings : readVisitAttendanceStaffSettings_();
+  const profile = resolveVisitAttendanceStaffProfile_(normalizedEmail, { staffSettings });
+  const employmentType = String(profile && profile.employmentType || 'employee').toLowerCase();
+  let shiftStartMinutes = VISIT_ATTENDANCE_WORK_START_MINUTES;
+  let shiftEndMinutes = shiftStartMinutes + PAID_LEAVE_DEFAULT_WORK_MINUTES;
+  let shiftSource = 'default';
+  if (employmentType === 'parttime') {
+    const shift = resolveVisitAttendanceShiftForProfile_(profile, targetDay, { tz, shiftContext: options && options.shiftContext });
+    if (shift) {
+      shiftStartMinutes = shift.startMinutes;
+      shiftEndMinutes = shift.endMinutes;
+      shiftSource = shift.source || 'albyte';
+    } else if (Number.isFinite(profile.defaultShiftMinutes) && profile.defaultShiftMinutes > 0) {
+      shiftEndMinutes = shiftStartMinutes + profile.defaultShiftMinutes;
+      shiftSource = 'staffDefault';
+    } else {
+      throw new Error('この日の予定勤務時間が登録されていません。先にシフトを登録してください。');
+    }
+  }
+  let fullWorkMinutes = employmentType === 'employee'
+    ? PAID_LEAVE_DEFAULT_WORK_MINUTES
+    : Math.max(0, shiftEndMinutes - shiftStartMinutes);
+  if (!Number.isFinite(fullWorkMinutes) || fullWorkMinutes <= 0) {
+    fullWorkMinutes = PAID_LEAVE_DEFAULT_WORK_MINUTES;
+  }
+  const breakMinutes = 0;
+  const requestedType = normalizePaidLeaveRequestType_(options && options.requestType);
+  const halfWorkMinutes = Math.max(
+    VISIT_ATTENDANCE_ROUNDING_MINUTES,
+    roundMinutesToIncrement_(fullWorkMinutes / 2, VISIT_ATTENDANCE_ROUNDING_MINUTES)
+  );
+  const halfAvailable = fullWorkMinutes >= PAID_LEAVE_HALF_MINIMUM_MINUTES;
+  let leaveType = requestedType;
+  let workMinutes = fullWorkMinutes;
+  let startMinutes = shiftStartMinutes;
+  let blockedReason = '';
+  if ((leaveType === 'amHalf' || leaveType === 'pmHalf')) {
+    if (!halfAvailable) {
+      blockedReason = 'この日の所定勤務時間では半休を取得できません。';
+    }
+    workMinutes = Math.min(fullWorkMinutes, halfWorkMinutes);
+    if (leaveType === 'amHalf') {
+      startMinutes = shiftStartMinutes + Math.max(0, fullWorkMinutes - workMinutes);
+    } else {
+      startMinutes = shiftStartMinutes;
+    }
+  }
+  workMinutes = roundMinutesToIncrement_(workMinutes, VISIT_ATTENDANCE_ROUNDING_MINUTES);
+  startMinutes = roundMinutesToIncrement_(startMinutes, VISIT_ATTENDANCE_ROUNDING_MINUTES);
+  if (!Number.isFinite(workMinutes) || workMinutes <= 0) {
+    workMinutes = PAID_LEAVE_DEFAULT_WORK_MINUTES;
+  }
+  if (!Number.isFinite(startMinutes)) {
+    startMinutes = VISIT_ATTENDANCE_WORK_START_MINUTES;
+  }
+  const endMinutes = startMinutes + workMinutes;
+  const plan = {
+    planVersion: 'paidLeave/v2',
+    email: normalizedEmail,
+    employmentType,
+    employmentLabel: profile && profile.employmentLabel ? profile.employmentLabel : getEmploymentLabel_(employmentType),
+    leaveType,
+    leaveLabel: getPaidLeaveTypeLabel_(leaveType),
+    workMinutes,
+    fullWorkMinutes,
+    halfWorkMinutes,
+    breakMinutes,
+    startMinutes,
+    endMinutes,
+    shiftStartMinutes,
+    shiftEndMinutes,
+    shiftText: formatMinutesRangeText_(shiftStartMinutes, shiftEndMinutes),
+    shiftSource,
+    halfAvailable,
+    blockedReason
+  };
+  plan.workText = formatDurationText_(plan.workMinutes);
+  plan.fullWorkText = formatDurationText_(plan.fullWorkMinutes);
+  plan.halfWorkText = formatDurationText_(plan.halfWorkMinutes);
+  return plan;
+}
+
+function parsePaidLeaveRequestMetadata_(raw){
+  if (!raw && raw !== 0) return null;
+  if (typeof raw === 'object' && raw !== null) {
+    return raw;
+  }
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return null;
+  }
+}
+
+function parsePaidLeaveTargetDate_(value){
+  let targetDate = value;
+  if (targetDate instanceof Date && !isNaN(targetDate.getTime())) {
+    return new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  }
+  const raw = String(targetDate || '').trim();
+  if (!raw) {
+    throw new Error('有給申請の日付を指定してください');
+  }
+  const normalized = raw.replace(/[\.\/]/g, '-');
+  const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) {
+    throw new Error('日付の形式が不正です (YYYY-MM-DD)');
+  }
+  const year = Number(m[1]);
+  const monthIndex = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  const parsed = new Date(year, monthIndex, day);
+  if (isNaN(parsed.getTime())) {
+    throw new Error('日付の解析に失敗しました');
+  }
+  return parsed;
+}
+
+function resolveAnnualPaidLeaveQuota_(email, options){
   const normalized = normalizeEmailKey_(email);
   if (!normalized) return DEFAULT_ANNUAL_PAID_LEAVE_DAYS;
-  const settings = readVisitAttendanceStaffSettings_();
+  const settings = options && options.staffSettings instanceof Map ? options.staffSettings : readVisitAttendanceStaffSettings_();
   const entry = settings.get(normalized);
   if (entry && Number.isFinite(entry.quotaDays)) {
     return entry.quotaDays;
@@ -7817,6 +8084,23 @@ function readVisitAttendanceRequests_(options){
 
     const typeRaw = String((row[14] != null && row[14] !== '') ? row[14] : (display[14] != null ? display[14] : '')).trim().toLowerCase();
     const requestType = typeRaw || VISIT_ATTENDANCE_REQUEST_TYPE_CORRECTION;
+    let paidLeaveDetail = null;
+    if (requestType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE) {
+      const planMeta = parsePaidLeaveRequestMetadata_(row[13] != null && row[13] !== '' ? row[13] : display[13]);
+      const leaveType = planMeta && planMeta.leaveType ? planMeta.leaveType : 'full';
+      const workMinutes = Number(planMeta && planMeta.workMinutes);
+      const shiftText = planMeta && planMeta.shiftText
+        ? planMeta.shiftText
+        : formatMinutesRangeText_(planMeta && planMeta.shiftStartMinutes, planMeta && planMeta.shiftEndMinutes);
+      paidLeaveDetail = {
+        leaveType,
+        leaveLabel: getPaidLeaveTypeLabel_(leaveType),
+        workText: planMeta && planMeta.workText ? planMeta.workText : formatDurationText_(Number.isFinite(workMinutes) && workMinutes > 0 ? workMinutes : PAID_LEAVE_DEFAULT_WORK_MINUTES),
+        shiftText: shiftText || '',
+        employmentType: planMeta && planMeta.employmentType ? planMeta.employmentType : 'employee',
+        employmentLabel: planMeta && planMeta.employmentLabel ? planMeta.employmentLabel : getEmploymentLabel_(planMeta && planMeta.employmentType ? planMeta.employmentType : 'employee')
+      };
+    }
 
     results.push({
       id,
@@ -7843,6 +8127,7 @@ function readVisitAttendanceRequests_(options){
       statusNote: String(row[12] || display[12] || '').trim(),
       originalData,
       type: requestType,
+      paidLeaveDetail,
       typeLabel: requestType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE ? '有給申請' : '勤怠修正申請'
     });
   }
@@ -7911,6 +8196,8 @@ function getVisitAttendancePortalData(options){
   }
   const now = new Date();
   const range = resolveVisitAttendanceMonthRange_(options && options.month, tz, now);
+  const staffSettings = readVisitAttendanceStaffSettings_();
+  const staffProfile = resolveVisitAttendanceStaffProfile_(normalizedEmail, { staffSettings });
   const attendance = readVisitAttendanceRecordsForEmail_(normalizedEmail, { startDate: range.start, endDate: range.end, tz });
   const requests = readVisitAttendanceRequests_({ email: normalizedEmail, startDate: range.start, endDate: range.end, tz });
   const requestMap = new Map();
@@ -7937,7 +8224,7 @@ function getVisitAttendancePortalData(options){
   } : null;
 
   const currentYear = now.getFullYear();
-  const quotaDays = resolveAnnualPaidLeaveQuota_(normalizedEmail);
+  const quotaDays = resolveAnnualPaidLeaveQuota_(normalizedEmail, { staffSettings });
   const usage = calculatePaidLeaveUsageForYear_(normalizedEmail, currentYear, tz);
   const remainingDays = Math.max(0, quotaDays - (usage.usedDays || 0));
   const paidLeaveSummary = {
@@ -7952,8 +8239,11 @@ function getVisitAttendancePortalData(options){
     ok: true,
     user: {
       email: normalizedEmail,
-      displayName: resolveStaffDisplayName_(normalizedEmail),
-      isAdmin
+      displayName: staffProfile.displayName || resolveStaffDisplayName_(normalizedEmail),
+      isAdmin,
+      employmentType: staffProfile.employmentType,
+      employmentLabel: staffProfile.employmentLabel,
+      staffProfile
     },
     timezone: tz,
     month: {
@@ -7984,6 +8274,38 @@ function getVisitAttendancePortalData(options){
   };
 }
 
+function previewPaidLeavePlan(payload){
+  assertDomain_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const email = (Session.getActiveUser() || {}).getEmail() || '';
+  const normalizedEmail = normalizeEmailKey_(email);
+  if (!normalizedEmail) {
+    throw new Error('ログインユーザーを特定できませんでした');
+  }
+  const data = payload || {};
+  try {
+    const targetDay = parsePaidLeaveTargetDate_(data.date || data.targetDate);
+    const plan = buildPaidLeavePlan_(normalizedEmail, targetDay, { tz, requestType: data.type || data.leaveType || data.kind });
+    return {
+      ok: true,
+      plan: {
+        leaveType: plan.leaveType,
+        leaveLabel: plan.leaveLabel,
+        workText: plan.workText,
+        fullWorkText: plan.fullWorkText,
+        halfWorkText: plan.halfWorkText,
+        shiftText: plan.shiftText,
+        employmentType: plan.employmentType,
+        employmentLabel: plan.employmentLabel,
+        halfAvailable: plan.halfAvailable
+      },
+      blockedReason: plan.blockedReason || ''
+    };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+}
+
 function submitPaidLeaveRequest(payload){
   assertDomain_();
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
@@ -7994,27 +8316,8 @@ function submitPaidLeaveRequest(payload){
   }
 
   const data = payload || {};
-  let targetDate = data.date || data.targetDate;
-  if (targetDate instanceof Date && !isNaN(targetDate.getTime())) {
-    targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
-  } else {
-    const raw = String(targetDate || '').trim();
-    if (!raw) {
-      throw new Error('有給申請の日付を指定してください');
-    }
-    const normalized = raw.replace(/[\.\/]/g, '-');
-    const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-    if (!m) {
-      throw new Error('日付の形式が不正です (YYYY-MM-DD)');
-    }
-    const year = Number(m[1]);
-    const monthIndex = Number(m[2]) - 1;
-    const day = Number(m[3]);
-    targetDate = new Date(year, monthIndex, day);
-  }
-  if (!(targetDate instanceof Date) || isNaN(targetDate.getTime())) {
-    throw new Error('日付の解析に失敗しました');
-  }
+  const targetDateValue = data.date || data.targetDate;
+  const targetDate = parsePaidLeaveTargetDate_(targetDateValue);
 
   const today = new Date();
   const firstOfCurrent = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -8036,6 +8339,11 @@ function submitPaidLeaveRequest(payload){
   }
 
   const note = String(data.note || data.reason || '').trim();
+  const leaveType = normalizePaidLeaveRequestType_(data.leaveType || data.type || data.kind);
+  const plan = buildPaidLeavePlan_(normalizedEmail, targetDay, { tz, requestType: leaveType });
+  if (plan.blockedReason) {
+    throw new Error(plan.blockedReason);
+  }
 
   const sheet = ensureVisitAttendanceRequestSheet_();
   const row = [
@@ -8055,6 +8363,7 @@ function submitPaidLeaveRequest(payload){
     '',
     VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE
   ];
+  row[13] = JSON.stringify(plan);
   sheet.appendRow(row);
 
   return { ok: true };
@@ -8571,22 +8880,37 @@ function updateVisitAttendanceRequestStatus(payload){
 
   if (statusRaw === 'approved') {
     if (requestType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE) {
-      let workMinutes = Number(data.workMinutes);
+      const planMeta = parsePaidLeaveRequestMetadata_(requestRow[13] != null && requestRow[13] !== '' ? requestRow[13] : requestDisplay[13]);
+      let startMinutes = Number(planMeta && planMeta.startMinutes);
+      if (!Number.isFinite(startMinutes)) {
+        startMinutes = VISIT_ATTENDANCE_WORK_START_MINUTES;
+      }
+      let workMinutes = Number(planMeta && planMeta.workMinutes);
+      if (!Number.isFinite(workMinutes) || workMinutes <= 0) {
+        workMinutes = Number(data.workMinutes);
+      }
       if (!Number.isFinite(workMinutes) || workMinutes <= 0) {
         workMinutes = PAID_LEAVE_DEFAULT_WORK_MINUTES;
       }
+      let restMinutes = Number(planMeta && planMeta.breakMinutes);
+      if (!Number.isFinite(restMinutes) || restMinutes < 0) {
+        restMinutes = 0;
+      }
+      const employmentType = String(planMeta && planMeta.employmentType || '').toLowerCase();
+      const isHourlyStaff = employmentType === 'parttime';
+      const isDailyStaff = employmentType === 'daily';
       createVisitAttendanceRecord({
         email: targetEmail,
         date: targetDay,
-        startMinutes: VISIT_ATTENDANCE_WORK_START_MINUTES,
+        startMinutes,
         workMinutes,
-        restMinutes: 0,
+        restMinutes,
         leaveType: VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE,
         source: VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE,
         flag: VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE,
         breakdown: '有給',
-        isHourlyStaff: false,
-        isDailyStaff: false
+        isHourlyStaff,
+        isDailyStaff
       });
     } else {
       const attendanceSheet = ensureVisitAttendanceSheet_();

@@ -33,6 +33,7 @@
   .section-header{ display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
   .form-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
   .form-grid label{ display:flex; flex-direction:column; gap:6px; font-size:0.9rem; }
+  .form-grid label small{ font-size:0.75rem; display:block; }
   input,select,textarea{ padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:0.95rem; background:#fff; color:inherit; }
   textarea{ min-height:80px; resize:vertical; }
   .form-actions{ display:flex; flex-wrap:wrap; gap:12px; justify-content:flex-end; }
@@ -104,7 +105,8 @@
           <select id="employmentType" required></select>
         </label>
         <label>役職/等級
-          <input id="employeeGrade" type="text" placeholder="例：院長 / S2" />
+          <input id="employeeGrade" type="text" list="gradeOptions" placeholder="例：院長 / S2" />
+          <small class="muted" id="gradeAmountHint"></small>
         </label>
         <label>基本給（月額）
           <input id="baseSalary" type="number" min="0" step="1000" placeholder="円" />
@@ -137,6 +139,7 @@
           <select id="withholding"></select>
         </label>
       </div>
+      <datalist id="gradeOptions"></datalist>
       <label style="margin-top:12px; display:flex; flex-direction:column; gap:6px;">メモ
         <textarea id="employeeNote" placeholder="任意で備考を記入"></textarea>
       </label>
@@ -144,6 +147,58 @@
         <button type="submit" class="btn">保存</button>
         <button type="button" id="formResetButton" class="btn ghost">新規入力</button>
         <button type="button" id="deleteButton" class="btn danger" hidden>削除</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <h2>役職・等級マスタ</h2>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="gradeReloadButton" type="button" class="btn ghost">再読み込み</button>
+        <button id="gradeNewButton" type="button" class="btn">新規登録</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>役職/等級</th>
+            <th>手当額</th>
+            <th>メモ</th>
+            <th>更新日時</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="gradeTableBody"><tr><td colspan="5" class="table-empty">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <div>
+        <h2 id="gradeFormTitle">役職/等級を登録</h2>
+        <div id="gradeFormMeta" class="meta-line"></div>
+      </div>
+    </div>
+    <form id="gradeForm" autocomplete="off">
+      <input type="hidden" id="gradeId" />
+      <div class="form-grid">
+        <label>役職/等級名
+          <input id="gradeName" type="text" required />
+        </label>
+        <label>手当額
+          <input id="gradeAmount" type="number" min="0" step="500" placeholder="円" />
+        </label>
+        <label>メモ
+          <textarea id="gradeNote" placeholder="補足情報や支給ルール"></textarea>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">保存</button>
+        <button type="button" id="gradeFormResetButton" class="btn ghost">クリア</button>
+        <button type="button" id="gradeDeleteButton" class="btn danger" hidden>削除</button>
       </div>
     </form>
   </section>
@@ -171,9 +226,12 @@ const WITHHOLDING_OPTIONS = [
 
 let payrollState = {
   employees: [],
+  grades: [],
   loading: false,
   saving: false,
-  selectedId: null
+  gradeSaving: false,
+  selectedId: null,
+  selectedGradeId: null
 };
 let toastTimer = null;
 
@@ -207,6 +265,207 @@ function renderOptions(select, options){
   select.innerHTML = options.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('');
 }
 
+function normalizeGradeName(value){
+  return String(value || '').replace(/\u3000/g, ' ').trim().toLowerCase();
+}
+
+function findGradeByInput(input){
+  if (!Array.isArray(payrollState.grades)) return null;
+  const key = normalizeGradeName(input);
+  if (!key) return null;
+  return payrollState.grades.find(grade => grade.normalizedName === key) || null;
+}
+
+function renderGradeTable(){
+  const tbody = document.getElementById('gradeTableBody');
+  if (!tbody) return;
+  if (!Array.isArray(payrollState.grades) || payrollState.grades.length === 0){
+    tbody.innerHTML = '<tr><td colspan="5" class="table-empty">登録がありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = payrollState.grades.map(grade => {
+    const name = grade.name || '';
+    const amount = grade.amount != null ? formatCurrency(grade.amount) : '--';
+    const note = grade.note ? grade.note : '';
+    const updated = grade.updatedAt ? new Date(grade.updatedAt).toLocaleString('ja-JP') : '';
+    return `
+    <tr>
+      <td>${name}</td>
+      <td>${amount}</td>
+      <td>${note}</td>
+      <td>${updated}</td>
+      <td><button type="button" class="btn ghost small" data-grade-action="edit" data-id="${grade.id || ''}">編集</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderGradeOptions(){
+  const datalist = document.getElementById('gradeOptions');
+  if (!datalist) return;
+  if (!Array.isArray(payrollState.grades) || payrollState.grades.length === 0){
+    datalist.innerHTML = '';
+    return;
+  }
+  datalist.innerHTML = payrollState.grades.map(grade => {
+    const amount = grade.amount != null ? formatCurrency(grade.amount) : '';
+    const suffix = amount ? ` (${amount})` : '';
+    return `<option value="${grade.name}">${grade.name}${suffix}</option>`;
+  }).join('');
+}
+
+function updateGradeHint(){
+  const input = document.getElementById('employeeGrade');
+  const hint = document.getElementById('gradeAmountHint');
+  if (!input || !hint) return;
+  const value = input.value;
+  if (!value){
+    hint.textContent = '';
+    return;
+  }
+  const grade = findGradeByInput(value);
+  if (!grade){
+    hint.textContent = '';
+    return;
+  }
+  hint.textContent = grade.amount != null ? `マスタ設定: ${formatCurrency(grade.amount)}` : 'マスタ設定: 金額未設定';
+}
+
+function gatherGradeFormData(){
+  return {
+    id: document.getElementById('gradeId').value,
+    name: document.getElementById('gradeName').value,
+    amount: document.getElementById('gradeAmount').value,
+    note: document.getElementById('gradeNote').value
+  };
+}
+
+function setGradeFormLoading(isSaving){
+  payrollState.gradeSaving = isSaving;
+  const form = document.getElementById('gradeForm');
+  if (!form) return;
+  Array.from(form.elements).forEach(el => { el.disabled = isSaving && el.id !== 'gradeDeleteButton'; });
+  const deleteBtn = document.getElementById('gradeDeleteButton');
+  if (deleteBtn) deleteBtn.disabled = isSaving;
+}
+
+function resetGradeForm(){
+  const form = document.getElementById('gradeForm');
+  if (form) form.reset();
+  payrollState.selectedGradeId = null;
+  document.getElementById('gradeId').value = '';
+  document.getElementById('gradeFormTitle').textContent = '役職/等級を登録';
+  document.getElementById('gradeFormMeta').textContent = '';
+  document.getElementById('gradeDeleteButton').hidden = true;
+}
+
+function populateGradeForm(grade){
+  if (!grade){
+    resetGradeForm();
+    return;
+  }
+  payrollState.selectedGradeId = grade.id || null;
+  document.getElementById('gradeId').value = grade.id || '';
+  document.getElementById('gradeName').value = grade.name || '';
+  document.getElementById('gradeAmount').value = grade.amount != null ? grade.amount : '';
+  document.getElementById('gradeNote').value = grade.note || '';
+  document.getElementById('gradeFormTitle').textContent = grade.name ? `${grade.name} を編集` : '役職/等級を編集';
+  document.getElementById('gradeFormMeta').textContent = grade.updatedAt ? `最終更新: ${new Date(grade.updatedAt).toLocaleString('ja-JP')}` : '';
+  document.getElementById('gradeDeleteButton').hidden = !grade.id;
+}
+
+function handleGradeTableClick(event){
+  const button = event.target.closest('button[data-grade-action="edit"]');
+  if (!button) return;
+  const id = button.getAttribute('data-id');
+  if (!id) return;
+  const grade = payrollState.grades.find(g => g.id === id);
+  if (grade){
+    populateGradeForm(grade);
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  }
+}
+
+function handleGradeSave(event){
+  event.preventDefault();
+  if (payrollState.gradeSaving) return;
+  setGradeFormLoading(true);
+  const payload = gatherGradeFormData();
+  google.script.run
+    .withSuccessHandler(res => {
+      setGradeFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '保存に失敗しました');
+        return;
+      }
+      showToast('役職/等級を保存しました');
+      payrollState.selectedGradeId = res.grade && res.grade.id ? res.grade.id : null;
+      fetchGrades();
+      fetchEmployees();
+    })
+    .withFailureHandler(err => {
+      setGradeFormLoading(false);
+      showToast(err && err.message ? err.message : '保存に失敗しました');
+    })
+    .payrollSaveGrade(payload);
+}
+
+function handleGradeDelete(){
+  const id = document.getElementById('gradeId').value;
+  if (!id) return;
+  if (!confirm('この役職/等級を削除しますか？')) return;
+  setGradeFormLoading(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setGradeFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '削除に失敗しました');
+        return;
+      }
+      showToast('削除しました');
+      resetGradeForm();
+      fetchGrades();
+      fetchEmployees();
+    })
+    .withFailureHandler(err => {
+      setGradeFormLoading(false);
+      showToast(err && err.message ? err.message : '削除に失敗しました');
+    })
+    .payrollDeleteGrade({ id });
+}
+
+function fetchGrades(){
+  const tbody = document.getElementById('gradeTableBody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="5" class="table-empty">読み込み中…</td></tr>';
+  }
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : 'マスタの取得に失敗しました');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="table-empty">エラーが発生しました</td></tr>';
+        return;
+      }
+      payrollState.grades = Array.isArray(res.grades) ? res.grades.map(grade => ({
+        ...grade,
+        normalizedName: normalizeGradeName(grade && grade.name)
+      })) : [];
+      renderGradeTable();
+      renderGradeOptions();
+      if (payrollState.selectedGradeId) {
+        const current = payrollState.grades.find(g => g.id === payrollState.selectedGradeId);
+        if (current) {
+          populateGradeForm(current);
+        }
+      }
+      updateGradeHint();
+    })
+    .withFailureHandler(err => {
+      showToast(err && err.message ? err.message : 'マスタの取得に失敗しました');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="table-empty">エラーが発生しました</td></tr>';
+    })
+    .payrollListGrades();
+}
+
 function renderTable(){
   const tbody = document.getElementById('employeeTableBody');
   if (!Array.isArray(payrollState.employees) || !payrollState.employees.length){
@@ -219,7 +478,9 @@ function renderTable(){
     const base = formatCurrency(row.baseSalary);
     const hourly = formatCurrency(row.hourlyWage);
     const allowance = formatCurrency(row.personalAllowance);
-    const grade = row.grade ? row.grade : '';
+    const gradeAmountLabel = row.gradeAmount != null ? formatCurrency(row.gradeAmount) : '';
+    const gradeName = row.grade ? row.grade : (row.gradeMasterName || '');
+    const grade = gradeAmountLabel ? `${gradeName} (${gradeAmountLabel})` : gradeName;
     const transportation = formatTransportation(row);
     const commission = row.commissionLabel || '';
     const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString('ja-JP') : '';
@@ -257,6 +518,7 @@ function resetForm(){
   document.getElementById('formMeta').textContent = '';
   document.getElementById('deleteButton').hidden = true;
   updateTransportationAmountState();
+  updateGradeHint();
 }
 
 function updateTransportationAmountState(){
@@ -294,6 +556,7 @@ function populateForm(employee){
   document.getElementById('withholding').value = employee.withholding || 'none';
   document.getElementById('employeeNote').value = employee.note || '';
   updateTransportationAmountState();
+  updateGradeHint();
   payrollState.selectedId = employee.id || null;
   document.getElementById('formTitle').textContent = employee.name ? `${employee.name} さん` : '従業員を編集';
   const updatedText = employee.updatedAt ? `最終更新: ${new Date(employee.updatedAt).toLocaleString('ja-JP')}` : '';
@@ -334,6 +597,7 @@ function fetchEmployees(){
       }
       payrollState.employees = Array.isArray(res.employees) ? res.employees : [];
       renderTable();
+      updateGradeHint();
       if (payrollState.selectedId) {
         const current = payrollState.employees.find(emp => emp.id === payrollState.selectedId);
         if (current) populateForm(current); else resetForm();
@@ -416,7 +680,20 @@ function init(){
   document.getElementById('deleteButton').addEventListener('click', handleDelete);
   document.getElementById('reloadButton').addEventListener('click', fetchEmployees);
   document.getElementById('transportationType').addEventListener('change', updateTransportationAmountState);
+  document.getElementById('employeeGrade').addEventListener('input', updateGradeHint);
+  document.getElementById('gradeForm').addEventListener('submit', handleGradeSave);
+  document.getElementById('gradeFormResetButton').addEventListener('click', resetGradeForm);
+  document.getElementById('gradeDeleteButton').addEventListener('click', handleGradeDelete);
+  document.getElementById('gradeTableBody').addEventListener('click', handleGradeTableClick);
+  document.getElementById('gradeReloadButton').addEventListener('click', fetchGrades);
+  document.getElementById('gradeNewButton').addEventListener('click', () => {
+    resetGradeForm();
+    const nameInput = document.getElementById('gradeName');
+    if (nameInput) nameInput.focus();
+  });
   updateTransportationAmountState();
+  updateGradeHint();
+  fetchGrades();
   fetchEmployees();
 }
 

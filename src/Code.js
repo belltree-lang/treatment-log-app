@@ -240,6 +240,25 @@ const PAYROLL_WITHHOLDING_LABELS = Object.freeze({
   required: 'あり',
   none: 'なし'
 });
+const PAYROLL_GRADE_SHEET_NAME = 'PayrollGrades';
+const PAYROLL_GRADE_SHEET_HEADER = ['グレードID','役職/等級','手当額','メモ','更新日時'];
+const PAYROLL_GRADE_COLUMNS = Object.freeze({
+  id: 0,
+  name: 1,
+  amount: 2,
+  note: 3,
+  updatedAt: 4
+});
+const PAYROLL_GRADE_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_GRADE_COLUMNS).reduce((map, key) => {
+  map[key] = PAYROLL_GRADE_COLUMNS[key] + 1;
+  return map;
+}, {}));
+const PAYROLL_GRADE_DEFAULTS = Object.freeze([
+  { name: '施設長' },
+  { name: '副施設長' },
+  { name: '院長' },
+  { name: '副院長' }
+]);
 
 const ALBYTE_STAFF_COLUMNS = Object.freeze({
   id: 0,
@@ -485,7 +504,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_GRADE_SHEET_NAME];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -517,6 +536,8 @@ function ensureAuxSheets_(options) {
     upgradeHeader(VISIT_ATTENDANCE_SHEET_NAME, VISIT_ATTENDANCE_SHEET_HEADER);
     upgradeHeader(ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_HEADER);
     upgradeHeader(ALBYTE_STAFF_SHEET_NAME, ALBYTE_STAFF_SHEET_HEADER);
+    upgradeHeader(PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_HEADER);
+    upgradeHeader(PAYROLL_GRADE_SHEET_NAME, PAYROLL_GRADE_SHEET_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
     ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
     ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
@@ -654,6 +675,48 @@ function ensurePayrollEmployeeSheet_(){
     sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_EMPLOYEE_SHEET_HEADER]);
   }
   return sheet;
+}
+
+function ensurePayrollGradeSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(PAYROLL_GRADE_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(PAYROLL_GRADE_SHEET_NAME);
+  }
+  const needed = PAYROLL_GRADE_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_GRADE_SHEET_HEADER]);
+    seedDefaultPayrollGrades_(sheet);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || PAYROLL_GRADE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_GRADE_SHEET_HEADER]);
+  }
+  if (sheet.getLastRow() <= 1) {
+    seedDefaultPayrollGrades_(sheet);
+  }
+  return sheet;
+}
+
+function seedDefaultPayrollGrades_(sheet){
+  if (!sheet || !PAYROLL_GRADE_DEFAULTS || PAYROLL_GRADE_DEFAULTS.length === 0) return;
+  const headerRows = sheet.getLastRow();
+  if (headerRows > 1) return;
+  const now = new Date();
+  const rows = PAYROLL_GRADE_DEFAULTS.map(def => [
+    Utilities.getUuid(),
+    def && def.name ? def.name : '',
+    def && def.amount != null ? def.amount : '',
+    def && def.note ? def.note : '',
+    now
+  ]);
+  sheet.getRange(2, 1, rows.length, PAYROLL_GRADE_SHEET_HEADER.length).setValues(rows);
 }
 
 /***** アルバイト勤怠：共通ユーティリティ *****/
@@ -2225,6 +2288,10 @@ function wrapPayrollResponse_(tag, fn){
   }
 }
 
+function normalizePayrollGradeName_(value){
+  return String(value || '').replace(/\u3000/g, ' ').trim().toLowerCase();
+}
+
 function normalizePayrollEmploymentType_(value){
   const text = String(value || '').trim().toLowerCase();
   if (!text) return 'employee';
@@ -2303,6 +2370,47 @@ function parsePayrollMoneyValue_(value){
   return Math.round(normalized);
 }
 
+function readPayrollGradeRecords_(){
+  const sheet = ensurePayrollGradeSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = PAYROLL_GRADE_SHEET_HEADER.length;
+  const records = [];
+  const mapById = new Map();
+  const mapByNormalizedName = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    values.forEach((row, idx) => {
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) return;
+      let id = String(row[PAYROLL_GRADE_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(idx + 2, PAYROLL_GRADE_COLUMN_INDEX.id).setValue(id);
+      }
+      const name = String(row[PAYROLL_GRADE_COLUMNS.name] || '').trim();
+      const normalizedName = normalizePayrollGradeName_(name);
+      const amount = parsePayrollMoneyValue_(row[PAYROLL_GRADE_COLUMNS.amount]);
+      const note = String(row[PAYROLL_GRADE_COLUMNS.note] || '').trim();
+      const updatedAt = row[PAYROLL_GRADE_COLUMNS.updatedAt];
+      const record = {
+        id,
+        name,
+        normalizedName,
+        amount,
+        note,
+        updatedAt,
+        rowIndex: idx + 2
+      };
+      records.push(record);
+      mapById.set(id, record);
+      if (normalizedName) {
+        mapByNormalizedName.set(normalizedName, record);
+      }
+    });
+  }
+  return { sheet, records, mapById, mapByNormalizedName };
+}
+
 function readPayrollEmployeeRecords_(){
   const sheet = ensurePayrollEmployeeSheet_();
   const lastRow = sheet.getLastRow();
@@ -2379,7 +2487,19 @@ function readPayrollEmployeeRecords_(){
   return { sheet, records, mapById, mapByEmail };
 }
 
-function buildPayrollEmployeeResponse_(record){
+function buildPayrollGradeResponse_(record){
+  if (!record) return null;
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  return {
+    id: record.id,
+    name: record.name,
+    amount: record.amount,
+    note: record.note,
+    updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
+  };
+}
+
+function buildPayrollEmployeeResponse_(record, gradeMatch){
   if (!record) return null;
   const tz = getConfig('timezone') || 'Asia/Tokyo';
   return {
@@ -2392,6 +2512,10 @@ function buildPayrollEmployeeResponse_(record){
     hourlyWage: record.hourlyWage,
     personalAllowance: record.personalAllowance,
     grade: record.grade,
+    gradeId: gradeMatch ? gradeMatch.id : null,
+    gradeAmount: gradeMatch && gradeMatch.amount != null ? gradeMatch.amount : null,
+    gradeMasterName: gradeMatch ? gradeMatch.name : null,
+    gradeMasterNote: gradeMatch ? gradeMatch.note : null,
     qualificationAllowance: record.qualificationAllowance,
     vehicleAllowance: record.vehicleAllowance,
     housingDeduction: record.housingDeduction,
@@ -2410,12 +2534,29 @@ function buildPayrollEmployeeResponse_(record){
 function payrollListEmployees(){
   return wrapPayrollResponse_('payrollListEmployees', () => {
     const context = readPayrollEmployeeRecords_();
+    const gradeContext = readPayrollGradeRecords_();
     const list = context.records.slice().sort((a, b) => {
       const nameA = (a && a.name) ? a.name.toString() : '';
       const nameB = (b && b.name) ? b.name.toString() : '';
       return nameA.localeCompare(nameB, 'ja');
-    }).map(record => buildPayrollEmployeeResponse_(record));
+    }).map(record => {
+      const normalized = normalizePayrollGradeName_(record && record.grade);
+      const gradeMatch = normalized ? gradeContext.mapByNormalizedName.get(normalized) : null;
+      return buildPayrollEmployeeResponse_(record, gradeMatch);
+    });
     return { ok: true, employees: list };
+  });
+}
+
+function payrollListGrades(){
+  return wrapPayrollResponse_('payrollListGrades', () => {
+    const context = readPayrollGradeRecords_();
+    const list = context.records.slice().sort((a, b) => {
+      const nameA = (a && a.name) ? a.name.toString() : '';
+      const nameB = (b && b.name) ? b.name.toString() : '';
+      return nameA.localeCompare(nameB, 'ja');
+    }).map(record => buildPayrollGradeResponse_(record));
+    return { ok: true, grades: list };
   });
 }
 
@@ -2481,7 +2622,9 @@ function payrollSaveEmployee(payload){
 
     const refreshed = readPayrollEmployeeRecords_();
     const saved = refreshed.mapById.get(id);
-    return { ok: true, employee: buildPayrollEmployeeResponse_(saved) };
+    const gradeContext = readPayrollGradeRecords_();
+    const gradeMatch = saved ? gradeContext.mapByNormalizedName.get(normalizePayrollGradeName_(saved.grade)) : null;
+    return { ok: true, employee: buildPayrollEmployeeResponse_(saved, gradeMatch) };
   });
 }
 
@@ -2495,6 +2638,69 @@ function payrollDeleteEmployee(payload){
     const record = context.mapById.get(id);
     if (!record) {
       return { ok: false, reason: 'not_found', message: '対象の従業員が見つかりません。' };
+    }
+    context.sheet.deleteRow(record.rowIndex);
+    return { ok: true };
+  });
+}
+
+function payrollSaveGrade(payload){
+  return wrapPayrollResponse_('payrollSaveGrade', () => {
+    const name = String(payload && payload.name || '').trim();
+    if (!name) {
+      return { ok: false, reason: 'validation', message: '役職/等級名を入力してください。' };
+    }
+    const amount = parsePayrollMoneyValue_(payload && payload.amount);
+    const note = String(payload && payload.note || '').trim();
+    let id = String(payload && payload.id || '').trim();
+
+    const context = readPayrollGradeRecords_();
+    const normalized = normalizePayrollGradeName_(name);
+    if (normalized) {
+      const duplicate = context.mapByNormalizedName.get(normalized);
+      if (duplicate && (!id || duplicate.id !== id)) {
+        return { ok: false, reason: 'validation', message: '同じ名前の役職/等級が既に存在します。' };
+      }
+    }
+
+    let rowIndex;
+    const sheet = context.sheet;
+    if (id) {
+      const existing = context.mapById.get(id);
+      if (!existing) {
+        return { ok: false, reason: 'not_found', message: '対象の役職/等級が見つかりません。' };
+      }
+      rowIndex = existing.rowIndex;
+    } else {
+      id = Utilities.getUuid();
+      rowIndex = sheet.getLastRow() + 1;
+    }
+
+    const values = new Array(PAYROLL_GRADE_SHEET_HEADER.length).fill('');
+    values[PAYROLL_GRADE_COLUMNS.id] = id;
+    values[PAYROLL_GRADE_COLUMNS.name] = name;
+    values[PAYROLL_GRADE_COLUMNS.amount] = amount != null ? amount : '';
+    values[PAYROLL_GRADE_COLUMNS.note] = note;
+    values[PAYROLL_GRADE_COLUMNS.updatedAt] = new Date();
+
+    sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+
+    const refreshed = readPayrollGradeRecords_();
+    const saved = refreshed.mapById.get(id);
+    return { ok: true, grade: buildPayrollGradeResponse_(saved) };
+  });
+}
+
+function payrollDeleteGrade(payload){
+  return wrapPayrollResponse_('payrollDeleteGrade', () => {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) {
+      return { ok: false, reason: 'validation', message: '削除する役職/等級を指定してください。' };
+    }
+    const context = readPayrollGradeRecords_();
+    const record = context.mapById.get(id);
+    if (!record) {
+      return { ok: false, reason: 'not_found', message: '対象の役職/等級が見つかりません。' };
     }
     context.sheet.deleteRow(record.rowIndex);
     return { ok: true };

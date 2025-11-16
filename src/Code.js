@@ -197,6 +197,50 @@ const ALBYTE_MAX_BREAK_MINUTES = 180;
 const ALBYTE_DAILY_OVERTIME_ROUNDING_MINUTES = 15;
 const ALBYTE_HOURLY_WAGE_PROPERTY_KEYS = Object.freeze(['ALBYTE_HOURLY_WAGE', 'albyteHourlyWage']);
 
+const PAYROLL_EMPLOYEE_SHEET_NAME = 'PayrollEmployees';
+const PAYROLL_EMPLOYEE_SHEET_HEADER = ['従業員ID','氏名','メール','雇用区分','基本給','時給','個別加算','役職/等級','資格手当','車両手当','社宅控除','源泉徴収','交通費区分','交通費額','歩合ロジック','メモ','更新日時'];
+const PAYROLL_EMPLOYEE_COLUMNS = Object.freeze({
+  id: 0,
+  name: 1,
+  email: 2,
+  employmentType: 3,
+  baseSalary: 4,
+  hourlyWage: 5,
+  personalAllowance: 6,
+  grade: 7,
+  qualificationAllowance: 8,
+  vehicleAllowance: 9,
+  housingDeduction: 10,
+  withholding: 11,
+  transportationType: 12,
+  transportationAmount: 13,
+  commissionLogic: 14,
+  note: 15,
+  updatedAt: 16
+});
+const PAYROLL_EMPLOYEE_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_EMPLOYEE_COLUMNS).reduce((map, key) => {
+  map[key] = PAYROLL_EMPLOYEE_COLUMNS[key] + 1;
+  return map;
+}, {}));
+const PAYROLL_EMPLOYMENT_LABELS = Object.freeze({
+  employee: '正社員',
+  parttime: 'アルバイト',
+  contractor: '業務委託'
+});
+const PAYROLL_TRANSPORTATION_LABELS = Object.freeze({
+  fixed: '固定',
+  actual: '実費',
+  none: 'なし'
+});
+const PAYROLL_COMMISSION_LABELS = Object.freeze({
+  legacy: '既存',
+  horiguchi: '堀口以降'
+});
+const PAYROLL_WITHHOLDING_LABELS = Object.freeze({
+  required: 'あり',
+  none: 'なし'
+});
+
 const ALBYTE_STAFF_COLUMNS = Object.freeze({
   id: 0,
   name: 1,
@@ -441,7 +485,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -585,6 +629,29 @@ function ensureVisitAttendanceStaffSheet_(){
   const mismatch = current.length < needed || VISIT_ATTENDANCE_STAFF_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
   if (mismatch) {
     sheet.getRange(1, 1, 1, needed).setValues([VISIT_ATTENDANCE_STAFF_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
+function ensurePayrollEmployeeSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(PAYROLL_EMPLOYEE_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(PAYROLL_EMPLOYEE_SHEET_NAME);
+  }
+  const needed = PAYROLL_EMPLOYEE_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_EMPLOYEE_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || PAYROLL_EMPLOYEE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_EMPLOYEE_SHEET_HEADER]);
   }
   return sheet;
 }
@@ -2144,6 +2211,293 @@ function albyteGetMonthlyReport(payload){
         }
       }
     };
+  });
+}
+
+/*** 給与マスタ（従業員基本情報） ***/
+function wrapPayrollResponse_(tag, fn){
+  try {
+    return fn();
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    Logger.log('[%s] %s', tag, err && err.stack ? err.stack : message);
+    return { ok: false, reason: 'system_error', message: message || 'エラーが発生しました。' };
+  }
+}
+
+function normalizePayrollEmploymentType_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return 'employee';
+  if (text === 'employee' || text === '正社員' || text === '正社' || text === '社員') {
+    return 'employee';
+  }
+  if (text === 'parttime' || text === 'part-time' || text === 'part_time' || text === 'parttimeemployee' || text === 'アルバイト' || text === 'ﾊﾞｲﾄ' || text === 'パート' || text === 'パートタイム') {
+    return 'parttime';
+  }
+  if (text === 'contractor' || text === '業務委託' || text === '委託' || text === '外注') {
+    return 'contractor';
+  }
+  return 'employee';
+}
+
+function formatPayrollEmploymentLabel_(type){
+  const key = String(type || '').toLowerCase();
+  return PAYROLL_EMPLOYMENT_LABELS[key] || PAYROLL_EMPLOYMENT_LABELS.employee;
+}
+
+function normalizePayrollTransportationType_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (!text || text === 'none' || text === 'なし' || text === '無' || text === '0') {
+    return 'none';
+  }
+  if (text === 'actual' || text === '実費' || text === 'じっぴ' || text === '実費精算') {
+    return 'actual';
+  }
+  return 'fixed';
+}
+
+function formatPayrollTransportationLabel_(type){
+  const key = String(type || '').toLowerCase();
+  return PAYROLL_TRANSPORTATION_LABELS[key] || PAYROLL_TRANSPORTATION_LABELS.none;
+}
+
+function normalizePayrollCommissionLogicType_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'horiguchi' || text === '堀口' || text === '堀口以降') {
+    return 'horiguchi';
+  }
+  return 'legacy';
+}
+
+function formatPayrollCommissionLabel_(type){
+  const key = String(type || '').toLowerCase();
+  return PAYROLL_COMMISSION_LABELS[key] || PAYROLL_COMMISSION_LABELS.legacy;
+}
+
+function normalizePayrollWithholdingType_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (!text || text === 'none' || text === '0' || text === 'なし' || text === '無' || text === 'off') {
+    return 'none';
+  }
+  if (text === 'required' || text === 'あり' || text === '有' || text === 'true' || text === 'yes' || text === 'on' || text === '1' || text === 'withholding') {
+    return 'required';
+  }
+  return 'none';
+}
+
+function formatPayrollWithholdingLabel_(type){
+  const key = String(type || '').toLowerCase();
+  return PAYROLL_WITHHOLDING_LABELS[key] || PAYROLL_WITHHOLDING_LABELS.none;
+}
+
+function parsePayrollMoneyValue_(value){
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return Math.round(value);
+  }
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const normalized = Number(text.replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(normalized)) return null;
+  return Math.round(normalized);
+}
+
+function readPayrollEmployeeRecords_(){
+  const sheet = ensurePayrollEmployeeSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = PAYROLL_EMPLOYEE_SHEET_HEADER.length;
+  const records = [];
+  const mapById = new Map();
+  const mapByEmail = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    values.forEach((row, idx) => {
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) return;
+      const rowIndex = idx + 2;
+      let id = String(row[PAYROLL_EMPLOYEE_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(rowIndex, PAYROLL_EMPLOYEE_COLUMN_INDEX.id).setValue(id);
+      }
+      const name = String(row[PAYROLL_EMPLOYEE_COLUMNS.name] || '').trim();
+      const email = String(row[PAYROLL_EMPLOYEE_COLUMNS.email] || '').trim();
+      const normalizedEmail = normalizeEmailKey_(email);
+      const employmentType = normalizePayrollEmploymentType_(row[PAYROLL_EMPLOYEE_COLUMNS.employmentType]);
+      const employmentLabel = formatPayrollEmploymentLabel_(employmentType);
+      const baseSalary = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.baseSalary]);
+      const hourlyWage = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.hourlyWage]);
+      const personalAllowance = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.personalAllowance]);
+      const grade = String(row[PAYROLL_EMPLOYEE_COLUMNS.grade] || '').trim();
+      const qualificationAllowance = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.qualificationAllowance]);
+      const vehicleAllowance = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.vehicleAllowance]);
+      const housingDeduction = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.housingDeduction]);
+      const withholding = normalizePayrollWithholdingType_(row[PAYROLL_EMPLOYEE_COLUMNS.withholding]);
+      const withholdingLabel = formatPayrollWithholdingLabel_(withholding);
+      const transportationType = normalizePayrollTransportationType_(row[PAYROLL_EMPLOYEE_COLUMNS.transportationType]);
+      const transportationLabel = formatPayrollTransportationLabel_(transportationType);
+      const transportationAmount = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.transportationAmount]);
+      const commissionLogic = normalizePayrollCommissionLogicType_(row[PAYROLL_EMPLOYEE_COLUMNS.commissionLogic]);
+      const commissionLabel = formatPayrollCommissionLabel_(commissionLogic);
+      const note = String(row[PAYROLL_EMPLOYEE_COLUMNS.note] || '').trim();
+      const updatedAt = parseDateValue_(row[PAYROLL_EMPLOYEE_COLUMNS.updatedAt]);
+      const record = {
+        rowIndex,
+        id,
+        name,
+        email,
+        normalizedEmail,
+        employmentType,
+        employmentLabel,
+        baseSalary,
+        hourlyWage,
+        personalAllowance,
+        grade,
+        qualificationAllowance,
+        vehicleAllowance,
+        housingDeduction,
+        withholding,
+        withholdingLabel,
+        transportationType,
+        transportationLabel,
+        transportationAmount,
+        commissionLogic,
+        commissionLabel,
+        note,
+        updatedAt
+      };
+      records.push(record);
+      if (id) {
+        mapById.set(id, record);
+      }
+      if (normalizedEmail) {
+        mapByEmail.set(normalizedEmail, record);
+      }
+    });
+  }
+  return { sheet, records, mapById, mapByEmail };
+}
+
+function buildPayrollEmployeeResponse_(record){
+  if (!record) return null;
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  return {
+    id: record.id,
+    name: record.name,
+    email: record.email,
+    employmentType: record.employmentType,
+    employmentLabel: record.employmentLabel,
+    baseSalary: record.baseSalary,
+    hourlyWage: record.hourlyWage,
+    personalAllowance: record.personalAllowance,
+    grade: record.grade,
+    qualificationAllowance: record.qualificationAllowance,
+    vehicleAllowance: record.vehicleAllowance,
+    housingDeduction: record.housingDeduction,
+    withholding: record.withholding,
+    withholdingLabel: record.withholdingLabel,
+    transportationType: record.transportationType,
+    transportationLabel: record.transportationLabel,
+    transportationAmount: record.transportationAmount,
+    commissionLogic: record.commissionLogic,
+    commissionLabel: record.commissionLabel,
+    note: record.note,
+    updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
+  };
+}
+
+function payrollListEmployees(){
+  return wrapPayrollResponse_('payrollListEmployees', () => {
+    const context = readPayrollEmployeeRecords_();
+    const list = context.records.slice().sort((a, b) => {
+      const nameA = (a && a.name) ? a.name.toString() : '';
+      const nameB = (b && b.name) ? b.name.toString() : '';
+      return nameA.localeCompare(nameB, 'ja');
+    }).map(record => buildPayrollEmployeeResponse_(record));
+    return { ok: true, employees: list };
+  });
+}
+
+function payrollSaveEmployee(payload){
+  return wrapPayrollResponse_('payrollSaveEmployee', () => {
+    const name = String(payload && payload.name || '').trim();
+    if (!name) {
+      return { ok: false, reason: 'validation', message: '氏名を入力してください。' };
+    }
+    const email = String(payload && payload.email || '').trim();
+    const employmentType = normalizePayrollEmploymentType_(payload && payload.employmentType);
+    if (!employmentType) {
+      return { ok: false, reason: 'validation', message: '雇用区分を選択してください。' };
+    }
+    const baseSalary = parsePayrollMoneyValue_(payload && payload.baseSalary);
+    const hourlyWage = parsePayrollMoneyValue_(payload && payload.hourlyWage);
+    const personalAllowance = parsePayrollMoneyValue_(payload && payload.personalAllowance);
+    const qualificationAllowance = parsePayrollMoneyValue_(payload && payload.qualificationAllowance);
+    const vehicleAllowance = parsePayrollMoneyValue_(payload && payload.vehicleAllowance);
+    const housingDeduction = parsePayrollMoneyValue_(payload && payload.housingDeduction);
+    const transportationType = normalizePayrollTransportationType_(payload && payload.transportationType);
+    const transportationAmount = parsePayrollMoneyValue_(payload && payload.transportationAmount);
+    const commissionLogic = normalizePayrollCommissionLogicType_(payload && payload.commissionLogic);
+    const withholding = normalizePayrollWithholdingType_(payload && payload.withholding);
+    const grade = String(payload && payload.grade || '').trim();
+    const note = String(payload && payload.note || '').trim();
+    let id = String(payload && payload.id || '').trim();
+
+    const context = readPayrollEmployeeRecords_();
+    const sheet = context.sheet;
+    let rowIndex;
+    if (id) {
+      const existing = context.mapById.get(id);
+      if (!existing) {
+        return { ok: false, reason: 'not_found', message: '従業員が見つかりません。' };
+      }
+      rowIndex = existing.rowIndex;
+    } else {
+      id = Utilities.getUuid();
+      rowIndex = sheet.getLastRow() + 1;
+    }
+
+    const values = new Array(PAYROLL_EMPLOYEE_SHEET_HEADER.length).fill('');
+    values[PAYROLL_EMPLOYEE_COLUMNS.id] = id;
+    values[PAYROLL_EMPLOYEE_COLUMNS.name] = name;
+    values[PAYROLL_EMPLOYEE_COLUMNS.email] = email;
+    values[PAYROLL_EMPLOYEE_COLUMNS.employmentType] = formatPayrollEmploymentLabel_(employmentType);
+    values[PAYROLL_EMPLOYEE_COLUMNS.baseSalary] = baseSalary != null ? baseSalary : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.hourlyWage] = hourlyWage != null ? hourlyWage : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.personalAllowance] = personalAllowance != null ? personalAllowance : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.grade] = grade;
+    values[PAYROLL_EMPLOYEE_COLUMNS.qualificationAllowance] = qualificationAllowance != null ? qualificationAllowance : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.vehicleAllowance] = vehicleAllowance != null ? vehicleAllowance : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.housingDeduction] = housingDeduction != null ? housingDeduction : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.withholding] = formatPayrollWithholdingLabel_(withholding);
+    values[PAYROLL_EMPLOYEE_COLUMNS.transportationType] = formatPayrollTransportationLabel_(transportationType);
+    values[PAYROLL_EMPLOYEE_COLUMNS.transportationAmount] = transportationAmount != null ? transportationAmount : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.commissionLogic] = formatPayrollCommissionLabel_(commissionLogic);
+    values[PAYROLL_EMPLOYEE_COLUMNS.note] = note;
+    values[PAYROLL_EMPLOYEE_COLUMNS.updatedAt] = new Date();
+
+    sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+
+    const refreshed = readPayrollEmployeeRecords_();
+    const saved = refreshed.mapById.get(id);
+    return { ok: true, employee: buildPayrollEmployeeResponse_(saved) };
+  });
+}
+
+function payrollDeleteEmployee(payload){
+  return wrapPayrollResponse_('payrollDeleteEmployee', () => {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) {
+      return { ok: false, reason: 'validation', message: '削除する従業員を指定してください。' };
+    }
+    const context = readPayrollEmployeeRecords_();
+    const record = context.mapById.get(id);
+    if (!record) {
+      return { ok: false, reason: 'not_found', message: '対象の従業員が見つかりません。' };
+    }
+    context.sheet.deleteRow(record.rowIndex);
+    return { ok: true };
   });
 }
 
@@ -5894,6 +6248,7 @@ function doGet(e) {
     case 'albyte':       templateFile = 'albyte'; break;
     case 'albyte_admin': templateFile = 'albyte_admin'; break;
     case 'albyte_report':templateFile = 'albyte_report'; break;
+    case 'payroll':      templateFile = 'payroll'; break;
     case 'record':       templateFile = 'app'; break;   // ★ app.html を record として表示
     case 'report':       templateFile = 'report'; break;
     default:             templateFile = 'welcome'; break;

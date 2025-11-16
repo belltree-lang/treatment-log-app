@@ -39,6 +39,10 @@
   .form-actions{ display:flex; flex-wrap:wrap; gap:12px; justify-content:flex-end; }
   .muted{ color:var(--muted); }
   .table-empty{ text-align:center; color:var(--muted); padding:24px 0; }
+  .attendance-controls{ display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  .attendance-controls label{ display:flex; flex-direction:column; gap:4px; font-size:0.85rem; color:var(--muted); }
+  .metric-main{ font-weight:600; }
+  .metric-subtext{ font-size:0.8rem; color:var(--muted); }
   .toast{ position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 18px; border-radius:999px; opacity:0; transition:opacity .3s ease; pointer-events:none; }
   .toast.show{ opacity:1; }
   .meta-line{ font-size:0.85rem; color:var(--muted); }
@@ -153,6 +157,39 @@
 
   <section class="card">
     <div class="section-header">
+      <div>
+        <h2>勤怠データ連携</h2>
+        <p class="meta-line">出勤日数・総勤務時間・自動有給化をまとめて確認できます。</p>
+      </div>
+      <div class="attendance-controls">
+        <label>対象月
+          <input type="month" id="attendanceMonth" />
+        </label>
+        <button id="attendanceReloadButton" type="button" class="btn">勤怠を再取得</button>
+      </div>
+    </div>
+    <div id="attendanceSummaryMeta" class="meta-line"></div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>従業員</th>
+            <th>出勤日数</th>
+            <th>総勤務</th>
+            <th>休憩</th>
+            <th>残業</th>
+            <th>自動有給</th>
+            <th>備考</th>
+          </tr>
+        </thead>
+        <tbody id="attendanceTableBody"><tr><td colspan="7" class="table-empty">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="attendanceUnassigned" class="meta-line"></div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
       <h2>役職・等級マスタ</h2>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button id="gradeReloadButton" type="button" class="btn ghost">再読み込み</button>
@@ -231,8 +268,14 @@ let payrollState = {
   saving: false,
   gradeSaving: false,
   selectedId: null,
-  selectedGradeId: null
+  selectedGradeId: null,
+  attendance: {
+    month: null,
+    loading: false,
+    summary: null
+  }
 };
+payrollState.attendance.month = getCurrentMonthKey();
 let toastTimer = null;
 
 function showToast(message){
@@ -249,6 +292,28 @@ function formatCurrency(value){
   const num = Number(value);
   if (!Number.isFinite(num)) return '--';
   return '¥' + Math.round(num).toLocaleString('ja-JP');
+}
+
+function getCurrentMonthKey(){
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${now.getFullYear()}-${month}`;
+}
+
+function formatMinutesClock(minutes){
+  if (!Number.isFinite(minutes) || minutes <= 0) return '00:00';
+  const hrs = Math.floor(minutes / 60);
+  const mins = Math.round(minutes % 60);
+  return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+}
+
+function formatMinutesHuman(minutes){
+  if (!Number.isFinite(minutes) || minutes <= 0) return '0分';
+  const hrs = Math.floor(minutes / 60);
+  const mins = Math.round(minutes % 60);
+  if (hrs && mins) return `${hrs}時間${mins}分`;
+  if (hrs && !mins) return `${hrs}時間`;
+  return `${mins}分`;
 }
 
 function formatTransportation(row){
@@ -668,6 +733,127 @@ function handleTableClick(event){
   }
 }
 
+function setAttendanceLoading(isLoading){
+  payrollState.attendance.loading = isLoading;
+  const reloadButton = document.getElementById('attendanceReloadButton');
+  const monthInput = document.getElementById('attendanceMonth');
+  if (reloadButton) reloadButton.disabled = isLoading;
+  if (monthInput) monthInput.disabled = isLoading;
+}
+
+function formatAttendanceMetricCell(minutes, durationText){
+  const main = formatMinutesClock(minutes);
+  const sub = durationText || formatMinutesHuman(minutes);
+  return `<div class="metric-main">${main}</div><div class="metric-subtext">${sub}</div>`;
+}
+
+function buildAttendanceNotes(entry){
+  const notes = [];
+  if (!entry.hasAttendance) notes.push('記録なし');
+  if (entry.autoPaidLeaveMinutes > 0) {
+    const days = entry.autoPaidLeaveDays || 0;
+    notes.push(`不足 ${formatMinutesHuman(entry.autoPaidLeaveMinutes)}（${days}日）を自動有給換算`);
+  }
+  if (entry.recordedPaidLeaveDays > 0) {
+    notes.push(`申請有給 ${entry.recordedPaidLeaveDays}日`);
+  }
+  if (entry.scheduledPerDayMinutes) {
+    notes.push(`所定 ${formatMinutesHuman(entry.scheduledPerDayMinutes)}/日`);
+  }
+  return notes.length ? notes.join('<br>') : '--';
+}
+
+function renderAttendanceMeta(){
+  const meta = document.getElementById('attendanceSummaryMeta');
+  if (!meta) return;
+  const summary = payrollState.attendance.summary;
+  if (!summary || !summary.month) {
+    meta.textContent = '勤怠データを取得していません。';
+    return;
+  }
+  const totals = summary.totals || {};
+  const workText = totals.workText || formatMinutesClock(totals.workMinutes);
+  const breakText = totals.breakText || formatMinutesClock(totals.breakMinutes);
+  meta.textContent = `${summary.month.label || summary.month.key || ''} / 総勤務 ${workText || '--'} / 休憩 ${breakText || '--'}`;
+}
+
+function renderAttendanceTable(){
+  const tbody = document.getElementById('attendanceTableBody');
+  if (!tbody) return;
+  const summary = payrollState.attendance.summary;
+  if (!summary || !Array.isArray(summary.employees) || summary.employees.length === 0){
+    tbody.innerHTML = '<tr><td colspan="7" class="table-empty">勤怠データがありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = summary.employees.map(entry => {
+    const name = entry.employeeName || '--';
+    const employment = entry.employmentLabel ? `<div class="metric-subtext">${entry.employmentLabel}</div>` : '';
+    return `
+      <tr>
+        <td><div class="metric-main">${name}</div>${employment}</td>
+        <td>${entry.workingDays || 0}日</td>
+        <td>${formatAttendanceMetricCell(entry.workMinutes, entry.workDurationText)}</td>
+        <td>${formatAttendanceMetricCell(entry.breakMinutes, formatMinutesHuman(entry.breakMinutes))}</td>
+        <td>${formatAttendanceMetricCell(entry.overtimeMinutes, formatMinutesHuman(entry.overtimeMinutes))}</td>
+        <td>${formatAttendanceMetricCell(entry.autoPaidLeaveMinutes, entry.autoPaidLeaveDurationText)}</td>
+        <td>${buildAttendanceNotes(entry)}</td>
+      </tr>`;
+  }).join('');
+}
+
+function renderAttendanceUnassigned(){
+  const box = document.getElementById('attendanceUnassigned');
+  if (!box) return;
+  const summary = payrollState.attendance.summary;
+  if (!summary || !Array.isArray(summary.unmatchedStaff) || summary.unmatchedStaff.length === 0){
+    box.textContent = '';
+    return;
+  }
+  const list = summary.unmatchedStaff.map(item => {
+    const label = item.staffName || item.email || 'スタッフ';
+    const work = item.workText || formatMinutesClock(item.workMinutes);
+    return `${label}（${work}）`;
+  });
+  box.textContent = `給与マスタ未登録の勤怠: ${list.join('、')}`;
+}
+
+function renderAttendanceSummary(){
+  renderAttendanceMeta();
+  renderAttendanceTable();
+  renderAttendanceUnassigned();
+}
+
+function fetchAttendanceSummary(){
+  const tbody = document.getElementById('attendanceTableBody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="7" class="table-empty">読み込み中…</td></tr>';
+  }
+  setAttendanceLoading(true);
+  const payload = {};
+  if (payrollState.attendance.month) {
+    payload.month = payrollState.attendance.month;
+  }
+  google.script.run
+    .withSuccessHandler(res => {
+      setAttendanceLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '勤怠データの取得に失敗しました');
+        payrollState.attendance.summary = null;
+        renderAttendanceSummary();
+        return;
+      }
+      payrollState.attendance.summary = res;
+      renderAttendanceSummary();
+    })
+    .withFailureHandler(err => {
+      setAttendanceLoading(false);
+      showToast(err && err.message ? err.message : '勤怠データの取得に失敗しました');
+      payrollState.attendance.summary = null;
+      renderAttendanceSummary();
+    })
+    .payrollListAttendanceSummary(payload);
+}
+
 function init(){
   renderOptions(document.getElementById('employmentType'), EMPLOYMENT_OPTIONS);
   renderOptions(document.getElementById('transportationType'), TRANSPORT_OPTIONS);
@@ -691,10 +877,23 @@ function init(){
     const nameInput = document.getElementById('gradeName');
     if (nameInput) nameInput.focus();
   });
+  const attendanceMonthInput = document.getElementById('attendanceMonth');
+  if (attendanceMonthInput) {
+    attendanceMonthInput.value = payrollState.attendance.month || getCurrentMonthKey();
+    attendanceMonthInput.addEventListener('change', event => {
+      payrollState.attendance.month = event.target.value;
+      fetchAttendanceSummary();
+    });
+  }
+  const attendanceReloadButton = document.getElementById('attendanceReloadButton');
+  if (attendanceReloadButton) {
+    attendanceReloadButton.addEventListener('click', fetchAttendanceSummary);
+  }
   updateTransportationAmountState();
   updateGradeHint();
   fetchGrades();
   fetchEmployees();
+  fetchAttendanceSummary();
 }
 
 init();

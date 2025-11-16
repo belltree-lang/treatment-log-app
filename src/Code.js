@@ -157,6 +157,7 @@ const VISIT_ATTENDANCE_STAFF_SHEET_NAME = 'VisitAttendanceStaff';
 const VISIT_ATTENDANCE_STAFF_SHEET_HEADER = ['メール','表示名','年間有給付与日数','雇用区分','AlbyteスタッフID','標準勤務時間(分)'];
 const DEFAULT_ANNUAL_PAID_LEAVE_DAYS = 10;
 const PAID_LEAVE_DEFAULT_WORK_MINUTES = 8 * 60;
+const VISIT_ATTENDANCE_DEFAULT_SHIFT_MINUTES = 8 * 60;
 const PAID_LEAVE_HALF_MINIMUM_MINUTES = 2 * 60;
 const PAID_LEAVE_EMPLOYMENT_LABELS = Object.freeze({
   employee: '社員',
@@ -2893,6 +2894,163 @@ function payrollCalculateCommissionSummary(payload){
         endDate: Utilities.formatDate(new Date(range.end.getTime() - 1), tz, 'yyyy-MM-dd')
       })),
       employees: summaries
+    };
+  });
+}
+
+function buildPayrollAttendanceEntry_(employee, records, staffProfile){
+  const normalizedRecords = Array.isArray(records) ? records : [];
+  const dailyMap = new Map();
+  normalizedRecords.forEach(record => {
+    if (!record || !record.date) return;
+    if (!dailyMap.has(record.date)) {
+      dailyMap.set(record.date, {
+        date: record.date,
+        workMinutes: 0,
+        breakMinutes: 0,
+        leaveType: record.metadata && record.metadata.leaveType ? record.metadata.leaveType : '',
+        records: []
+      });
+    }
+    const entry = dailyMap.get(record.date);
+    entry.workMinutes += Number(record.workMinutes) || 0;
+    entry.breakMinutes += Number(record.breakMinutes) || 0;
+    entry.records.push(record);
+  });
+
+  const workingDays = dailyMap.size;
+  const scheduledPerDay = staffProfile && Number.isFinite(staffProfile.defaultShiftMinutes)
+    ? staffProfile.defaultShiftMinutes
+    : VISIT_ATTENDANCE_DEFAULT_SHIFT_MINUTES;
+  let totalWorkMinutes = 0;
+  let totalBreakMinutes = 0;
+  let overtimeMinutes = 0;
+  let autoPaidLeaveMinutes = 0;
+  let autoPaidLeaveDays = 0;
+  let recordedPaidLeaveDays = 0;
+
+  dailyMap.forEach(entry => {
+    const work = Math.max(0, entry.workMinutes || 0);
+    const brk = Math.max(0, entry.breakMinutes || 0);
+    totalWorkMinutes += work;
+    totalBreakMinutes += brk;
+    if (entry.leaveType === VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE) {
+      recordedPaidLeaveDays += 1;
+    }
+    if (scheduledPerDay > 0) {
+      if (work > scheduledPerDay) {
+        overtimeMinutes += work - scheduledPerDay;
+      } else if (work < scheduledPerDay) {
+        autoPaidLeaveMinutes += scheduledPerDay - work;
+        autoPaidLeaveDays += 1;
+      }
+    }
+  });
+
+  const scheduledMinutes = workingDays * scheduledPerDay;
+  const buildText = (value) => formatMinutesAsTimeText_(Math.max(0, Math.round(value || 0)));
+
+  return {
+    employeeId: employee && employee.id ? employee.id : '',
+    employeeName: employee && employee.name ? employee.name : '',
+    email: employee && employee.email ? employee.email : '',
+    employmentType: employee && employee.employmentType ? employee.employmentType : '',
+    employmentLabel: employee && employee.employmentLabel ? employee.employmentLabel : '',
+    workingDays,
+    workMinutes: totalWorkMinutes,
+    workText: buildText(totalWorkMinutes),
+    workDurationText: formatDurationText_(totalWorkMinutes),
+    breakMinutes: totalBreakMinutes,
+    breakText: buildText(totalBreakMinutes),
+    overtimeMinutes,
+    overtimeText: buildText(overtimeMinutes),
+    autoPaidLeaveMinutes,
+    autoPaidLeaveText: buildText(autoPaidLeaveMinutes),
+    autoPaidLeaveDurationText: formatDurationText_(autoPaidLeaveMinutes),
+    autoPaidLeaveDays,
+    recordedPaidLeaveDays,
+    scheduledMinutes,
+    scheduledText: buildText(scheduledMinutes),
+    scheduledPerDayMinutes: scheduledPerDay,
+    hasAttendance: workingDays > 0,
+    recordsCount: normalizedRecords.length
+  };
+}
+
+function payrollListAttendanceSummary(payload){
+  return wrapPayrollResponse_('payrollListAttendanceSummary', () => {
+    const datasetResult = getUnifiedAttendanceDataset(payload || {});
+    if (!datasetResult || datasetResult.ok !== true || !datasetResult.dataset) {
+      throw new Error((datasetResult && datasetResult.message) || '勤怠データの取得に失敗しました。');
+    }
+    const dataset = datasetResult.dataset;
+    const staffSettings = readVisitAttendanceStaffSettings_();
+    const employeeContext = readPayrollEmployeeRecords_();
+    const employees = employeeContext.records || [];
+    const visitRecordsByEmail = new Map();
+    const datasetRecords = Array.isArray(dataset.records) ? dataset.records : [];
+    datasetRecords.forEach(record => {
+      if (!record || record.staffType !== 'employee') return;
+      const normalizedEmail = normalizeEmailKey_(record.staffId);
+      if (!normalizedEmail) return;
+      if (!visitRecordsByEmail.has(normalizedEmail)) {
+        visitRecordsByEmail.set(normalizedEmail, []);
+      }
+      visitRecordsByEmail.get(normalizedEmail).push(record);
+    });
+
+    const employeeEmailSet = new Set();
+    employees.forEach(emp => {
+      const emailKey = normalizeEmailKey_(emp && emp.email);
+      if (emailKey) employeeEmailSet.add(emailKey);
+    });
+
+    const employeeSummaries = employees.map(employee => {
+      const normalizedEmail = normalizeEmailKey_(employee && employee.email);
+      const records = normalizedEmail ? (visitRecordsByEmail.get(normalizedEmail) || []) : [];
+      const profile = normalizedEmail ? staffSettings.get(normalizedEmail) : null;
+      return buildPayrollAttendanceEntry_(employee, records, profile);
+    });
+
+    const unmatchedStaff = [];
+    visitRecordsByEmail.forEach((records, email) => {
+      if (employeeEmailSet.has(email)) return;
+      const workMinutes = records.reduce((sum, record) => sum + (Number(record && record.workMinutes) || 0), 0);
+      const breakMinutes = records.reduce((sum, record) => sum + (Number(record && record.breakMinutes) || 0), 0);
+      const sample = records[0] || {};
+      unmatchedStaff.push({
+        email,
+        staffName: sample.staffName || email,
+        workMinutes,
+        workText: formatMinutesAsTimeText_(workMinutes),
+        breakMinutes,
+        breakText: formatMinutesAsTimeText_(breakMinutes),
+        workingDays: records.length,
+        durationText: formatDurationText_(workMinutes)
+      });
+    });
+
+    const tz = dataset.timezone || Session.getScriptTimeZone() || 'Asia/Tokyo';
+    const range = dataset.range || {};
+    const fromKey = range.from || '';
+    const derivedMonthKey = fromKey ? fromKey.slice(0, 7) : '';
+    const payloadMonth = payload && (payload.month || payload.monthKey);
+    const monthKey = payloadMonth ? String(payloadMonth) : derivedMonthKey;
+    const fromDate = fromKey ? createDateFromKey_(fromKey) : null;
+    const monthLabel = fromDate ? Utilities.formatDate(fromDate, tz, 'yyyy年M月') : (monthKey || '');
+
+    return {
+      ok: true,
+      month: {
+        key: monthKey,
+        label: monthLabel
+      },
+      range,
+      timezone: tz,
+      totals: dataset.totals || null,
+      systems: dataset.systems || [],
+      employees: employeeSummaries,
+      unmatchedStaff
     };
   });
 }

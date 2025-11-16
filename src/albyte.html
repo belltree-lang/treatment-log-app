@@ -510,7 +510,38 @@ function callServer(method, payload, options){
   }
 }
 
+function refreshPortalState(options){
+  if (!sessionState || !sessionState.token) {
+    return;
+  }
+  const silent = Boolean(options && options.silent);
+  const loadingMessage = options && options.loadingMessage ? options.loadingMessage : 'データを読み込んでいます…';
+  if (!silent) {
+    setLoading(true, loadingMessage);
+  }
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!silent) {
+        setLoading(false);
+      }
+      handlePortalResponse(res, {
+        suppressErrorToast: silent,
+        toast: options && options.toast
+      });
+    })
+    .withFailureHandler(err => {
+      if (!silent) {
+        setLoading(false);
+        showToast(err && err.message ? err.message : '最新状態の取得に失敗しました。');
+      } else {
+        console.warn('[albyte] failed to refresh portal state', err);
+      }
+    })
+    .albyteGetPortalState({ token: sessionState.token });
+}
+
 function handlePortalResponse(res, options){
+  const suppressErrorToast = Boolean(options && options.suppressErrorToast);
   if (!res || res.ok !== true) {
     const reason = res && res.reason;
     const message = res && res.message ? res.message : '処理に失敗しました。';
@@ -519,7 +550,11 @@ function handlePortalResponse(res, options){
       logout();
       return;
     }
-    showToast(message);
+    if (!suppressErrorToast) {
+      showToast(message);
+    } else {
+      console.warn('[albyte] suppressed error toast:', message);
+    }
     return;
   }
 
@@ -546,6 +581,12 @@ function handlePortalResponse(res, options){
   }
   if (options && options.toast) {
     showToast(options.toast);
+  }
+  if (options && options.expectStatus) {
+    const currentStatus = portalState && portalState.today ? portalState.today.status : '';
+    if (currentStatus !== options.expectStatus) {
+      refreshPortalState({ silent: true });
+    }
   }
 }
 
@@ -683,7 +724,10 @@ function clockIn(){
   }
   callServer('albyteClockIn', { token: sessionState.token }, {
     loadingMessage: '出勤を記録しています…',
-    onSuccess: res => handlePortalResponse(res, { toast: res && res.ok ? '出勤を記録しました。' : undefined })
+    onSuccess: res => handlePortalResponse(res, {
+      toast: res && res.ok ? '出勤を記録しました。' : undefined,
+      expectStatus: 'working'
+    })
   });
 }
 
@@ -695,7 +739,10 @@ function clockOut(){
   }
   callServer('albyteClockOut', { token: sessionState.token }, {
     loadingMessage: '退勤を記録しています…',
-    onSuccess: res => handlePortalResponse(res, { toast: res && res.ok ? '退勤を記録しました。' : undefined })
+    onSuccess: res => handlePortalResponse(res, {
+      toast: res && res.ok ? '退勤を記録しました。' : undefined,
+      expectStatus: 'completed'
+    })
   });
 }
 
@@ -769,23 +816,7 @@ function bootstrap(){
   sessionState = loadSession();
   if (sessionState && sessionState.token){
     setView('portal');
-    callServer('albyteGetPortalState', { token: sessionState.token }, {
-      loadingMessage: 'データを読み込んでいます…',
-      onSuccess: res => {
-        if (!res || res.ok !== true){
-          clearSession();
-          setView('login');
-          if (res && res.message){
-            showToast(res.message);
-          }
-          return;
-        }
-        sessionState.staff = res.staff;
-        portalState = res.portal;
-        saveSession();
-        renderPortal();
-      }
-    });
+    refreshPortalState();
   } else {
     setView('login');
   }

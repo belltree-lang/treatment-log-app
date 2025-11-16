@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>給与マスタ</title>
+<style>
+  :root{
+    --bg:#f8fafc;
+    --fg:#1f2937;
+    --card:#fff;
+    --border:#e5e7eb;
+    --muted:#6b7280;
+    --brand:#2563eb;
+    --danger:#dc2626;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap{ max-width:1080px; margin:0 auto; padding:32px 16px 80px; display:flex; flex-direction:column; gap:20px; }
+  .card{ background:var(--card); border-radius:18px; padding:24px; box-shadow:0 12px 34px rgba(15,23,42,0.08); display:flex; flex-direction:column; gap:16px; }
+  .header h1{ margin:0; font-size:1.6rem; }
+  .header p{ margin:4px 0 0; color:var(--muted); }
+  table{ width:100%; border-collapse:collapse; font-size:0.9rem; }
+  th,td{ border:1px solid var(--border); padding:10px 12px; text-align:left; vertical-align:top; }
+  th{ background:#f3f4f6; font-weight:600; }
+  .table-scroll{ overflow-x:auto; }
+  .btn{ appearance:none; border:0; border-radius:999px; padding:8px 16px; font-size:0.9rem; font-weight:600; cursor:pointer; background:var(--brand); color:#fff; transition:transform .15s ease, box-shadow .15s ease; }
+  .btn:hover{ transform:translateY(-1px); box-shadow:0 10px 24px rgba(37,99,235,0.18); }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; box-shadow:none; transform:none; }
+  .btn.ghost{ background:#e5e7eb; color:var(--fg); box-shadow:none; }
+  .btn.danger{ background:var(--danger); color:#fff; }
+  .btn.small{ padding:6px 12px; font-size:0.8rem; }
+  .section-header{ display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .form-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+  .form-grid label{ display:flex; flex-direction:column; gap:6px; font-size:0.9rem; }
+  input,select,textarea{ padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:0.95rem; background:#fff; color:inherit; }
+  textarea{ min-height:80px; resize:vertical; }
+  .form-actions{ display:flex; flex-wrap:wrap; gap:12px; justify-content:flex-end; }
+  .muted{ color:var(--muted); }
+  .table-empty{ text-align:center; color:var(--muted); padding:24px 0; }
+  .toast{ position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 18px; border-radius:999px; opacity:0; transition:opacity .3s ease; pointer-events:none; }
+  .toast.show{ opacity:1; }
+  .meta-line{ font-size:0.85rem; color:var(--muted); }
+  @media (max-width:640px){
+    th,td{ font-size:0.85rem; padding:8px; }
+    .btn{ width:100%; text-align:center; }
+    .form-actions{ flex-direction:column; align-items:stretch; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="header">
+    <h1>給与マスタ</h1>
+    <p>従業員ごとの基本情報・手当・控除設定を管理します。</p>
+  </header>
+
+  <section class="card">
+    <div class="section-header">
+      <h2>従業員一覧</h2>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="reloadButton" type="button" class="btn ghost">再読み込み</button>
+        <button id="newButton" type="button" class="btn">新規登録</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>氏名</th>
+            <th>区分</th>
+            <th>基本給</th>
+            <th>時給</th>
+            <th>個別加算</th>
+            <th>役職/等級</th>
+            <th>交通費</th>
+            <th>歩合</th>
+            <th>更新日時</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="employeeTableBody"><tr><td colspan="10" class="table-empty">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <div>
+        <h2 id="formTitle">従業員を登録</h2>
+        <div id="formMeta" class="meta-line"></div>
+      </div>
+    </div>
+    <form id="employeeForm" autocomplete="off">
+      <input type="hidden" id="employeeId" />
+      <div class="form-grid">
+        <label>氏名
+          <input id="employeeName" type="text" required />
+        </label>
+        <label>メール
+          <input id="employeeEmail" type="email" placeholder="name@example.com" />
+        </label>
+        <label>雇用区分
+          <select id="employmentType" required></select>
+        </label>
+        <label>役職/等級
+          <input id="employeeGrade" type="text" placeholder="例：院長 / S2" />
+        </label>
+        <label>基本給（月額）
+          <input id="baseSalary" type="number" min="0" step="1000" placeholder="円" />
+        </label>
+        <label>時給
+          <input id="hourlyWage" type="number" min="0" step="50" placeholder="円" />
+        </label>
+        <label>個別加算
+          <input id="personalAllowance" type="number" step="500" placeholder="円" />
+        </label>
+        <label>資格手当
+          <input id="qualificationAllowance" type="number" step="500" placeholder="円" />
+        </label>
+        <label>車両手当
+          <input id="vehicleAllowance" type="number" step="500" placeholder="円" />
+        </label>
+        <label>社宅控除
+          <input id="housingDeduction" type="number" step="500" placeholder="円" />
+        </label>
+        <label>交通費区分
+          <select id="transportationType"></select>
+        </label>
+        <label>交通費金額
+          <input id="transportationAmount" type="number" step="500" placeholder="固定の場合のみ" />
+        </label>
+        <label>歩合ロジック
+          <select id="commissionLogic"></select>
+        </label>
+        <label>源泉徴収
+          <select id="withholding"></select>
+        </label>
+      </div>
+      <label style="margin-top:12px; display:flex; flex-direction:column; gap:6px;">メモ
+        <textarea id="employeeNote" placeholder="任意で備考を記入"></textarea>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn">保存</button>
+        <button type="button" id="formResetButton" class="btn ghost">新規入力</button>
+        <button type="button" id="deleteButton" class="btn danger" hidden>削除</button>
+      </div>
+    </form>
+  </section>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+const EMPLOYMENT_OPTIONS = [
+  { value:'employee', label:'正社員' },
+  { value:'parttime', label:'アルバイト' },
+  { value:'contractor', label:'業務委託' }
+];
+const TRANSPORT_OPTIONS = [
+  { value:'none', label:'なし' },
+  { value:'fixed', label:'固定' },
+  { value:'actual', label:'実費' }
+];
+const COMMISSION_OPTIONS = [
+  { value:'legacy', label:'既存' },
+  { value:'horiguchi', label:'堀口以降' }
+];
+const WITHHOLDING_OPTIONS = [
+  { value:'none', label:'なし' },
+  { value:'required', label:'あり' }
+];
+
+let payrollState = {
+  employees: [],
+  loading: false,
+  saving: false,
+  selectedId: null
+};
+let toastTimer = null;
+
+function showToast(message){
+  if (!message) return;
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+}
+
+function formatCurrency(value){
+  if (value == null || value === '') return '--';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '--';
+  return '¥' + Math.round(num).toLocaleString('ja-JP');
+}
+
+function formatTransportation(row){
+  if (!row) return '';
+  const type = row.transportationLabel || '';
+  if (!row.transportationAmount && type) return type;
+  if (!type) return formatCurrency(row.transportationAmount);
+  if (row.transportationAmount == null) return type;
+  return `${type} (${formatCurrency(row.transportationAmount)})`;
+}
+
+function renderOptions(select, options){
+  if (!select) return;
+  select.innerHTML = options.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('');
+}
+
+function renderTable(){
+  const tbody = document.getElementById('employeeTableBody');
+  if (!Array.isArray(payrollState.employees) || !payrollState.employees.length){
+    tbody.innerHTML = '<tr><td colspan="10" class="table-empty">登録がありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = payrollState.employees.map(row => {
+    const name = row.name ? row.name : '';
+    const employment = row.employmentLabel || '';
+    const base = formatCurrency(row.baseSalary);
+    const hourly = formatCurrency(row.hourlyWage);
+    const allowance = formatCurrency(row.personalAllowance);
+    const grade = row.grade ? row.grade : '';
+    const transportation = formatTransportation(row);
+    const commission = row.commissionLabel || '';
+    const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString('ja-JP') : '';
+    return `
+    <tr>
+      <td>${name}</td>
+      <td>${employment}</td>
+      <td>${base}</td>
+      <td>${hourly}</td>
+      <td>${allowance}</td>
+      <td>${grade}</td>
+      <td>${transportation}</td>
+      <td>${commission}</td>
+      <td>${updated}</td>
+      <td><button type="button" class="btn ghost small" data-action="edit" data-id="${row.id || ''}">編集</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function setFormLoading(isSaving){
+  payrollState.saving = isSaving;
+  const form = document.getElementById('employeeForm');
+  if (form) {
+    Array.from(form.elements).forEach(el => { el.disabled = isSaving && el.id !== 'deleteButton'; });
+    document.getElementById('deleteButton').disabled = isSaving;
+  }
+}
+
+function resetForm(){
+  const form = document.getElementById('employeeForm');
+  if (form) form.reset();
+  document.getElementById('employeeId').value = '';
+  payrollState.selectedId = null;
+  document.getElementById('formTitle').textContent = '従業員を登録';
+  document.getElementById('formMeta').textContent = '';
+  document.getElementById('deleteButton').hidden = true;
+  updateTransportationAmountState();
+}
+
+function updateTransportationAmountState(){
+  const type = document.getElementById('transportationType').value;
+  const amountInput = document.getElementById('transportationAmount');
+  if (type === 'fixed') {
+    amountInput.disabled = false;
+    amountInput.placeholder = '固定支給額';
+  } else {
+    amountInput.disabled = true;
+    amountInput.value = '';
+    amountInput.placeholder = '固定の場合のみ';
+  }
+}
+
+function populateForm(employee){
+  if (!employee){
+    resetForm();
+    return;
+  }
+  document.getElementById('employeeId').value = employee.id || '';
+  document.getElementById('employeeName').value = employee.name || '';
+  document.getElementById('employeeEmail').value = employee.email || '';
+  document.getElementById('employmentType').value = employee.employmentType || 'employee';
+  document.getElementById('employeeGrade').value = employee.grade || '';
+  document.getElementById('baseSalary').value = employee.baseSalary != null ? employee.baseSalary : '';
+  document.getElementById('hourlyWage').value = employee.hourlyWage != null ? employee.hourlyWage : '';
+  document.getElementById('personalAllowance').value = employee.personalAllowance != null ? employee.personalAllowance : '';
+  document.getElementById('qualificationAllowance').value = employee.qualificationAllowance != null ? employee.qualificationAllowance : '';
+  document.getElementById('vehicleAllowance').value = employee.vehicleAllowance != null ? employee.vehicleAllowance : '';
+  document.getElementById('housingDeduction').value = employee.housingDeduction != null ? employee.housingDeduction : '';
+  document.getElementById('transportationType').value = employee.transportationType || 'none';
+  document.getElementById('transportationAmount').value = employee.transportationAmount != null ? employee.transportationAmount : '';
+  document.getElementById('commissionLogic').value = employee.commissionLogic || 'legacy';
+  document.getElementById('withholding').value = employee.withholding || 'none';
+  document.getElementById('employeeNote').value = employee.note || '';
+  updateTransportationAmountState();
+  payrollState.selectedId = employee.id || null;
+  document.getElementById('formTitle').textContent = employee.name ? `${employee.name} さん` : '従業員を編集';
+  const updatedText = employee.updatedAt ? `最終更新: ${new Date(employee.updatedAt).toLocaleString('ja-JP')}` : '';
+  document.getElementById('formMeta').textContent = updatedText;
+  document.getElementById('deleteButton').hidden = !employee.id;
+}
+
+function gatherFormData(){
+  return {
+    id: document.getElementById('employeeId').value,
+    name: document.getElementById('employeeName').value,
+    email: document.getElementById('employeeEmail').value,
+    employmentType: document.getElementById('employmentType').value,
+    grade: document.getElementById('employeeGrade').value,
+    baseSalary: document.getElementById('baseSalary').value,
+    hourlyWage: document.getElementById('hourlyWage').value,
+    personalAllowance: document.getElementById('personalAllowance').value,
+    qualificationAllowance: document.getElementById('qualificationAllowance').value,
+    vehicleAllowance: document.getElementById('vehicleAllowance').value,
+    housingDeduction: document.getElementById('housingDeduction').value,
+    transportationType: document.getElementById('transportationType').value,
+    transportationAmount: document.getElementById('transportationAmount').value,
+    commissionLogic: document.getElementById('commissionLogic').value,
+    withholding: document.getElementById('withholding').value,
+    note: document.getElementById('employeeNote').value
+  };
+}
+
+function fetchEmployees(){
+  const tbody = document.getElementById('employeeTableBody');
+  tbody.innerHTML = '<tr><td colspan="10" class="table-empty">読み込み中…</td></tr>';
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '一覧の取得に失敗しました');
+        tbody.innerHTML = '<tr><td colspan="10" class="table-empty">エラーが発生しました</td></tr>';
+        return;
+      }
+      payrollState.employees = Array.isArray(res.employees) ? res.employees : [];
+      renderTable();
+      if (payrollState.selectedId) {
+        const current = payrollState.employees.find(emp => emp.id === payrollState.selectedId);
+        if (current) populateForm(current); else resetForm();
+      }
+    })
+    .withFailureHandler(err => {
+      showToast(err && err.message ? err.message : '一覧の取得に失敗しました');
+      tbody.innerHTML = '<tr><td colspan="10" class="table-empty">エラーが発生しました</td></tr>';
+    })
+    .payrollListEmployees();
+}
+
+function handleSave(event){
+  event.preventDefault();
+  if (payrollState.saving) return;
+  setFormLoading(true);
+  const payload = gatherFormData();
+  google.script.run
+    .withSuccessHandler(res => {
+      setFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '保存に失敗しました');
+        return;
+      }
+      showToast('保存しました');
+      payrollState.selectedId = res.employee && res.employee.id ? res.employee.id : null;
+      fetchEmployees();
+    })
+    .withFailureHandler(err => {
+      setFormLoading(false);
+      showToast(err && err.message ? err.message : '保存に失敗しました');
+    })
+    .payrollSaveEmployee(payload);
+}
+
+function handleDelete(){
+  const id = document.getElementById('employeeId').value;
+  if (!id) return;
+  if (!confirm('この従業員を削除しますか？')) return;
+  setFormLoading(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '削除に失敗しました');
+        return;
+      }
+      showToast('削除しました');
+      resetForm();
+      fetchEmployees();
+    })
+    .withFailureHandler(err => {
+      setFormLoading(false);
+      showToast(err && err.message ? err.message : '削除に失敗しました');
+    })
+    .payrollDeleteEmployee({ id });
+}
+
+function handleTableClick(event){
+  const button = event.target.closest('button[data-action="edit"]');
+  if (!button) return;
+  const id = button.getAttribute('data-id');
+  if (!id) return;
+  const employee = payrollState.employees.find(emp => emp.id === id);
+  if (employee) {
+    populateForm(employee);
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  }
+}
+
+function init(){
+  renderOptions(document.getElementById('employmentType'), EMPLOYMENT_OPTIONS);
+  renderOptions(document.getElementById('transportationType'), TRANSPORT_OPTIONS);
+  renderOptions(document.getElementById('commissionLogic'), COMMISSION_OPTIONS);
+  renderOptions(document.getElementById('withholding'), WITHHOLDING_OPTIONS);
+  document.getElementById('employeeForm').addEventListener('submit', handleSave);
+  document.getElementById('employeeTableBody').addEventListener('click', handleTableClick);
+  document.getElementById('newButton').addEventListener('click', resetForm);
+  document.getElementById('formResetButton').addEventListener('click', resetForm);
+  document.getElementById('deleteButton').addEventListener('click', handleDelete);
+  document.getElementById('reloadButton').addEventListener('click', fetchEmployees);
+  document.getElementById('transportationType').addEventListener('change', updateTransportationAmountState);
+  updateTransportationAmountState();
+  fetchEmployees();
+}
+
+init();
+</script>
+</body>
+</html>

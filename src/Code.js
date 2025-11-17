@@ -10779,3 +10779,263 @@ function deleteHandover(row) {
   s.deleteRow(row);
   return true;
 }
+function seedAlbyteTestDataForQa(){
+  return wrapAlbyteResponse_('albyteSeedTestData', () => {
+    return withAlbyteLock_(() => {
+      const tz = getConfig('timezone') || 'Asia/Tokyo';
+      const now = new Date();
+      const staffSpecs = [
+        { name: 'テストA', pin: '1111', staffType: 'hourly', shiftEnd: '16:15' },
+        { name: 'テストB', pin: '2222', staffType: 'hourly', shiftEnd: '13:30' },
+        { name: 'テストC', pin: '3333', staffType: 'hourly', shiftEnd: '16:00' }
+      ];
+
+      const staffResult = ensureAlbyteTestStaff_(staffSpecs, now);
+      const shiftResult = seedAlbyteTestShifts_(staffResult.records, tz, now);
+      const attendanceResult = seedAlbyteTestAttendance_(staffResult.records, tz, now);
+
+      return {
+        ok: true,
+        message: 'アルバイト勤怠テストデータを生成しました。',
+        staffCreated: staffResult.created,
+        shiftsCreated: shiftResult.created,
+        attendanceCreated: attendanceResult.created
+      };
+    });
+  });
+}
+
+function ensureAlbyteTestStaff_(specs, now){
+  const context = readAlbyteStaffRecords_();
+  const sheet = context.sheet;
+  let created = 0;
+  specs.forEach(spec => {
+    const normalized = normalizeAlbyteName_(spec.name);
+    if (normalized && context.mapByName.get(normalized)) {
+      return;
+    }
+    sheet.appendRow([
+      Utilities.getUuid(),
+      spec.name,
+      spec.pin,
+      '',
+      0,
+      '',
+      now,
+      spec.staffType,
+      spec.shiftEnd
+    ]);
+    created++;
+  });
+  const refreshed = readAlbyteStaffRecords_();
+  const records = specs.map(spec => {
+    const normalized = normalizeAlbyteName_(spec.name);
+    const record = normalized ? refreshed.mapByName.get(normalized) : null;
+    if (!record) {
+      throw new Error('スタッフ "' + spec.name + '" の取得に失敗しました。');
+    }
+    return record;
+  });
+  return { records, created };
+}
+
+function seedAlbyteTestShifts_(staffRecords, tz, now){
+  if (!staffRecords || !staffRecords.length) {
+    return { created: 0 };
+  }
+  const context = readAlbyteShiftRecords_();
+  const sheet = context.sheet;
+  const width = ALBYTE_SHIFT_SHEET_HEADER.length;
+  const existing = new Map();
+  context.records.forEach(record => {
+    if (record && record.staffId && record.dateKey) {
+      existing.set(record.staffId + '::' + record.dateKey, true);
+    }
+  });
+  const monthDays = {
+    10: [3, 7, 14],
+    11: [5, 12, 19]
+  };
+  const startOptions = ['09:00', '10:30', '11:30'];
+  const shiftRows = [];
+  staffRecords.forEach(staff => {
+    Object.keys(monthDays).forEach(monthKey => {
+      const days = monthDays[monthKey];
+      days.forEach(day => {
+        const dateKey = Utilities.formatDate(new Date(2025, Number(monthKey) - 1, day), tz, 'yyyy-MM-dd');
+        const mapKey = staff.id + '::' + dateKey;
+        if (existing.has(mapKey)) {
+          return;
+        }
+        existing.set(mapKey, true);
+        const start = startOptions[Math.floor(Math.random() * startOptions.length)];
+        const end = staff.shiftEndTime && staff.shiftEndTime.trim()
+          ? staff.shiftEndTime
+          : (start === '09:00' ? '16:15' : '15:00');
+        shiftRows.push([
+          Utilities.getUuid(),
+          dateKey,
+          staff.id,
+          staff.name,
+          start,
+          end,
+          'テストシフト',
+          now
+        ]);
+      });
+    });
+  });
+  if (!shiftRows.length) {
+    return { created: 0 };
+  }
+  const startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, shiftRows.length, width).setValues(shiftRows);
+  return { created: shiftRows.length };
+}
+
+function seedAlbyteTestAttendance_(staffRecords, tz, now){
+  if (!staffRecords || !staffRecords.length) {
+    return { created: 0 };
+  }
+  const attendanceContext = readAlbyteAttendanceRecords_({ fromDateKey: '2025-10-01', toDateKey: '2025-11-30' });
+  const sheet = attendanceContext.sheet;
+  const width = ALBYTE_ATTENDANCE_SHEET_HEADER.length;
+  const existing = new Map();
+  attendanceContext.records.forEach(record => {
+    if (record && record.staffId && record.date) {
+      existing.set(record.staffId + '::' + record.date, true);
+    }
+  });
+  const staffMap = new Map();
+  staffRecords.forEach(staff => {
+    staffMap.set(staff.id, staff);
+  });
+  const monthDays = {
+    10: [2, 6, 10, 17, 24],
+    11: [3, 7, 13, 20, 27]
+  };
+  const startOptions = ['09:00', '10:30', '11:30'];
+  const endOptions = {
+    '09:00': ['13:30', '15:00', '16:15'],
+    '10:30': ['15:00', '16:15'],
+    '11:30': ['15:00', '16:15']
+  };
+  const breakOptions = [30, 45, 60];
+  const scenarioQueue = [
+    { type: 'overtime', note: '18:00超過調整テスト' },
+    { type: 'missingBreak', note: '休憩未登録テスト' },
+    { type: 'missingClockOut', note: '退勤未登録テスト' },
+    { type: 'invalidClockOut', note: '退勤時刻バリデーションテスト' }
+  ];
+  const attendanceRows = [];
+  const insertedKeys = [];
+
+  staffRecords.forEach(staff => {
+    Object.keys(monthDays).forEach(monthKey => {
+      monthDays[monthKey].forEach(day => {
+        const dateKey = Utilities.formatDate(new Date(2025, Number(monthKey) - 1, day), tz, 'yyyy-MM-dd');
+        const mapKey = staff.id + '::' + dateKey;
+        if (existing.has(mapKey)) {
+          return;
+        }
+        existing.set(mapKey, true);
+        const scenario = scenarioQueue.length ? scenarioQueue.shift() : null;
+        const start = startOptions[Math.floor(Math.random() * startOptions.length)];
+        const endPool = endOptions[start] || ['15:00'];
+        let end = endPool[Math.floor(Math.random() * endPool.length)];
+        let breakMinutes = breakOptions[Math.floor(Math.random() * breakOptions.length)];
+        let note = 'テストデータ';
+        let includeBreakLog = true;
+        if (scenario) {
+          note = scenario.note;
+          if (scenario.type === 'overtime') {
+            end = '18:30';
+          } else if (scenario.type === 'missingBreak') {
+            breakMinutes = '';
+            includeBreakLog = false;
+          } else if (scenario.type === 'missingClockOut') {
+            end = '';
+          } else if (scenario.type === 'invalidClockOut') {
+            end = '07:45';
+          }
+        }
+        const breakValue = typeof breakMinutes === 'number' ? breakMinutes : '';
+        const logEntries = [];
+        const clockInIso = buildIsoForAlbyteSeed_(dateKey, start, tz);
+        if (clockInIso) {
+          logEntries.push({ type: 'clockIn', at: clockInIso });
+        }
+        if (includeBreakLog && typeof breakMinutes === 'number') {
+          const breakIso = buildIsoForAlbyteSeed_(dateKey, addMinutesToTimeText_(start, 90), tz);
+          logEntries.push({ type: 'breakUpdate', at: breakIso, minutes: breakMinutes, source: 'seed' });
+        }
+        if (end) {
+          const clockOutIso = buildIsoForAlbyteSeed_(dateKey, end, tz);
+          if (clockOutIso) {
+            logEntries.push({ type: 'clockOut', at: clockOutIso });
+          }
+        }
+        attendanceRows.push([
+          Utilities.getUuid(),
+          staff.id,
+          staff.name,
+          dateKey,
+          start,
+          end,
+          breakValue,
+          note,
+          '',
+          serializeAlbyteAttendanceLog_(logEntries),
+          now,
+          now
+        ]);
+        insertedKeys.push({ staffId: staff.id, dateKey });
+      });
+    });
+  });
+  if (!attendanceRows.length) {
+    return { created: 0 };
+  }
+  const startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, attendanceRows.length, width).setValues(attendanceRows);
+  const shiftContext = readAlbyteShiftRecords_();
+  insertedKeys.forEach(entry => {
+    const record = readAlbyteAttendanceRowFor_(entry.staffId, entry.dateKey, { sheet });
+    if (record) {
+      applyAlbyteAutoAdjustmentsForRow_(record, {
+        sheet,
+        staff: staffMap.get(entry.staffId),
+        shiftContext
+      });
+    }
+  });
+  return { created: attendanceRows.length };
+}
+
+function buildIsoForAlbyteSeed_(dateKey, timeText, tz){
+  if (!dateKey || !timeText) {
+    return '';
+  }
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const [hh, mm] = timeText.split(':').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return '';
+  }
+  const hour = Number.isFinite(hh) ? hh : 0;
+  const minute = Number.isFinite(mm) ? mm : 0;
+  const date = new Date(y, m - 1, d, hour, minute);
+  return formatIsoStringWithOffset_(date, tz || getConfig('timezone') || 'Asia/Tokyo');
+}
+
+function addMinutesToTimeText_(timeText, minutes){
+  const [hh, mm] = String(timeText || '00:00').split(':').map(Number);
+  if (!Number.isFinite(minutes)) {
+    return timeText;
+  }
+  const base = new Date(2025, 0, 1, Number.isFinite(hh) ? hh : 0, Number.isFinite(mm) ? mm : 0, 0, 0);
+  base.setMinutes(base.getMinutes() + minutes);
+  const hour = base.getHours();
+  const minute = base.getMinutes();
+  const pad = value => String(value).padStart(2, '0');
+  return pad(hour) + ':' + pad(minute);
+}

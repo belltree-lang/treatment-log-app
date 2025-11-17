@@ -40,7 +40,32 @@
   .card-header{ display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px; }
   .muted{ color:var(--muted); font-size:0.9rem; }
   table{ width:100%; border-collapse:collapse; }
+  .table-wrapper{ width:100%; overflow-x:auto; }
+  .attendance-table{ width:100%; border-collapse:collapse; table-layout:fixed; }
   th,td{ text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); font-size:0.95rem; vertical-align:top; }
+  .attendance-table th{ font-weight:600; color:#111827; }
+  .attendance-table th.col-date,
+  .attendance-table td.col-date{ width:132px; }
+  .attendance-table th.col-time,
+  .attendance-table td.col-time,
+  .attendance-table th.col-work,
+  .attendance-table td.col-work,
+  .attendance-table th.col-break,
+  .attendance-table td.col-break{ width:86px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .attendance-table th.col-breakdown,
+  .attendance-table td.col-breakdown{ width:18%; }
+  .attendance-table th.col-source,
+  .attendance-table td.col-source{ width:16%; }
+  .attendance-table th.col-request,
+  .attendance-table td.col-request{ width:150px; }
+  .attendance-table th.col-actions,
+  .attendance-table td.col-actions{ width:90px; text-align:center; }
+  .attendance-table td.col-actions .btn{ width:100%; padding:6px 0; }
+  .attendance-table tbody tr:hover{ background:#f1f5f9; }
+  .date-cell{ font-variant-numeric:tabular-nums; }
+  .date-primary{ font-weight:600; }
+  .date-sub{ font-size:0.85rem; margin-top:2px; }
+  .time-cell{ font-variant-numeric:tabular-nums; }
   th{ font-weight:600; color:#111827; white-space:nowrap; }
   tbody tr:hover{ background:#f1f5f9; }
   .badge{ display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:999px; font-size:0.8rem; font-weight:600; }
@@ -209,6 +234,7 @@
 
 <script>
 const MONTH_STORAGE_KEY = 'visitAttendance.selectedMonth';
+const WEEKDAYS = ['日','月','火','水','木','金','土'];
 
 let state = { data: null, selectedMonth: null, requestDate: null, paidLeaveDate: null, paidLeavePlan: null, paidLeavePlanToken: 0 };
 
@@ -430,7 +456,7 @@ function renderAttendance(){
   const monthNotice = document.getElementById('monthNotice');
   const data = state.data;
   const month = data.month || {};
-  const attendance = data.attendance || [];
+  const attendance = normalizeAttendanceRecords(data.attendance || []);
   monthNotice.textContent = month.canRequest ? 'この月の勤怠は修正申請できます（前月分まで）' : '当月は閲覧のみです。修正申請は前月分まで受付。';
   if (!attendance.length){
     container.innerHTML = '<div class="muted">対象月の勤怠データがありません。</div>';
@@ -442,25 +468,40 @@ function renderAttendance(){
       const statusLabel = req ? req.statusLabel : '';
       const statusClass = status ? `status-badge--${status}` : '';
       const statusNote = req && req.statusNote ? `<div class="muted">${escapeHtml(req.statusNote)}</div>` : '';
-      const requestCell = req ? `<div class="badge ${statusClass}">${statusLabel}</div>${statusNote}` : '-';
+      const requestCell = req
+        ? `<div class="badge ${statusClass}">${escapeHtml(statusLabel)}</div>${statusNote}`
+        : '<span class="muted">-</span>';
       const button = month.canRequest ? `<button class="btn" ${status === 'pending' ? 'disabled' : ''} data-date="${record.date}">申請</button>` : '';
       const sourceLabel = escapeHtml(record.sourceLabel || '');
       const autoNote = record.autoAdjustmentMessage ? `<div class="auto-adjust-note">${escapeHtml(record.autoAdjustmentMessage)}</div>` : '';
       const sourceCell = sourceLabel + autoNote;
+      const { primary: datePrimary, secondary: dateSecondary } = formatAttendanceDateParts(record);
+      const startLabel = formatTimeDisplay(record.start);
+      const endLabel = formatTimeDisplay(record.end);
+      const workLabel = formatTimeDisplay(record.work);
+      const breakLabel = formatTimeDisplay(record.break);
+      const dateCell = `
+        <div class="date-primary">${escapeHtml(datePrimary || record.displayDate || record.date || '')}</div>
+        ${dateSecondary ? `<div class="date-sub muted">${escapeHtml(dateSecondary)}</div>` : (record.weekday ? `<div class="date-sub muted">（${escapeHtml(record.weekday)}）</div>` : '')}
+      `;
+      const startCell = startLabel ? escapeHtml(startLabel) : '<span class="muted">--:--</span>';
+      const endCell = endLabel ? escapeHtml(endLabel) : '<span class="muted">--:--</span>';
+      const workCell = workLabel ? escapeHtml(workLabel) : '<span class="muted">--</span>';
+      const breakCell = breakLabel ? escapeHtml(breakLabel) : '<span class="muted">--</span>';
       return `<tr>
-        <td>${record.displayDate || record.date}<div class="muted">${record.weekday || ''}</div></td>
-        <td>${record.start || ''}</td>
-        <td>${record.end || ''}</td>
-        <td>${record.work || ''}</td>
-        <td>${record.break || ''}</td>
-        <td>${escapeHtml(record.breakdown || '')}</td>
-        <td>${sourceCell}</td>
-        <td>${requestCell}</td>
-        <td>${month.canRequest ? button : ''}</td>
+        <td class="col-date date-cell">${dateCell}</td>
+        <td class="col-time time-cell">${startCell}</td>
+        <td class="col-time time-cell">${endCell}</td>
+        <td class="col-work time-cell">${workCell}</td>
+        <td class="col-break time-cell">${breakCell}</td>
+        <td class="col-breakdown">${escapeHtml(record.breakdown || '')}</td>
+        <td class="col-source">${sourceCell}</td>
+        <td class="col-request">${requestCell}</td>
+        <td class="col-actions">${month.canRequest ? button : ''}</td>
       </tr>`;
     }).join('');
-  container.innerHTML = `<div class="table-wrapper"><table>
-    <thead><tr><th>日付</th><th>出勤</th><th>退勤</th><th>勤務</th><th>休憩</th><th>種別内訳</th><th>区分</th><th>申請状況</th><th>${month.canRequest ? '操作' : ''}</th></tr></thead>
+  container.innerHTML = `<div class="table-wrapper"><table class="attendance-table">
+    <thead><tr><th class="col-date">日付</th><th class="col-time">出勤</th><th class="col-time">退勤</th><th class="col-work">勤務</th><th class="col-break">休憩</th><th class="col-breakdown">種別内訳</th><th class="col-source">区分</th><th class="col-request">申請状況</th><th class="col-actions">${month.canRequest ? '操作' : ''}</th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
   if (month.canRequest){
@@ -483,9 +524,11 @@ function renderHistory(){
     const isPaidLeave = req.type === 'paidLeave' || req.type === 'paidleave';
     const typeLabel = req.typeLabel || (isPaidLeave ? '有給申請' : '勤怠修正申請');
     const paidLeaveDetail = req.paidLeaveDetail || null;
+    const endLabel = formatTimeDisplay(req.end);
+    const breakLabel = formatTimeDisplay(req.breakText || req.breakMinutes);
     const detail = isPaidLeave
       ? `有給（${escapeHtml(paidLeaveDetail && paidLeaveDetail.leaveLabel ? paidLeaveDetail.leaveLabel : '全日')} / ${escapeHtml(paidLeaveDetail && paidLeaveDetail.workText ? paidLeaveDetail.workText : '-')}` + '）'
-      : `退勤 ${req.end || '-'} / 休憩 ${req.breakText || '-'}`;
+      : `退勤 ${escapeHtml(endLabel || '-')} / 休憩 ${escapeHtml(breakLabel || '-')}`;
     const weekday = req.targetWeekday || '';
     const shiftMeta = isPaidLeave && paidLeaveDetail && paidLeaveDetail.shiftText
       ? `<span>所定: ${escapeHtml(paidLeaveDetail.shiftText)}</span>`
@@ -541,7 +584,7 @@ function renderAdminCorrectionRequests(requests){
     return `<tr>
       <td>${escapeHtml(req.targetDate)}<div class="muted">${escapeHtml(req.targetWeekday||'')}</div></td>
       <td>${escapeHtml(req.targetEmail || '')}</td>
-      <td>退勤 ${escapeHtml(req.end || '-')}<br>休憩 ${escapeHtml(req.breakText || '-')}</td>
+      <td>退勤 ${escapeHtml(formatTimeDisplay(req.end) || '-')}<br>休憩 ${escapeHtml(formatTimeDisplay(req.breakText || req.breakMinutes) || '-')}</td>
       <td>${escapeHtml(req.note || '')}</td>
       <td><select id="${selectId}">
         <option value="pending" ${req.status==='pending'?'selected':''}>申請中</option>
@@ -963,6 +1006,118 @@ function escapeHtml(str){
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function normalizeAttendanceRecords(records){
+  if (!Array.isArray(records)) return [];
+  const seen = new Set();
+  return records.filter(record => {
+    if (!record || !record.date) return true;
+    const key = String(record.date);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function formatAttendanceDateParts(record){
+  const dateValue = record && (record.date || record.displayDate);
+  const parsed = parseDateValue(dateValue);
+  const weekday = record && record.weekday ? String(record.weekday) : '';
+  if (!parsed) {
+    return {
+      primary: dateValue ? String(dateValue) : '',
+      secondary: weekday ? `（${weekday}）` : ''
+    };
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const iso = `${year}-${month}-${day}`;
+  const short = `${parsed.getMonth() + 1}/${parsed.getDate()}`;
+  const weekdayText = weekday || WEEKDAYS[parsed.getDay()] || '';
+  return {
+    primary: iso,
+    secondary: weekdayText ? `${short}（${weekdayText}）` : short
+  };
+}
+
+function parseDateValue(value){
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return new Date(value.getTime());
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value > 1e10) {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) return date;
+    }
+  }
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const normalized = text.replace(/[\.]/g, '/');
+  const parsed = new Date(normalized);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+  const m = text.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
+  if (m) {
+    const year = Number(m[1]);
+    const monthIndex = Number(m[2]) - 1;
+    const day = Number(m[3]);
+    if (Number.isFinite(year) && Number.isFinite(monthIndex) && Number.isFinite(day)) {
+      return new Date(year, monthIndex, day);
+    }
+  }
+  return null;
+}
+
+function formatTimeDisplay(value){
+  if (value == null || value === '') return '';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return formatDateToClock(value);
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value > 1e10) {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        return formatDateToClock(date);
+      }
+    }
+    return formatMinutesAsClock(value);
+  }
+  const text = String(value).trim();
+  if (!text) return '';
+  const exact = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (exact) {
+    return `${exact[1].padStart(2, '0')}:${exact[2]}`;
+  }
+  if (/^\d+$/.test(text)) {
+    return formatMinutesAsClock(Number(text));
+  }
+  const parsedDate = new Date(text);
+  if (!isNaN(parsedDate.getTime())) {
+    return formatDateToClock(parsedDate);
+  }
+  const inlineMatch = text.match(/(\d{1,2}):(\d{2})/);
+  if (inlineMatch) {
+    return `${inlineMatch[1].padStart(2, '0')}:${inlineMatch[2]}`;
+  }
+  return text;
+}
+
+function formatDateToClock(date){
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function formatMinutesAsClock(minutes){
+  const total = Number(minutes);
+  if (!Number.isFinite(total)) return '';
+  const normalized = Math.max(0, Math.round(total));
+  const hours = String(Math.floor(normalized / 60)).padStart(2, '0');
+  const mins = String(normalized % 60).padStart(2, '0');
+  return `${hours}:${mins}`;
 }
 
 function formatDateInput(date){

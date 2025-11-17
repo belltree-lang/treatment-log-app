@@ -9713,6 +9713,15 @@ function getVisitAttendancePortalData(options){
       record.request = req;
     }
   });
+  attendance.forEach(record => {
+    if (!record) return;
+    const hasWeekday = record.weekday && String(record.weekday).trim();
+    if (hasWeekday) return;
+    const resolvedDate = record.date ? createDateFromKey_(record.date) : null;
+    if (resolvedDate) {
+      record.weekday = getWeekdaySymbol_(resolvedDate, tz) || '';
+    }
+  });
   const totalWork = attendance.reduce((sum, r) => sum + (Number.isFinite(r.workMinutes) ? r.workMinutes : 0), 0);
   const totalBreak = attendance.reduce((sum, r) => sum + (Number.isFinite(r.breakMinutes) ? r.breakMinutes : 0), 0);
   const firstOfCurrent = new Date(now.getFullYear(), now.getMonth(), 1);

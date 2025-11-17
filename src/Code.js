@@ -1112,12 +1112,13 @@ function appendAlbyteAttendanceLog_(existingLog, entry){
 }
 
 function parseAlbyteAttendanceRow_(row, rowIndex){
+  const dateKey = normalizeDateKey_(row[ALBYTE_ATTENDANCE_COLUMNS.date]);
   return {
     rowIndex,
     id: String(row[ALBYTE_ATTENDANCE_COLUMNS.id] || '').trim(),
     staffId: String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim(),
     staffName: String(row[ALBYTE_ATTENDANCE_COLUMNS.staffName] || '').trim(),
-    date: String(row[ALBYTE_ATTENDANCE_COLUMNS.date] || '').trim(),
+    date: dateKey,
     clockIn: String(row[ALBYTE_ATTENDANCE_COLUMNS.clockIn] || '').trim(),
     clockOut: String(row[ALBYTE_ATTENDANCE_COLUMNS.clockOut] || '').trim(),
     breakMinutes: Number(row[ALBYTE_ATTENDANCE_COLUMNS.breakMinutes]) || 0,
@@ -1136,7 +1137,7 @@ function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
   const width = ALBYTE_ATTENDANCE_SHEET_HEADER.length;
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
   const targetId = String(staffId || '').trim();
-  const targetDate = String(dateKey || '').trim();
+  const targetDate = normalizeDateKey_(dateKey);
   const normalizedStaffName = options && options.normalizedStaffName
     ? String(options.normalizedStaffName).trim()
     : (options && options.staff
@@ -1153,7 +1154,7 @@ function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
   };
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
-    const rowDate = String(row[ALBYTE_ATTENDANCE_COLUMNS.date] || '').trim();
+    const rowDate = normalizeDateKey_(row[ALBYTE_ATTENDANCE_COLUMNS.date]);
     if (rowDate !== targetDate) continue;
     const rowStaffId = String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim();
     if (targetId && rowStaffId === targetId) {

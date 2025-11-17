@@ -240,6 +240,7 @@ function escapeHtml(value){
 }
 
 const SESSION_STORAGE_KEY = 'albyte.session.v1';
+const LEGACY_SERIAL_DATE_PATTERN = /(1899|1900)/;
 const STATUS_LABELS = { idle: '未出勤', working: '勤務中', completed: '退勤済み' };
 const STATUS_CLASS = { idle: 'status-idle', working: 'status-working', completed: 'status-completed' };
 
@@ -357,6 +358,27 @@ function formatBreakCellValue(row){
   return formatBreakValue(row.breakMinutes, row.breakText);
 }
 
+function normalizeMonthlyRecords(records){
+  if (!Array.isArray(records)) return [];
+  const seen = new Set();
+  const normalized = [];
+  records.forEach(record => {
+    if (!record) return;
+    if (record.date) {
+      const key = `${String(record.date)}__${String(record.clockIn || '')}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+    }
+    normalized.push(Object.assign({}, record, {
+      clockIn: formatClockValue(record.clockIn),
+      clockOut: formatClockValue(record.clockOut)
+    }));
+  });
+  return normalized;
+}
+
 function renderMonthlySummary(){
   if (!monthlyCard) return;
   if (!monthlyState) {
@@ -437,7 +459,9 @@ function loadMonthlySummary(year, month){
         }
         return;
       }
-      monthlyState = res.summary;
+      monthlyState = Object.assign({}, res.summary, {
+        records: normalizeMonthlyRecords(res.summary && res.summary.records)
+      });
       renderMonthlySummary();
     })
     .withFailureHandler(err => {
@@ -649,8 +673,10 @@ function renderPortal(){
   statusBadge.className = 'status-badge ' + (STATUS_CLASS[status] || STATUS_CLASS.idle);
 
   const record = portal.today.record || null;
-  clockInValue.textContent = record && record.clockIn ? record.clockIn : '--:--';
-  clockOutValue.textContent = record && record.clockOut ? record.clockOut : '--:--';
+  const clockInLabel = formatClockValue(record && record.clockIn);
+  const clockOutLabel = formatClockValue(record && record.clockOut);
+  clockInValue.textContent = clockInLabel || '--:--';
+  clockOutValue.textContent = clockOutLabel || '--:--';
   const breakMinutes = portal.today.breakMinutes != null ? portal.today.breakMinutes : 0;
   breakValue.textContent = isDailyStaff ? '対象外' : (breakMinutes + '分');
 
@@ -717,6 +743,70 @@ function formatUpdatedAt(value){
   const hour = String(date.getHours()).padStart(2, '0');
   const minute = String(date.getMinutes()).padStart(2, '0');
   return month + '/' + day + ' ' + hour + ':' + minute;
+}
+
+function formatClockValue(value){
+  return formatTimeDisplay(value);
+}
+
+function formatTimeDisplay(value){
+  if (value == null || value === '') return '';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return formatDateToClock(value);
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value > 1e10) {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        return formatDateToClock(date);
+      }
+    }
+    return formatMinutesAsClock(value);
+  }
+  const text = String(value).trim();
+  if (!text) return '';
+  const exact = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (exact) {
+    return `${exact[1].padStart(2, '0')}:${exact[2]}`;
+  }
+  if (/^\d+$/.test(text)) {
+    return formatMinutesAsClock(Number(text));
+  }
+  const parsedDate = new Date(text);
+  if (!isNaN(parsedDate.getTime())) {
+    return formatDateToClock(parsedDate);
+  }
+  const inlineMatch = text.match(/(\d{1,2}):(\d{2})/);
+  if (inlineMatch) {
+    return `${inlineMatch[1].padStart(2, '0')}:${inlineMatch[2]}`;
+  }
+  const legacyMatch = extractLegacyTime(text);
+  if (legacyMatch) {
+    return legacyMatch;
+  }
+  return text;
+}
+
+function extractLegacyTime(text){
+  if (!text || !LEGACY_SERIAL_DATE_PATTERN.test(text)) return '';
+  const match = text.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return '';
+  return `${match[1].padStart(2, '0')}:${match[2]}`;
+}
+
+function formatDateToClock(date){
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function formatMinutesAsClock(minutes){
+  const total = Number(minutes);
+  if (!Number.isFinite(total)) return '';
+  const normalized = Math.max(0, Math.round(total));
+  const hours = String(Math.floor(normalized / 60)).padStart(2, '0');
+  const mins = String(normalized % 60).padStart(2, '0');
+  return `${hours}:${mins}`;
 }
 
 function submitLogin(event){

@@ -1246,7 +1246,7 @@ function readAlbyteShiftRecords_(){
       records.push(record);
     }
   }
-  return { sheet: ensureAlbyteShiftSheet_(), records };
+  return { sheet, records };
 }
 
 function getAlbyteShiftById_(id, context){
@@ -1336,6 +1336,21 @@ function computeAlbyteWorkMetrics_(record, staff, shift){
     baseShiftEndMinutes,
     baseShiftEndText
   };
+}
+
+function resolveAlbyteWorkSourceLabel_(metrics, shift){
+  if (!metrics) return '通常勤務';
+  const workMinutes = Number.isFinite(metrics.workMinutes) ? metrics.workMinutes : 0;
+  if (metrics.isDailyStaff && Number.isFinite(metrics.overtimeMinutes) && metrics.overtimeMinutes > 0) {
+    return '延長勤務';
+  }
+  if (shift && Number.isFinite(shift.startMinutes) && Number.isFinite(shift.endMinutes)) {
+    const scheduled = Math.max(0, shift.endMinutes - shift.startMinutes);
+    if (Number.isFinite(scheduled) && scheduled > 0 && workMinutes > scheduled) {
+      return '延長勤務';
+    }
+  }
+  return '通常勤務';
 }
 
 function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
@@ -1507,6 +1522,7 @@ function buildAlbyteAttendanceView_(record, options){
   const breakMinutes = Number.isFinite(metrics.breakMinutes) ? metrics.breakMinutes : 0;
   const workMinutes = Number.isFinite(metrics.workMinutes) ? metrics.workMinutes : NaN;
   const overtimeText = metrics.isDailyStaff ? formatMinutesAsTimeText_(metrics.overtimeMinutes || 0) : '';
+  const sourceLabel = resolveAlbyteWorkSourceLabel_(metrics, shift);
   const tz = getConfig('timezone') || 'Asia/Tokyo';
   return {
     id: record.id,
@@ -1524,6 +1540,7 @@ function buildAlbyteAttendanceView_(record, options){
     overtimeText,
     staffType: metrics.staffType,
     isDailyStaff: metrics.isDailyStaff,
+    sourceLabel,
     note: record.note || '',
     autoFlag: record.autoFlag || '',
     log: record.log || [],
@@ -3752,6 +3769,7 @@ function buildUnifiedAlbyteAttendanceRecord_(record, options){
     workText: view.workText || formatMinutesAsTimeText_(workMinutes),
     durationText: view.durationText || formatDurationText_(workMinutes),
     note: view.note || '',
+    sourceLabel: view.sourceLabel || '通常勤務',
     metadata: {
       autoFlag: view.autoFlag || '',
       log: Array.isArray(view.log) ? view.log : [],
@@ -9219,11 +9237,14 @@ function buildPaidLeavePlan_(email, targetDay, options){
       shiftStartMinutes = shift.startMinutes;
       shiftEndMinutes = shift.endMinutes;
       shiftSource = shift.source || 'albyte';
-    } else if (Number.isFinite(profile.defaultShiftMinutes) && profile.defaultShiftMinutes > 0) {
-      shiftEndMinutes = shiftStartMinutes + profile.defaultShiftMinutes;
-      shiftSource = 'staffDefault';
     } else {
-      throw new Error('この日の予定勤務時間が登録されていません。先にシフトを登録してください。');
+      const fallbackMinutes = Number.isFinite(profile.defaultShiftMinutes) && profile.defaultShiftMinutes > 0
+        ? profile.defaultShiftMinutes
+        : VISIT_ATTENDANCE_DEFAULT_SHIFT_MINUTES;
+      shiftEndMinutes = shiftStartMinutes + fallbackMinutes;
+      shiftSource = Number.isFinite(profile.defaultShiftMinutes) && profile.defaultShiftMinutes > 0
+        ? 'staffDefault'
+        : 'fallback';
     }
   }
   let fullWorkMinutes = employmentType === 'employee'
@@ -9458,6 +9479,9 @@ function readVisitAttendanceRecords_(options){
       sourceLabel = normalizedSource === 'autorounded18' ? '自動反映（18:00調整）' : '手動入力（18:00調整）';
     } else if (autoAdjustedEnd && sourceLabel && sourceLabel.indexOf('18:00調整') === -1) {
       sourceLabel = sourceLabel + '（18:00調整）';
+    }
+    if (!sourceRaw && sourceLabel === '手動入力') {
+      sourceLabel = '通常勤務';
     }
 
     const finalEndMinutes = Number.isFinite(effectiveEndMinutes)

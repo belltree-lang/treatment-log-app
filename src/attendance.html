@@ -40,12 +40,15 @@
   .card-header{ display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px; }
   .muted{ color:var(--muted); font-size:0.9rem; }
   table{ width:100%; border-collapse:collapse; }
-  .table-wrapper{ width:100%; overflow-x:auto; }
+  .table-wrapper{ width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:#94a3b8 transparent; }
+  .table-wrapper::-webkit-scrollbar{ height:6px; }
+  .table-wrapper::-webkit-scrollbar-track{ background:transparent; }
+  .table-wrapper::-webkit-scrollbar-thumb{ background:#94a3b8; border-radius:4px; }
   .attendance-table{ width:100%; border-collapse:collapse; table-layout:fixed; }
   th,td{ text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); font-size:0.95rem; vertical-align:top; }
   .attendance-table th{ font-weight:600; color:#111827; }
   .attendance-table th.col-date,
-  .attendance-table td.col-date{ width:132px; }
+  .attendance-table td.col-date{ width:122px; }
   .attendance-table th.col-time,
   .attendance-table td.col-time,
   .attendance-table th.col-work,
@@ -53,14 +56,14 @@
   .attendance-table th.col-break,
   .attendance-table td.col-break{ width:86px; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .attendance-table th.col-breakdown,
-  .attendance-table td.col-breakdown{ width:18%; }
+  .attendance-table td.col-breakdown{ width:16%; white-space:normal; word-break:break-word; overflow-wrap:anywhere; line-height:1.35; }
   .attendance-table th.col-source,
-  .attendance-table td.col-source{ width:16%; }
+  .attendance-table td.col-source{ width:13%; white-space:normal; word-break:break-word; line-height:1.35; }
   .attendance-table th.col-request,
-  .attendance-table td.col-request{ width:150px; }
+  .attendance-table td.col-request{ width:150px; white-space:normal; }
   .attendance-table th.col-actions,
-  .attendance-table td.col-actions{ width:90px; text-align:center; }
-  .attendance-table td.col-actions .btn{ width:100%; padding:6px 0; }
+  .attendance-table td.col-actions{ width:110px; text-align:center; white-space:nowrap; }
+  .attendance-table td.col-actions .btn{ width:100%; }
   .attendance-table tbody tr:hover{ background:#f1f5f9; }
   .date-cell{ font-variant-numeric:tabular-nums; }
   .date-primary{ font-weight:600; }
@@ -76,6 +79,7 @@
   .btn:hover{ transform:translateY(-1px); box-shadow:0 10px 20px rgba(37,99,235,0.15); }
   .btn:disabled{ opacity:.45; cursor:not-allowed; box-shadow:none; transform:none; }
   .btn.ghost{ background:#e5e7eb; color:#1f2937; }
+  .btn-sm{ padding:6px 12px; font-size:0.82rem; }
   .table-note{ margin-top:12px; font-size:0.9rem; color:var(--muted); }
   .history-list{ display:flex; flex-direction:column; gap:12px; }
   .history-item{ border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:#fff; }
@@ -104,12 +108,35 @@
   .toast{ position:fixed; left:50%; bottom:32px; transform:translateX(-50%); background:#1f2937; color:#fff; padding:10px 18px; border-radius:999px; font-size:0.9rem; box-shadow:0 12px 30px rgba(15,23,42,0.25); opacity:0; pointer-events:none; transition:opacity .3s ease; z-index:1600; }
   .toast.show{ opacity:1; }
   .auto-adjust-note{ margin-top:4px; font-size:0.8rem; color:#b91c1c; }
+  @media (max-width:768px){
+    .attendance-table th.col-date,
+    .attendance-table td.col-date{ width:110px; }
+    .attendance-table th.col-time,
+    .attendance-table td.col-time{ width:78px; }
+    .attendance-table th.col-work,
+    .attendance-table td.col-work,
+    .attendance-table th.col-break,
+    .attendance-table td.col-break{ width:74px; }
+    .attendance-table th.col-breakdown,
+    .attendance-table td.col-breakdown{ width:14%; }
+    .attendance-table th.col-source,
+    .attendance-table td.col-source{ width:12%; }
+    .attendance-table th.col-request,
+    .attendance-table td.col-request{ width:130px; }
+    .attendance-table th.col-actions,
+    .attendance-table td.col-actions{ width:120px; }
+    .attendance-table td.col-actions .btn{ min-width:110px; }
+  }
   @media (max-width:640px){
     th,td{ font-size:0.85rem; padding:8px 6px; }
     .btn{ padding:7px 12px; font-size:0.85rem; }
     .header-controls{ flex-direction:column; align-items:flex-start; }
     .header-actions{ width:100%; justify-content:flex-start; }
     .paid-leave-widget{ width:100%; }
+    .dialog{ padding:16px; }
+    select,input,textarea{ font-size:0.9rem; padding:8px; }
+    .modal-actions{ flex-direction:column; }
+    .modal-actions .btn{ width:100%; }
   }
 </style>
 </head>
@@ -471,7 +498,9 @@ function renderAttendance(){
       const requestCell = req
         ? `<div class="badge ${statusClass}">${escapeHtml(statusLabel)}</div>${statusNote}`
         : '<span class="muted">-</span>';
-      const button = month.canRequest ? `<button class="btn" ${status === 'pending' ? 'disabled' : ''} data-date="${record.date}">申請</button>` : '';
+      const button = month.canRequest
+        ? `<button class="btn btn-sm" ${status === 'pending' ? 'disabled' : ''} data-date="${record.date}">申請</button>`
+        : '';
       const sourceLabel = escapeHtml(record.sourceLabel || '');
       const autoNote = record.autoAdjustmentMessage ? `<div class="auto-adjust-note">${escapeHtml(record.autoAdjustmentMessage)}</div>` : '';
       const sourceCell = sourceLabel + autoNote;
@@ -479,7 +508,7 @@ function renderAttendance(){
       const startLabel = formatTimeDisplay(record.start);
       const endLabel = formatTimeDisplay(record.end);
       const workLabel = formatTimeDisplay(record.work);
-      const breakLabel = formatTimeDisplay(record.break);
+      const breakLabel = formatBreakDisplay(record);
       const dateCell = `
         <div class="date-primary">${escapeHtml(datePrimary || record.displayDate || record.date || '')}</div>
         ${dateSecondary ? `<div class="date-sub muted">${escapeHtml(dateSecondary)}</div>` : (record.weekday ? `<div class="date-sub muted">（${escapeHtml(record.weekday)}）</div>` : '')}
@@ -1040,6 +1069,25 @@ function formatAttendanceDateParts(record){
     primary: iso,
     secondary: weekdayText ? `${short}（${weekdayText}）` : short
   };
+}
+
+function formatBreakDisplay(record){
+  if (!record) return '';
+  const minutes = Number(record.breakMinutes);
+  if (Number.isFinite(minutes) && minutes === 0){
+    return '–';
+  }
+  const label = formatTimeDisplay(record.break);
+  if (!label){
+    if (Number.isFinite(minutes)){
+      return minutes === 0 ? '–' : formatMinutesAsClock(minutes);
+    }
+    return '';
+  }
+  if ((label === '00:00' || label === '0:00') && Number.isFinite(minutes) && minutes === 0){
+    return '–';
+  }
+  return label;
 }
 
 function parseDateValue(value){

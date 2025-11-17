@@ -27,3 +27,7 @@
 ## デプロイ時の注意
 - `Code.js` の `onOpen()` で作成されるメニューから手動同期やトリガー確認を実行してください。
 - Web アプリの URL（`ScriptApp.getService().getUrl()`）を基に、`welcome.html` の各リンクが遷移します。
+
+## 社会保険料設定
+- `payroll.html` から標準報酬等級マスタや料率を管理し、従業員ごとの社会保険料プレビューを確認できます。
+- `PayrollInsuranceStandards` と `PayrollInsuranceOverrides` シートにデータが保存され、標準報酬月額の自動計算・月次上書きに利用されます。

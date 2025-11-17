@@ -43,6 +43,20 @@
   .attendance-controls label{ display:flex; flex-direction:column; gap:4px; font-size:0.85rem; color:var(--muted); }
   .metric-main{ font-weight:600; }
   .metric-subtext{ font-size:0.8rem; color:var(--muted); }
+  .badge{ display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:600; }
+  .badge.info{ background:#e0f2fe; color:#0f172a; }
+  .badge.danger{ background:#fee2e2; color:#7f1d1d; }
+  .rate-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  .rate-grid label{ font-size:0.85rem; color:var(--muted); }
+  .rate-grid input{ width:100%; }
+  .table-note{ font-size:0.85rem; color:var(--muted); margin-top:8px; }
+  .text-right{ text-align:right; }
+  .insurance-summary-name{ display:flex; flex-direction:column; gap:4px; }
+  .insurance-summary-name small{ color:var(--muted); font-size:0.8rem; }
+  .insurance-summary-amount{ display:flex; flex-direction:column; gap:2px; }
+  .insurance-summary-amount strong{ font-size:1rem; }
+  .insurance-summary-note{ font-size:0.85rem; color:var(--muted); }
+  .inline-controls{ display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; }
   .toast{ position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 18px; border-radius:999px; opacity:0; transition:opacity .3s ease; pointer-events:none; }
   .toast.show{ opacity:1; }
   .meta-line{ font-size:0.85rem; color:var(--muted); }
@@ -239,6 +253,168 @@
       </div>
     </form>
   </section>
+
+  <section class="card">
+    <div class="section-header">
+      <h2>社会保険料レート</h2>
+      <div class="inline-controls">
+        <button type="button" id="insuranceRateReset" class="btn ghost">初期値に戻す</button>
+      </div>
+    </div>
+    <form id="insuranceRateForm" autocomplete="off">
+      <div class="rate-grid">
+        <label>健康保険（本人）
+          <input id="insuranceHealthEmployee" type="number" step="0.0001" min="0" required />
+        </label>
+        <label>健康保険（事業主）
+          <input id="insuranceHealthEmployer" type="number" step="0.0001" min="0" required />
+        </label>
+        <label>厚生年金（本人）
+          <input id="insurancePensionEmployee" type="number" step="0.0001" min="0" required />
+        </label>
+        <label>厚生年金（事業主）
+          <input id="insurancePensionEmployer" type="number" step="0.0001" min="0" required />
+        </label>
+        <label>介護保険（本人）
+          <input id="insuranceNursingEmployee" type="number" step="0.0001" min="0" />
+        </label>
+        <label>介護保険（事業主）
+          <input id="insuranceNursingEmployer" type="number" step="0.0001" min="0" />
+        </label>
+        <label>子ども・子育て拠出金（本人）
+          <input id="insuranceChildEmployee" type="number" step="0.0001" min="0" />
+        </label>
+        <label>子ども・子育て拠出金（事業主）
+          <input id="insuranceChildEmployer" type="number" step="0.0001" min="0" />
+        </label>
+      </div>
+      <p class="table-note">料率は小数（例: 4.95% = 0.0495）で入力してください。</p>
+      <div class="form-actions">
+        <button type="submit" class="btn">レートを保存</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <h2>標準報酬等級マスタ</h2>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="insuranceStandardReload" type="button" class="btn ghost">再読み込み</button>
+        <button id="insuranceStandardNew" type="button" class="btn">新規登録</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>等級</th>
+            <th>標準報酬月額</th>
+            <th>報酬範囲</th>
+            <th>備考</th>
+            <th>更新日時</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="insuranceStandardTableBody"><tr><td colspan="6" class="table-empty">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <h2 id="insuranceStandardFormTitle">標準報酬等級を登録</h2>
+      <div id="insuranceStandardFormMeta" class="meta-line"></div>
+    </div>
+    <form id="insuranceStandardForm" autocomplete="off">
+      <input type="hidden" id="insuranceStandardId" />
+      <div class="form-grid">
+        <label>等級名
+          <input id="insuranceStandardGrade" type="text" required />
+        </label>
+        <label>標準報酬月額
+          <input id="insuranceStandardAmount" type="number" min="0" step="1000" required />
+        </label>
+        <label>報酬下限
+          <input id="insuranceStandardLower" type="number" min="0" step="1000" placeholder="任意" />
+        </label>
+        <label>報酬上限
+          <input id="insuranceStandardUpper" type="number" min="0" step="1000" placeholder="任意" />
+        </label>
+        <label>メモ
+          <textarea id="insuranceStandardNote" placeholder="適用条件など"></textarea>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">保存</button>
+        <button type="button" id="insuranceStandardReset" class="btn ghost">クリア</button>
+        <button type="button" id="insuranceStandardDelete" class="btn danger" hidden>削除</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <div>
+        <h2>社会保険料プレビュー</h2>
+        <p id="insuranceSummaryMeta" class="meta-line"></p>
+      </div>
+      <div class="attendance-controls">
+        <label>対象月
+          <input type="month" id="insuranceMonthInput" />
+        </label>
+        <button id="insuranceReloadButton" type="button" class="btn">再取得</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>従業員</th>
+            <th>給与基礎</th>
+            <th>適用等級</th>
+            <th>標準報酬月額</th>
+            <th>本人負担</th>
+            <th>事業主負担</th>
+            <th>備考</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="insuranceSummaryTableBody"><tr><td colspan="8" class="table-empty">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <h2>標準報酬の手動上書き</h2>
+      <div id="insuranceOverrideMeta" class="meta-line"></div>
+    </div>
+    <form id="insuranceOverrideForm" autocomplete="off">
+      <input type="hidden" id="insuranceOverrideId" />
+      <div class="form-grid">
+        <label>対象従業員
+          <select id="insuranceOverrideEmployee" required></select>
+        </label>
+        <label>対象月
+          <input type="month" id="insuranceOverrideMonth" required />
+        </label>
+        <label>適用等級
+          <input id="insuranceOverrideGrade" type="text" placeholder="任意" />
+        </label>
+        <label>標準報酬月額
+          <input id="insuranceOverrideAmount" type="number" min="0" step="1000" required />
+        </label>
+        <label>メモ
+          <textarea id="insuranceOverrideNote" placeholder="変更理由など"></textarea>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn">上書きを保存</button>
+        <button type="button" id="insuranceOverrideReset" class="btn ghost">クリア</button>
+        <button type="button" id="insuranceOverrideDelete" class="btn danger" hidden>削除</button>
+      </div>
+    </form>
+  </section>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script>
@@ -260,6 +436,16 @@ const WITHHOLDING_OPTIONS = [
   { value:'none', label:'なし' },
   { value:'required', label:'あり' }
 ];
+const SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
+  healthEmployee: 0.0495,
+  healthEmployer: 0.0495,
+  pensionEmployee: 0.0915,
+  pensionEmployer: 0.0915,
+  nursingEmployee: 0.0045,
+  nursingEmployer: 0.0045,
+  childEmployee: 0.0018,
+  childEmployer: 0.0018
+});
 
 let payrollState = {
   employees: [],
@@ -273,6 +459,18 @@ let payrollState = {
     month: null,
     loading: false,
     summary: null
+  },
+  socialInsurance: {
+    rates: { ...SOCIAL_INSURANCE_RATE_DEFAULTS },
+    standards: [],
+    selectedStandardId: null,
+    month: getCurrentMonthKey(),
+    summary: null,
+    summaryLoading: false,
+    settingsLoading: false,
+    rateSaving: false,
+    standardSaving: false,
+    overrideSaving: false
   }
 };
 payrollState.attendance.month = getCurrentMonthKey();
@@ -323,6 +521,11 @@ function formatTransportation(row){
   if (!type) return formatCurrency(row.transportationAmount);
   if (row.transportationAmount == null) return type;
   return `${type} (${formatCurrency(row.transportationAmount)})`;
+}
+
+function getEmploymentLabel(value){
+  const match = EMPLOYMENT_OPTIONS.find(opt => opt.value === value);
+  return match ? match.label : (value || '');
 }
 
 function renderOptions(select, options){
@@ -531,6 +734,469 @@ function fetchGrades(){
     .payrollListGrades();
 }
 
+function renderInsuranceRateForm(){
+  const rates = payrollState.socialInsurance.rates || SOCIAL_INSURANCE_RATE_DEFAULTS;
+  const mapping = {
+    healthEmployee: 'insuranceHealthEmployee',
+    healthEmployer: 'insuranceHealthEmployer',
+    pensionEmployee: 'insurancePensionEmployee',
+    pensionEmployer: 'insurancePensionEmployer',
+    nursingEmployee: 'insuranceNursingEmployee',
+    nursingEmployer: 'insuranceNursingEmployer',
+    childEmployee: 'insuranceChildEmployee',
+    childEmployer: 'insuranceChildEmployer'
+  };
+  Object.keys(mapping).forEach(key => {
+    const el = document.getElementById(mapping[key]);
+    if (el) {
+      const value = rates && rates[key] != null ? rates[key] : '';
+      el.value = value;
+    }
+  });
+}
+
+function setInsuranceRateFormLoading(isSaving){
+  payrollState.socialInsurance.rateSaving = isSaving;
+  const form = document.getElementById('insuranceRateForm');
+  if (form) {
+    Array.from(form.elements).forEach(el => { el.disabled = isSaving; });
+  }
+  const resetBtn = document.getElementById('insuranceRateReset');
+  if (resetBtn) resetBtn.disabled = isSaving;
+}
+
+function gatherInsuranceRatePayload(){
+  return {
+    healthEmployee: document.getElementById('insuranceHealthEmployee').value,
+    healthEmployer: document.getElementById('insuranceHealthEmployer').value,
+    pensionEmployee: document.getElementById('insurancePensionEmployee').value,
+    pensionEmployer: document.getElementById('insurancePensionEmployer').value,
+    nursingEmployee: document.getElementById('insuranceNursingEmployee').value,
+    nursingEmployer: document.getElementById('insuranceNursingEmployer').value,
+    childEmployee: document.getElementById('insuranceChildEmployee').value,
+    childEmployer: document.getElementById('insuranceChildEmployer').value
+  };
+}
+
+function handleInsuranceRateSave(event){
+  event.preventDefault();
+  if (payrollState.socialInsurance.rateSaving) return;
+  setInsuranceRateFormLoading(true);
+  const payload = gatherInsuranceRatePayload();
+  google.script.run
+    .withSuccessHandler(res => {
+      setInsuranceRateFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : 'レートの保存に失敗しました');
+        return;
+      }
+      payrollState.socialInsurance.rates = res.rates || { ...SOCIAL_INSURANCE_RATE_DEFAULTS };
+      renderInsuranceRateForm();
+      showToast('社会保険料レートを更新しました');
+      fetchInsuranceSummary();
+    })
+    .withFailureHandler(err => {
+      setInsuranceRateFormLoading(false);
+      showToast(err && err.message ? err.message : 'レートの保存に失敗しました');
+    })
+    .payrollSaveSocialInsuranceRates(payload);
+}
+
+function handleInsuranceRateReset(){
+  payrollState.socialInsurance.rates = { ...SOCIAL_INSURANCE_RATE_DEFAULTS };
+  renderInsuranceRateForm();
+}
+
+function formatInsuranceRange(lower, upper){
+  const hasLower = lower != null && lower !== '';
+  const hasUpper = upper != null && upper !== '';
+  if (!hasLower && !hasUpper) return '指定なし';
+  const lowerText = hasLower ? formatCurrency(lower) : '0';
+  const upperText = hasUpper ? formatCurrency(upper) : '∞';
+  return `${lowerText}〜${upperText}`;
+}
+
+function renderInsuranceStandardTable(){
+  const tbody = document.getElementById('insuranceStandardTableBody');
+  if (!tbody) return;
+  const list = payrollState.socialInsurance.standards;
+  if (!Array.isArray(list) || list.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="table-empty">登録がありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(row => {
+    const grade = row.grade || '--';
+    const amount = formatCurrency(row.monthlyAmount);
+    const range = formatInsuranceRange(row.lowerBound, row.upperBound);
+    const note = row.note || '';
+    const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString('ja-JP') : '';
+    return `
+      <tr>
+        <td>${grade}</td>
+        <td class="text-right">${amount}</td>
+        <td>${range}</td>
+        <td>${note}</td>
+        <td>${updated}</td>
+        <td><button type="button" class="btn ghost small" data-insurance-standard="edit" data-id="${row.id || ''}">編集</button></td>
+      </tr>`;
+  }).join('');
+}
+
+function setInsuranceStandardFormLoading(isSaving){
+  payrollState.socialInsurance.standardSaving = isSaving;
+  const form = document.getElementById('insuranceStandardForm');
+  if (form) {
+    Array.from(form.elements).forEach(el => { el.disabled = isSaving && el.id !== 'insuranceStandardDelete'; });
+  }
+  const deleteBtn = document.getElementById('insuranceStandardDelete');
+  if (deleteBtn) deleteBtn.disabled = isSaving;
+}
+
+function resetInsuranceStandardForm(){
+  const form = document.getElementById('insuranceStandardForm');
+  if (form) form.reset();
+  payrollState.socialInsurance.selectedStandardId = null;
+  document.getElementById('insuranceStandardId').value = '';
+  document.getElementById('insuranceStandardFormTitle').textContent = '標準報酬等級を登録';
+  document.getElementById('insuranceStandardFormMeta').textContent = '';
+  document.getElementById('insuranceStandardDelete').hidden = true;
+}
+
+function populateInsuranceStandardForm(standard){
+  if (!standard){
+    resetInsuranceStandardForm();
+    return;
+  }
+  payrollState.socialInsurance.selectedStandardId = standard.id || null;
+  document.getElementById('insuranceStandardId').value = standard.id || '';
+  document.getElementById('insuranceStandardGrade').value = standard.grade || '';
+  document.getElementById('insuranceStandardAmount').value = standard.monthlyAmount != null ? standard.monthlyAmount : '';
+  document.getElementById('insuranceStandardLower').value = standard.lowerBound != null ? standard.lowerBound : '';
+  document.getElementById('insuranceStandardUpper').value = standard.upperBound != null ? standard.upperBound : '';
+  document.getElementById('insuranceStandardNote').value = standard.note || '';
+  document.getElementById('insuranceStandardFormTitle').textContent = `${standard.grade || '標準報酬'} を編集`;
+  document.getElementById('insuranceStandardFormMeta').textContent = standard.updatedAt ? `最終更新: ${new Date(standard.updatedAt).toLocaleString('ja-JP')}` : '';
+  document.getElementById('insuranceStandardDelete').hidden = !standard.id;
+}
+
+function handleInsuranceStandardSave(event){
+  event.preventDefault();
+  if (payrollState.socialInsurance.standardSaving) return;
+  setInsuranceStandardFormLoading(true);
+  const payload = {
+    id: document.getElementById('insuranceStandardId').value,
+    grade: document.getElementById('insuranceStandardGrade').value,
+    monthlyAmount: document.getElementById('insuranceStandardAmount').value,
+    lowerBound: document.getElementById('insuranceStandardLower').value,
+    upperBound: document.getElementById('insuranceStandardUpper').value,
+    note: document.getElementById('insuranceStandardNote').value
+  };
+  google.script.run
+    .withSuccessHandler(res => {
+      setInsuranceStandardFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '標準報酬の保存に失敗しました');
+        return;
+      }
+      payrollState.socialInsurance.selectedStandardId = res.standard && res.standard.id ? res.standard.id : null;
+      showToast('標準報酬等級を保存しました');
+      fetchSocialInsuranceSettings();
+    })
+    .withFailureHandler(err => {
+      setInsuranceStandardFormLoading(false);
+      showToast(err && err.message ? err.message : '標準報酬の保存に失敗しました');
+    })
+    .payrollSaveSocialInsuranceStandard(payload);
+}
+
+function handleInsuranceStandardDelete(){
+  const id = document.getElementById('insuranceStandardId').value;
+  if (!id) return;
+  if (!confirm('この等級を削除しますか？')) return;
+  setInsuranceStandardFormLoading(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setInsuranceStandardFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '削除に失敗しました');
+        return;
+      }
+      showToast('削除しました');
+      resetInsuranceStandardForm();
+      fetchSocialInsuranceSettings();
+    })
+    .withFailureHandler(err => {
+      setInsuranceStandardFormLoading(false);
+      showToast(err && err.message ? err.message : '削除に失敗しました');
+    })
+    .payrollDeleteSocialInsuranceStandard({ id });
+}
+
+function handleInsuranceStandardTableClick(event){
+  const button = event.target.closest('button[data-insurance-standard="edit"]');
+  if (!button) return;
+  const id = button.getAttribute('data-id');
+  if (!id) return;
+  const standard = payrollState.socialInsurance.standards.find(item => item.id === id);
+  if (standard) {
+    populateInsuranceStandardForm(standard);
+    window.scrollTo({ top: button.getBoundingClientRect().top + window.scrollY - 120, behavior: 'smooth' });
+  }
+}
+
+function fetchSocialInsuranceSettings(){
+  const tbody = document.getElementById('insuranceStandardTableBody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="6" class="table-empty">読み込み中…</td></tr>';
+  }
+  payrollState.socialInsurance.settingsLoading = true;
+  google.script.run
+    .withSuccessHandler(res => {
+      payrollState.socialInsurance.settingsLoading = false;
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '社会保険設定の取得に失敗しました');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="table-empty">エラーが発生しました</td></tr>';
+        return;
+      }
+      payrollState.socialInsurance.standards = Array.isArray(res.standards) ? res.standards : [];
+      payrollState.socialInsurance.rates = res.rates || { ...SOCIAL_INSURANCE_RATE_DEFAULTS };
+      renderInsuranceStandardTable();
+      renderInsuranceRateForm();
+    })
+    .withFailureHandler(err => {
+      payrollState.socialInsurance.settingsLoading = false;
+      showToast(err && err.message ? err.message : '社会保険設定の取得に失敗しました');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="table-empty">エラーが発生しました</td></tr>';
+    })
+    .payrollGetSocialInsuranceSettings();
+}
+
+function setInsuranceSummaryLoading(isLoading){
+  payrollState.socialInsurance.summaryLoading = isLoading;
+  const reloadButton = document.getElementById('insuranceReloadButton');
+  if (reloadButton) reloadButton.disabled = isLoading;
+  const monthInput = document.getElementById('insuranceMonthInput');
+  if (monthInput) monthInput.disabled = isLoading;
+}
+
+function renderInsuranceSummaryMeta(){
+  const meta = document.getElementById('insuranceSummaryMeta');
+  if (!meta) return;
+  const summary = payrollState.socialInsurance.summary;
+  if (!summary || !summary.month) {
+    meta.textContent = '対象月を選択してください。';
+    return;
+  }
+  const label = summary.month.label || summary.month.key || '';
+  const entries = Array.isArray(summary.entries) ? summary.entries : [];
+  const overrideCount = entries.filter(entry => entry && entry.isOverride).length;
+  meta.textContent = `${label} / 上書き ${overrideCount} 件`;
+}
+
+function renderInsuranceSummaryTable(){
+  const tbody = document.getElementById('insuranceSummaryTableBody');
+  if (!tbody) return;
+  const summary = payrollState.socialInsurance.summary;
+  if (!summary || !Array.isArray(summary.entries) || summary.entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="table-empty">表示できる従業員がいません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = summary.entries.map(entry => {
+    const employmentLabel = getEmploymentLabel(entry.employmentType);
+    const nameBlock = `
+      <div class="insurance-summary-name">
+        <div class="metric-main">${entry.employeeName || '--'}</div>
+        <small>${employmentLabel}</small>
+      </div>`;
+    const appliedGrade = entry.appliedGrade || (entry.matchedGrade || '--');
+    const overrideBadge = entry.isOverride ? '<span class="badge danger">手動</span>' : '';
+    const baseComp = formatCurrency(entry.compensationAmount);
+    const standardAmount = formatCurrency(entry.appliedAmount);
+    const contrib = entry.contributions || {};
+    const employeeTotal = formatCurrency(contrib.employeeTotal);
+    const employerTotal = formatCurrency(contrib.employerTotal);
+    const note = entry.overrideNote || '';
+    return `
+      <tr>
+        <td>${nameBlock}</td>
+        <td class="text-right"><div class="insurance-summary-amount"><strong>${baseComp}</strong><small>推定月額</small></div></td>
+        <td><div class="insurance-summary-name">${appliedGrade} ${overrideBadge} <small>基準: ${entry.matchedGrade || '--'}</small></div></td>
+        <td class="text-right">${standardAmount}</td>
+        <td class="text-right"><div class="insurance-summary-amount"><strong>${employeeTotal}</strong><small>本人</small></div></td>
+        <td class="text-right"><div class="insurance-summary-amount"><strong>${employerTotal}</strong><small>事業主</small></div></td>
+        <td class="insurance-summary-note">${note}</td>
+        <td><button type="button" class="btn ghost small" data-insurance-action="override" data-employee-id="${entry.employeeId || ''}">上書き</button></td>
+      </tr>`;
+  }).join('');
+}
+
+function renderInsuranceSummary(){
+  renderInsuranceSummaryMeta();
+  renderInsuranceSummaryTable();
+}
+
+function fetchInsuranceSummary(){
+  const tbody = document.getElementById('insuranceSummaryTableBody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="8" class="table-empty">読み込み中…</td></tr>';
+  }
+  setInsuranceSummaryLoading(true);
+  const payload = {};
+  if (payrollState.socialInsurance.month) {
+    payload.month = payrollState.socialInsurance.month;
+  }
+  google.script.run
+    .withSuccessHandler(res => {
+      setInsuranceSummaryLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '社会保険料の取得に失敗しました');
+        payrollState.socialInsurance.summary = null;
+        renderInsuranceSummary();
+        return;
+      }
+      payrollState.socialInsurance.summary = res;
+      payrollState.socialInsurance.month = res.month && res.month.key ? res.month.key : payrollState.socialInsurance.month;
+      if (res.rates) {
+        payrollState.socialInsurance.rates = res.rates;
+        renderInsuranceRateForm();
+      }
+      const monthInput = document.getElementById('insuranceMonthInput');
+      if (monthInput && payrollState.socialInsurance.month) {
+        monthInput.value = payrollState.socialInsurance.month;
+      }
+      renderInsuranceSummary();
+    })
+    .withFailureHandler(err => {
+      setInsuranceSummaryLoading(false);
+      showToast(err && err.message ? err.message : '社会保険料の取得に失敗しました');
+      payrollState.socialInsurance.summary = null;
+      renderInsuranceSummary();
+    })
+    .payrollListSocialInsuranceSummary(payload);
+}
+
+function renderInsuranceOverrideEmployeeOptions(){
+  const select = document.getElementById('insuranceOverrideEmployee');
+  if (!select) return;
+  const options = payrollState.employees.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  select.innerHTML = '<option value="">選択してください</option>' + options.map(emp => `<option value="${emp.id || ''}">${emp.name || '氏名未登録'}</option>`).join('');
+}
+
+function resetInsuranceOverrideForm(){
+  const form = document.getElementById('insuranceOverrideForm');
+  if (form) form.reset();
+  document.getElementById('insuranceOverrideId').value = '';
+  const monthInput = document.getElementById('insuranceOverrideMonth');
+  if (monthInput && payrollState.socialInsurance.month) {
+    monthInput.value = payrollState.socialInsurance.month;
+  }
+  document.getElementById('insuranceOverrideDelete').hidden = true;
+  document.getElementById('insuranceOverrideMeta').textContent = '上書きは対象月ごとに1件保持されます。';
+}
+
+function populateInsuranceOverrideForm(entry){
+  if (!entry) {
+    resetInsuranceOverrideForm();
+    return;
+  }
+  document.getElementById('insuranceOverrideEmployee').value = entry.employeeId || '';
+  if (entry.monthKey) {
+    document.getElementById('insuranceOverrideMonth').value = entry.monthKey;
+  }
+  document.getElementById('insuranceOverrideGrade').value = entry.appliedGrade || entry.matchedGrade || '';
+  document.getElementById('insuranceOverrideAmount').value = entry.appliedAmount != null ? entry.appliedAmount : '';
+  document.getElementById('insuranceOverrideNote').value = entry.overrideNote || '';
+  if (entry.overrideId) {
+    document.getElementById('insuranceOverrideId').value = entry.overrideId;
+    document.getElementById('insuranceOverrideDelete').hidden = false;
+  } else {
+    document.getElementById('insuranceOverrideId').value = '';
+    document.getElementById('insuranceOverrideDelete').hidden = true;
+  }
+  const meta = document.getElementById('insuranceOverrideMeta');
+  meta.textContent = `${entry.employeeName || ''} / ${entry.monthKey || ''}`;
+}
+
+function setInsuranceOverrideFormLoading(isSaving){
+  payrollState.socialInsurance.overrideSaving = isSaving;
+  const form = document.getElementById('insuranceOverrideForm');
+  if (form) {
+    Array.from(form.elements).forEach(el => { el.disabled = isSaving && el.id !== 'insuranceOverrideDelete'; });
+  }
+  const deleteBtn = document.getElementById('insuranceOverrideDelete');
+  if (deleteBtn) deleteBtn.disabled = isSaving;
+}
+
+function gatherInsuranceOverridePayload(){
+  return {
+    id: document.getElementById('insuranceOverrideId').value,
+    employeeId: document.getElementById('insuranceOverrideEmployee').value,
+    month: document.getElementById('insuranceOverrideMonth').value,
+    grade: document.getElementById('insuranceOverrideGrade').value,
+    monthlyAmount: document.getElementById('insuranceOverrideAmount').value,
+    note: document.getElementById('insuranceOverrideNote').value
+  };
+}
+
+function handleInsuranceOverrideSave(event){
+  event.preventDefault();
+  if (payrollState.socialInsurance.overrideSaving) return;
+  setInsuranceOverrideFormLoading(true);
+  const payload = gatherInsuranceOverridePayload();
+  google.script.run
+    .withSuccessHandler(res => {
+      setInsuranceOverrideFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '上書きの保存に失敗しました');
+        return;
+      }
+      showToast('上書きを保存しました');
+      resetInsuranceOverrideForm();
+      fetchInsuranceSummary();
+    })
+    .withFailureHandler(err => {
+      setInsuranceOverrideFormLoading(false);
+      showToast(err && err.message ? err.message : '上書きの保存に失敗しました');
+    })
+    .payrollSaveSocialInsuranceOverride(payload);
+}
+
+function handleInsuranceOverrideDelete(){
+  const id = document.getElementById('insuranceOverrideId').value;
+  if (!id) return;
+  if (!confirm('この上書きを削除しますか？')) return;
+  setInsuranceOverrideFormLoading(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setInsuranceOverrideFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '削除に失敗しました');
+        return;
+      }
+      showToast('削除しました');
+      resetInsuranceOverrideForm();
+      fetchInsuranceSummary();
+    })
+    .withFailureHandler(err => {
+      setInsuranceOverrideFormLoading(false);
+      showToast(err && err.message ? err.message : '削除に失敗しました');
+    })
+    .payrollDeleteSocialInsuranceOverride({ id });
+}
+
+function handleInsuranceSummaryTableClick(event){
+  const button = event.target.closest('button[data-insurance-action="override"]');
+  if (!button) return;
+  const employeeId = button.getAttribute('data-employee-id');
+  const summary = payrollState.socialInsurance.summary;
+  if (!employeeId || !summary || !Array.isArray(summary.entries)) return;
+  const entry = summary.entries.find(item => item && item.employeeId === employeeId);
+  if (entry) {
+    populateInsuranceOverrideForm(entry);
+    window.scrollTo({ top: document.getElementById('insuranceOverrideForm').offsetTop - 40, behavior: 'smooth' });
+  }
+}
+
 function renderTable(){
   const tbody = document.getElementById('employeeTableBody');
   if (!Array.isArray(payrollState.employees) || !payrollState.employees.length){
@@ -663,6 +1329,7 @@ function fetchEmployees(){
       payrollState.employees = Array.isArray(res.employees) ? res.employees : [];
       renderTable();
       updateGradeHint();
+      renderInsuranceOverrideEmployeeOptions();
       if (payrollState.selectedId) {
         const current = payrollState.employees.find(emp => emp.id === payrollState.selectedId);
         if (current) populateForm(current); else resetForm();
@@ -877,6 +1544,27 @@ function init(){
     const nameInput = document.getElementById('gradeName');
     if (nameInput) nameInput.focus();
   });
+  const insuranceRateForm = document.getElementById('insuranceRateForm');
+  if (insuranceRateForm) {
+    insuranceRateForm.addEventListener('submit', handleInsuranceRateSave);
+  }
+  const insuranceRateReset = document.getElementById('insuranceRateReset');
+  if (insuranceRateReset) {
+    insuranceRateReset.addEventListener('click', handleInsuranceRateReset);
+  }
+  const insuranceStandardForm = document.getElementById('insuranceStandardForm');
+  if (insuranceStandardForm) {
+    insuranceStandardForm.addEventListener('submit', handleInsuranceStandardSave);
+  }
+  document.getElementById('insuranceStandardReset').addEventListener('click', resetInsuranceStandardForm);
+  document.getElementById('insuranceStandardDelete').addEventListener('click', handleInsuranceStandardDelete);
+  document.getElementById('insuranceStandardTableBody').addEventListener('click', handleInsuranceStandardTableClick);
+  document.getElementById('insuranceStandardReload').addEventListener('click', fetchSocialInsuranceSettings);
+  document.getElementById('insuranceStandardNew').addEventListener('click', () => {
+    resetInsuranceStandardForm();
+    const input = document.getElementById('insuranceStandardGrade');
+    if (input) input.focus();
+  });
   const attendanceMonthInput = document.getElementById('attendanceMonth');
   if (attendanceMonthInput) {
     attendanceMonthInput.value = payrollState.attendance.month || getCurrentMonthKey();
@@ -889,11 +1577,38 @@ function init(){
   if (attendanceReloadButton) {
     attendanceReloadButton.addEventListener('click', fetchAttendanceSummary);
   }
+  const insuranceMonthInput = document.getElementById('insuranceMonthInput');
+  if (insuranceMonthInput) {
+    insuranceMonthInput.value = payrollState.socialInsurance.month || getCurrentMonthKey();
+    insuranceMonthInput.addEventListener('change', event => {
+      payrollState.socialInsurance.month = event.target.value;
+      fetchInsuranceSummary();
+    });
+  }
+  const insuranceReloadButton = document.getElementById('insuranceReloadButton');
+  if (insuranceReloadButton) {
+    insuranceReloadButton.addEventListener('click', fetchInsuranceSummary);
+  }
+  const insuranceSummaryTableBody = document.getElementById('insuranceSummaryTableBody');
+  if (insuranceSummaryTableBody) {
+    insuranceSummaryTableBody.addEventListener('click', handleInsuranceSummaryTableClick);
+  }
+  const insuranceOverrideForm = document.getElementById('insuranceOverrideForm');
+  if (insuranceOverrideForm) {
+    insuranceOverrideForm.addEventListener('submit', handleInsuranceOverrideSave);
+  }
+  document.getElementById('insuranceOverrideReset').addEventListener('click', resetInsuranceOverrideForm);
+  document.getElementById('insuranceOverrideDelete').addEventListener('click', handleInsuranceOverrideDelete);
   updateTransportationAmountState();
   updateGradeHint();
+  renderInsuranceRateForm();
+  resetInsuranceStandardForm();
+  resetInsuranceOverrideForm();
   fetchGrades();
   fetchEmployees();
   fetchAttendanceSummary();
+  fetchSocialInsuranceSettings();
+  fetchInsuranceSummary();
 }
 
 init();

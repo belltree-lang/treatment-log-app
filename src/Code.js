@@ -264,6 +264,47 @@ const PAYROLL_GRADE_DEFAULTS = Object.freeze([
   { name: '院長' },
   { name: '副院長' }
 ]);
+const PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME = 'PayrollInsuranceStandards';
+const PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER = ['標準報酬ID','等級','標準報酬月額','報酬下限','報酬上限','メモ','更新日時'];
+const PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS = Object.freeze({
+  id: 0,
+  grade: 1,
+  monthlyAmount: 2,
+  lowerBound: 3,
+  upperBound: 4,
+  note: 5,
+  updatedAt: 6
+});
+const PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS).reduce((map, key) => {
+  map[key] = PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS[key] + 1;
+  return map;
+}, {}));
+const PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME = 'PayrollInsuranceOverrides';
+const PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER = ['上書きID','従業員ID','年月','等級','標準報酬月額','メモ','更新日時'];
+const PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS = Object.freeze({
+  id: 0,
+  employeeId: 1,
+  monthKey: 2,
+  grade: 3,
+  monthlyAmount: 4,
+  note: 5,
+  updatedAt: 6
+});
+const PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS).reduce((map, key) => {
+  map[key] = PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS[key] + 1;
+  return map;
+}, {}));
+const PAYROLL_SOCIAL_INSURANCE_RATE_PROPERTY_KEY = 'payroll_social_insurance_rates';
+const PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
+  healthEmployee: 0.0495,
+  healthEmployer: 0.0495,
+  pensionEmployee: 0.0915,
+  pensionEmployer: 0.0915,
+  nursingEmployee: 0.0045,
+  nursingEmployer: 0.0045,
+  childEmployee: 0.0018,
+  childEmployer: 0.0018
+});
 
 const ALBYTE_STAFF_COLUMNS = Object.freeze({
   id: 0,
@@ -509,7 +550,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_GRADE_SHEET_NAME];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_GRADE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -543,6 +584,8 @@ function ensureAuxSheets_(options) {
     upgradeHeader(ALBYTE_STAFF_SHEET_NAME, ALBYTE_STAFF_SHEET_HEADER);
     upgradeHeader(PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_HEADER);
     upgradeHeader(PAYROLL_GRADE_SHEET_NAME, PAYROLL_GRADE_SHEET_HEADER);
+    upgradeHeader(PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER);
+    upgradeHeader(PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
     ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
     ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
@@ -705,6 +748,52 @@ function ensurePayrollGradeSheet_(){
   }
   if (sheet.getLastRow() <= 1) {
     seedDefaultPayrollGrades_(sheet);
+  }
+  return sheet;
+}
+
+function ensurePayrollSocialInsuranceStandardSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME);
+  }
+  const needed = PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER]);
+  }
+  return sheet;
+}
+
+function ensurePayrollSocialInsuranceOverrideSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME);
+  }
+  const needed = PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER]);
   }
   return sheet;
 }
@@ -2532,6 +2621,40 @@ function parsePayrollMoneyValue_(value){
   return Math.round(normalized);
 }
 
+function normalizePayrollMonthKey_(value){
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    return Utilities.formatDate(value, tz, 'yyyy-MM');
+  }
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const dashMatch = text.match(/^(\d{4})[-/](\d{1,2})$/);
+  if (dashMatch) {
+    const year = Number(dashMatch[1]);
+    const month = Number(dashMatch[2]);
+    if (Number.isFinite(year) && Number.isFinite(month) && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, '0')}`;
+    }
+  }
+  const compactMatch = text.match(/^(\d{4})(\d{2})$/);
+  if (compactMatch) {
+    const year = Number(compactMatch[1]);
+    const month = Number(compactMatch[2]);
+    if (Number.isFinite(year) && Number.isFinite(month) && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, '0')}`;
+    }
+  }
+  const jpMatch = text.match(/^(\d{4})年(\d{1,2})月$/);
+  if (jpMatch) {
+    const year = Number(jpMatch[1]);
+    const month = Number(jpMatch[2]);
+    if (Number.isFinite(year) && Number.isFinite(month) && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, '0')}`;
+    }
+  }
+  return '';
+}
+
 function readPayrollGradeRecords_(){
   const sheet = ensurePayrollGradeSheet_();
   const lastRow = sheet.getLastRow();
@@ -2647,6 +2770,250 @@ function readPayrollEmployeeRecords_(){
     });
   }
   return { sheet, records, mapById, mapByEmail };
+}
+
+function readPayrollSocialInsuranceStandards_(){
+  const sheet = ensurePayrollSocialInsuranceStandardSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER.length;
+  const records = [];
+  const mapById = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    values.forEach((row, idx) => {
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) return;
+      const rowIndex = idx + 2;
+      let id = String(row[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(rowIndex, PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMN_INDEX.id).setValue(id);
+      }
+      const grade = String(row[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.grade] || '').trim();
+      const monthlyAmount = parsePayrollMoneyValue_(row[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.monthlyAmount]);
+      const lowerBound = parsePayrollMoneyValue_(row[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.lowerBound]);
+      const upperBound = parsePayrollMoneyValue_(row[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.upperBound]);
+      const note = String(row[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.note] || '').trim();
+      const updatedAt = parseDateValue_(row[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.updatedAt]);
+      const record = { id, grade, monthlyAmount, lowerBound, upperBound, note, updatedAt, rowIndex };
+      records.push(record);
+      mapById.set(id, record);
+    });
+  }
+  records.sort((a, b) => {
+    const amountA = Number(a && a.monthlyAmount) || 0;
+    const amountB = Number(b && b.monthlyAmount) || 0;
+    if (amountA === amountB) {
+      const gradeA = String(a && a.grade || '');
+      const gradeB = String(b && b.grade || '');
+      return gradeA.localeCompare(gradeB, 'ja');
+    }
+    return amountA - amountB;
+  });
+  return { sheet, records, mapById };
+}
+
+function readPayrollSocialInsuranceOverrides_(){
+  const sheet = ensurePayrollSocialInsuranceOverrideSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER.length;
+  const records = [];
+  const mapById = new Map();
+  const mapByEmployeeMonth = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    values.forEach((row, idx) => {
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) return;
+      const rowIndex = idx + 2;
+      let id = String(row[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(rowIndex, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMN_INDEX.id).setValue(id);
+      }
+      const employeeId = String(row[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.employeeId] || '').trim();
+      const monthKey = normalizePayrollMonthKey_(row[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.monthKey]);
+      const grade = String(row[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.grade] || '').trim();
+      const monthlyAmount = parsePayrollMoneyValue_(row[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.monthlyAmount]);
+      const note = String(row[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.note] || '').trim();
+      const updatedAt = parseDateValue_(row[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.updatedAt]);
+      if (!employeeId || !monthKey) return;
+      const record = { id, employeeId, monthKey, grade, monthlyAmount, note, updatedAt, rowIndex };
+      records.push(record);
+      mapById.set(id, record);
+      const key = employeeId + '::' + monthKey;
+      mapByEmployeeMonth.set(key, record);
+    });
+  }
+  return { sheet, records, mapById, mapByEmployeeMonth };
+}
+
+function buildPayrollSocialInsuranceStandardResponse_(record){
+  if (!record) return null;
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  return {
+    id: record.id,
+    grade: record.grade,
+    monthlyAmount: record.monthlyAmount,
+    lowerBound: record.lowerBound,
+    upperBound: record.upperBound,
+    note: record.note,
+    updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
+  };
+}
+
+function buildPayrollSocialInsuranceOverrideResponse_(record){
+  if (!record) return null;
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  return {
+    id: record.id,
+    employeeId: record.employeeId,
+    monthKey: record.monthKey,
+    grade: record.grade,
+    monthlyAmount: record.monthlyAmount,
+    note: record.note,
+    updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
+  };
+}
+
+function sanitizePayrollRateValue_(value){
+  if (value == null || value === '') return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return Math.round(num * 1000000) / 1000000;
+}
+
+function getPayrollSocialInsuranceRates_(){
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty(PAYROLL_SOCIAL_INSURANCE_RATE_PROPERTY_KEY);
+  if (!raw) {
+    return { ...PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    const merged = { ...PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS };
+    Object.keys(PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS).forEach(key => {
+      const sanitized = sanitizePayrollRateValue_(parsed[key]);
+      if (sanitized != null) {
+        merged[key] = sanitized;
+      }
+    });
+    return merged;
+  } catch (err) {
+    Logger.log('[getPayrollSocialInsuranceRates_] Failed to parse overrides: ' + err);
+    return { ...PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS };
+  }
+}
+
+function savePayrollSocialInsuranceRates_(payload){
+  const merged = { ...PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS };
+  Object.keys(PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS).forEach(key => {
+    const sanitized = sanitizePayrollRateValue_(payload && payload[key]);
+    if (sanitized != null) {
+      merged[key] = sanitized;
+    }
+  });
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(PAYROLL_SOCIAL_INSURANCE_RATE_PROPERTY_KEY, JSON.stringify(merged));
+  return merged;
+}
+
+function estimatePayrollMonthlyCompensation_(employee){
+  if (!employee) return 0;
+  if (Number.isFinite(employee.baseSalary) && employee.baseSalary > 0) {
+    return Math.round(employee.baseSalary);
+  }
+  const hourly = Number(employee.hourlyWage) || 0;
+  const monthlyFromHourly = hourly > 0 ? hourly * 160 : 0;
+  const allowances = ['personalAllowance','qualificationAllowance','vehicleAllowance']
+    .map(key => Number(employee[key]) || 0)
+    .reduce((sum, val) => sum + Math.max(0, val), 0);
+  return Math.round(monthlyFromHourly + allowances);
+}
+
+function matchPayrollSocialInsuranceStandard_(amount, standards){
+  if (!Array.isArray(standards) || standards.length === 0) return null;
+  const target = Number(amount);
+  const sorted = standards.slice().sort((a, b) => {
+    const aVal = Number(a && a.lowerBound != null ? a.lowerBound : a && a.monthlyAmount) || 0;
+    const bVal = Number(b && b.lowerBound != null ? b.lowerBound : b && b.monthlyAmount) || 0;
+    if (aVal === bVal) {
+      return (Number(a && a.monthlyAmount) || 0) - (Number(b && b.monthlyAmount) || 0);
+    }
+    return aVal - bVal;
+  });
+  if (!Number.isFinite(target) || target <= 0) {
+    return sorted[0];
+  }
+  let fallback = sorted[sorted.length - 1];
+  for (let i = 0; i < sorted.length; i++) {
+    const entry = sorted[i];
+    const lower = Number(entry && entry.lowerBound);
+    const upper = Number(entry && entry.upperBound);
+    const min = Number.isFinite(lower) ? lower : 0;
+    const max = Number.isFinite(upper) ? upper : Infinity;
+    if (target >= min && target <= max) {
+      return entry;
+    }
+    if (target > max) {
+      fallback = entry;
+    }
+  }
+  return fallback || sorted[sorted.length - 1];
+}
+
+function calculatePayrollSocialInsuranceContribution_(standardAmount, rates){
+  const amount = Number(standardAmount) || 0;
+  const rateSet = rates || PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS;
+  const round = (val) => Math.round((Number(val) || 0));
+  const healthEmployee = round(amount * (rateSet.healthEmployee || 0));
+  const healthEmployer = round(amount * (rateSet.healthEmployer || 0));
+  const pensionEmployee = round(amount * (rateSet.pensionEmployee || 0));
+  const pensionEmployer = round(amount * (rateSet.pensionEmployer || 0));
+  const nursingEmployee = round(amount * (rateSet.nursingEmployee || 0));
+  const nursingEmployer = round(amount * (rateSet.nursingEmployer || 0));
+  const childEmployee = round(amount * (rateSet.childEmployee || 0));
+  const childEmployer = round(amount * (rateSet.childEmployer || 0));
+  const employeeTotal = healthEmployee + pensionEmployee + nursingEmployee + childEmployee;
+  const employerTotal = healthEmployer + pensionEmployer + nursingEmployer + childEmployer;
+  return {
+    healthEmployee,
+    healthEmployer,
+    pensionEmployee,
+    pensionEmployer,
+    nursingEmployee,
+    nursingEmployer,
+    childEmployee,
+    childEmployer,
+    employeeTotal,
+    employerTotal
+  };
+}
+
+function buildPayrollSocialInsuranceSummaryEntry_(employee, options){
+  const monthKey = options && options.monthKey;
+  const rates = options && options.rates;
+  const standard = options && options.standard;
+  const override = options && options.override;
+  const monthlyCompensation = estimatePayrollMonthlyCompensation_(employee);
+  const applied = override && override.monthlyAmount != null ? override : standard;
+  const appliedAmount = applied && applied.monthlyAmount != null ? applied.monthlyAmount : (standard && standard.monthlyAmount != null ? standard.monthlyAmount : 0);
+  const contributions = calculatePayrollSocialInsuranceContribution_(appliedAmount, rates);
+  return {
+    employeeId: employee && employee.id ? employee.id : '',
+    employeeName: employee && employee.name ? employee.name : '',
+    employmentType: employee && employee.employmentType ? employee.employmentType : '',
+    monthKey,
+    compensationAmount: monthlyCompensation,
+    matchedGrade: standard && standard.grade ? standard.grade : '',
+    matchedStandardAmount: standard && standard.monthlyAmount != null ? standard.monthlyAmount : null,
+    appliedGrade: applied && applied.grade ? applied.grade : (standard && standard.grade ? standard.grade : ''),
+    appliedAmount,
+    overrideId: override && override.id ? override.id : '',
+    overrideNote: override && override.note ? override.note : '',
+    isOverride: Boolean(override && override.id),
+    contributions
+  };
 }
 
 function buildPayrollGradeResponse_(record){
@@ -3052,6 +3419,186 @@ function payrollListAttendanceSummary(payload){
       employees: employeeSummaries,
       unmatchedStaff
     };
+  });
+}
+
+function payrollGetSocialInsuranceSettings(){
+  return wrapPayrollResponse_('payrollGetSocialInsuranceSettings', () => {
+    const standardsContext = readPayrollSocialInsuranceStandards_();
+    const rates = getPayrollSocialInsuranceRates_();
+    const standards = standardsContext.records.map(record => buildPayrollSocialInsuranceStandardResponse_(record));
+    return { ok: true, standards, rates };
+  });
+}
+
+function payrollSaveSocialInsuranceStandard(payload){
+  return wrapPayrollResponse_('payrollSaveSocialInsuranceStandard', () => {
+    const grade = String(payload && payload.grade || '').trim();
+    if (!grade) {
+      return { ok: false, reason: 'validation', message: '等級を入力してください。' };
+    }
+    const monthlyAmount = parsePayrollMoneyValue_(payload && payload.monthlyAmount);
+    if (monthlyAmount == null) {
+      return { ok: false, reason: 'validation', message: '標準報酬月額を入力してください。' };
+    }
+    const lowerBound = parsePayrollMoneyValue_(payload && payload.lowerBound);
+    const upperBound = parsePayrollMoneyValue_(payload && payload.upperBound);
+    const note = String(payload && payload.note || '').trim();
+    const context = readPayrollSocialInsuranceStandards_();
+    const sheet = context.sheet;
+    let id = String(payload && payload.id || '').trim();
+    let rowIndex;
+    if (id) {
+      const existing = context.mapById.get(id);
+      if (!existing) {
+        return { ok: false, reason: 'not_found', message: '対象の等級が見つかりません。' };
+      }
+      rowIndex = existing.rowIndex;
+    } else {
+      id = Utilities.getUuid();
+      rowIndex = sheet.getLastRow() + 1;
+    }
+    const values = new Array(PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER.length).fill('');
+    values[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.id] = id;
+    values[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.grade] = grade;
+    values[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.monthlyAmount] = monthlyAmount;
+    values[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.lowerBound] = lowerBound != null ? lowerBound : '';
+    values[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.upperBound] = upperBound != null ? upperBound : '';
+    values[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.note] = note;
+    values[PAYROLL_SOCIAL_INSURANCE_STANDARD_COLUMNS.updatedAt] = new Date();
+    sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+    const refreshed = readPayrollSocialInsuranceStandards_();
+    const saved = refreshed.mapById.get(id);
+    return { ok: true, standard: buildPayrollSocialInsuranceStandardResponse_(saved) };
+  });
+}
+
+function payrollDeleteSocialInsuranceStandard(payload){
+  return wrapPayrollResponse_('payrollDeleteSocialInsuranceStandard', () => {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) {
+      return { ok: false, reason: 'validation', message: '削除対象の等級を指定してください。' };
+    }
+    const context = readPayrollSocialInsuranceStandards_();
+    const record = context.mapById.get(id);
+    if (!record) {
+      return { ok: false, reason: 'not_found', message: '対象の等級が見つかりません。' };
+    }
+    context.sheet.deleteRow(record.rowIndex);
+    return { ok: true };
+  });
+}
+
+function payrollSaveSocialInsuranceRates(payload){
+  return wrapPayrollResponse_('payrollSaveSocialInsuranceRates', () => {
+    const saved = savePayrollSocialInsuranceRates_(payload || {});
+    return { ok: true, rates: saved };
+  });
+}
+
+function payrollListSocialInsuranceSummary(payload){
+  return wrapPayrollResponse_('payrollListSocialInsuranceSummary', () => {
+    const monthKeyInput = payload && (payload.monthKey || payload.month);
+    const normalizedMonthKey = normalizePayrollMonthKey_(monthKeyInput) || normalizePayrollMonthKey_(new Date());
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const monthDate = normalizedMonthKey ? createDateFromKey_(normalizedMonthKey + '-01') : null;
+    const monthLabel = monthDate ? Utilities.formatDate(monthDate, tz, 'yyyy年M月') : normalizedMonthKey;
+    const employeeContext = readPayrollEmployeeRecords_();
+    const standardsContext = readPayrollSocialInsuranceStandards_();
+    const overridesContext = readPayrollSocialInsuranceOverrides_();
+    const rates = getPayrollSocialInsuranceRates_();
+    const overrideMap = overridesContext.mapByEmployeeMonth || new Map();
+    const entries = employeeContext.records.map(employee => {
+      const baseAmount = estimatePayrollMonthlyCompensation_(employee);
+      const matchedStandard = matchPayrollSocialInsuranceStandard_(baseAmount, standardsContext.records);
+      const overrideKey = employee.id + '::' + normalizedMonthKey;
+      const override = overrideMap.get(overrideKey);
+      return buildPayrollSocialInsuranceSummaryEntry_(employee, {
+        monthKey: normalizedMonthKey,
+        rates,
+        standard: matchedStandard,
+        override
+      });
+    });
+    return {
+      ok: true,
+      month: { key: normalizedMonthKey, label: monthLabel },
+      entries,
+      rates
+    };
+  });
+}
+
+function payrollSaveSocialInsuranceOverride(payload){
+  return wrapPayrollResponse_('payrollSaveSocialInsuranceOverride', () => {
+    const employeeId = String(payload && payload.employeeId || '').trim();
+    if (!employeeId) {
+      return { ok: false, reason: 'validation', message: '従業員を選択してください。' };
+    }
+    const employeeContext = readPayrollEmployeeRecords_();
+    const employee = employeeContext.mapById.get(employeeId);
+    if (!employee) {
+      return { ok: false, reason: 'not_found', message: '従業員が見つかりません。' };
+    }
+    const monthKey = normalizePayrollMonthKey_(payload && (payload.month || payload.monthKey));
+    if (!monthKey) {
+      return { ok: false, reason: 'validation', message: '対象月を指定してください。' };
+    }
+    const monthlyAmount = parsePayrollMoneyValue_(payload && payload.monthlyAmount);
+    if (monthlyAmount == null) {
+      return { ok: false, reason: 'validation', message: '標準報酬月額を入力してください。' };
+    }
+    const grade = String(payload && payload.grade || '').trim();
+    const note = String(payload && payload.note || '').trim();
+    const context = readPayrollSocialInsuranceOverrides_();
+    const sheet = context.sheet;
+    let id = String(payload && payload.id || '').trim();
+    let rowIndex;
+    if (id) {
+      const existing = context.mapById.get(id);
+      if (!existing) {
+        return { ok: false, reason: 'not_found', message: '上書きが見つかりません。' };
+      }
+      rowIndex = existing.rowIndex;
+    } else {
+      const existingKey = employeeId + '::' + monthKey;
+      const existing = context.mapByEmployeeMonth.get(existingKey);
+      if (existing) {
+        id = existing.id;
+        rowIndex = existing.rowIndex;
+      } else {
+        id = Utilities.getUuid();
+        rowIndex = sheet.getLastRow() + 1;
+      }
+    }
+    const values = new Array(PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER.length).fill('');
+    values[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.id] = id;
+    values[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.employeeId] = employeeId;
+    values[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.monthKey] = monthKey;
+    values[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.grade] = grade;
+    values[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.monthlyAmount] = monthlyAmount;
+    values[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.note] = note;
+    values[PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS.updatedAt] = new Date();
+    sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
+    const refreshed = readPayrollSocialInsuranceOverrides_();
+    const saved = refreshed.mapById.get(id);
+    return { ok: true, override: buildPayrollSocialInsuranceOverrideResponse_(saved) };
+  });
+}
+
+function payrollDeleteSocialInsuranceOverride(payload){
+  return wrapPayrollResponse_('payrollDeleteSocialInsuranceOverride', () => {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) {
+      return { ok: false, reason: 'validation', message: '削除対象を選択してください。' };
+    }
+    const context = readPayrollSocialInsuranceOverrides_();
+    const record = context.mapById.get(id);
+    if (!record) {
+      return { ok: false, reason: 'not_found', message: '上書きが見つかりません。' };
+    }
+    context.sheet.deleteRow(record.rowIndex);
+    return { ok: true };
   });
 }
 

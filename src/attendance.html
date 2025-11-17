@@ -262,6 +262,7 @@
 <script>
 const MONTH_STORAGE_KEY = 'visitAttendance.selectedMonth';
 const WEEKDAYS = ['日','月','火','水','木','金','土'];
+const LEGACY_SERIAL_DATE_PATTERN = /(1899|1900)/;
 
 let state = { data: null, selectedMonth: null, requestDate: null, paidLeaveDate: null, paidLeavePlan: null, paidLeavePlanToken: 0 };
 
@@ -858,7 +859,8 @@ function openModal(date){
   endInput.max = policy.workEndLimit || '18:00';
   const step = Number(policy.roundingMinutes || 15) * 60;
   endInput.step = step > 0 ? step : 900;
-  endInput.value = record && record.end ? record.end : (policy.workEndLimit || '18:00');
+  const endValue = record && record.end ? formatTimeDisplay(record.end) : '';
+  endInput.value = endValue || policy.workEndLimit || '18:00';
   populateBreakOptions(record ? record.breakMinutes : 0, policy);
   document.getElementById('modalNote').value = '';
   const weekday = record ? record.weekday : '';
@@ -1040,13 +1042,23 @@ function escapeHtml(str){
 function normalizeAttendanceRecords(records){
   if (!Array.isArray(records)) return [];
   const seen = new Set();
-  return records.filter(record => {
-    if (!record || !record.date) return true;
-    const key = String(record.date);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const normalized = [];
+  records.forEach(record => {
+    if (!record) return;
+    if (record.date){
+      const key = `${String(record.date)}__${String(record.start || '')}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+    }
+    normalized.push({
+      ...record,
+      start: formatTimeDisplay(record.start),
+      end: formatTimeDisplay(record.end),
+      work: formatTimeDisplay(record.work),
+      break: formatTimeDisplay(record.break != null ? record.break : record.breakText)
+    });
   });
+  return normalized;
 }
 
 function formatAttendanceDateParts(record){
@@ -1150,7 +1162,18 @@ function formatTimeDisplay(value){
   if (inlineMatch) {
     return `${inlineMatch[1].padStart(2, '0')}:${inlineMatch[2]}`;
   }
+  const legacyMatch = extractLegacyTime(text);
+  if (legacyMatch) {
+    return legacyMatch;
+  }
   return text;
+}
+
+function extractLegacyTime(text){
+  if (!text || !LEGACY_SERIAL_DATE_PATTERN.test(text)) return '';
+  const match = text.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return '';
+  return `${match[1].padStart(2, '0')}:${match[2]}`;
 }
 
 function formatDateToClock(date){

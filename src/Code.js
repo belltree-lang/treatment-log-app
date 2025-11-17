@@ -1137,18 +1137,37 @@ function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
   const targetId = String(staffId || '').trim();
   const targetDate = String(dateKey || '').trim();
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    if (String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim() !== targetId) continue;
-    if (String(row[ALBYTE_ATTENDANCE_COLUMNS.date] || '').trim() !== targetDate) continue;
-    const parsed = parseAlbyteAttendanceRow_(row, i + 2);
-    if (!parsed.id) {
+  const normalizedStaffName = options && options.normalizedStaffName
+    ? String(options.normalizedStaffName).trim()
+    : (options && options.staff
+      ? (options.staff.normalizedName || normalizeAlbyteName_(options.staff.name))
+      : '');
+  const allowNameFallback = Boolean(options && options.allowNameFallback && normalizedStaffName);
+  let fallback = null;
+  const maybeEnsureId = parsed => {
+    if (parsed && !parsed.id) {
       parsed.id = Utilities.getUuid();
       sheet.getRange(parsed.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.id).setValue(parsed.id);
     }
     return parsed;
+  };
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const rowDate = String(row[ALBYTE_ATTENDANCE_COLUMNS.date] || '').trim();
+    if (rowDate !== targetDate) continue;
+    const rowStaffId = String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim();
+    if (targetId && rowStaffId === targetId) {
+      return maybeEnsureId(parseAlbyteAttendanceRow_(row, i + 2));
+    }
+    if (!allowNameFallback || rowStaffId) continue;
+    const rowName = normalizeAlbyteName_(row[ALBYTE_ATTENDANCE_COLUMNS.staffName]);
+    if (rowName && rowName === normalizedStaffName) {
+      if (!fallback) {
+        fallback = maybeEnsureId(parseAlbyteAttendanceRow_(row, i + 2));
+      }
+    }
   }
-  return null;
+  return fallback;
 }
 
 function getAlbyteAttendanceById_(id, options){
@@ -1411,6 +1430,10 @@ function readAlbyteAttendanceRecords_(options){
   const fromKey = options && options.fromDateKey ? String(options.fromDateKey) : '';
   const toKey = options && options.toDateKey ? String(options.toDateKey) : '';
   const staffId = options && options.staffId ? String(options.staffId) : '';
+  const normalizedStaffName = options && options.normalizedStaffName
+    ? String(options.normalizedStaffName).trim()
+    : '';
+  const allowNameFallback = Boolean(options && options.allowNameFallback && normalizedStaffName);
   if (lastRow >= 2) {
     const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
     for (let i = 0; i < values.length; i++) {
@@ -1419,7 +1442,18 @@ function readAlbyteAttendanceRecords_(options){
       if (!parsed || !parsed.date) continue;
       if (fromKey && parsed.date < fromKey) continue;
       if (toKey && parsed.date > toKey) continue;
-      if (staffId && parsed.staffId !== staffId) continue;
+      if (staffId) {
+        if (parsed.staffId === staffId) {
+          // ok
+        } else if (allowNameFallback && !parsed.staffId) {
+          const rowName = normalizeAlbyteName_(parsed.staffName);
+          if (rowName !== normalizedStaffName) {
+            continue;
+          }
+        } else {
+          continue;
+        }
+      }
       records.push(parsed);
     }
   }
@@ -1506,7 +1540,10 @@ function buildAlbytePortalState_(staffRecord){
   const now = new Date();
   const todayKey = fmtDate(now, tz);
   const weekday = getWeekdaySymbol_(now, tz);
-  const attendance = readAlbyteAttendanceRowFor_(staffRecord.id, todayKey);
+  const attendance = readAlbyteAttendanceRowFor_(staffRecord.id, todayKey, {
+    staff: staffRecord,
+    allowNameFallback: true
+  });
   const staffType = staffRecord && staffRecord.staffType ? staffRecord.staffType : 'hourly';
   const baseShiftEnd = staffRecord && staffRecord.shiftEndTime ? staffRecord.shiftEndTime : '';
   const base = {
@@ -1853,7 +1890,14 @@ function albyteGetMonthlySummary(payload){
     const month = resolvedMonth.month;
     const { from, to } = resolveMonthlyRangeKeys_(year, month);
     const shiftContext = readAlbyteShiftRecords_();
-    const { records } = readAlbyteAttendanceRecords_({ fromDateKey: from, toDateKey: to, staffId: staff.id });
+    const normalizedStaffName = staff && (staff.normalizedName || normalizeAlbyteName_(staff.name));
+    const { records } = readAlbyteAttendanceRecords_({
+      fromDateKey: from,
+      toDateKey: to,
+      staffId: staff.id,
+      normalizedStaffName,
+      allowNameFallback: true
+    });
     const list = records.map(record => buildAlbyteAttendanceView_(record, { shiftContext, staff }));
     let totalWork = 0;
     let totalBreak = 0;

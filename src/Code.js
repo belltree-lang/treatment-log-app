@@ -70,7 +70,7 @@ const SystemPrompt_DoctorReport_JP = [
 ].join('\n');
 const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special','期間（月）','参照元レポートID','生成方式'];
 
-const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202502';
+const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202503';
 const PATIENT_CACHE_TTL_SECONDS = 90;
 const PATIENT_CACHE_KEYS = {
   header: pid => 'patient:header:' + normId_(pid),
@@ -314,6 +314,93 @@ const PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
   employmentEmployee: 0,
   employmentEmployer: 0
 });
+
+const PAYROLL_PAYOUT_TYPE_LABELS = Object.freeze({
+  salary: '通常給与',
+  bonus: '賞与',
+  yearEndAdjustment: '年末調整',
+  withholdingCertificate: '源泉徴収票'
+});
+
+const PAYROLL_PAYOUT_EVENT_SHEET_NAME = 'PayrollPayoutEvents';
+const PAYROLL_PAYOUT_EVENT_HEADER = [
+  'イベントID',
+  '従業員ID',
+  '支給種別',
+  '対象年度',
+  '対象月',
+  '期間開始',
+  '期間終了',
+  '支給日',
+  'タイトル',
+  '状態',
+  '明細JSON',
+  '社会保険JSON',
+  '調整JSON',
+  'メタJSON',
+  '更新日時'
+];
+const PAYROLL_PAYOUT_EVENT_COLUMNS = Object.freeze({
+  id: 0,
+  employeeId: 1,
+  payoutType: 2,
+  fiscalYear: 3,
+  monthKey: 4,
+  periodStart: 5,
+  periodEnd: 6,
+  payDate: 7,
+  title: 8,
+  status: 9,
+  detailsJson: 10,
+  insuranceJson: 11,
+  adjustmentJson: 12,
+  metadataJson: 13,
+  updatedAt: 14
+});
+const PAYROLL_PAYOUT_EVENT_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_PAYOUT_EVENT_COLUMNS).reduce((map, key) => {
+  map[key] = PAYROLL_PAYOUT_EVENT_COLUMNS[key] + 1;
+  return map;
+}, {}));
+
+const PAYROLL_ANNUAL_SUMMARY_SHEET_NAME = 'PayrollAnnualSummaries';
+const PAYROLL_ANNUAL_SUMMARY_HEADER = [
+  '集計ID',
+  '従業員ID',
+  '対象年度',
+  '課税支給額',
+  '非課税支給額',
+  '社会保険料',
+  '雇用保険料',
+  '源泉所得税',
+  '住民税',
+  '年末調整額',
+  '賞与総額',
+  '支給回数',
+  'summaryJSON',
+  'メタJSON',
+  '更新日時'
+];
+const PAYROLL_ANNUAL_SUMMARY_COLUMNS = Object.freeze({
+  id: 0,
+  employeeId: 1,
+  fiscalYear: 2,
+  taxableAmount: 3,
+  nonTaxableAmount: 4,
+  socialInsurance: 5,
+  employmentInsurance: 6,
+  withholdingTax: 7,
+  municipalTax: 8,
+  yearEndAdjustment: 9,
+  bonusAmount: 10,
+  payoutCount: 11,
+  summaryJson: 12,
+  metadataJson: 13,
+  updatedAt: 14
+});
+const PAYROLL_ANNUAL_SUMMARY_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_ANNUAL_SUMMARY_COLUMNS).reduce((map, key) => {
+  map[key] = PAYROLL_ANNUAL_SUMMARY_COLUMNS[key] + 1;
+  return map;
+}, {}));
 
 const ALBYTE_STAFF_COLUMNS = Object.freeze({
   id: 0,
@@ -559,7 +646,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_GRADE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME, PAYROLL_ROLE_SHEET_NAME];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_GRADE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME, PAYROLL_ROLE_SHEET_NAME, PAYROLL_PAYOUT_EVENT_SHEET_NAME, PAYROLL_ANNUAL_SUMMARY_SHEET_NAME];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -596,6 +683,8 @@ function ensureAuxSheets_(options) {
     upgradeHeader(PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER);
     upgradeHeader(PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER);
     upgradeHeader(PAYROLL_ROLE_SHEET_NAME, PAYROLL_ROLE_SHEET_HEADER);
+    upgradeHeader(PAYROLL_PAYOUT_EVENT_SHEET_NAME, PAYROLL_PAYOUT_EVENT_HEADER);
+    upgradeHeader(PAYROLL_ANNUAL_SUMMARY_SHEET_NAME, PAYROLL_ANNUAL_SUMMARY_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
     ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
     ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
@@ -839,6 +928,52 @@ function ensurePayrollRoleSheet_(){
   const mismatch = current.length < needed || PAYROLL_ROLE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
   if (mismatch) {
     sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_ROLE_SHEET_HEADER]);
+  }
+  return sheet;
+}
+
+function ensurePayrollPayoutEventSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(PAYROLL_PAYOUT_EVENT_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(PAYROLL_PAYOUT_EVENT_SHEET_NAME);
+  }
+  const needed = PAYROLL_PAYOUT_EVENT_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_PAYOUT_EVENT_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || PAYROLL_PAYOUT_EVENT_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_PAYOUT_EVENT_HEADER]);
+  }
+  return sheet;
+}
+
+function ensurePayrollAnnualSummarySheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(PAYROLL_ANNUAL_SUMMARY_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(PAYROLL_ANNUAL_SUMMARY_SHEET_NAME);
+  }
+  const needed = PAYROLL_ANNUAL_SUMMARY_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_ANNUAL_SUMMARY_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || PAYROLL_ANNUAL_SUMMARY_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_ANNUAL_SUMMARY_HEADER]);
   }
   return sheet;
 }
@@ -2719,6 +2854,26 @@ function formatPayrollCommissionLabel_(type){
   return PAYROLL_COMMISSION_LABELS[key] || PAYROLL_COMMISSION_LABELS.legacy;
 }
 
+function normalizePayrollPayoutType_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return 'salary';
+  if (text === 'bonus' || text === 'shoyo' || text === '賞与') {
+    return 'bonus';
+  }
+  if (text === 'yearend' || text === 'year_end' || text === 'year-end' || text === 'nenmatsu' || text === '年末調整') {
+    return 'yearEndAdjustment';
+  }
+  if (text === 'withholding' || text === 'gensen' || text === '源泉徴収票' || text === 'withholdingcertificate') {
+    return 'withholdingCertificate';
+  }
+  return 'salary';
+}
+
+function formatPayrollPayoutLabel_(type){
+  const key = String(type || '').trim();
+  return PAYROLL_PAYOUT_TYPE_LABELS[key] || PAYROLL_PAYOUT_TYPE_LABELS.salary;
+}
+
 function resolvePayrollCommissionMonthRange_(input){
   const now = new Date();
   let year = now.getFullYear();
@@ -2907,6 +3062,21 @@ function parsePayrollMoneyValue_(value){
   return Math.round(normalized);
 }
 
+function parseJsonColumnValue_(value){
+  if (value == null || value === '') return null;
+  if (typeof value === 'object') {
+    return value;
+  }
+  const text = String(value || '').trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    Logger.log('[parseJsonColumnValue_] Failed to parse JSON: ' + (err && err.message ? err.message : err));
+    return null;
+  }
+}
+
 function normalizePayrollMonthKey_(value){
   if (value instanceof Date && !isNaN(value.getTime())) {
     const tz = getConfig('timezone') || 'Asia/Tokyo';
@@ -3082,6 +3252,131 @@ function readPayrollRoleAssignments_(){
     });
   }
   return { sheet, mapByEmail };
+}
+
+function readPayrollPayoutEvents_(){
+  const sheet = ensurePayrollPayoutEventSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = PAYROLL_PAYOUT_EVENT_HEADER.length;
+  const records = [];
+  const mapById = new Map();
+  const mapByEmployeeId = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    values.forEach((row, idx) => {
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) return;
+      const rowIndex = idx + 2;
+      let id = String(row[PAYROLL_PAYOUT_EVENT_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(rowIndex, PAYROLL_PAYOUT_EVENT_COLUMN_INDEX.id).setValue(id);
+      }
+      const employeeId = String(row[PAYROLL_PAYOUT_EVENT_COLUMNS.employeeId] || '').trim();
+      if (!employeeId) return;
+      const payoutType = normalizePayrollPayoutType_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.payoutType]);
+      const fiscalYearCandidate = Number(row[PAYROLL_PAYOUT_EVENT_COLUMNS.fiscalYear]);
+      const fiscalYear = Number.isFinite(fiscalYearCandidate) ? fiscalYearCandidate : null;
+      const monthKey = normalizePayrollMonthKey_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.monthKey]);
+      const periodStart = parseDateValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.periodStart]);
+      const periodEnd = parseDateValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.periodEnd]);
+      const payDate = parseDateValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.payDate]);
+      const title = String(row[PAYROLL_PAYOUT_EVENT_COLUMNS.title] || '').trim();
+      const status = String(row[PAYROLL_PAYOUT_EVENT_COLUMNS.status] || '').trim() || 'draft';
+      const details = parseJsonColumnValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.detailsJson]);
+      const insurance = parseJsonColumnValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.insuranceJson]);
+      const adjustments = parseJsonColumnValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.adjustmentJson]);
+      const metadata = parseJsonColumnValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.metadataJson]);
+      const updatedAt = parseDateValue_(row[PAYROLL_PAYOUT_EVENT_COLUMNS.updatedAt]);
+      const record = {
+        id,
+        employeeId,
+        payoutType,
+        fiscalYear,
+        monthKey: monthKey || '',
+        periodStart,
+        periodEnd,
+        payDate,
+        title,
+        status,
+        details,
+        insurance,
+        adjustments,
+        metadata,
+        updatedAt,
+        rowIndex
+      };
+      records.push(record);
+      mapById.set(id, record);
+      if (!mapByEmployeeId.has(employeeId)) {
+        mapByEmployeeId.set(employeeId, []);
+      }
+      mapByEmployeeId.get(employeeId).push(record);
+    });
+  }
+  return { sheet, records, mapById, mapByEmployeeId };
+}
+
+function readPayrollAnnualSummaries_(){
+  const sheet = ensurePayrollAnnualSummarySheet_();
+  const lastRow = sheet.getLastRow();
+  const width = PAYROLL_ANNUAL_SUMMARY_HEADER.length;
+  const records = [];
+  const mapById = new Map();
+  const mapByEmployeeYear = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    values.forEach((row, idx) => {
+      const isEmpty = row.every(cell => cell === '' || cell == null);
+      if (isEmpty) return;
+      const rowIndex = idx + 2;
+      let id = String(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.id] || '').trim();
+      if (!id) {
+        id = Utilities.getUuid();
+        sheet.getRange(rowIndex, PAYROLL_ANNUAL_SUMMARY_COLUMN_INDEX.id).setValue(id);
+      }
+      const employeeId = String(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.employeeId] || '').trim();
+      if (!employeeId) return;
+      const fiscalYearCandidate = Number(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.fiscalYear]);
+      const fiscalYear = Number.isFinite(fiscalYearCandidate) ? fiscalYearCandidate : null;
+      const taxableAmount = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.taxableAmount]);
+      const nonTaxableAmount = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.nonTaxableAmount]);
+      const socialInsurance = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.socialInsurance]);
+      const employmentInsurance = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.employmentInsurance]);
+      const withholdingTax = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.withholdingTax]);
+      const municipalTax = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.municipalTax]);
+      const yearEndAdjustment = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.yearEndAdjustment]);
+      const bonusAmount = parsePayrollMoneyValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.bonusAmount]);
+      const payoutCountCandidate = Number(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.payoutCount]);
+      const payoutCount = Number.isFinite(payoutCountCandidate) ? payoutCountCandidate : null;
+      const summary = parseJsonColumnValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.summaryJson]);
+      const metadata = parseJsonColumnValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.metadataJson]);
+      const updatedAt = parseDateValue_(row[PAYROLL_ANNUAL_SUMMARY_COLUMNS.updatedAt]);
+      const record = {
+        id,
+        employeeId,
+        fiscalYear,
+        taxableAmount,
+        nonTaxableAmount,
+        socialInsurance,
+        employmentInsurance,
+        withholdingTax,
+        municipalTax,
+        yearEndAdjustment,
+        bonusAmount,
+        payoutCount,
+        summary,
+        metadata,
+        updatedAt,
+        rowIndex
+      };
+      records.push(record);
+      mapById.set(id, record);
+      const key = employeeId + '::' + (fiscalYear != null ? String(fiscalYear) : '');
+      mapByEmployeeYear.set(key, record);
+    });
+  }
+  return { sheet, records, mapById, mapByEmployeeYear };
 }
 
 function resolvePayrollUserAccess_(){
@@ -3525,6 +3820,60 @@ function buildPayrollEmployeeResponse_(record, gradeMatch){
   };
 }
 
+function buildPayrollPayoutEventResponse_(record, employee){
+  if (!record) return null;
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const employeeName = employee && employee.name
+    ? employee.name
+    : (record.metadata && record.metadata.employeeName ? record.metadata.employeeName : '');
+  return {
+    id: record.id,
+    employeeId: record.employeeId,
+    employeeName,
+    payoutType: record.payoutType,
+    payoutTypeLabel: formatPayrollPayoutLabel_(record.payoutType),
+    fiscalYear: record.fiscalYear,
+    monthKey: record.monthKey || '',
+    monthLabel: formatPayrollMonthLabel_(record.monthKey || '', tz),
+    periodStart: record.periodStart ? Utilities.formatDate(record.periodStart, tz, 'yyyy-MM-dd') : null,
+    periodEnd: record.periodEnd ? Utilities.formatDate(record.periodEnd, tz, 'yyyy-MM-dd') : null,
+    payDate: record.payDate ? Utilities.formatDate(record.payDate, tz, 'yyyy-MM-dd') : null,
+    title: record.title || '',
+    status: record.status || 'draft',
+    details: record.details || null,
+    insurance: record.insurance || null,
+    adjustments: record.adjustments || null,
+    metadata: record.metadata || null,
+    updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
+  };
+}
+
+function buildPayrollAnnualSummaryResponse_(record, employee){
+  if (!record) return null;
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const employeeName = employee && employee.name
+    ? employee.name
+    : (record.metadata && record.metadata.employeeName ? record.metadata.employeeName : '');
+  return {
+    id: record.id,
+    employeeId: record.employeeId,
+    employeeName,
+    fiscalYear: record.fiscalYear,
+    taxableAmount: record.taxableAmount,
+    nonTaxableAmount: record.nonTaxableAmount,
+    socialInsurance: record.socialInsurance,
+    employmentInsurance: record.employmentInsurance,
+    withholdingTax: record.withholdingTax,
+    municipalTax: record.municipalTax,
+    yearEndAdjustment: record.yearEndAdjustment,
+    bonusAmount: record.bonusAmount,
+    payoutCount: record.payoutCount,
+    summary: record.summary || null,
+    metadata: record.metadata || null,
+    updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
+  };
+}
+
 function payrollListEmployees(){
   return wrapPayrollResponse_('payrollListEmployees', () => {
     const access = requirePayrollAccess_();
@@ -3951,6 +4300,64 @@ function payrollListAttendanceSummary(payload){
   });
 }
 
+function payrollListPayoutEvents(payload){
+  return wrapPayrollResponse_('payrollListPayoutEvents', () => {
+    const access = requirePayrollAccess_();
+    const employeeContext = readPayrollEmployeeRecords_();
+    const payoutContext = readPayrollPayoutEvents_();
+    const employees = filterPayrollEmployeesByAccess_(employeeContext.records || [], access);
+    const employeeMap = new Map();
+    employees.forEach(employee => {
+      if (employee && employee.id) {
+        employeeMap.set(employee.id, employee);
+      }
+    });
+    const hasTypeFilter = payload && payload.payoutType != null && String(payload.payoutType).trim() !== '';
+    const typeFilter = hasTypeFilter ? normalizePayrollPayoutType_(payload.payoutType) : '';
+    const fiscalYearCandidate = Number(payload && (payload.fiscalYear || payload.year));
+    const hasFiscalYearFilter = Number.isFinite(fiscalYearCandidate);
+    const monthFilter = normalizePayrollMonthKey_(payload && (payload.month || payload.monthKey));
+    const hasMonthFilter = Boolean(monthFilter);
+    const events = payoutContext.records.filter(record => {
+      if (!employeeMap.has(record.employeeId)) return false;
+      if (hasTypeFilter && record.payoutType !== typeFilter) return false;
+      if (hasFiscalYearFilter && record.fiscalYear !== fiscalYearCandidate) return false;
+      if (hasMonthFilter && (record.monthKey || '') !== monthFilter) return false;
+      return true;
+    }).map(record => {
+      const employee = employeeMap.get(record.employeeId) || employeeContext.mapById.get(record.employeeId) || null;
+      return buildPayrollPayoutEventResponse_(record, employee);
+    });
+    return { ok: true, events };
+  });
+}
+
+function payrollListAnnualSummaries(payload){
+  return wrapPayrollResponse_('payrollListAnnualSummaries', () => {
+    const access = requirePayrollAccess_();
+    const employeeContext = readPayrollEmployeeRecords_();
+    const summaryContext = readPayrollAnnualSummaries_();
+    const employees = filterPayrollEmployeesByAccess_(employeeContext.records || [], access);
+    const employeeMap = new Map();
+    employees.forEach(employee => {
+      if (employee && employee.id) {
+        employeeMap.set(employee.id, employee);
+      }
+    });
+    const fiscalYearCandidate = Number(payload && (payload.fiscalYear || payload.year));
+    const hasFiscalYearFilter = Number.isFinite(fiscalYearCandidate);
+    const summaries = summaryContext.records.filter(record => {
+      if (!employeeMap.has(record.employeeId)) return false;
+      if (hasFiscalYearFilter && record.fiscalYear !== fiscalYearCandidate) return false;
+      return true;
+    }).map(record => {
+      const employee = employeeMap.get(record.employeeId) || employeeContext.mapById.get(record.employeeId) || null;
+      return buildPayrollAnnualSummaryResponse_(record, employee);
+    });
+    return { ok: true, summaries };
+  });
+}
+
 function payrollGetSocialInsuranceSettings(){
   return wrapPayrollResponse_('payrollGetSocialInsuranceSettings', () => {
     const standardsContext = readPayrollSocialInsuranceStandards_();
@@ -4157,24 +4564,76 @@ function buildPayrollPayslipTemplateData_(employee, payload){
   const tz = getConfig('timezone') || 'Asia/Tokyo';
   const now = new Date();
   const monthKeyInput = payload && (payload.month || payload.monthKey);
-  const monthKey = normalizePayrollMonthKey_(monthKeyInput) || normalizePayrollMonthKey_(now);
-  const monthDate = monthKey ? createDateFromKey_(monthKey + '-01') : now;
-  const defaultStart = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth(), 1) : now;
-  const defaultEnd = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0) : now;
-  const periodStart = parseDateValue_(payload && (payload.periodStart || payload.periodFrom)) || defaultStart;
-  const periodEnd = parseDateValue_(payload && (payload.periodEnd || payload.periodTo)) || defaultEnd;
+  let monthKey = normalizePayrollMonthKey_(monthKeyInput) || normalizePayrollMonthKey_(now);
+  let monthDate = monthKey ? createDateFromKey_(monthKey + '-01') : now;
+  let defaultStart = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth(), 1) : now;
+  let defaultEnd = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0) : now;
+  let periodStart = parseDateValue_(payload && (payload.periodStart || payload.periodFrom));
+  let periodEnd = parseDateValue_(payload && (payload.periodEnd || payload.periodTo));
+  let payday = parseDateValue_(payload && (payload.payday || payload.payDate));
+  let issued = parseDateValue_(payload && (payload.issuedAt || payload.issuedDate));
+  const payoutEventIdInput = String(payload && payload.payoutEventId || '').trim();
+  const payoutTypeInput = payload && (payload.payoutType || payload.type);
+  let payoutType = normalizePayrollPayoutType_(payoutTypeInput);
+  let payoutEvent = null;
+  if (payoutEventIdInput) {
+    const payoutContext = readPayrollPayoutEvents_();
+    payoutEvent = payoutContext.mapById.get(payoutEventIdInput) || null;
+  } else if (payload && payload.payoutEvent) {
+    payoutEvent = payload.payoutEvent;
+  }
+  if (payoutEvent) {
+    if (payoutEvent.payoutType) {
+      payoutType = normalizePayrollPayoutType_(payoutEvent.payoutType);
+    }
+    const overrideMonth = normalizePayrollMonthKey_(payoutEvent.monthKey);
+    if (overrideMonth) {
+      monthKey = overrideMonth;
+      monthDate = monthKey ? createDateFromKey_(monthKey + '-01') : now;
+      defaultStart = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth(), 1) : now;
+      defaultEnd = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0) : now;
+    }
+    const overridePeriodStart = parseDateValue_(payoutEvent.periodStart || payoutEvent.periodFrom);
+    if (overridePeriodStart) {
+      periodStart = overridePeriodStart;
+    }
+    const overridePeriodEnd = parseDateValue_(payoutEvent.periodEnd || payoutEvent.periodTo);
+    if (overridePeriodEnd) {
+      periodEnd = overridePeriodEnd;
+    }
+    const overridePayday = parseDateValue_(payoutEvent.payDate || payoutEvent.payday);
+    if (overridePayday) {
+      payday = overridePayday;
+    }
+    const overrideIssued = parseDateValue_(payoutEvent.issuedAt || payoutEvent.issuedDate);
+    if (overrideIssued) {
+      issued = overrideIssued;
+    }
+  }
+  periodStart = periodStart instanceof Date && !isNaN(periodStart.getTime()) ? periodStart : defaultStart;
+  periodEnd = periodEnd instanceof Date && !isNaN(periodEnd.getTime()) ? periodEnd : defaultEnd;
+  payday = payday instanceof Date && !isNaN(payday.getTime()) ? payday : new Date(defaultEnd.getFullYear(), defaultEnd.getMonth() + 1, 25);
+  issued = issued instanceof Date && !isNaN(issued.getTime()) ? issued : now;
   const payPeriodText = Utilities.formatDate(periodStart, tz, 'yyyy年M月d日') + ' 〜 ' + Utilities.formatDate(periodEnd, tz, 'yyyy年M月d日');
-  const paydayInput = parseDateValue_(payload && (payload.payday || payload.payDate));
-  const payday = paydayInput || new Date(defaultEnd.getFullYear(), defaultEnd.getMonth() + 1, 25);
   const paydayText = Utilities.formatDate(payday, tz, 'yyyy年M月d日');
-  const issuedInput = parseDateValue_(payload && (payload.issuedAt || payload.issuedDate));
-  const issued = issuedInput || now;
   const issuedText = Utilities.formatDate(issued, tz, 'yyyy年M月d日');
-  const monthLabel = formatPayrollMonthLabel_(monthKey, tz);
+  const payoutTypeLabel = formatPayrollPayoutLabel_(payoutType);
   const gradeContext = readPayrollGradeRecords_();
   const normalizedGrade = normalizePayrollGradeName_(employee && employee.grade);
   const gradeRecord = normalizedGrade ? gradeContext.mapByNormalizedName.get(normalizedGrade) : null;
   const gradeAmount = gradeRecord && gradeRecord.amount != null ? gradeRecord.amount : 0;
+  const payoutDetails = payoutEvent && payoutEvent.details ? payoutEvent.details : null;
+  const payoutDetailsTitle = payoutDetails && payoutDetails.title ? String(payoutDetails.title).trim() : '';
+  const payoutTitle = String(payload && payload.payoutTitle || '').trim()
+    || (payoutEvent && payoutEvent.title ? payoutEvent.title : '')
+    || payoutDetailsTitle
+    || ((payoutType === 'bonus' && formatPayrollMonthLabel_(monthKey, tz))
+      ? formatPayrollMonthLabel_(monthKey, tz) + ' 賞与'
+      : formatPayrollMonthLabel_(monthKey, tz));
+  const replacePayItems = payoutDetails && payoutDetails.replaceDefaultPayItems === true;
+  const replaceDeductionItems = payoutDetails && payoutDetails.replaceDefaultDeductionItems === true;
+  const detailPayItems = Array.isArray(payoutDetails && payoutDetails.earnings) ? payoutDetails.earnings : [];
+  const detailDeductionItems = Array.isArray(payoutDetails && payoutDetails.deductions) ? payoutDetails.deductions : [];
 
   const payItems = [];
   const appendPayItem = (label, amount, note) => {
@@ -4182,22 +4641,29 @@ function buildPayrollPayslipTemplateData_(employee, payload){
     if (parsed == null || parsed === 0) return;
     payItems.push({ label: label || '', amount: parsed, note: note ? String(note).trim() : '' });
   };
-  appendPayItem('基本給', employee.baseSalary);
-  if ((employee.baseSalary == null || employee.baseSalary === 0) && employee.hourlyWage) {
-    const estimated = Math.round((Number(employee.hourlyWage) || 0) * 160);
-    if (estimated > 0) {
-      appendPayItem('時間給換算 (160h)', estimated);
+  if (!replacePayItems) {
+    appendPayItem('基本給', employee.baseSalary);
+    if ((employee.baseSalary == null || employee.baseSalary === 0) && employee.hourlyWage) {
+      const estimated = Math.round((Number(employee.hourlyWage) || 0) * 160);
+      if (estimated > 0) {
+        appendPayItem('時間給換算 (160h)', estimated);
+      }
+    }
+    appendPayItem(gradeRecord && gradeRecord.name ? gradeRecord.name : '役職手当', gradeAmount);
+    appendPayItem('個別加算', employee.personalAllowance);
+    appendPayItem('資格手当', employee.qualificationAllowance);
+    appendPayItem('車両手当', employee.vehicleAllowance);
+    if (employee.transportationType === 'fixed') {
+      appendPayItem('交通費（固定）', employee.transportationAmount);
+    } else if (employee.transportationType === 'actual') {
+      appendPayItem('交通費（実費）', employee.transportationAmount);
     }
   }
-  appendPayItem(gradeRecord && gradeRecord.name ? gradeRecord.name : '役職手当', gradeAmount);
-  appendPayItem('個別加算', employee.personalAllowance);
-  appendPayItem('資格手当', employee.qualificationAllowance);
-  appendPayItem('車両手当', employee.vehicleAllowance);
-  if (employee.transportationType === 'fixed') {
-    appendPayItem('交通費（固定）', employee.transportationAmount);
-  } else if (employee.transportationType === 'actual') {
-    appendPayItem('交通費（実費）', employee.transportationAmount);
-  }
+  detailPayItems.forEach(item => {
+    if (!item) return;
+    const label = String(item.label || '').trim() || '支給';
+    appendPayItem(label, item.amount, item.note);
+  });
   const extraPayItemsSource = []
     .concat(Array.isArray(payload && payload.payItems) ? payload.payItems : [])
     .concat(Array.isArray(payload && payload.extraPayItems) ? payload.extraPayItems : []);
@@ -4213,36 +4679,60 @@ function buildPayrollPayslipTemplateData_(employee, payload){
     if (parsed == null || parsed === 0) return;
     deductionItems.push({ label: label || '', amount: parsed, note: note ? String(note).trim() : '' });
   };
+  const insuranceOverride = payoutEvent && payoutEvent.insurance ? payoutEvent.insurance : null;
   let socialInsurance = null;
-  if (monthKey) {
-    const standardsContext = readPayrollSocialInsuranceStandards_();
-    const overridesContext = readPayrollSocialInsuranceOverrides_();
-    const rates = getPayrollSocialInsuranceRates_();
-    const overrideKey = employee.id + '::' + monthKey;
-    const override = overridesContext.mapByEmployeeMonth.get(overrideKey);
-    const standard = matchPayrollSocialInsuranceStandard_(estimatePayrollMonthlyCompensation_(employee), standardsContext.records);
-    const insuranceEntry = buildPayrollSocialInsuranceSummaryEntry_(employee, { monthKey, rates, standard, override });
-    socialInsurance = insuranceEntry;
-    if (insuranceEntry && insuranceEntry.contributions) {
-      const contrib = insuranceEntry.contributions;
-      const healthTotal = (contrib.healthEmployee || 0) + (contrib.nursingEmployee || 0) + (contrib.childEmployee || 0);
-      appendDeductionItem('健康保険', healthTotal);
-      appendDeductionItem('厚生年金', contrib.pensionEmployee || 0);
-      appendDeductionItem('雇用保険', contrib.employmentEmployee || 0);
+  if (!replaceDeductionItems) {
+    if (insuranceOverride && Array.isArray(insuranceOverride.components)) {
+      socialInsurance = insuranceOverride;
+      insuranceOverride.components.forEach(component => {
+        if (!component) return;
+        appendDeductionItem(component.label || '社会保険', component.amount, component.note);
+      });
+    } else if (monthKey) {
+      const standardsContext = readPayrollSocialInsuranceStandards_();
+      const overridesContext = readPayrollSocialInsuranceOverrides_();
+      const rates = getPayrollSocialInsuranceRates_();
+      const overrideKey = employee.id + '::' + monthKey;
+      const override = overridesContext.mapByEmployeeMonth.get(overrideKey);
+      const standard = matchPayrollSocialInsuranceStandard_(estimatePayrollMonthlyCompensation_(employee), standardsContext.records);
+      const insuranceEntry = buildPayrollSocialInsuranceSummaryEntry_(employee, { monthKey, rates, standard, override });
+      socialInsurance = insuranceEntry;
+      if (insuranceEntry && insuranceEntry.contributions) {
+        const contrib = insuranceEntry.contributions;
+        const healthTotal = (contrib.healthEmployee || 0) + (contrib.nursingEmployee || 0) + (contrib.childEmployee || 0);
+        appendDeductionItem('健康保険', healthTotal);
+        appendDeductionItem('厚生年金', contrib.pensionEmployee || 0);
+        appendDeductionItem('雇用保険', contrib.employmentEmployee || 0);
+      }
+    }
+    const deductionEntry = buildPayrollDeductionEntry_(employee, { gradeAmount }) || { components: [] };
+    if (Array.isArray(deductionEntry.components)) {
+      deductionEntry.components.forEach(component => {
+        if (!component) return;
+        const type = component.type || '';
+        let label = component.label || '';
+        if (type === 'withholding') label = '所得税';
+        if (type === 'housing') label = '社宅控除';
+        if (type === 'municipal') label = '住民税';
+        appendDeductionItem(label || '控除', component.amount, component.note);
+      });
+    }
+  } else {
+    if (insuranceOverride && Array.isArray(insuranceOverride.components)) {
+      socialInsurance = insuranceOverride;
+      insuranceOverride.components.forEach(component => {
+        if (!component) return;
+        appendDeductionItem(component.label || '社会保険', component.amount, component.note);
+      });
+    } else if (insuranceOverride) {
+      socialInsurance = insuranceOverride;
     }
   }
-  const deductionEntry = buildPayrollDeductionEntry_(employee, { gradeAmount }) || { components: [] };
-  if (Array.isArray(deductionEntry.components)) {
-    deductionEntry.components.forEach(component => {
-      if (!component) return;
-      const type = component.type || '';
-      let label = component.label || '';
-      if (type === 'withholding') label = '所得税';
-      if (type === 'housing') label = '社宅控除';
-      if (type === 'municipal') label = '住民税';
-      appendDeductionItem(label || '控除', component.amount, component.note);
-    });
-  }
+  detailDeductionItems.forEach(item => {
+    if (!item) return;
+    const label = String(item.label || '').trim() || '控除';
+    appendDeductionItem(label, item.amount, item.note);
+  });
   const extraDeductionSource = []
     .concat(Array.isArray(payload && payload.deductionItems) ? payload.deductionItems : [])
     .concat(Array.isArray(payload && payload.extraDeductionItems) ? payload.extraDeductionItems : []);
@@ -4254,9 +4744,27 @@ function buildPayrollPayslipTemplateData_(employee, payload){
 
   const filteredPayItems = payItems.filter(item => Number(item.amount) > 0);
   const filteredDeductionItems = deductionItems.filter(item => Number(item.amount) > 0);
-  const totalGross = filteredPayItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const totalDeduction = filteredDeductionItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const netPay = totalGross - totalDeduction;
+  const sumItems = (list) => list.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  let totalGross = sumItems(filteredPayItems);
+  let totalDeduction = sumItems(filteredDeductionItems);
+  const payoutSummary = payoutDetails && payoutDetails.summary ? payoutDetails.summary : null;
+  if (payoutSummary) {
+    const summaryGross = parsePayrollMoneyValue_(payoutSummary.grossAmount);
+    if (summaryGross != null) {
+      totalGross = summaryGross;
+    }
+    const summaryDeduction = parsePayrollMoneyValue_(payoutSummary.deductionAmount);
+    if (summaryDeduction != null) {
+      totalDeduction = summaryDeduction;
+    }
+  }
+  let netPay = totalGross - totalDeduction;
+  if (payoutSummary) {
+    const summaryNet = parsePayrollMoneyValue_(payoutSummary.netAmount);
+    if (summaryNet != null) {
+      netPay = summaryNet;
+    }
+  }
   const formattedPayItems = filteredPayItems.map(item => ({
     label: item.label,
     amount: item.amount,
@@ -4273,10 +4781,22 @@ function buildPayrollPayslipTemplateData_(employee, payload){
   const folderName = formatPayrollEmployeeFolderName_(employee.name);
   const reiwaLabel = formatJapaneseEraMonthLabel_(monthDate || now, tz);
   const fileBase = sanitizeDriveFileName_(`${employee.name || '従業員'}_給与支払明細_${reiwaLabel}`);
-  const noteText = String(payload && payload.note || '').trim() || '勤怠・控除内容は労働基準法および就業規則に基づき算出しています。内容に相違がある場合は5営業日以内に総務までご連絡ください。';
-  const messageHeading = String(payload && payload.messageHeading || '').trim() || 'Message from BellTree';
-  const messageBody = String(payload && payload.messageBody || '').trim() || '「あなたの働きが、べるつりーの理念である “関係者に最善を提供する” ことにつながっています。」\n「いつもありがとうございます。」';
-  const netPayNote = String(payload && (payload.netPayNote || payload.bankInfo) || employee.note || '').trim() || '振込予定口座：登録口座';
+  let noteText = String(payload && payload.note || '').trim() || '勤怠・控除内容は労働基準法および就業規則に基づき算出しています。内容に相違がある場合は5営業日以内に総務までご連絡ください。';
+  if (payoutDetails && payoutDetails.note) {
+    noteText = String(payoutDetails.note).trim();
+  }
+  let messageHeading = String(payload && payload.messageHeading || '').trim() || 'Message from BellTree';
+  if (payoutDetails && payoutDetails.messageHeading) {
+    messageHeading = String(payoutDetails.messageHeading).trim();
+  }
+  let messageBody = String(payload && payload.messageBody || '').trim() || '「あなたの働きが、べるつりーの理念である “関係者に最善を提供する” ことにつながっています。」\n「いつもありがとうございます。」';
+  if (payoutDetails && payoutDetails.messageBody) {
+    messageBody = String(payoutDetails.messageBody).trim();
+  }
+  let netPayNote = String(payload && (payload.netPayNote || payload.bankInfo) || employee.note || '').trim() || '振込予定口座：登録口座';
+  if (payoutDetails && payoutDetails.netPayNote) {
+    netPayNote = String(payoutDetails.netPayNote).trim();
+  }
   const brand = {
     initials: String(payload && payload.brandInitials || '').trim() || 'BT',
     title: String(payload && payload.brandTitle || '').trim() || '給与明細',
@@ -4285,6 +4805,8 @@ function buildPayrollPayslipTemplateData_(employee, payload){
   const footerCompany = String(payload && payload.footerCompany || '').trim() || 'BellTree';
   const footerAddress = String(payload && payload.footerAddress || '').trim() || '〒192-0372 東京都八王子市下柚木3-7-2-401';
   const footerContact = String(payload && payload.footerContact || '').trim() || '代表 042-682-2839 ｜ belltree@belltree1102.com';
+  const resolvedPayoutEventId = payoutEvent && payoutEvent.id ? payoutEvent.id : payoutEventIdInput;
+  const monthLabel = formatPayrollMonthLabel_(monthKey, tz);
 
   return {
     employeeId: employee.id,
@@ -4293,6 +4815,10 @@ function buildPayrollPayslipTemplateData_(employee, payload){
     employeeFolderName: folderName,
     monthKey,
     monthLabel,
+    payoutType,
+    payoutTypeLabel,
+    payoutTitle,
+    payoutEventId: resolvedPayoutEventId || '',
     reiwaLabel,
     payPeriodText,
     paydayText,

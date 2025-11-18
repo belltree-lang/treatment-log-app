@@ -7662,6 +7662,7 @@ function doGet(e) {
     case 'albyte_admin': templateFile = 'albyte_admin'; break;
     case 'albyte_report':templateFile = 'albyte_report'; break;
     case 'payroll':      templateFile = 'payroll'; break;
+    case 'payroll_pdf_family': templateFile = 'payroll_pdf_family'; break;
     case 'record':       templateFile = 'app'; break;   // ★ app.html を record として表示
     case 'report':       templateFile = 'report'; break;
     default:             templateFile = 'welcome'; break;

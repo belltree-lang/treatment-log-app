@@ -661,9 +661,11 @@ function handlePortalResponse(res, options){
   if (options && options.toast) {
     showToast(options.toast);
   }
-  if (options && options.expectStatus) {
+  const expectStatus = options && options.expectStatus;
+  const forceRefresh = Boolean(options && options.forceRefresh);
+  if (expectStatus || forceRefresh) {
     const currentStatus = portalState && portalState.today ? portalState.today.status : '';
-    if (currentStatus !== options.expectStatus) {
+    if (forceRefresh || currentStatus !== expectStatus) {
       refreshPortalState({ silent: true });
     }
   }
@@ -871,7 +873,8 @@ function clockIn(){
     loadingMessage: '出勤を記録しています…',
     onSuccess: res => handlePortalResponse(res, {
       toast: res && res.ok ? '出勤を記録しました。' : undefined,
-      expectStatus: 'working'
+      expectStatus: 'working',
+      forceRefresh: true
     })
   });
 }
@@ -886,7 +889,8 @@ function clockOut(){
     loadingMessage: '退勤を記録しています…',
     onSuccess: res => handlePortalResponse(res, {
       toast: res && res.ok ? '退勤を記録しました。' : undefined,
-      expectStatus: 'completed'
+      expectStatus: 'completed',
+      forceRefresh: true
     })
   });
 }

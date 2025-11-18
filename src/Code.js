@@ -1111,23 +1111,86 @@ function appendAlbyteAttendanceLog_(existingLog, entry){
   return serializeAlbyteAttendanceLog_(list);
 }
 
+function normalizeAlbyteClockValue_(value){
+  if (value == null || value === '') return null;
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, tz, 'HH:mm');
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 0 && value <= 1) {
+      return formatMinutesAsTimeText_(Math.round(value * 24 * 60));
+    }
+    return formatMinutesAsTimeText_(value);
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  const normalized = text.replace(/[時h]/gi, ':').replace(/分/g, '');
+  const match = normalized.match(/^(\d{1,2})(?::?(\d{2}))?$/);
+  if (match) {
+    const hours = match[1].padStart(2, '0');
+    const mins = (match[2] || '0').padStart(2, '0');
+    return hours + ':' + mins;
+  }
+  const parsedDate = new Date(text);
+  if (!isNaN(parsedDate.getTime())) {
+    return Utilities.formatDate(parsedDate, tz, 'HH:mm');
+  }
+  return text;
+}
+
+function deriveAlbyteDateKeyFromLogEntries_(entries){
+  if (!Array.isArray(entries)) return '';
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (!entry || !entry.at) continue;
+    const parsed = new Date(entry.at);
+    if (!isNaN(parsed.getTime())) {
+      return Utilities.formatDate(parsed, tz, 'yyyy-MM-dd');
+    }
+  }
+  return '';
+}
+
+function resolveAlbyteAttendanceRecordDate_(record){
+  if (!record) return '';
+  let dateKey = normalizeDateKey_(record.date);
+  if (!dateKey) {
+    dateKey = deriveAlbyteDateKeyFromLogEntries_(record.log);
+  }
+  if (!dateKey) {
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const candidate = record.updatedAt || record.createdAt;
+    if (candidate instanceof Date && !isNaN(candidate.getTime())) {
+      dateKey = Utilities.formatDate(candidate, tz, 'yyyy-MM-dd');
+    }
+  }
+  if (dateKey) {
+    record.date = dateKey;
+  }
+  return dateKey;
+}
+
 function parseAlbyteAttendanceRow_(row, rowIndex){
-  const dateKey = normalizeDateKey_(row[ALBYTE_ATTENDANCE_COLUMNS.date]);
-  return {
+  const log = parseAlbyteAttendanceLog_(row[ALBYTE_ATTENDANCE_COLUMNS.log]);
+  const record = {
     rowIndex,
     id: String(row[ALBYTE_ATTENDANCE_COLUMNS.id] || '').trim(),
     staffId: String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim(),
     staffName: String(row[ALBYTE_ATTENDANCE_COLUMNS.staffName] || '').trim(),
-    date: dateKey,
-    clockIn: String(row[ALBYTE_ATTENDANCE_COLUMNS.clockIn] || '').trim(),
-    clockOut: String(row[ALBYTE_ATTENDANCE_COLUMNS.clockOut] || '').trim(),
+    date: normalizeDateKey_(row[ALBYTE_ATTENDANCE_COLUMNS.date]),
+    clockIn: normalizeAlbyteClockValue_(row[ALBYTE_ATTENDANCE_COLUMNS.clockIn]),
+    clockOut: normalizeAlbyteClockValue_(row[ALBYTE_ATTENDANCE_COLUMNS.clockOut]),
     breakMinutes: Number(row[ALBYTE_ATTENDANCE_COLUMNS.breakMinutes]) || 0,
     note: String(row[ALBYTE_ATTENDANCE_COLUMNS.note] || '').trim(),
     autoFlag: String(row[ALBYTE_ATTENDANCE_COLUMNS.autoFlag] || '').trim(),
-    log: parseAlbyteAttendanceLog_(row[ALBYTE_ATTENDANCE_COLUMNS.log]),
+    log,
     createdAt: parseDateValue_(row[ALBYTE_ATTENDANCE_COLUMNS.createdAt]),
     updatedAt: parseDateValue_(row[ALBYTE_ATTENDANCE_COLUMNS.updatedAt])
   };
+  resolveAlbyteAttendanceRecordDate_(record);
+  return record;
 }
 
 function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
@@ -1145,6 +1208,7 @@ function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
       : '');
   const allowNameFallback = Boolean(options && options.allowNameFallback && normalizedStaffName);
   let fallback = null;
+  let match = null;
   const maybeEnsureId = parsed => {
     if (parsed && !parsed.id) {
       parsed.id = Utilities.getUuid();
@@ -1158,17 +1222,56 @@ function readAlbyteAttendanceRowFor_(staffId, dateKey, options){
     if (rowDate !== targetDate) continue;
     const rowStaffId = String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim();
     if (targetId && rowStaffId === targetId) {
-      return maybeEnsureId(parseAlbyteAttendanceRow_(row, i + 2));
+      match = maybeEnsureId(parseAlbyteAttendanceRow_(row, i + 2));
+      continue;
     }
     if (!allowNameFallback || rowStaffId) continue;
     const rowName = normalizeAlbyteName_(row[ALBYTE_ATTENDANCE_COLUMNS.staffName]);
     if (rowName && rowName === normalizedStaffName) {
-      if (!fallback) {
-        fallback = maybeEnsureId(parseAlbyteAttendanceRow_(row, i + 2));
-      }
+      fallback = maybeEnsureId(parseAlbyteAttendanceRow_(row, i + 2));
     }
   }
-  return fallback;
+  return match || fallback;
+}
+
+function readLatestAlbyteAttendanceRowForStaff_(staffRecord, options){
+  if (!staffRecord) return null;
+  const sheet = options && options.sheet ? options.sheet : ensureAlbyteAttendanceSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const width = ALBYTE_ATTENDANCE_SHEET_HEADER.length;
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const targetId = String(staffRecord.id || '').trim();
+  const normalizedStaffName = staffRecord.normalizedName || normalizeAlbyteName_(staffRecord.name);
+  let latest = null;
+  const maybeEnsureId = parsed => {
+    if (parsed && !parsed.id) {
+      parsed.id = Utilities.getUuid();
+      sheet.getRange(parsed.rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.id).setValue(parsed.id);
+    }
+    return parsed;
+  };
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const rowStaffId = String(row[ALBYTE_ATTENDANCE_COLUMNS.staffId] || '').trim();
+    let matches = false;
+    if (targetId && rowStaffId === targetId) {
+      matches = true;
+    } else if (!rowStaffId && normalizedStaffName) {
+      const rowName = normalizeAlbyteName_(row[ALBYTE_ATTENDANCE_COLUMNS.staffName]);
+      matches = rowName && rowName === normalizedStaffName;
+    }
+    if (!matches) continue;
+    const parsed = maybeEnsureId(parseAlbyteAttendanceRow_(row, i + 2));
+    if (!parsed) continue;
+    const timestamp = (parsed.updatedAt && parsed.updatedAt.getTime())
+      || (parsed.createdAt && parsed.createdAt.getTime())
+      || 0;
+    if (!latest || timestamp >= latest.timestamp) {
+      latest = { record: parsed, timestamp };
+    }
+  }
+  return latest ? latest.record : null;
 }
 
 function getAlbyteAttendanceById_(id, options){
@@ -1559,10 +1662,19 @@ function buildAlbytePortalState_(staffRecord){
   const now = new Date();
   const todayKey = fmtDate(now, tz);
   const weekday = getWeekdaySymbol_(now, tz);
-  const attendance = readAlbyteAttendanceRowFor_(staffRecord.id, todayKey, {
+  let attendance = readAlbyteAttendanceRowFor_(staffRecord.id, todayKey, {
     staff: staffRecord,
     allowNameFallback: true
   });
+  if (!attendance) {
+    const latest = readLatestAlbyteAttendanceRowForStaff_(staffRecord, {});
+    if (latest) {
+      const resolvedDate = resolveAlbyteAttendanceRecordDate_(latest);
+      if (resolvedDate === todayKey) {
+        attendance = latest;
+      }
+    }
+  }
   const staffType = staffRecord && staffRecord.staffType ? staffRecord.staffType : 'hourly';
   const baseShiftEnd = staffRecord && staffRecord.shiftEndTime ? staffRecord.shiftEndTime : '';
   const base = {
@@ -1774,7 +1886,10 @@ function albyteClockIn(payload){
         }
       }
 
-      const refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      let refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet, staff });
+      if (!refreshed) {
+        refreshed = readLatestAlbyteAttendanceRowForStaff_(staff, { sheet });
+      }
       if (refreshed) {
         applyAlbyteAutoAdjustmentsForRow_(refreshed, { sheet, staff });
       }
@@ -1817,7 +1932,10 @@ function albyteClockOut(payload){
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
 
-      const refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      let refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet, staff });
+      if (!refreshed) {
+        refreshed = readLatestAlbyteAttendanceRowForStaff_(staff, { sheet });
+      }
       if (refreshed) {
         applyAlbyteAutoAdjustmentsForRow_(refreshed, { sheet, staff });
       }
@@ -1880,7 +1998,10 @@ function albyteUpdateBreak(payload){
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.log).setValue(log);
       sheet.getRange(rowIndex, ALBYTE_ATTENDANCE_COLUMN_INDEX.updatedAt).setValue(now);
 
-      const refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet });
+      let refreshed = readAlbyteAttendanceRowFor_(staff.id, dateKey, { sheet, staff });
+      if (!refreshed) {
+        refreshed = readLatestAlbyteAttendanceRowForStaff_(staff, { sheet });
+      }
       if (refreshed) {
         applyAlbyteAutoAdjustmentsForRow_(refreshed, { sheet, staff });
       }

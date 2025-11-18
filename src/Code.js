@@ -2,6 +2,7 @@
 const APP = {
   // Driveに保存するPDFの親フォルダID（空でも可：スプレッドシートと同じ階層に保存）
   PARENT_FOLDER_ID: '1VAv9ZOLB7A__m8ErFDPhFHvhpO21OFPP',
+  PAYROLL_PDF_ROOT_FOLDER_ID: '1Jw_QcZ1ph_mi92Y5I2efvpg15VivyV1X',
   // 正本スプレッドシート（患者情報のブック）。空なら「現在のスプレッドシート」を使う
   SSID: '1ajnW9Fuvu0YzUUkfTmw0CrbhrM3lM5tt5OA1dK2_CoQ',
   BASE_FEE_YEN: 4170,
@@ -297,6 +298,7 @@ const PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMN_INDEX = Object.freeze(Object.keys
   return map;
 }, {}));
 const PAYROLL_SOCIAL_INSURANCE_RATE_PROPERTY_KEY = 'payroll_social_insurance_rates';
+const PAYROLL_PDF_ROOT_FOLDER_PROPERTY_KEY = 'PAYROLL_PDF_ROOT_FOLDER_ID';
 const PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
   healthEmployee: 0.0495,
   healthEmployer: 0.0495,
@@ -989,6 +991,43 @@ function parseDateValue_(value){
   if (value == null || value === '') return null;
   const parsed = new Date(value);
   return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function escapeHtml_(value){
+  const text = value == null ? '' : String(value);
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function convertPlainTextToSafeHtml_(text){
+  const escaped = escapeHtml_(text || '');
+  return escaped.replace(/\r?\n/g, '<br />');
+}
+
+function sanitizeDriveFileName_(value){
+  const text = String(value || '').trim();
+  if (!text) return 'file';
+  return text.replace(/[\\/:*?"<>|#%]/g, '_').replace(/\s+/g, ' ').trim();
+}
+
+function formatPayrollCurrencyYen_(value){
+  const num = Math.round(Number(value) || 0);
+  return '¥' + num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function formatJapaneseEraMonthLabel_(date, tz){
+  const base = date instanceof Date && !isNaN(date.getTime()) ? date : new Date();
+  const timezone = tz || Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const reiwaStart = new Date(2019, 4, 1);
+  if (base.getTime() >= reiwaStart.getTime()) {
+    const reiwaYear = base.getFullYear() - 2018;
+    return '令和' + reiwaYear + '年' + Utilities.formatDate(base, timezone, 'M') + '月分';
+  }
+  return Utilities.formatDate(base, timezone, 'yyyy年M月分');
 }
 
 function readAlbyteStaffRecords_(){
@@ -3913,6 +3952,212 @@ function payrollDeleteSocialInsuranceOverride(payload){
   });
 }
 
+function buildPayrollPayslipTemplateData_(employee, payload){
+  if (!employee) {
+    throw new Error('従業員が見つかりません。');
+  }
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const now = new Date();
+  const monthKeyInput = payload && (payload.month || payload.monthKey);
+  const monthKey = normalizePayrollMonthKey_(monthKeyInput) || normalizePayrollMonthKey_(now);
+  const monthDate = monthKey ? createDateFromKey_(monthKey + '-01') : now;
+  const defaultStart = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth(), 1) : now;
+  const defaultEnd = monthDate ? new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0) : now;
+  const periodStart = parseDateValue_(payload && (payload.periodStart || payload.periodFrom)) || defaultStart;
+  const periodEnd = parseDateValue_(payload && (payload.periodEnd || payload.periodTo)) || defaultEnd;
+  const payPeriodText = Utilities.formatDate(periodStart, tz, 'yyyy年M月d日') + ' 〜 ' + Utilities.formatDate(periodEnd, tz, 'yyyy年M月d日');
+  const paydayInput = parseDateValue_(payload && (payload.payday || payload.payDate));
+  const payday = paydayInput || new Date(defaultEnd.getFullYear(), defaultEnd.getMonth() + 1, 25);
+  const paydayText = Utilities.formatDate(payday, tz, 'yyyy年M月d日');
+  const issuedInput = parseDateValue_(payload && (payload.issuedAt || payload.issuedDate));
+  const issued = issuedInput || now;
+  const issuedText = Utilities.formatDate(issued, tz, 'yyyy年M月d日');
+  const monthLabel = monthDate ? Utilities.formatDate(monthDate, tz, 'yyyy年M月') : '';
+  const gradeContext = readPayrollGradeRecords_();
+  const normalizedGrade = normalizePayrollGradeName_(employee && employee.grade);
+  const gradeRecord = normalizedGrade ? gradeContext.mapByNormalizedName.get(normalizedGrade) : null;
+  const gradeAmount = gradeRecord && gradeRecord.amount != null ? gradeRecord.amount : 0;
+
+  const payItems = [];
+  const appendPayItem = (label, amount, note) => {
+    const parsed = parsePayrollMoneyValue_(amount);
+    if (parsed == null || parsed === 0) return;
+    payItems.push({ label: label || '', amount: parsed, note: note ? String(note).trim() : '' });
+  };
+  appendPayItem('基本給', employee.baseSalary);
+  if ((employee.baseSalary == null || employee.baseSalary === 0) && employee.hourlyWage) {
+    const estimated = Math.round((Number(employee.hourlyWage) || 0) * 160);
+    if (estimated > 0) {
+      appendPayItem('時間給換算 (160h)', estimated);
+    }
+  }
+  appendPayItem(gradeRecord && gradeRecord.name ? gradeRecord.name : '役職手当', gradeAmount);
+  appendPayItem('個別加算', employee.personalAllowance);
+  appendPayItem('資格手当', employee.qualificationAllowance);
+  appendPayItem('車両手当', employee.vehicleAllowance);
+  if (employee.transportationType === 'fixed') {
+    appendPayItem('交通費（固定）', employee.transportationAmount);
+  } else if (employee.transportationType === 'actual') {
+    appendPayItem('交通費（実費）', employee.transportationAmount);
+  }
+  const extraPayItemsSource = []
+    .concat(Array.isArray(payload && payload.payItems) ? payload.payItems : [])
+    .concat(Array.isArray(payload && payload.extraPayItems) ? payload.extraPayItems : []);
+  extraPayItemsSource.forEach(item => {
+    if (!item) return;
+    const label = String(item.label || '').trim() || '支給';
+    appendPayItem(label, item.amount, item.note);
+  });
+
+  const deductionItems = [];
+  const appendDeductionItem = (label, amount, note) => {
+    const parsed = parsePayrollMoneyValue_(amount);
+    if (parsed == null || parsed === 0) return;
+    deductionItems.push({ label: label || '', amount: parsed, note: note ? String(note).trim() : '' });
+  };
+  let socialInsurance = null;
+  if (monthKey) {
+    const standardsContext = readPayrollSocialInsuranceStandards_();
+    const overridesContext = readPayrollSocialInsuranceOverrides_();
+    const rates = getPayrollSocialInsuranceRates_();
+    const overrideKey = employee.id + '::' + monthKey;
+    const override = overridesContext.mapByEmployeeMonth.get(overrideKey);
+    const standard = matchPayrollSocialInsuranceStandard_(estimatePayrollMonthlyCompensation_(employee), standardsContext.records);
+    const insuranceEntry = buildPayrollSocialInsuranceSummaryEntry_(employee, { monthKey, rates, standard, override });
+    socialInsurance = insuranceEntry;
+    if (insuranceEntry && insuranceEntry.contributions) {
+      const contrib = insuranceEntry.contributions;
+      const healthTotal = (contrib.healthEmployee || 0) + (contrib.nursingEmployee || 0) + (contrib.childEmployee || 0);
+      appendDeductionItem('健康保険', healthTotal);
+      appendDeductionItem('厚生年金', contrib.pensionEmployee || 0);
+      appendDeductionItem('雇用保険', contrib.employmentEmployee || 0);
+    }
+  }
+  const deductionEntry = buildPayrollDeductionEntry_(employee, { gradeAmount }) || { components: [] };
+  if (Array.isArray(deductionEntry.components)) {
+    deductionEntry.components.forEach(component => {
+      if (!component) return;
+      const type = component.type || '';
+      let label = component.label || '';
+      if (type === 'withholding') label = '所得税';
+      if (type === 'housing') label = '社宅控除';
+      if (type === 'municipal') label = '住民税';
+      appendDeductionItem(label || '控除', component.amount, component.note);
+    });
+  }
+  const extraDeductionSource = []
+    .concat(Array.isArray(payload && payload.deductionItems) ? payload.deductionItems : [])
+    .concat(Array.isArray(payload && payload.extraDeductionItems) ? payload.extraDeductionItems : []);
+  extraDeductionSource.forEach(item => {
+    if (!item) return;
+    const label = String(item.label || '').trim() || '控除';
+    appendDeductionItem(label, item.amount, item.note);
+  });
+
+  const filteredPayItems = payItems.filter(item => Number(item.amount) > 0);
+  const filteredDeductionItems = deductionItems.filter(item => Number(item.amount) > 0);
+  const totalGross = filteredPayItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const totalDeduction = filteredDeductionItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const netPay = totalGross - totalDeduction;
+  const formattedPayItems = filteredPayItems.map(item => ({
+    label: item.label,
+    amount: item.amount,
+    amountText: formatPayrollCurrencyYen_(item.amount),
+    note: item.note
+  }));
+  const formattedDeductionItems = filteredDeductionItems.map(item => ({
+    label: item.label,
+    amount: item.amount,
+    amountText: formatPayrollCurrencyYen_(item.amount),
+    note: item.note
+  }));
+
+  const folderName = formatPayrollEmployeeFolderName_(employee.name);
+  const reiwaLabel = formatJapaneseEraMonthLabel_(monthDate || now, tz);
+  const fileBase = sanitizeDriveFileName_(`${employee.name || '従業員'}_給与支払明細_${reiwaLabel}`);
+  const noteText = String(payload && payload.note || '').trim() || '勤怠・控除内容は労働基準法および就業規則に基づき算出しています。内容に相違がある場合は5営業日以内に総務までご連絡ください。';
+  const messageHeading = String(payload && payload.messageHeading || '').trim() || 'Message from BellTree';
+  const messageBody = String(payload && payload.messageBody || '').trim() || '「あなたの働きが、べるつりーの理念である “関係者に最善を提供する” ことにつながっています。」\n「いつもありがとうございます。」';
+  const netPayNote = String(payload && (payload.netPayNote || payload.bankInfo) || employee.note || '').trim() || '振込予定口座：登録口座';
+  const brand = {
+    initials: String(payload && payload.brandInitials || '').trim() || 'BT',
+    title: String(payload && payload.brandTitle || '').trim() || '給与明細',
+    tagline: String(payload && payload.brandTagline || '').trim() || 'PAYROLL STATEMENT'
+  };
+  const footerCompany = String(payload && payload.footerCompany || '').trim() || 'BellTree';
+  const footerAddress = String(payload && payload.footerAddress || '').trim() || '〒192-0372 東京都八王子市下柚木3-7-2-401';
+  const footerContact = String(payload && payload.footerContact || '').trim() || '代表 042-682-2839 ｜ belltree@belltree1102.com';
+
+  return {
+    employeeId: employee.id,
+    employeeName: employee.name,
+    employeeDisplayName: (employee.name || '従業員') + ' 様',
+    employeeFolderName: folderName,
+    monthKey,
+    monthLabel,
+    reiwaLabel,
+    payPeriodText,
+    paydayText,
+    totalGross,
+    totalGrossText: formatPayrollCurrencyYen_(totalGross),
+    totalDeduction,
+    totalDeductionText: formatPayrollCurrencyYen_(totalDeduction),
+    netPay,
+    netPayText: formatPayrollCurrencyYen_(netPay),
+    netPayNote,
+    payItems: formattedPayItems,
+    deductionItems: formattedDeductionItems,
+    noteHtml: convertPlainTextToSafeHtml_(noteText),
+    messageHeading,
+    messageBodyHtml: convertPlainTextToSafeHtml_(messageBody),
+    issuedText,
+    brand,
+    footerCompany,
+    footerAddress,
+    footerContact,
+    socialInsurance,
+    fileName: fileBase + '.pdf'
+  };
+}
+
+function createPayrollPayslipPdf_(payload){
+  const context = readPayrollEmployeeRecords_();
+  const employeeId = String(payload && payload.employeeId || '').trim();
+  let employee = employeeId ? context.mapById.get(employeeId) : null;
+  if (!employee) {
+    const name = String(payload && payload.employeeName || '').trim();
+    if (name) {
+      employee = context.records.find(record => record.name === name);
+    }
+  }
+  if (!employee) {
+    throw new Error('従業員が見つかりません。');
+  }
+  const templateData = buildPayrollPayslipTemplateData_(employee, payload || {});
+  const folder = ensurePayrollEmployeeFolder_(employee.name);
+  const template = HtmlService.createTemplateFromFile('payroll_pdf_family');
+  template.payrollPdfData = templateData;
+  const html = template.evaluate().getContent();
+  const blob = Utilities.newBlob(html, 'text/html', 'payroll_payslip.html').getAs(MimeType.PDF);
+  blob.setName(templateData.fileName || '給与明細.pdf');
+  const file = folder.createFile(blob);
+  return { file, data: templateData, folder };
+}
+
+function payrollGeneratePayslipPdf(payload){
+  return wrapPayrollResponse_('payrollGeneratePayslipPdf', () => {
+    const result = createPayrollPayslipPdf_(payload || {});
+    return {
+      ok: true,
+      fileId: result.file.getId(),
+      fileName: result.file.getName(),
+      fileUrl: result.file.getUrl(),
+      folderName: result.folder.getName(),
+      data: result.data
+    };
+  });
+}
+
 function resolveUnifiedAttendanceRange_(payload){
   const tz = getConfig('timezone') || 'Asia/Tokyo';
   let fromKey = normalizeDateKey_(payload && payload.from, tz);
@@ -5786,6 +6031,44 @@ function getParentFolder_(){
   const it = file.getParents();
   if (it.hasNext()) return it.next();
   return DriveApp.getRootFolder();
+}
+
+function getPayrollPdfRootFolder_(){
+  const props = PropertiesService.getScriptProperties();
+  const configured = (props.getProperty(PAYROLL_PDF_ROOT_FOLDER_PROPERTY_KEY) || '').trim();
+  if (configured) {
+    try {
+      return DriveApp.getFolderById(configured);
+    } catch (err) {
+      Logger.log('[getPayrollPdfRootFolder_] invalid property: ' + err);
+    }
+  }
+  const fallback = (APP.PAYROLL_PDF_ROOT_FOLDER_ID || '').trim();
+  if (fallback) {
+    try {
+      return DriveApp.getFolderById(fallback);
+    } catch (err2) {
+      Logger.log('[getPayrollPdfRootFolder_] invalid APP fallback: ' + err2);
+    }
+  }
+  return getParentFolder_();
+}
+
+function formatPayrollEmployeeFolderName_(name){
+  const raw = String(name || '').trim();
+  const normalized = raw ? raw.replace(/\s+/g, '　') : '未設定従業員';
+  return normalized.endsWith('殿') ? normalized : normalized + '殿';
+}
+
+function ensurePayrollEmployeeFolder_(employeeName){
+  const root = getPayrollPdfRootFolder_();
+  if (!root) throw new Error('給与明細の保存先フォルダを取得できません。');
+  const folderName = formatPayrollEmployeeFolderName_(employeeName);
+  const iterator = root.getFoldersByName(folderName);
+  if (iterator.hasNext()) {
+    return iterator.next();
+  }
+  return root.createFolder(folderName);
 }
 function getOrCreateFolderForPatientMonth_(pid, date){
   const parent = getParentFolder_();
@@ -7679,6 +7962,7 @@ function doGet(e) {
   } else {
     t.patientId = "";
   }
+  t.payrollPdfData = {};
 
   if(e.parameter && e.parameter.lead) t.lead = e.parameter.lead;
 

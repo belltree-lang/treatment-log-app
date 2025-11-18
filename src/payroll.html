@@ -77,6 +77,22 @@
 
   <section class="card">
     <div class="section-header">
+      <div>
+        <h2>給与明細の一括生成</h2>
+        <p class="meta-line">対象月を選び「全員まとめて生成」を押すと、各従業員のPDFを再計算して上書き保存します（前月以前の修正は不可）。</p>
+      </div>
+      <div class="inline-controls">
+        <label>対象月
+          <input type="month" id="bulkPayslipMonth" />
+        </label>
+        <button id="bulkPayslipButton" type="button" class="btn">全員まとめて生成</button>
+      </div>
+    </div>
+    <div id="bulkPayslipStatus" class="meta-line"></div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
       <h2>従業員一覧</h2>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button id="reloadButton" type="button" class="btn ghost">再読み込み</button>
@@ -88,6 +104,7 @@
         <thead>
           <tr>
             <th>氏名</th>
+            <th>拠点</th>
             <th>区分</th>
             <th>基本給</th>
             <th>時給</th>
@@ -100,7 +117,7 @@
             <th></th>
           </tr>
         </thead>
-        <tbody id="employeeTableBody"><tr><td colspan="11" class="table-empty">読み込み中…</td></tr></tbody>
+        <tbody id="employeeTableBody"><tr><td colspan="12" class="table-empty">読み込み中…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -120,6 +137,9 @@
         </label>
         <label>メール
           <input id="employeeEmail" type="email" placeholder="name@example.com" />
+        </label>
+        <label>拠点
+          <input id="employeeBase" type="text" placeholder="例：八王子" />
         </label>
         <label>雇用区分
           <select id="employmentType" required></select>
@@ -496,6 +516,11 @@ let payrollState = {
   gradeSaving: false,
   selectedId: null,
   selectedGradeId: null,
+  bulk: {
+    month: getPreviousMonthKey(),
+    loading: false,
+    summary: null
+  },
   attendance: {
     month: null,
     loading: false,
@@ -541,6 +566,13 @@ function getCurrentMonthKey(){
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   return `${now.getFullYear()}-${month}`;
+}
+
+function getPreviousMonthKey(){
+  const now = new Date();
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const month = String(prev.getMonth() + 1).padStart(2, '0');
+  return `${prev.getFullYear()}-${month}`;
 }
 
 function formatMinutesClock(minutes){
@@ -1249,11 +1281,12 @@ function handleInsuranceSummaryTableClick(event){
 function renderTable(){
   const tbody = document.getElementById('employeeTableBody');
   if (!Array.isArray(payrollState.employees) || !payrollState.employees.length){
-    tbody.innerHTML = '<tr><td colspan="11" class="table-empty">登録がありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="table-empty">登録がありません</td></tr>';
     return;
   }
   tbody.innerHTML = payrollState.employees.map(row => {
     const name = row.name ? row.name : '';
+    const baseLocation = row.base || '';
     const employment = row.employmentLabel || '';
     const base = formatCurrency(row.baseSalary);
     const hourly = formatCurrency(row.hourlyWage);
@@ -1268,6 +1301,7 @@ function renderTable(){
     return `
     <tr>
       <td>${name}</td>
+      <td>${baseLocation || '<span class="muted">--</span>'}</td>
       <td>${employment}</td>
       <td>${base}</td>
       <td>${hourly}</td>
@@ -1299,6 +1333,7 @@ function resetForm(){
   document.getElementById('formTitle').textContent = '従業員を登録';
   document.getElementById('formMeta').textContent = '';
   document.getElementById('deleteButton').hidden = true;
+  document.getElementById('employeeBase').value = '';
   updateTransportationAmountState();
   updateGradeHint();
 }
@@ -1324,6 +1359,7 @@ function populateForm(employee){
   document.getElementById('employeeId').value = employee.id || '';
   document.getElementById('employeeName').value = employee.name || '';
   document.getElementById('employeeEmail').value = employee.email || '';
+  document.getElementById('employeeBase').value = employee.base || '';
   document.getElementById('employmentType').value = employee.employmentType || 'employee';
   document.getElementById('employeeGrade').value = employee.grade || '';
   document.getElementById('baseSalary').value = employee.baseSalary != null ? employee.baseSalary : '';
@@ -1352,6 +1388,7 @@ function gatherFormData(){
     id: document.getElementById('employeeId').value,
     name: document.getElementById('employeeName').value,
     email: document.getElementById('employeeEmail').value,
+    base: document.getElementById('employeeBase').value,
     employmentType: document.getElementById('employmentType').value,
     grade: document.getElementById('employeeGrade').value,
     baseSalary: document.getElementById('baseSalary').value,
@@ -1371,12 +1408,12 @@ function gatherFormData(){
 
 function fetchEmployees(){
   const tbody = document.getElementById('employeeTableBody');
-  tbody.innerHTML = '<tr><td colspan="11" class="table-empty">読み込み中…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="12" class="table-empty">読み込み中…</td></tr>';
   google.script.run
     .withSuccessHandler(res => {
       if (!res || res.ok !== true) {
         showToast(res && res.message ? res.message : '一覧の取得に失敗しました');
-        tbody.innerHTML = '<tr><td colspan="11" class="table-empty">エラーが発生しました</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="table-empty">エラーが発生しました</td></tr>';
         return;
       }
       payrollState.employees = Array.isArray(res.employees) ? res.employees : [];
@@ -1391,7 +1428,7 @@ function fetchEmployees(){
     })
     .withFailureHandler(err => {
       showToast(err && err.message ? err.message : '一覧の取得に失敗しました');
-      tbody.innerHTML = '<tr><td colspan="11" class="table-empty">エラーが発生しました</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12" class="table-empty">エラーが発生しました</td></tr>';
     })
     .payrollListEmployees();
 }
@@ -1661,11 +1698,81 @@ function fetchAttendanceSummary(){
     .payrollListAttendanceSummary(payload);
 }
 
+function setBulkFormLoading(isLoading){
+  payrollState.bulk.loading = isLoading;
+  const button = document.getElementById('bulkPayslipButton');
+  const monthInput = document.getElementById('bulkPayslipMonth');
+  if (button) button.disabled = isLoading;
+  if (monthInput) monthInput.disabled = isLoading;
+}
+
+function renderBulkStatus(message){
+  const status = document.getElementById('bulkPayslipStatus');
+  if (!status) return;
+  status.textContent = message || '';
+}
+
+function handleBulkPayslipGenerate(){
+  if (payrollState.bulk.loading) return;
+  const monthInput = document.getElementById('bulkPayslipMonth');
+  const monthValue = monthInput ? monthInput.value : '';
+  if (!monthValue) {
+    showToast('対象月を選択してください');
+    return;
+  }
+  payrollState.bulk.month = monthValue;
+  setBulkFormLoading(true);
+  renderBulkStatus('生成中です…');
+  google.script.run
+    .withSuccessHandler(res => {
+      setBulkFormLoading(false);
+      if (!res || res.ok !== true) {
+        const message = res && res.message ? res.message : '一括生成に失敗しました';
+        showToast(message);
+        renderBulkStatus(message);
+        return;
+      }
+      const summary = res.summary || {};
+      const label = res.month && (res.month.label || res.month.key) ? (res.month.label || res.month.key) : '';
+      let message = `対象 ${summary.total || 0}名 / 成功 ${summary.success || 0} / 失敗 ${summary.failed || 0}`;
+      if (label) {
+        message = `${label}：` + message;
+      }
+      if (Array.isArray(res.errors) && res.errors.length) {
+        const details = res.errors.slice(0, 3).map(err => {
+          const name = err && (err.employeeName || err.employeeId || '');
+          const reason = err && err.message ? err.message : '失敗';
+          return `${name}: ${reason}`;
+        }).join(' / ');
+        if (details) {
+          message += ` / 失敗詳細 ${details}${res.errors.length > 3 ? ' …' : ''}`;
+        }
+      }
+      renderBulkStatus(message);
+      showToast('給与明細を生成しました');
+    })
+    .withFailureHandler(err => {
+      setBulkFormLoading(false);
+      const message = err && err.message ? err.message : '一括生成に失敗しました';
+      showToast(message);
+      renderBulkStatus(message);
+    })
+    .payrollBulkGeneratePayslips({ month: monthValue });
+}
+
 function init(){
   renderOptions(document.getElementById('employmentType'), EMPLOYMENT_OPTIONS);
   renderOptions(document.getElementById('transportationType'), TRANSPORT_OPTIONS);
   renderOptions(document.getElementById('commissionLogic'), COMMISSION_OPTIONS);
   renderOptions(document.getElementById('withholding'), WITHHOLDING_OPTIONS);
+  const bulkMonthInput = document.getElementById('bulkPayslipMonth');
+  if (bulkMonthInput) {
+    bulkMonthInput.value = payrollState.bulk.month;
+  }
+  const bulkButton = document.getElementById('bulkPayslipButton');
+  if (bulkButton) {
+    bulkButton.addEventListener('click', handleBulkPayslipGenerate);
+  }
   document.getElementById('employeeForm').addEventListener('submit', handleSave);
   document.getElementById('employeeTableBody').addEventListener('click', handleTableClick);
   document.getElementById('newButton').addEventListener('click', resetForm);

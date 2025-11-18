@@ -23,6 +23,10 @@
   .header-main{ display:flex; flex-direction:column; gap:4px; }
   .header-controls{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
   .header-actions{ display:flex; align-items:center; gap:12px; margin-left:auto; flex-wrap:wrap; }
+  .tab-nav{ display:flex; gap:8px; margin:8px 0 0; }
+  .tab-button{ border:0; border-radius:999px; padding:6px 16px; background:rgba(37,99,235,0.12); color:#1f2937; font-weight:600; cursor:pointer; }
+  .tab-button.active{ background:var(--brand); color:#fff; }
+  .tab-panel--hidden{ display:none; }
   .paid-leave-widget{ background:rgba(37,99,235,0.08); border-radius:12px; padding:8px 12px; font-size:0.9rem; color:#1f2937; display:flex; flex-direction:column; gap:2px; min-width:160px; }
   .paid-leave-widget strong{ color:#2563eb; font-size:1.05rem; }
   .paid-leave-widget-meta{ font-size:0.8rem; color:var(--muted); }
@@ -108,6 +112,11 @@
   .toast{ position:fixed; left:50%; bottom:32px; transform:translateX(-50%); background:#1f2937; color:#fff; padding:10px 18px; border-radius:999px; font-size:0.9rem; box-shadow:0 12px 30px rgba(15,23,42,0.25); opacity:0; pointer-events:none; transition:opacity .3s ease; z-index:1600; }
   .toast.show{ opacity:1; }
   .auto-adjust-note{ margin-top:4px; font-size:0.8rem; color:#b91c1c; }
+  .payslip-list{ display:flex; flex-direction:column; gap:12px; }
+  .payslip-item{ display:flex; justify-content:space-between; align-items:center; gap:16px; padding:12px 16px; border:1px solid var(--border); border-radius:12px; background:#fff; }
+  .payslip-info{ display:flex; flex-direction:column; gap:4px; }
+  .payslip-title{ font-weight:600; }
+  .payslip-meta{ font-size:0.85rem; color:var(--muted); }
   @media (max-width:768px){
     .attendance-table th.col-date,
     .attendance-table td.col-date{ width:110px; }
@@ -160,7 +169,12 @@
     </div>
   </header>
 
-  <section class="card">
+  <div class="tab-nav" role="tablist">
+    <button class="tab-button active" type="button" data-tab-target="attendance">勤怠</button>
+    <button class="tab-button" type="button" data-tab-target="payslip">給与明細を見る</button>
+  </div>
+
+  <section class="card tab-panel" data-tab-panel="attendance">
     <div class="card-header">
       <h2>勤怠一覧</h2>
       <div id="monthNotice" class="muted"></div>
@@ -169,12 +183,12 @@
     <div class="table-note">退勤は18:00まで・15分単位。休憩時間も15分単位で申請してください。</div>
   </section>
 
-  <section class="card">
+  <section class="card tab-panel" data-tab-panel="attendance">
     <h2>申請履歴</h2>
     <div id="requestHistory" class="muted">読み込み中…</div>
   </section>
 
-  <section class="card" id="adminPanel" hidden>
+  <section class="card tab-panel" data-tab-panel="attendance" id="adminPanel" hidden>
     <h2>管理者：申請承認</h2>
     <div class="admin-section">
       <h3>勤怠修正申請</h3>
@@ -184,6 +198,17 @@
       <h3>有給申請</h3>
       <div id="adminPaidLeaveRequests" class="muted">読み込み中…</div>
     </div>
+  </section>
+
+  <section class="card tab-panel tab-panel--hidden" id="payslipPanel" data-tab-panel="payslip">
+    <div class="card-header">
+      <h2>給与明細</h2>
+      <div class="header-actions">
+        <button id="payslipReloadButton" class="btn ghost" type="button">再読み込み</button>
+      </div>
+    </div>
+    <div id="payslipStatus" class="muted"></div>
+    <div id="payslipList" class="payslip-list muted">読み込み中…</div>
   </section>
 </div>
 
@@ -264,7 +289,7 @@ const MONTH_STORAGE_KEY = 'visitAttendance.selectedMonth';
 const WEEKDAYS = ['日','月','火','水','木','金','土'];
 const LEGACY_SERIAL_DATE_PATTERN = /(1899|1900)/;
 
-let state = { data: null, selectedMonth: null, requestDate: null, paidLeaveDate: null, paidLeavePlan: null, paidLeavePlanToken: 0 };
+let state = { data: null, selectedMonth: null, requestDate: null, paidLeaveDate: null, paidLeavePlan: null, paidLeavePlanToken: 0, activeTab: 'attendance' };
 
 function getSavedMonthKey(){
   try {
@@ -375,6 +400,20 @@ if (paidLeaveDateField) {
   paidLeaveDateField.addEventListener('change', handlePaidLeaveFieldChange);
 }
 
+document.querySelectorAll('[data-tab-target]').forEach(button => {
+  button.addEventListener('click', () => {
+    const target = button.getAttribute('data-tab-target');
+    setActiveTab(target);
+  });
+});
+
+const payslipReloadButton = document.getElementById('payslipReloadButton');
+if (payslipReloadButton) {
+  payslipReloadButton.addEventListener('click', () => {
+    loadMonth(state.selectedMonth || (state.data && state.data.month ? state.data.month.key : null));
+  });
+}
+
 function loadMonth(monthKey){
   setLoading(true, '読み込み中…');
   google.script.run
@@ -401,6 +440,7 @@ function loadMonth(monthKey){
 
 function renderAll(){
   if (!state.data) return;
+  updateTabVisibility();
   renderUser();
   renderMonthSelect();
   renderSummary();
@@ -408,6 +448,29 @@ function renderAll(){
   renderAttendance();
   renderHistory();
   renderAdmin();
+  renderPayslipPanel();
+}
+
+function setActiveTab(tab){
+  const next = tab || 'attendance';
+  if (state.activeTab === next) {
+    updateTabVisibility();
+    return;
+  }
+  state.activeTab = next;
+  updateTabVisibility();
+}
+
+function updateTabVisibility(){
+  const current = state.activeTab || 'attendance';
+  document.querySelectorAll('[data-tab-target]').forEach(button => {
+    const target = button.getAttribute('data-tab-target');
+    button.classList.toggle('active', target === current);
+  });
+  document.querySelectorAll('[data-tab-panel]').forEach(panel => {
+    const target = panel.getAttribute('data-tab-panel');
+    panel.classList.toggle('tab-panel--hidden', target !== current);
+  });
 }
 
 function renderUser(){
@@ -599,6 +662,47 @@ function renderAdmin(){
   panel.hidden = false;
   renderAdminCorrectionRequests(admin.correctionRequests || []);
   renderAdminPaidLeaveRequests(admin.paidLeaveRequests || []);
+}
+
+function renderPayslipPanel(){
+  const list = document.getElementById('payslipList');
+  const status = document.getElementById('payslipStatus');
+  if (!list || !status) return;
+  const payroll = state.data && state.data.payroll ? state.data.payroll : null;
+  if (!payroll) {
+    status.textContent = '給与明細を取得できませんでした。';
+    list.innerHTML = '';
+    return;
+  }
+  if (!payroll.available) {
+    status.textContent = payroll.restrictedReason || '給与明細を閲覧する権限がありません。';
+    list.innerHTML = '';
+    return;
+  }
+  status.textContent = payroll.message || '';
+  const payslips = Array.isArray(payroll.payslips) ? payroll.payslips : [];
+  if (!payslips.length) {
+    list.innerHTML = '<div class="muted">閲覧可能な給与明細はまだありません。</div>';
+    return;
+  }
+  list.innerHTML = payslips.map(item => {
+    const title = escapeHtml(item.monthHint || item.name || '給与明細');
+    const issued = item.createdAtText ? `発行: ${escapeHtml(item.createdAtText)}` : '';
+    const updated = item.updatedAtText && item.updatedAtText !== item.createdAtText
+      ? `更新: ${escapeHtml(item.updatedAtText)}`
+      : '';
+    const size = item.sizeText ? `サイズ: ${escapeHtml(item.sizeText)}` : '';
+    return `
+      <div class="payslip-item">
+        <div class="payslip-info">
+          <div class="payslip-title">${title}</div>
+          ${issued ? `<div class="payslip-meta">${issued}</div>` : ''}
+          ${updated ? `<div class="payslip-meta">${updated}</div>` : ''}
+          ${size ? `<div class="payslip-meta">${size}</div>` : ''}
+        </div>
+        <a class="btn btn-sm" href="${item.url}" target="_blank" rel="noopener">開く</a>
+      </div>`;
+  }).join('');
 }
 
 function renderAdminCorrectionRequests(requests){

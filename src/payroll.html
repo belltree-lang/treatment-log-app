@@ -93,13 +93,14 @@
             <th>時給</th>
             <th>個別加算</th>
             <th>役職/等級</th>
+            <th>住民税</th>
             <th>交通費</th>
             <th>歩合</th>
             <th>更新日時</th>
             <th></th>
           </tr>
         </thead>
-        <tbody id="employeeTableBody"><tr><td colspan="10" class="table-empty">読み込み中…</td></tr></tbody>
+        <tbody id="employeeTableBody"><tr><td colspan="11" class="table-empty">読み込み中…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -144,6 +145,9 @@
         </label>
         <label>社宅控除
           <input id="housingDeduction" type="number" step="500" placeholder="円" />
+        </label>
+        <label>住民税
+          <input id="municipalTax" type="number" step="500" placeholder="円" />
         </label>
         <label>交通費区分
           <select id="transportationType"></select>
@@ -1215,7 +1219,7 @@ function handleInsuranceSummaryTableClick(event){
 function renderTable(){
   const tbody = document.getElementById('employeeTableBody');
   if (!Array.isArray(payrollState.employees) || !payrollState.employees.length){
-    tbody.innerHTML = '<tr><td colspan="10" class="table-empty">登録がありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="table-empty">登録がありません</td></tr>';
     return;
   }
   tbody.innerHTML = payrollState.employees.map(row => {
@@ -1227,6 +1231,7 @@ function renderTable(){
     const gradeAmountLabel = row.gradeAmount != null ? formatCurrency(row.gradeAmount) : '';
     const gradeName = row.grade ? row.grade : (row.gradeMasterName || '');
     const grade = gradeAmountLabel ? `${gradeName} (${gradeAmountLabel})` : gradeName;
+    const municipalTax = formatCurrency(row.municipalTax);
     const transportation = formatTransportation(row);
     const commission = row.commissionLabel || '';
     const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString('ja-JP') : '';
@@ -1238,6 +1243,7 @@ function renderTable(){
       <td>${hourly}</td>
       <td>${allowance}</td>
       <td>${grade}</td>
+      <td>${municipalTax}</td>
       <td>${transportation}</td>
       <td>${commission}</td>
       <td>${updated}</td>
@@ -1296,6 +1302,7 @@ function populateForm(employee){
   document.getElementById('qualificationAllowance').value = employee.qualificationAllowance != null ? employee.qualificationAllowance : '';
   document.getElementById('vehicleAllowance').value = employee.vehicleAllowance != null ? employee.vehicleAllowance : '';
   document.getElementById('housingDeduction').value = employee.housingDeduction != null ? employee.housingDeduction : '';
+  document.getElementById('municipalTax').value = employee.municipalTax != null ? employee.municipalTax : '';
   document.getElementById('transportationType').value = employee.transportationType || 'none';
   document.getElementById('transportationAmount').value = employee.transportationAmount != null ? employee.transportationAmount : '';
   document.getElementById('commissionLogic').value = employee.commissionLogic || 'legacy';
@@ -1323,6 +1330,7 @@ function gatherFormData(){
     qualificationAllowance: document.getElementById('qualificationAllowance').value,
     vehicleAllowance: document.getElementById('vehicleAllowance').value,
     housingDeduction: document.getElementById('housingDeduction').value,
+    municipalTax: document.getElementById('municipalTax').value,
     transportationType: document.getElementById('transportationType').value,
     transportationAmount: document.getElementById('transportationAmount').value,
     commissionLogic: document.getElementById('commissionLogic').value,
@@ -1333,12 +1341,12 @@ function gatherFormData(){
 
 function fetchEmployees(){
   const tbody = document.getElementById('employeeTableBody');
-  tbody.innerHTML = '<tr><td colspan="10" class="table-empty">読み込み中…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11" class="table-empty">読み込み中…</td></tr>';
   google.script.run
     .withSuccessHandler(res => {
       if (!res || res.ok !== true) {
         showToast(res && res.message ? res.message : '一覧の取得に失敗しました');
-        tbody.innerHTML = '<tr><td colspan="10" class="table-empty">エラーが発生しました</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="table-empty">エラーが発生しました</td></tr>';
         return;
       }
       payrollState.employees = Array.isArray(res.employees) ? res.employees : [];
@@ -1352,7 +1360,7 @@ function fetchEmployees(){
     })
     .withFailureHandler(err => {
       showToast(err && err.message ? err.message : '一覧の取得に失敗しました');
-      tbody.innerHTML = '<tr><td colspan="10" class="table-empty">エラーが発生しました</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" class="table-empty">エラーが発生しました</td></tr>';
     })
     .payrollListEmployees();
 }

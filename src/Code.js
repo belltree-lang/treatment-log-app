@@ -1208,45 +1208,46 @@ function readAlbyteShiftRecords_(){
   const lastRow = sheet.getLastRow();
   const width = ALBYTE_SHIFT_SHEET_HEADER.length;
   const records = [];
-  if (lastRow >= 2) {
-    const tz = getConfig('timezone') || 'Asia/Tokyo';
-    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
-    for (let i = 0; i < values.length; i++) {
-      const row = values[i];
-      const isEmpty = row.every(cell => cell === '' || cell == null);
-      if (isEmpty) continue;
-      const rowIndex = i + 2;
-      let id = String(row[ALBYTE_SHIFT_COLUMNS.id] || '').trim();
-      if (!id) {
-        id = Utilities.getUuid();
-        sheet.getRange(rowIndex, ALBYTE_SHIFT_COLUMN_INDEX.id).setValue(id);
-      }
-      const dateKey = normalizeDateKey_(row[ALBYTE_SHIFT_COLUMNS.date], tz);
-      const staffId = String(row[ALBYTE_SHIFT_COLUMNS.staffId] || '').trim();
-      const staffName = String(row[ALBYTE_SHIFT_COLUMNS.staffName] || '').trim();
-      const normalizedName = normalizeAlbyteName_(staffName);
-      const startMinutes = parseTimeTextToMinutes_(row[ALBYTE_SHIFT_COLUMNS.start]);
-      const endMinutes = parseTimeTextToMinutes_(row[ALBYTE_SHIFT_COLUMNS.end]);
-      const note = String(row[ALBYTE_SHIFT_COLUMNS.note] || '').trim();
-      const updatedAt = parseDateValue_(row[ALBYTE_SHIFT_COLUMNS.updatedAt]);
-      const record = {
-        rowIndex,
-        id,
-        dateKey,
-        staffId,
-        staffName,
-        normalizedName,
-        startMinutes: Number.isFinite(startMinutes) ? startMinutes : NaN,
-        endMinutes: Number.isFinite(endMinutes) ? endMinutes : NaN,
-        startText: Number.isFinite(startMinutes) ? formatMinutesAsTimeText_(startMinutes) : '',
-        endText: Number.isFinite(endMinutes) ? formatMinutesAsTimeText_(endMinutes) : '',
-        note,
-        updatedAt
-      };
-      records.push(record);
-    }
+  if (lastRow < 2) {
+    return { sheet, records };
   }
-  return { sheet: ensureAlbyteShiftSheet_(), records };
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const isEmpty = row.every(cell => cell === '' || cell == null);
+    if (isEmpty) continue;
+    const rowIndex = i + 2;
+    let id = String(row[ALBYTE_SHIFT_COLUMNS.id] || '').trim();
+    if (!id) {
+      id = Utilities.getUuid();
+      sheet.getRange(rowIndex, ALBYTE_SHIFT_COLUMN_INDEX.id).setValue(id);
+    }
+    const dateKey = normalizeDateKey_(row[ALBYTE_SHIFT_COLUMNS.date], tz);
+    const staffId = String(row[ALBYTE_SHIFT_COLUMNS.staffId] || '').trim();
+    const staffName = String(row[ALBYTE_SHIFT_COLUMNS.staffName] || '').trim();
+    const normalizedName = normalizeAlbyteName_(staffName);
+    const startMinutes = parseTimeTextToMinutes_(row[ALBYTE_SHIFT_COLUMNS.start]);
+    const endMinutes = parseTimeTextToMinutes_(row[ALBYTE_SHIFT_COLUMNS.end]);
+    const note = String(row[ALBYTE_SHIFT_COLUMNS.note] || '').trim();
+    const updatedAt = parseDateValue_(row[ALBYTE_SHIFT_COLUMNS.updatedAt]);
+    const record = {
+      rowIndex,
+      id,
+      dateKey,
+      staffId,
+      staffName,
+      normalizedName,
+      startMinutes: Number.isFinite(startMinutes) ? startMinutes : NaN,
+      endMinutes: Number.isFinite(endMinutes) ? endMinutes : NaN,
+      startText: Number.isFinite(startMinutes) ? formatMinutesAsTimeText_(startMinutes) : '',
+      endText: Number.isFinite(endMinutes) ? formatMinutesAsTimeText_(endMinutes) : '',
+      note,
+      updatedAt
+    };
+    records.push(record);
+  }
+  return { sheet, records };
 }
 
 function getAlbyteShiftById_(id, context){
@@ -1336,6 +1337,21 @@ function computeAlbyteWorkMetrics_(record, staff, shift){
     baseShiftEndMinutes,
     baseShiftEndText
   };
+}
+
+function resolveAlbyteSourceLabel_(record, metrics, shift){
+  const fallback = '通常勤務';
+  if (!record) return fallback;
+  if (metrics && metrics.isDailyStaff) {
+    return metrics.overtimeMinutes > 0 ? '延長勤務' : fallback;
+  }
+  const clockOutMinutes = parseTimeTextToMinutes_(record.clockOut);
+  if (shift && Number.isFinite(shift.endMinutes) && Number.isFinite(clockOutMinutes)) {
+    if (clockOutMinutes > shift.endMinutes) {
+      return '延長勤務';
+    }
+  }
+  return fallback;
 }
 
 function applyAlbyteAutoAdjustmentsForRow_(attendanceRecord, options){
@@ -1507,6 +1523,7 @@ function buildAlbyteAttendanceView_(record, options){
   const breakMinutes = Number.isFinite(metrics.breakMinutes) ? metrics.breakMinutes : 0;
   const workMinutes = Number.isFinite(metrics.workMinutes) ? metrics.workMinutes : NaN;
   const overtimeText = metrics.isDailyStaff ? formatMinutesAsTimeText_(metrics.overtimeMinutes || 0) : '';
+  const sourceLabel = resolveAlbyteSourceLabel_(record, metrics, shift);
   const tz = getConfig('timezone') || 'Asia/Tokyo';
   return {
     id: record.id,
@@ -1525,6 +1542,7 @@ function buildAlbyteAttendanceView_(record, options){
     staffType: metrics.staffType,
     isDailyStaff: metrics.isDailyStaff,
     note: record.note || '',
+    sourceLabel,
     autoFlag: record.autoFlag || '',
     log: record.log || [],
     createdAt: record.createdAt ? formatIsoStringWithOffset_(record.createdAt, tz) : null,
@@ -3765,7 +3783,8 @@ function buildUnifiedAlbyteAttendanceRecord_(record, options){
       isDailyStaff: !!view.isDailyStaff,
       overtimeMinutes: view.isDailyStaff ? view.workMinutes : 0,
       overtimeText: view.isDailyStaff ? (view.overtimeText || view.workText || formatMinutesAsTimeText_(workMinutes)) : '',
-      baseShiftEnd: view.baseShiftEnd || ''
+      baseShiftEnd: view.baseShiftEnd || '',
+      sourceLabel: view.sourceLabel || '通常勤務'
     }
   };
 }

@@ -77,6 +77,7 @@
   .monthly-table col.col-clock{ width:92px; }
   .monthly-table col.col-break{ width:72px; }
   .monthly-table col.col-work{ width:120px; }
+  .monthly-table col.col-kind{ width:110px; }
   .monthly-table col.col-note{ width:220px; }
   .monthly-table col.col-auto{ width:72px; }
   .monthly-table thead th{ font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:#475569; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
@@ -203,6 +204,7 @@
           <col class="col-clock" />
           <col class="col-break" />
           <col class="col-work" />
+          <col class="col-kind" />
           <col class="col-note" />
           <col class="col-auto" />
         </colgroup>
@@ -213,6 +215,7 @@
             <th>退勤</th>
             <th>休憩</th>
             <th>勤務/延長</th>
+            <th>区分</th>
             <th>備考</th>
             <th>補正</th>
           </tr>
@@ -358,6 +361,11 @@ function formatBreakCellValue(row){
   return formatBreakValue(row.breakMinutes, row.breakText);
 }
 
+function formatSourceLabel(row){
+  if (!row) return '通常勤務';
+  return row.sourceLabel || '通常勤務';
+}
+
 function normalizeMonthlyRecords(records){
   if (!Array.isArray(records)) return [];
   const seen = new Set();
@@ -408,7 +416,7 @@ function renderMonthlySummary(){
   if (monthlyTableBody) {
     const rows = Array.isArray(summary.records) ? summary.records : [];
     if (!rows.length) {
-      monthlyTableBody.innerHTML = '<tr><td colspan="7">データがありません</td></tr>';
+      monthlyTableBody.innerHTML = '<tr><td colspan="8">データがありません</td></tr>';
     } else {
       monthlyTableBody.innerHTML = rows.map(row => {
         const note = escapeHtml(row.note || '');
@@ -420,12 +428,14 @@ function renderMonthlySummary(){
         const workText = row.isDailyStaff
           ? `延長 ${escapeHtml(row.overtimeText || row.workText || '')}`
           : escapeHtml(row.workText || '');
+        const kindText = escapeHtml(formatSourceLabel(row));
         return `<tr>
           <td class="cell-date">${date}</td>
           <td class="cell-clock">${clockIn}</td>
           <td class="cell-clock">${clockOut}</td>
           <td class="cell-break">${breakText}</td>
           <td class="cell-work">${workText}</td>
+          <td class="cell-kind">${kindText}</td>
           <td class="cell-note">${note}</td>
           <td class="cell-auto">${auto}</td>
         </tr>`;

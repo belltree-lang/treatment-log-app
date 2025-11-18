@@ -246,6 +246,7 @@ const PAYROLL_WITHHOLDING_LABELS = Object.freeze({
   required: 'あり',
   none: 'なし'
 });
+const PAYROLL_WITHHOLDING_TAX_RATE = 0.1021;
 const PAYROLL_GRADE_SHEET_NAME = 'PayrollGrades';
 const PAYROLL_GRADE_SHEET_HEADER = ['グレードID','役職/等級','手当額','メモ','更新日時'];
 const PAYROLL_GRADE_COLUMNS = Object.freeze({
@@ -3132,6 +3133,72 @@ function estimatePayrollMonthlyCompensation_(employee){
   return Math.round(monthlyFromHourly + allowances);
 }
 
+function estimatePayrollTaxableCompensation_(employee, options){
+  if (!employee) return 0;
+  const allowances = ['personalAllowance','qualificationAllowance','vehicleAllowance']
+    .map(key => Math.max(0, Number(employee[key]) || 0))
+    .reduce((sum, val) => sum + val, 0);
+  const gradeAllowance = Math.max(0, Number(options && options.gradeAmount) || 0);
+  const extra = allowances + gradeAllowance;
+  const baseSalary = Number(employee.baseSalary);
+  if (Number.isFinite(baseSalary) && baseSalary > 0) {
+    return Math.round(baseSalary + extra);
+  }
+  const hourlyWage = Number(employee.hourlyWage) || 0;
+  const estimatedHourly = hourlyWage > 0 ? hourlyWage * 160 : 0;
+  return Math.round(estimatedHourly + extra);
+}
+
+function calculatePayrollWithholdingTax_(employee, options){
+  if (!employee || employee.withholding !== 'required') return 0;
+  const base = options && options.taxableCompensation != null
+    ? Number(options.taxableCompensation)
+    : estimatePayrollTaxableCompensation_(employee, options);
+  if (!Number.isFinite(base) || base <= 0) return 0;
+  const rateCandidate = Number(options && options.withholdingRate);
+  const rate = Number.isFinite(rateCandidate) && rateCandidate > 0
+    ? rateCandidate
+    : PAYROLL_WITHHOLDING_TAX_RATE;
+  return Math.round(base * rate);
+}
+
+function buildPayrollDeductionEntry_(employee, options){
+  if (!employee) return null;
+  const gradeAmount = Number(options && options.gradeAmount) || 0;
+  const taxableCompensation = estimatePayrollTaxableCompensation_(employee, { gradeAmount });
+  const withholdingAmount = calculatePayrollWithholdingTax_(employee, {
+    taxableCompensation,
+    withholdingRate: PAYROLL_WITHHOLDING_TAX_RATE,
+    gradeAmount
+  });
+  const housingDeduction = Math.max(0, Number(employee.housingDeduction) || 0);
+  const municipalTax = Math.max(0, Number(employee.municipalTax) || 0);
+  const components = [];
+  if (withholdingAmount > 0) {
+    components.push({ type: 'withholding', label: '源泉所得税', amount: withholdingAmount, rate: PAYROLL_WITHHOLDING_TAX_RATE });
+  }
+  if (housingDeduction > 0) {
+    components.push({ type: 'housing', label: '社宅費控除', amount: housingDeduction });
+  }
+  if (municipalTax > 0) {
+    components.push({ type: 'municipal', label: '住民税', amount: municipalTax });
+  }
+  const totalAmount = withholdingAmount + housingDeduction + municipalTax;
+  return {
+    employeeId: employee.id || '',
+    employeeName: employee.name || '',
+    employmentType: employee.employmentType || '',
+    employmentLabel: employee.employmentLabel || '',
+    taxableCompensation,
+    withholdingAmount,
+    housingDeduction,
+    municipalTax,
+    totalAmount,
+    components,
+    gradeAllowanceAmount: gradeAmount
+  };
+}
+
 function matchPayrollSocialInsuranceStandard_(amount, standards){
   if (!Array.isArray(standards) || standards.length === 0) return null;
   const target = Number(amount);
@@ -3286,6 +3353,34 @@ function payrollListEmployees(){
       return buildPayrollEmployeeResponse_(record, gradeMatch);
     });
     return { ok: true, employees: list };
+  });
+}
+
+function payrollListDeductionSummary(){
+  return wrapPayrollResponse_('payrollListDeductionSummary', () => {
+    const employeeContext = readPayrollEmployeeRecords_();
+    const gradeContext = readPayrollGradeRecords_();
+    const entries = employeeContext.records.map(record => {
+      const normalized = normalizePayrollGradeName_(record && record.grade);
+      const gradeMatch = normalized ? gradeContext.mapByNormalizedName.get(normalized) : null;
+      const gradeAmount = gradeMatch && gradeMatch.amount != null ? gradeMatch.amount : 0;
+      return buildPayrollDeductionEntry_(record, { gradeAmount });
+    }).filter(entry => entry && entry.totalAmount > 0);
+    entries.sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || '', 'ja'));
+    const totals = entries.reduce((acc, entry) => {
+      acc.withholding += entry.withholdingAmount || 0;
+      acc.housing += entry.housingDeduction || 0;
+      acc.municipal += entry.municipalTax || 0;
+      acc.total += entry.totalAmount || 0;
+      return acc;
+    }, { withholding: 0, housing: 0, municipal: 0, total: 0 });
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    return {
+      ok: true,
+      generatedAt: formatIsoStringWithOffset_(new Date(), tz),
+      totals,
+      employees: entries
+    };
   });
 }
 

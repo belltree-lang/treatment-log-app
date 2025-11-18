@@ -177,6 +177,32 @@
   <section class="card">
     <div class="section-header">
       <div>
+        <h2>控除リスト</h2>
+        <p class="meta-line" id="deductionMeta">控除額を集計しています…</p>
+      </div>
+      <button id="deductionReloadButton" type="button" class="btn">控除を再計算</button>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>従業員</th>
+            <th>課税対象額</th>
+            <th>源泉所得税</th>
+            <th>社宅控除</th>
+            <th>住民税</th>
+            <th>控除計</th>
+            <th>内訳</th>
+          </tr>
+        </thead>
+        <tbody id="deductionTableBody"><tr><td colspan="7" class="table-empty">読み込み中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <div>
         <h2>勤怠データ連携</h2>
         <p class="meta-line">出勤日数・総勤務時間・自動有給化をまとめて確認できます。</p>
       </div>
@@ -472,6 +498,10 @@ let payrollState = {
   selectedGradeId: null,
   attendance: {
     month: null,
+    loading: false,
+    summary: null
+  },
+  deductions: {
     loading: false,
     summary: null
   },
@@ -1353,6 +1383,7 @@ function fetchEmployees(){
       renderTable();
       updateGradeHint();
       renderInsuranceOverrideEmployeeOptions();
+      fetchDeductionSummary();
       if (payrollState.selectedId) {
         const current = payrollState.employees.find(emp => emp.id === payrollState.selectedId);
         if (current) populateForm(current); else resetForm();
@@ -1507,6 +1538,92 @@ function renderAttendanceUnassigned(){
   box.textContent = `給与マスタ未登録の勤怠: ${list.join('、')}`;
 }
 
+function setDeductionLoading(isLoading){
+  payrollState.deductions.loading = isLoading;
+  const reloadButton = document.getElementById('deductionReloadButton');
+  if (reloadButton) reloadButton.disabled = isLoading;
+}
+
+function renderDeductionMeta(){
+  const meta = document.getElementById('deductionMeta');
+  if (!meta) return;
+  const summary = payrollState.deductions.summary;
+  if (!summary) {
+    meta.textContent = '控除データがまだありません。';
+    return;
+  }
+  const count = Array.isArray(summary.employees) ? summary.employees.length : 0;
+  const total = summary.totals && summary.totals.total != null ? formatCurrency(summary.totals.total) : '¥0';
+  const updatedText = summary.generatedAt ? new Date(summary.generatedAt).toLocaleString('ja-JP') : '';
+  meta.textContent = `${count}名 / 控除合計 ${total}${updatedText ? ` / 更新: ${updatedText}` : ''}`;
+}
+
+function formatDeductionBreakdown(entry){
+  if (!entry || !Array.isArray(entry.components) || entry.components.length === 0) {
+    return '--';
+  }
+  return entry.components.map(component => {
+    const amount = formatCurrency(component.amount);
+    const rateText = component.rate != null ? `（${(component.rate * 100).toFixed(2)}%）` : '';
+    return `<div>${component.label}${rateText}: ${amount}</div>`;
+  }).join('');
+}
+
+function renderDeductionTable(){
+  const tbody = document.getElementById('deductionTableBody');
+  if (!tbody) return;
+  const summary = payrollState.deductions.summary;
+  if (!summary || !Array.isArray(summary.employees) || summary.employees.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="table-empty">控除対象の従業員がいません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = summary.employees.map(entry => {
+    const employment = entry.employmentLabel ? `<div class="metric-subtext">${entry.employmentLabel}</div>` : '';
+    return `
+      <tr>
+        <td><div class="metric-main">${entry.employeeName || '--'}</div>${employment}</td>
+        <td class="text-right">${formatCurrency(entry.taxableCompensation)}</td>
+        <td class="text-right">${formatCurrency(entry.withholdingAmount)}</td>
+        <td class="text-right">${formatCurrency(entry.housingDeduction)}</td>
+        <td class="text-right">${formatCurrency(entry.municipalTax)}</td>
+        <td class="text-right">${formatCurrency(entry.totalAmount)}</td>
+        <td>${formatDeductionBreakdown(entry)}</td>
+      </tr>`;
+  }).join('');
+}
+
+function renderDeductionSummary(){
+  renderDeductionMeta();
+  renderDeductionTable();
+}
+
+function fetchDeductionSummary(){
+  const tbody = document.getElementById('deductionTableBody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="7" class="table-empty">読み込み中…</td></tr>';
+  }
+  setDeductionLoading(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setDeductionLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : '控除データの取得に失敗しました');
+        payrollState.deductions.summary = null;
+        renderDeductionSummary();
+        return;
+      }
+      payrollState.deductions.summary = res;
+      renderDeductionSummary();
+    })
+    .withFailureHandler(err => {
+      setDeductionLoading(false);
+      showToast(err && err.message ? err.message : '控除データの取得に失敗しました');
+      payrollState.deductions.summary = null;
+      renderDeductionSummary();
+    })
+    .payrollListDeductionSummary();
+}
+
 function renderAttendanceSummary(){
   renderAttendanceMeta();
   renderAttendanceTable();
@@ -1599,6 +1716,10 @@ function init(){
   const attendanceReloadButton = document.getElementById('attendanceReloadButton');
   if (attendanceReloadButton) {
     attendanceReloadButton.addEventListener('click', fetchAttendanceSummary);
+  }
+  const deductionReloadButton = document.getElementById('deductionReloadButton');
+  if (deductionReloadButton) {
+    deductionReloadButton.addEventListener('click', fetchDeductionSummary);
   }
   const insuranceMonthInput = document.getElementById('insuranceMonthInput');
   if (insuranceMonthInput) {

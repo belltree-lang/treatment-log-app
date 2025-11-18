@@ -243,8 +243,8 @@ const PAYROLL_COMMISSION_RULES = Object.freeze({
   horiguchi: { weeklyThreshold: 30, amount: 1250 }
 });
 const PAYROLL_WITHHOLDING_LABELS = Object.freeze({
-  required: 'あり',
-  none: 'なし'
+  required: 'あり（10.21%）',
+  none: 'なし（個人事業主扱い）'
 });
 const PAYROLL_WITHHOLDING_TAX_RATE = 0.1021;
 const PAYROLL_GRADE_SHEET_NAME = 'PayrollGrades';
@@ -2794,10 +2794,12 @@ function buildPayrollCommissionBreakdown_(record, countsEntry, options){
 
 function normalizePayrollWithholdingType_(value){
   const text = String(value || '').trim().toLowerCase();
-  if (!text || text === 'none' || text === '0' || text === 'なし' || text === '無' || text === 'off') {
+  const plain = text.replace(/[（(].*?[）)]/g, '').trim();
+  const normalized = plain || text;
+  if (!normalized || normalized === 'none' || normalized === '0' || normalized === 'なし' || normalized === '無' || normalized === 'off') {
     return 'none';
   }
-  if (text === 'required' || text === 'あり' || text === '有' || text === 'true' || text === 'yes' || text === 'on' || text === '1' || text === 'withholding') {
+  if (normalized === 'required' || normalized === 'あり' || normalized === '有' || normalized === 'true' || normalized === 'yes' || normalized === 'on' || normalized === '1' || normalized === 'withholding') {
     return 'required';
   }
   return 'none';

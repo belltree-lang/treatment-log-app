@@ -562,6 +562,16 @@ function formatCurrency(value){
   return '¥' + Math.round(num).toLocaleString('ja-JP');
 }
 
+function escapeHtml(value){
+  if (value == null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function getCurrentMonthKey(){
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -594,10 +604,13 @@ function formatMinutesHuman(minutes){
 function formatTransportation(row){
   if (!row) return '';
   const type = row.transportationLabel || '';
-  if (!row.transportationAmount && type) return type;
-  if (!type) return formatCurrency(row.transportationAmount);
-  if (row.transportationAmount == null) return type;
-  return `${type} (${formatCurrency(row.transportationAmount)})`;
+  if (type && row.transportationAmount == null) return escapeHtml(type);
+  if (!type && row.transportationAmount != null) {
+    return escapeHtml(formatCurrency(row.transportationAmount));
+  }
+  if (!type) return '';
+  if (row.transportationAmount == null) return escapeHtml(type);
+  return escapeHtml(`${type} (${formatCurrency(row.transportationAmount)})`);
 }
 
 function getEmploymentLabel(value){
@@ -629,17 +642,18 @@ function renderGradeTable(){
     return;
   }
   tbody.innerHTML = payrollState.grades.map(grade => {
-    const name = grade.name || '';
+    const name = grade.name ? escapeHtml(grade.name) : '';
     const amount = grade.amount != null ? formatCurrency(grade.amount) : '--';
-    const note = grade.note ? grade.note : '';
-    const updated = grade.updatedAt ? new Date(grade.updatedAt).toLocaleString('ja-JP') : '';
+    const note = grade.note ? escapeHtml(grade.note) : '';
+    const updated = grade.updatedAt ? escapeHtml(new Date(grade.updatedAt).toLocaleString('ja-JP')) : '';
+    const idAttr = escapeHtml(grade.id || '');
     return `
     <tr>
       <td>${name}</td>
       <td>${amount}</td>
       <td>${note}</td>
       <td>${updated}</td>
-      <td><button type="button" class="btn ghost small" data-grade-action="edit" data-id="${grade.id || ''}">編集</button></td>
+      <td><button type="button" class="btn ghost small" data-grade-action="edit" data-id="${idAttr}">編集</button></td>
     </tr>`;
   }).join('');
 }
@@ -654,7 +668,9 @@ function renderGradeOptions(){
   datalist.innerHTML = payrollState.grades.map(grade => {
     const amount = grade.amount != null ? formatCurrency(grade.amount) : '';
     const suffix = amount ? ` (${amount})` : '';
-    return `<option value="${grade.name}">${grade.name}${suffix}</option>`;
+    const value = escapeHtml(grade.name || '');
+    const label = escapeHtml((grade.name || '') + suffix);
+    return `<option value="${value}">${label}</option>`;
   }).join('');
 }
 
@@ -906,11 +922,12 @@ function renderInsuranceStandardTable(){
     return;
   }
   tbody.innerHTML = list.map(row => {
-    const grade = row.grade || '--';
+    const grade = escapeHtml(row.grade || '--');
     const amount = formatCurrency(row.monthlyAmount);
-    const range = formatInsuranceRange(row.lowerBound, row.upperBound);
-    const note = row.note || '';
-    const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString('ja-JP') : '';
+    const range = escapeHtml(formatInsuranceRange(row.lowerBound, row.upperBound));
+    const note = row.note ? escapeHtml(row.note) : '';
+    const updated = row.updatedAt ? escapeHtml(new Date(row.updatedAt).toLocaleString('ja-JP')) : '';
+    const idAttr = escapeHtml(row.id || '');
     return `
       <tr>
         <td>${grade}</td>
@@ -918,7 +935,7 @@ function renderInsuranceStandardTable(){
         <td>${range}</td>
         <td>${note}</td>
         <td>${updated}</td>
-        <td><button type="button" class="btn ghost small" data-insurance-standard="edit" data-id="${row.id || ''}">編集</button></td>
+        <td><button type="button" class="btn ghost small" data-insurance-standard="edit" data-id="${idAttr}">編集</button></td>
       </tr>`;
   }).join('');
 }
@@ -1083,30 +1100,33 @@ function renderInsuranceSummaryTable(){
     return;
   }
   tbody.innerHTML = summary.entries.map(entry => {
-    const employmentLabel = getEmploymentLabel(entry.employmentType);
+    const employmentLabel = escapeHtml(getEmploymentLabel(entry.employmentType));
+    const employeeName = entry.employeeName ? escapeHtml(entry.employeeName) : '--';
     const nameBlock = `
       <div class="insurance-summary-name">
-        <div class="metric-main">${entry.employeeName || '--'}</div>
+        <div class="metric-main">${employeeName}</div>
         <small>${employmentLabel}</small>
       </div>`;
-    const appliedGrade = entry.appliedGrade || (entry.matchedGrade || '--');
+    const appliedGrade = escapeHtml(entry.appliedGrade || entry.matchedGrade || '--');
     const overrideBadge = entry.isOverride ? '<span class="badge danger">手動</span>' : '';
-    const baseComp = formatCurrency(entry.compensationAmount);
-    const standardAmount = formatCurrency(entry.appliedAmount);
+    const matchedGrade = escapeHtml(entry.matchedGrade || '--');
+    const baseComp = escapeHtml(formatCurrency(entry.compensationAmount));
+    const standardAmount = escapeHtml(formatCurrency(entry.appliedAmount));
     const contrib = entry.contributions || {};
-    const employeeTotal = formatCurrency(contrib.employeeTotal);
-    const employerTotal = formatCurrency(contrib.employerTotal);
-    const note = entry.overrideNote || '';
+    const employeeTotal = escapeHtml(formatCurrency(contrib.employeeTotal));
+    const employerTotal = escapeHtml(formatCurrency(contrib.employerTotal));
+    const note = entry.overrideNote ? escapeHtml(entry.overrideNote) : '';
+    const employeeIdAttr = escapeHtml(entry.employeeId || '');
     return `
       <tr>
         <td>${nameBlock}</td>
         <td class="text-right"><div class="insurance-summary-amount"><strong>${baseComp}</strong><small>推定月額</small></div></td>
-        <td><div class="insurance-summary-name">${appliedGrade} ${overrideBadge} <small>基準: ${entry.matchedGrade || '--'}</small></div></td>
+        <td><div class="insurance-summary-name">${appliedGrade}${overrideBadge ? ` ${overrideBadge}` : ''} <small>基準: ${matchedGrade}</small></div></td>
         <td class="text-right">${standardAmount}</td>
         <td class="text-right"><div class="insurance-summary-amount"><strong>${employeeTotal}</strong><small>本人</small></div></td>
         <td class="text-right"><div class="insurance-summary-amount"><strong>${employerTotal}</strong><small>事業主</small></div></td>
         <td class="insurance-summary-note">${note}</td>
-        <td><button type="button" class="btn ghost small" data-insurance-action="override" data-employee-id="${entry.employeeId || ''}">上書き</button></td>
+        <td><button type="button" class="btn ghost small" data-insurance-action="override" data-employee-id="${employeeIdAttr}">上書き</button></td>
       </tr>`;
   }).join('');
 }
@@ -1160,7 +1180,11 @@ function renderInsuranceOverrideEmployeeOptions(){
   const select = document.getElementById('insuranceOverrideEmployee');
   if (!select) return;
   const options = payrollState.employees.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
-  select.innerHTML = '<option value="">選択してください</option>' + options.map(emp => `<option value="${emp.id || ''}">${emp.name || '氏名未登録'}</option>`).join('');
+  select.innerHTML = '<option value="">選択してください</option>' + options.map(emp => {
+    const value = escapeHtml(emp.id || '');
+    const label = escapeHtml(emp.name || '氏名未登録');
+    return `<option value="${value}">${label}</option>`;
+  }).join('');
 }
 
 function resetInsuranceOverrideForm(){
@@ -1285,23 +1309,28 @@ function renderTable(){
     return;
   }
   tbody.innerHTML = payrollState.employees.map(row => {
-    const name = row.name ? row.name : '';
-    const baseLocation = row.base || '';
-    const employment = row.employmentLabel || '';
+    const name = row.name ? escapeHtml(row.name) : '';
+    const baseLocation = row.base ? escapeHtml(row.base) : '';
+    const baseLocationCell = baseLocation || '<span class="muted">--</span>';
+    const employment = row.employmentLabel ? escapeHtml(row.employmentLabel) : '';
     const base = formatCurrency(row.baseSalary);
     const hourly = formatCurrency(row.hourlyWage);
     const allowance = formatCurrency(row.personalAllowance);
     const gradeAmountLabel = row.gradeAmount != null ? formatCurrency(row.gradeAmount) : '';
-    const gradeName = row.grade ? row.grade : (row.gradeMasterName || '');
-    const grade = gradeAmountLabel ? `${gradeName} (${gradeAmountLabel})` : gradeName;
+    const gradeNameRaw = row.grade ? row.grade : (row.gradeMasterName || '');
+    const gradeName = gradeNameRaw ? escapeHtml(gradeNameRaw) : '';
+    const grade = gradeAmountLabel
+      ? `${gradeName || ''} (${gradeAmountLabel})`
+      : (gradeName || '');
     const municipalTax = formatCurrency(row.municipalTax);
     const transportation = formatTransportation(row);
-    const commission = row.commissionLabel || '';
-    const updated = row.updatedAt ? new Date(row.updatedAt).toLocaleString('ja-JP') : '';
+    const commission = row.commissionLabel ? escapeHtml(row.commissionLabel) : '';
+    const updated = row.updatedAt ? escapeHtml(new Date(row.updatedAt).toLocaleString('ja-JP')) : '';
+    const idAttr = escapeHtml(row.id || '');
     return `
     <tr>
       <td>${name}</td>
-      <td>${baseLocation || '<span class="muted">--</span>'}</td>
+      <td>${baseLocationCell}</td>
       <td>${employment}</td>
       <td>${base}</td>
       <td>${hourly}</td>
@@ -1311,7 +1340,7 @@ function renderTable(){
       <td>${transportation}</td>
       <td>${commission}</td>
       <td>${updated}</td>
-      <td><button type="button" class="btn ghost small" data-action="edit" data-id="${row.id || ''}">編集</button></td>
+      <td><button type="button" class="btn ghost small" data-action="edit" data-id="${idAttr}">編集</button></td>
     </tr>`;
   }).join('');
 }
@@ -1544,8 +1573,10 @@ function renderAttendanceTable(){
     return;
   }
   tbody.innerHTML = summary.employees.map(entry => {
-    const name = entry.employeeName || '--';
-    const employment = entry.employmentLabel ? `<div class="metric-subtext">${entry.employmentLabel}</div>` : '';
+    const name = entry.employeeName ? escapeHtml(entry.employeeName) : '--';
+    const employment = entry.employmentLabel
+      ? `<div class="metric-subtext">${escapeHtml(entry.employmentLabel)}</div>`
+      : '';
     return `
       <tr>
         <td><div class="metric-main">${name}</div>${employment}</td>
@@ -1602,7 +1633,8 @@ function formatDeductionBreakdown(entry){
   return entry.components.map(component => {
     const amount = formatCurrency(component.amount);
     const rateText = component.rate != null ? `（${(component.rate * 100).toFixed(2)}%）` : '';
-    return `<div>${component.label}${rateText}: ${amount}</div>`;
+    const label = escapeHtml(component.label || '控除');
+    return `<div>${label}${rateText}: ${amount}</div>`;
   }).join('');
 }
 
@@ -1615,10 +1647,13 @@ function renderDeductionTable(){
     return;
   }
   tbody.innerHTML = summary.employees.map(entry => {
-    const employment = entry.employmentLabel ? `<div class="metric-subtext">${entry.employmentLabel}</div>` : '';
+    const employment = entry.employmentLabel
+      ? `<div class="metric-subtext">${escapeHtml(entry.employmentLabel)}</div>`
+      : '';
+    const employeeName = entry.employeeName ? escapeHtml(entry.employeeName) : '--';
     return `
       <tr>
-        <td><div class="metric-main">${entry.employeeName || '--'}</div>${employment}</td>
+        <td><div class="metric-main">${employeeName}</div>${employment}</td>
         <td class="text-right">${formatCurrency(entry.taxableCompensation)}</td>
         <td class="text-right">${formatCurrency(entry.withholdingAmount)}</td>
         <td class="text-right">${formatCurrency(entry.housingDeduction)}</td>

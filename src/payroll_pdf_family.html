@@ -103,6 +103,22 @@
     color:var(--muted);
     font-size:0.92rem;
   }
+  .payout-chip {
+    margin-top:6px;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    background:rgba(77,107,60,0.12);
+    color:var(--accent);
+    padding:4px 12px;
+    border-radius:999px;
+    font-size:0.85rem;
+    font-weight:600;
+  }
+  .payout-chip span {
+    color:var(--muted);
+    font-size:0.78rem;
+  }
   .period-card {
     margin-top:18px;
     border:1px solid var(--border);
@@ -250,6 +266,10 @@
         <div class="brand-text">
           <h1><?= pdf.brand && pdf.brand.title ? pdf.brand.title : '給与明細' ?></h1>
           <p><?= pdf.brand && pdf.brand.tagline ? pdf.brand.tagline : 'PAYROLL STATEMENT' ?></p>
+          <div class="payout-chip">
+            <strong><?= pdf.payoutTypeLabel || '通常給与' ?></strong>
+            <? if (pdf.payoutTitle) { ?><span><?= pdf.payoutTitle ?></span><? } ?>
+          </div>
         </div>
       </div>
       <div class="period-card">

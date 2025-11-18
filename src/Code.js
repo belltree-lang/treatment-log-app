@@ -155,7 +155,7 @@ const VISIT_ATTENDANCE_REQUEST_SHEET_HEADER = [
 const VISIT_ATTENDANCE_REQUEST_TYPE_CORRECTION = 'correction';
 const VISIT_ATTENDANCE_REQUEST_TYPE_PAID_LEAVE = 'paidLeave';
 const VISIT_ATTENDANCE_STAFF_SHEET_NAME = 'VisitAttendanceStaff';
-const VISIT_ATTENDANCE_STAFF_SHEET_HEADER = ['メール','表示名','年間有給付与日数','雇用区分','AlbyteスタッフID','標準勤務時間(分)'];
+const VISIT_ATTENDANCE_STAFF_SHEET_HEADER = ['メール','表示名','年間有給付与日数','雇用区分','AlbyteスタッフID','標準勤務時間(分)','給与従業員ID','拠点'];
 const DEFAULT_ANNUAL_PAID_LEAVE_DAYS = 10;
 const PAID_LEAVE_DEFAULT_WORK_MINUTES = 8 * 60;
 const VISIT_ATTENDANCE_DEFAULT_SHIFT_MINUTES = 8 * 60;
@@ -200,26 +200,27 @@ const ALBYTE_DAILY_OVERTIME_ROUNDING_MINUTES = 15;
 const ALBYTE_HOURLY_WAGE_PROPERTY_KEYS = Object.freeze(['ALBYTE_HOURLY_WAGE', 'albyteHourlyWage']);
 
 const PAYROLL_EMPLOYEE_SHEET_NAME = 'PayrollEmployees';
-const PAYROLL_EMPLOYEE_SHEET_HEADER = ['従業員ID','氏名','メール','雇用区分','基本給','時給','個別加算','役職/等級','資格手当','車両手当','社宅控除','住民税','源泉徴収','交通費区分','交通費額','歩合ロジック','メモ','更新日時'];
+const PAYROLL_EMPLOYEE_SHEET_HEADER = ['従業員ID','氏名','メール','拠点','雇用区分','基本給','時給','個別加算','役職/等級','資格手当','車両手当','社宅控除','住民税','源泉徴収','交通費区分','交通費額','歩合ロジック','メモ','更新日時'];
 const PAYROLL_EMPLOYEE_COLUMNS = Object.freeze({
   id: 0,
   name: 1,
   email: 2,
-  employmentType: 3,
-  baseSalary: 4,
-  hourlyWage: 5,
-  personalAllowance: 6,
-  grade: 7,
-  qualificationAllowance: 8,
-  vehicleAllowance: 9,
-  housingDeduction: 10,
-  municipalTax: 11,
-  withholding: 12,
-  transportationType: 13,
-  transportationAmount: 14,
-  commissionLogic: 15,
-  note: 16,
-  updatedAt: 17
+  base: 3,
+  employmentType: 4,
+  baseSalary: 5,
+  hourlyWage: 6,
+  personalAllowance: 7,
+  grade: 8,
+  qualificationAllowance: 9,
+  vehicleAllowance: 10,
+  housingDeduction: 11,
+  municipalTax: 12,
+  withholding: 13,
+  transportationType: 14,
+  transportationAmount: 15,
+  commissionLogic: 16,
+  note: 17,
+  updatedAt: 18
 });
 const PAYROLL_EMPLOYEE_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_EMPLOYEE_COLUMNS).reduce((map, key) => {
   map[key] = PAYROLL_EMPLOYEE_COLUMNS[key] + 1;
@@ -297,6 +298,8 @@ const PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMN_INDEX = Object.freeze(Object.keys
   map[key] = PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMNS[key] + 1;
   return map;
 }, {}));
+const PAYROLL_ROLE_SHEET_NAME = 'PayrollRoles';
+const PAYROLL_ROLE_SHEET_HEADER = ['メール','ロール','拠点'];
 const PAYROLL_SOCIAL_INSURANCE_RATE_PROPERTY_KEY = 'payroll_social_insurance_rates';
 const PAYROLL_PDF_ROOT_FOLDER_PROPERTY_KEY = 'PAYROLL_PDF_ROOT_FOLDER_ID';
 const PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
@@ -556,7 +559,7 @@ function ensureAuxSheets_(options) {
     }
 
     const wb = ss();
-    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_GRADE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME];
+    const need = ['施術録','患者情報','News','フラグ','予定','操作ログ','定型文','添付索引','年次確認','ダッシュボード','AI報告書', VISIT_ATTENDANCE_SHEET_NAME, ALBYTE_ATTENDANCE_SHEET_NAME, ALBYTE_STAFF_SHEET_NAME, PAYROLL_EMPLOYEE_SHEET_NAME, PAYROLL_GRADE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME, PAYROLL_ROLE_SHEET_NAME];
     need.forEach(n => { if (!wb.getSheetByName(n)) wb.insertSheet(n); });
 
     const ensureHeader = (name, header) => {
@@ -592,6 +595,7 @@ function ensureAuxSheets_(options) {
     upgradeHeader(PAYROLL_GRADE_SHEET_NAME, PAYROLL_GRADE_SHEET_HEADER);
     upgradeHeader(PAYROLL_SOCIAL_INSURANCE_STANDARD_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_STANDARD_HEADER);
     upgradeHeader(PAYROLL_SOCIAL_INSURANCE_OVERRIDE_SHEET_NAME, PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER);
+    upgradeHeader(PAYROLL_ROLE_SHEET_NAME, PAYROLL_ROLE_SHEET_HEADER);
     ensureHeader('フラグ',   ['患者ID','status','pauseUntil']);
     ensureHeader('予定',     ['患者ID','種別','予定日','登録者']);
     ensureHeader('操作ログ', ['TS','操作','患者ID','詳細','実行者']);
@@ -812,6 +816,29 @@ function ensurePayrollSocialInsuranceOverrideSheet_(){
   const mismatch = current.length < needed || PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER.some((label, idx) => String(current[idx] || '') !== label);
   if (mismatch) {
     sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_SOCIAL_INSURANCE_OVERRIDE_HEADER]);
+  }
+  return sheet;
+}
+
+function ensurePayrollRoleSheet_(){
+  ensureAuxSheets_();
+  const wb = ss();
+  let sheet = wb.getSheetByName(PAYROLL_ROLE_SHEET_NAME);
+  if (!sheet) {
+    sheet = wb.insertSheet(PAYROLL_ROLE_SHEET_NAME);
+  }
+  const needed = PAYROLL_ROLE_SHEET_HEADER.length;
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  }
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_ROLE_SHEET_HEADER]);
+    return sheet;
+  }
+  const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
+  const mismatch = current.length < needed || PAYROLL_ROLE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
+  if (mismatch) {
+    sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_ROLE_SHEET_HEADER]);
   }
   return sheet;
 }
@@ -2625,6 +2652,24 @@ function normalizePayrollGradeName_(value){
   return String(value || '').replace(/\u3000/g, ' ').trim().toLowerCase();
 }
 
+function normalizePayrollBaseKey_(value){
+  return String(value || '')
+    .replace(/\u3000/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizePayrollRoleKey_(value){
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'rep' || text === '代表' || text === 'owner' || text === 'ceo') {
+    return 'representative';
+  }
+  if (text === 'manager' || text === 'admin' || text === '管理者') {
+    return 'manager';
+  }
+  return text || '';
+}
+
 function normalizePayrollEmploymentType_(value){
   const text = String(value || '').trim().toLowerCase();
   if (!text) return 'employee';
@@ -2958,6 +3003,8 @@ function readPayrollEmployeeRecords_(){
       const name = String(row[PAYROLL_EMPLOYEE_COLUMNS.name] || '').trim();
       const email = String(row[PAYROLL_EMPLOYEE_COLUMNS.email] || '').trim();
       const normalizedEmail = normalizeEmailKey_(email);
+      const base = String(row[PAYROLL_EMPLOYEE_COLUMNS.base] || '').trim();
+      const baseKey = normalizePayrollBaseKey_(base);
       const employmentType = normalizePayrollEmploymentType_(row[PAYROLL_EMPLOYEE_COLUMNS.employmentType]);
       const employmentLabel = formatPayrollEmploymentLabel_(employmentType);
       const baseSalary = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.baseSalary]);
@@ -2983,6 +3030,8 @@ function readPayrollEmployeeRecords_(){
         name,
         email,
         normalizedEmail,
+        base,
+        baseKey,
         employmentType,
         employmentLabel,
         baseSalary,
@@ -3013,6 +3062,101 @@ function readPayrollEmployeeRecords_(){
     });
   }
   return { sheet, records, mapById, mapByEmail };
+}
+
+function readPayrollRoleAssignments_(){
+  const sheet = ensurePayrollRoleSheet_();
+  const lastRow = sheet.getLastRow();
+  const width = PAYROLL_ROLE_SHEET_HEADER.length;
+  const mapByEmail = new Map();
+  if (lastRow >= 2) {
+    const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+    values.forEach(row => {
+      const email = normalizeEmailKey_(row[0]);
+      if (!email) return;
+      const role = normalizePayrollRoleKey_(row[1]);
+      if (!role) return;
+      const base = String(row[2] || '').trim();
+      const baseKey = normalizePayrollBaseKey_(base);
+      mapByEmail.set(email, { email, role, base, baseKey });
+    });
+  }
+  return { sheet, mapByEmail };
+}
+
+function resolvePayrollUserAccess_(){
+  const email = (Session.getActiveUser() || {}).getEmail() || '';
+  const normalizedEmail = normalizeEmailKey_(email);
+  const roles = readPayrollRoleAssignments_();
+  let entry = normalizedEmail ? roles.mapByEmail.get(normalizedEmail) : null;
+  let role = entry && entry.role ? entry.role : '';
+  let base = entry && entry.base ? entry.base : '';
+  let baseKey = entry && entry.baseKey ? entry.baseKey : '';
+  if (!role) {
+    if (isAdminUser_()) {
+      role = 'representative';
+    } else {
+      role = 'none';
+    }
+  }
+  return {
+    email: normalizedEmail || '',
+    role,
+    base,
+    baseKey,
+    isRepresentative: role === 'representative',
+    isManager: role === 'manager'
+  };
+}
+
+function requirePayrollAccess_(){
+  const access = resolvePayrollUserAccess_();
+  if (access.role !== 'representative' && access.role !== 'manager') {
+    throw new Error('給与マスタの権限がありません。');
+  }
+  if (access.role === 'manager' && !access.baseKey) {
+    throw new Error('管理者の拠点が未設定です。');
+  }
+  return access;
+}
+
+function filterPayrollEmployeesByAccess_(records, access){
+  if (!Array.isArray(records)) return [];
+  if (!access || access.role === 'representative') {
+    return records.slice();
+  }
+  const baseKey = normalizePayrollBaseKey_(access.baseKey || access.base || '');
+  if (!baseKey) return [];
+  return records.filter(record => normalizePayrollBaseKey_(record && (record.baseKey || record.base)) === baseKey);
+}
+
+function assertPayrollEmployeeAccessible_(employee, access){
+  if (!employee) {
+    throw new Error('従業員が見つかりません。');
+  }
+  if (!access || access.role === 'representative') {
+    return;
+  }
+  const employeeBaseKey = normalizePayrollBaseKey_(employee.baseKey || employee.base || '');
+  const accessBaseKey = normalizePayrollBaseKey_(access.baseKey || access.base || '');
+  if (!accessBaseKey) {
+    throw new Error('管理者の拠点が未設定です。');
+  }
+  if (!employeeBaseKey || employeeBaseKey !== accessBaseKey) {
+    throw new Error('この従業員のデータへアクセスする権限がありません。');
+  }
+}
+
+function assertPayrollMonthIsEditable_(monthKey){
+  const normalized = normalizePayrollMonthKey_(monthKey);
+  if (!normalized) return;
+  const targetDate = createDateFromKey_(normalized + '-01');
+  if (!targetDate) return;
+  const now = new Date();
+  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  if (targetDate.getTime() < previousMonthStart.getTime()) {
+    throw new Error('前月以前の給与明細は修正できません。');
+  }
 }
 
 function readPayrollSocialInsuranceStandards_(){
@@ -3354,6 +3498,7 @@ function buildPayrollEmployeeResponse_(record, gradeMatch){
     id: record.id,
     name: record.name,
     email: record.email,
+    base: record.base,
     employmentType: record.employmentType,
     employmentLabel: record.employmentLabel,
     baseSalary: record.baseSalary,
@@ -3382,9 +3527,11 @@ function buildPayrollEmployeeResponse_(record, gradeMatch){
 
 function payrollListEmployees(){
   return wrapPayrollResponse_('payrollListEmployees', () => {
+    const access = requirePayrollAccess_();
     const context = readPayrollEmployeeRecords_();
     const gradeContext = readPayrollGradeRecords_();
-    const list = context.records.slice().sort((a, b) => {
+    const scoped = filterPayrollEmployeesByAccess_(context.records, access);
+    const list = scoped.slice().sort((a, b) => {
       const nameA = (a && a.name) ? a.name.toString() : '';
       const nameB = (b && b.name) ? b.name.toString() : '';
       return nameA.localeCompare(nameB, 'ja');
@@ -3399,9 +3546,11 @@ function payrollListEmployees(){
 
 function payrollListDeductionSummary(){
   return wrapPayrollResponse_('payrollListDeductionSummary', () => {
+    const access = requirePayrollAccess_();
     const employeeContext = readPayrollEmployeeRecords_();
     const gradeContext = readPayrollGradeRecords_();
-    const entries = employeeContext.records.map(record => {
+    const scoped = filterPayrollEmployeesByAccess_(employeeContext.records, access);
+    const entries = scoped.map(record => {
       const normalized = normalizePayrollGradeName_(record && record.grade);
       const gradeMatch = normalized ? gradeContext.mapByNormalizedName.get(normalized) : null;
       const gradeAmount = gradeMatch && gradeMatch.amount != null ? gradeMatch.amount : 0;
@@ -3439,6 +3588,7 @@ function payrollListGrades(){
 
 function payrollSaveEmployee(payload){
   return wrapPayrollResponse_('payrollSaveEmployee', () => {
+    const access = requirePayrollAccess_();
     const name = String(payload && payload.name || '').trim();
     if (!name) {
       return { ok: false, reason: 'validation', message: '氏名を入力してください。' };
@@ -3448,6 +3598,8 @@ function payrollSaveEmployee(payload){
     if (!employmentType) {
       return { ok: false, reason: 'validation', message: '雇用区分を選択してください。' };
     }
+    let base = String(payload && payload.base || '').trim();
+    let baseKey = normalizePayrollBaseKey_(base);
     const baseSalary = parsePayrollMoneyValue_(payload && payload.baseSalary);
     const hourlyWage = parsePayrollMoneyValue_(payload && payload.hourlyWage);
     const personalAllowance = parsePayrollMoneyValue_(payload && payload.personalAllowance);
@@ -3466,8 +3618,9 @@ function payrollSaveEmployee(payload){
     const context = readPayrollEmployeeRecords_();
     const sheet = context.sheet;
     let rowIndex;
+    let existing = null;
     if (id) {
-      const existing = context.mapById.get(id);
+      existing = context.mapById.get(id);
       if (!existing) {
         return { ok: false, reason: 'not_found', message: '従業員が見つかりません。' };
       }
@@ -3477,10 +3630,31 @@ function payrollSaveEmployee(payload){
       rowIndex = sheet.getLastRow() + 1;
     }
 
+    if (access.role === 'manager') {
+      const managerBaseKey = normalizePayrollBaseKey_(access.baseKey || access.base || '');
+      if (!managerBaseKey) {
+        return { ok: false, reason: 'forbidden', message: '管理者の拠点が未設定です。' };
+      }
+      if (existing) {
+        const existingBaseKey = normalizePayrollBaseKey_(existing.base);
+        if (existingBaseKey && existingBaseKey !== managerBaseKey) {
+          return { ok: false, reason: 'forbidden', message: '自拠点以外の従業員は編集できません。' };
+        }
+      }
+      if (baseKey && baseKey !== managerBaseKey) {
+        return { ok: false, reason: 'forbidden', message: '自拠点以外の従業員は編集できません。' };
+      }
+      if (!base) {
+        base = access.base || '';
+      }
+      baseKey = managerBaseKey;
+    }
+
     const values = new Array(PAYROLL_EMPLOYEE_SHEET_HEADER.length).fill('');
     values[PAYROLL_EMPLOYEE_COLUMNS.id] = id;
     values[PAYROLL_EMPLOYEE_COLUMNS.name] = name;
     values[PAYROLL_EMPLOYEE_COLUMNS.email] = email;
+    values[PAYROLL_EMPLOYEE_COLUMNS.base] = base;
     values[PAYROLL_EMPLOYEE_COLUMNS.employmentType] = formatPayrollEmploymentLabel_(employmentType);
     values[PAYROLL_EMPLOYEE_COLUMNS.baseSalary] = baseSalary != null ? baseSalary : '';
     values[PAYROLL_EMPLOYEE_COLUMNS.hourlyWage] = hourlyWage != null ? hourlyWage : '';
@@ -3513,11 +3687,13 @@ function payrollDeleteEmployee(payload){
     if (!id) {
       return { ok: false, reason: 'validation', message: '削除する従業員を指定してください。' };
     }
+    const access = requirePayrollAccess_();
     const context = readPayrollEmployeeRecords_();
     const record = context.mapById.get(id);
     if (!record) {
       return { ok: false, reason: 'not_found', message: '対象の従業員が見つかりません。' };
     }
+    assertPayrollEmployeeAccessible_(record, access);
     context.sheet.deleteRow(record.rowIndex);
     return { ok: true };
   });
@@ -3592,7 +3768,9 @@ function payrollCalculateCommissionSummary(payload){
     const { year, month, start, end } = resolvePayrollCommissionMonthRange_(payload && payload.month);
     const weekRanges = buildPayrollMonthWeekRanges_(start, end);
     const countsMap = collectTreatmentCountsByStaffForRange_(start, end, tz);
-    const employees = readPayrollEmployeeRecords_().records || [];
+    const access = requirePayrollAccess_();
+    const employeeContext = readPayrollEmployeeRecords_();
+    const employees = filterPayrollEmployeesByAccess_(employeeContext.records || [], access);
     const summaries = employees.map(record => {
       const emailKey = normalizeEmailKey_(record && record.email);
       const countsEntry = emailKey ? countsMap.get(emailKey) : null;
@@ -3702,8 +3880,9 @@ function payrollListAttendanceSummary(payload){
     }
     const dataset = datasetResult.dataset;
     const staffSettings = readVisitAttendanceStaffSettings_();
+    const access = requirePayrollAccess_();
     const employeeContext = readPayrollEmployeeRecords_();
-    const employees = employeeContext.records || [];
+    const employees = filterPayrollEmployeesByAccess_(employeeContext.records || [], access);
     const visitRecordsByEmail = new Map();
     const datasetRecords = Array.isArray(dataset.records) ? dataset.records : [];
     datasetRecords.forEach(record => {
@@ -3853,12 +4032,14 @@ function payrollListSocialInsuranceSummary(payload){
     const tz = getConfig('timezone') || 'Asia/Tokyo';
     const monthDate = normalizedMonthKey ? createDateFromKey_(normalizedMonthKey + '-01') : null;
     const monthLabel = monthDate ? Utilities.formatDate(monthDate, tz, 'yyyy年M月') : normalizedMonthKey;
+    const access = requirePayrollAccess_();
     const employeeContext = readPayrollEmployeeRecords_();
     const standardsContext = readPayrollSocialInsuranceStandards_();
     const overridesContext = readPayrollSocialInsuranceOverrides_();
     const rates = getPayrollSocialInsuranceRates_();
     const overrideMap = overridesContext.mapByEmployeeMonth || new Map();
-    const entries = employeeContext.records.map(employee => {
+    const employees = filterPayrollEmployeesByAccess_(employeeContext.records || [], access);
+    const entries = employees.map(employee => {
       const baseAmount = estimatePayrollMonthlyCompensation_(employee);
       const matchedStandard = matchPayrollSocialInsuranceStandard_(baseAmount, standardsContext.records);
       const overrideKey = employee.id + '::' + normalizedMonthKey;
@@ -3885,11 +4066,13 @@ function payrollSaveSocialInsuranceOverride(payload){
     if (!employeeId) {
       return { ok: false, reason: 'validation', message: '従業員を選択してください。' };
     }
+    const access = requirePayrollAccess_();
     const employeeContext = readPayrollEmployeeRecords_();
     const employee = employeeContext.mapById.get(employeeId);
     if (!employee) {
       return { ok: false, reason: 'not_found', message: '従業員が見つかりません。' };
     }
+    assertPayrollEmployeeAccessible_(employee, access);
     const monthKey = normalizePayrollMonthKey_(payload && (payload.month || payload.monthKey));
     if (!monthKey) {
       return { ok: false, reason: 'validation', message: '対象月を指定してください。' };
@@ -3942,14 +4125,29 @@ function payrollDeleteSocialInsuranceOverride(payload){
     if (!id) {
       return { ok: false, reason: 'validation', message: '削除対象を選択してください。' };
     }
+    const access = requirePayrollAccess_();
     const context = readPayrollSocialInsuranceOverrides_();
     const record = context.mapById.get(id);
     if (!record) {
       return { ok: false, reason: 'not_found', message: '上書きが見つかりません。' };
     }
+    const employeeContext = readPayrollEmployeeRecords_();
+    const employee = record.employeeId ? employeeContext.mapById.get(record.employeeId) : null;
+    if (employee) {
+      assertPayrollEmployeeAccessible_(employee, access);
+    }
     context.sheet.deleteRow(record.rowIndex);
     return { ok: true };
   });
+}
+
+function formatPayrollMonthLabel_(monthKey, tz){
+  const normalized = normalizePayrollMonthKey_(monthKey);
+  if (!normalized) return '';
+  const date = createDateFromKey_(normalized + '-01');
+  if (!date) return '';
+  const timezone = tz || getConfig('timezone') || 'Asia/Tokyo';
+  return Utilities.formatDate(date, timezone, 'yyyy年M月');
 }
 
 function buildPayrollPayslipTemplateData_(employee, payload){
@@ -3972,7 +4170,7 @@ function buildPayrollPayslipTemplateData_(employee, payload){
   const issuedInput = parseDateValue_(payload && (payload.issuedAt || payload.issuedDate));
   const issued = issuedInput || now;
   const issuedText = Utilities.formatDate(issued, tz, 'yyyy年M月d日');
-  const monthLabel = monthDate ? Utilities.formatDate(monthDate, tz, 'yyyy年M月') : '';
+  const monthLabel = formatPayrollMonthLabel_(monthKey, tz);
   const gradeContext = readPayrollGradeRecords_();
   const normalizedGrade = normalizePayrollGradeName_(employee && employee.grade);
   const gradeRecord = normalizedGrade ? gradeContext.mapByNormalizedName.get(normalizedGrade) : null;
@@ -4120,8 +4318,9 @@ function buildPayrollPayslipTemplateData_(employee, payload){
   };
 }
 
-function createPayrollPayslipPdf_(payload){
-  const context = readPayrollEmployeeRecords_();
+function createPayrollPayslipPdf_(payload, options){
+  const context = options && options.context ? options.context : readPayrollEmployeeRecords_();
+  const access = options && options.access ? options.access : null;
   const employeeId = String(payload && payload.employeeId || '').trim();
   let employee = employeeId ? context.mapById.get(employeeId) : null;
   if (!employee) {
@@ -4133,8 +4332,14 @@ function createPayrollPayslipPdf_(payload){
   if (!employee) {
     throw new Error('従業員が見つかりません。');
   }
+  if (access) {
+    assertPayrollEmployeeAccessible_(employee, access);
+  }
   const templateData = buildPayrollPayslipTemplateData_(employee, payload || {});
   const folder = ensurePayrollEmployeeFolder_(employee.name);
+  if (payload && payload.overwriteExisting) {
+    deletePayrollPayslipFilesByName_(folder, templateData.fileName);
+  }
   const template = HtmlService.createTemplateFromFile('payroll_pdf_family');
   template.payrollPdfData = templateData;
   const html = template.evaluate().getContent();
@@ -4146,7 +4351,9 @@ function createPayrollPayslipPdf_(payload){
 
 function payrollGeneratePayslipPdf(payload){
   return wrapPayrollResponse_('payrollGeneratePayslipPdf', () => {
-    const result = createPayrollPayslipPdf_(payload || {});
+    const access = requirePayrollAccess_();
+    const context = readPayrollEmployeeRecords_();
+    const result = createPayrollPayslipPdf_(payload || {}, { context, access });
     return {
       ok: true,
       fileId: result.file.getId(),
@@ -4154,6 +4361,52 @@ function payrollGeneratePayslipPdf(payload){
       fileUrl: result.file.getUrl(),
       folderName: result.folder.getName(),
       data: result.data
+    };
+  });
+}
+
+function payrollBulkGeneratePayslips(payload){
+  return wrapPayrollResponse_('payrollBulkGeneratePayslips', () => {
+    const access = requirePayrollAccess_();
+    const context = readPayrollEmployeeRecords_();
+    const tz = getConfig('timezone') || 'Asia/Tokyo';
+    const monthInput = payload && (payload.month || payload.monthKey);
+    const normalizedMonth = normalizePayrollMonthKey_(monthInput) || normalizePayrollMonthKey_(new Date());
+    assertPayrollMonthIsEditable_(normalizedMonth);
+    const employees = filterPayrollEmployeesByAccess_(context.records, access);
+    if (!employees.length) {
+      throw new Error('対象従業員が見つかりません。');
+    }
+    const successes = [];
+    const failures = [];
+    employees.forEach(employee => {
+      try {
+        const result = createPayrollPayslipPdf_(Object.assign({}, payload, {
+          employeeId: employee.id,
+          month: normalizedMonth,
+          overwriteExisting: true
+        }), { context, access });
+        successes.push({
+          employeeId: employee.id,
+          employeeName: employee.name,
+          fileId: result.file.getId(),
+          fileName: result.file.getName(),
+          fileUrl: result.file.getUrl()
+        });
+      } catch (err) {
+        failures.push({
+          employeeId: employee.id,
+          employeeName: employee.name,
+          message: err && err.message ? err.message : String(err)
+        });
+      }
+    });
+    return {
+      ok: true,
+      month: { key: normalizedMonth, label: formatPayrollMonthLabel_(normalizedMonth, tz) },
+      summary: { total: employees.length, success: successes.length, failed: failures.length },
+      results: successes,
+      errors: failures
     };
   });
 }
@@ -6063,12 +6316,82 @@ function formatPayrollEmployeeFolderName_(name){
 function ensurePayrollEmployeeFolder_(employeeName){
   const root = getPayrollPdfRootFolder_();
   if (!root) throw new Error('給与明細の保存先フォルダを取得できません。');
+  const existing = findPayrollEmployeeFolder_(employeeName);
+  if (existing) return existing;
+  return root.createFolder(formatPayrollEmployeeFolderName_(employeeName));
+}
+
+function findPayrollEmployeeFolder_(employeeName){
+  const root = getPayrollPdfRootFolder_();
+  if (!root) return null;
   const folderName = formatPayrollEmployeeFolderName_(employeeName);
   const iterator = root.getFoldersByName(folderName);
   if (iterator.hasNext()) {
     return iterator.next();
   }
-  return root.createFolder(folderName);
+  return null;
+}
+
+function deletePayrollPayslipFilesByName_(folder, fileName){
+  if (!folder || !fileName) return;
+  const iterator = folder.getFilesByName(fileName);
+  while (iterator.hasNext()) {
+    const file = iterator.next();
+    try {
+      file.setTrashed(true);
+    } catch (err) {
+      Logger.log('[deletePayrollPayslipFilesByName_] Failed to delete %s: %s', fileName, err);
+    }
+  }
+}
+
+function extractPayrollMonthHint_(fileName){
+  const text = String(fileName || '');
+  const match = text.match(/(\d{4})年(\d{1,2})月/);
+  if (match) {
+    return match[1] + '年' + Number(match[2]) + '月';
+  }
+  return '';
+}
+
+function listPayrollPayslipFilesInFolder_(folder, options){
+  if (!folder) return [];
+  const limit = Number(options && options.limit) > 0 ? Number(options.limit) : 50;
+  const tz = (options && options.tz) || getConfig('timezone') || 'Asia/Tokyo';
+  const iterator = folder.getFiles();
+  const entries = [];
+  while (iterator.hasNext()) {
+    const file = iterator.next();
+    const name = file.getName();
+    const mime = file.getMimeType();
+    const isPdf = (mime && mime.toLowerCase().indexOf('pdf') !== -1) || String(name || '').toLowerCase().endsWith('.pdf');
+    if (!isPdf) continue;
+    entries.push({
+      id: file.getId(),
+      name,
+      url: file.getUrl(),
+      createdAt: file.getDateCreated(),
+      updatedAt: file.getLastUpdated(),
+      sizeBytes: file.getSize()
+    });
+  }
+  entries.sort((a, b) => {
+    const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0;
+    const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0;
+    return bTime - aTime;
+  });
+  return entries.slice(0, limit).map(entry => ({
+    id: entry.id,
+    name: entry.name,
+    url: entry.url,
+    createdAt: entry.createdAt ? entry.createdAt.toISOString() : null,
+    createdAtText: entry.createdAt ? formatIsoStringWithOffset_(entry.createdAt, tz) : '',
+    updatedAt: entry.updatedAt ? entry.updatedAt.toISOString() : null,
+    updatedAtText: entry.updatedAt ? formatIsoStringWithOffset_(entry.updatedAt, tz) : '',
+    sizeBytes: entry.sizeBytes,
+    sizeText: formatFileSizeShort_(entry.sizeBytes),
+    monthHint: extractPayrollMonthHint_(entry.name)
+  }));
 }
 function getOrCreateFolderForPatientMonth_(pid, date){
   const parent = getParentFolder_();
@@ -9226,6 +9549,20 @@ function formatDurationText_(minutes){
   return hours + '時間' + mins + '分';
 }
 
+function formatFileSizeShort_(bytes){
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const units = ['B','KB','MB','GB'];
+  let current = value;
+  let unitIndex = 0;
+  while (current >= 1024 && unitIndex < units.length - 1) {
+    current /= 1024;
+    unitIndex++;
+  }
+  const display = unitIndex === 0 ? Math.round(current) : Math.round(current * 10) / 10;
+  return display + units[unitIndex];
+}
+
 function parseTimeTextToMinutes_(value){
   if (value == null || value === '') return NaN;
   if (value instanceof Date && !isNaN(value.getTime())) {
@@ -9631,6 +9968,9 @@ function readVisitAttendanceStaffSettings_(){
       defaultShiftMinutes = null;
     }
     const displayName = String(row[1] || '').trim() || resolveStaffDisplayName_(email) || '';
+    const payrollEmployeeId = String(row[6] || '').trim();
+    const worksite = String(row[7] || '').trim();
+    const worksiteKey = normalizePayrollBaseKey_(worksite);
     map.set(email, {
       email,
       displayName,
@@ -9638,7 +9978,10 @@ function readVisitAttendanceStaffSettings_(){
       employmentType,
       employmentLabel,
       albyteStaffId,
-      defaultShiftMinutes
+      defaultShiftMinutes,
+      payrollEmployeeId,
+      worksite,
+      worksiteKey
     });
   });
   return map;
@@ -9708,7 +10051,10 @@ function resolveVisitAttendanceStaffProfile_(email, options){
     employmentType: 'employee',
     employmentLabel: getEmploymentLabel_('employee'),
     albyteStaffId: '',
-    defaultShiftMinutes: null
+    defaultShiftMinutes: null,
+    payrollEmployeeId: '',
+    worksite: '',
+    worksiteKey: ''
   };
 }
 
@@ -10239,6 +10585,44 @@ function resolveVisitAttendanceMonthRange_(monthKey, tz, now){
   };
 }
 
+function buildVisitAttendancePayrollPortalData_(normalizedEmail, staffProfile){
+  const payrollEmployeeId = staffProfile && staffProfile.payrollEmployeeId ? staffProfile.payrollEmployeeId : '';
+  const payrollContext = readPayrollEmployeeRecords_();
+  let employee = payrollEmployeeId ? payrollContext.mapById.get(payrollEmployeeId) : null;
+  if (!employee && normalizedEmail) {
+    employee = payrollContext.mapByEmail.get(normalizedEmail);
+  }
+  if (!employee) {
+    return {
+      available: false,
+      restrictedReason: '給与従業員IDが未連携です。総務までお問い合わせください。'
+    };
+  }
+  const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const folder = findPayrollEmployeeFolder_(employee.name);
+  let payslips = [];
+  try {
+    payslips = folder ? listPayrollPayslipFilesInFolder_(folder, { limit: 50, tz }) : [];
+  } catch (err) {
+    Logger.log('[buildVisitAttendancePayrollPortalData_] failed to list files: ' + err);
+    payslips = [];
+  }
+  const message = payslips.length === 0 ? 'まだ給与明細が発行されていません。' : '';
+  return {
+    available: true,
+    employee: {
+      id: employee.id,
+      name: employee.name,
+      base: employee.base || '',
+      baseKey: employee.baseKey || ''
+    },
+    folder: folder ? { id: folder.getId(), name: folder.getName(), url: folder.getUrl() } : null,
+    payslips,
+    message,
+    updatedAt: formatIsoStringWithOffset_(new Date(), tz)
+  };
+}
+
 function getVisitAttendancePortalData(options){
   assertDomain_();
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
@@ -10297,6 +10681,16 @@ function getVisitAttendancePortalData(options){
     requiredDays: 5
   };
 
+  let payrollPortal = null;
+  try {
+    payrollPortal = buildVisitAttendancePayrollPortalData_(normalizedEmail, staffProfile);
+  } catch (err) {
+    payrollPortal = {
+      available: false,
+      restrictedReason: err && err.message ? err.message : '給与明細の取得に失敗しました。'
+    };
+  }
+
   return {
     ok: true,
     user: {
@@ -10332,7 +10726,8 @@ function getVisitAttendancePortalData(options){
       roundingMinutes: VISIT_ATTENDANCE_ROUNDING_MINUTES
     },
     admin: adminData,
-    paidLeave: paidLeaveSummary
+    paidLeave: paidLeaveSummary,
+    payroll: payrollPortal
   };
 }
 

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<? var pdf = payrollPdfData || {}; var payItems = Array.isArray(pdf.payItems) ? pdf.payItems : []; var deductionItems = Array.isArray(pdf.deductionItems) ? pdf.deductionItems : []; ?>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PDF給与明細</title>
@@ -245,24 +246,24 @@
   <div class="sheet">
     <header>
       <div class="brand">
-        <div class="brand-icon">BT</div>
+        <div class="brand-icon"><?= pdf.brand && pdf.brand.initials ? pdf.brand.initials : 'BT' ?></div>
         <div class="brand-text">
-          <h1>給与明細</h1>
-          <p>PAYROLL STATEMENT</p>
+          <h1><?= pdf.brand && pdf.brand.title ? pdf.brand.title : '給与明細' ?></h1>
+          <p><?= pdf.brand && pdf.brand.tagline ? pdf.brand.tagline : 'PAYROLL STATEMENT' ?></p>
         </div>
       </div>
       <div class="period-card">
         <div>
           <span>給与対象期間</span>
-          <strong data-field="pay-period">2024年4月1日 〜 2024年4月30日</strong>
+          <strong data-field="pay-period"><?= pdf.payPeriodText || '対象期間未設定' ?></strong>
         </div>
         <div>
           <span>支給日</span>
-          <strong data-field="payday">2024年5月25日</strong>
+          <strong data-field="payday"><?= pdf.paydayText || '未設定' ?></strong>
         </div>
         <div>
           <span>従業員</span>
-          <strong data-field="employee-name">山田 太郎 様</strong>
+          <strong data-field="employee-name"><?= pdf.employeeDisplayName || pdf.employeeName || '従業員' ?></strong>
         </div>
       </div>
     </header>
@@ -270,18 +271,18 @@
     <section class="summary-grid">
       <article class="summary-card">
         <h2>支給総額</h2>
-        <div class="value" data-field="total-gross">¥420,000</div>
-        <p>基本給＋各種手当の合計</p>
+        <div class="value" data-field="total-gross"><?= pdf.totalGrossText || '¥0' ?></div>
+        <p><?= pdf.totalGrossNote || '基本給＋各種手当の合計' ?></p>
       </article>
       <article class="summary-card">
         <h2>控除総額</h2>
-        <div class="value" data-field="total-deduction">¥68,540</div>
-        <p>社会保険・税金などの控除</p>
+        <div class="value" data-field="total-deduction"><?= pdf.totalDeductionText || '¥0' ?></div>
+        <p><?= pdf.totalDeductionNote || '社会保険・税金などの控除' ?></p>
       </article>
       <article class="summary-card">
         <h2>差引支給額</h2>
-        <div class="value" data-field="net-pay">¥351,460</div>
-        <p>振込予定口座：〇〇銀行 普通 1234567</p>
+        <div class="value" data-field="net-pay"><?= pdf.netPayText || '¥0' ?></div>
+        <p><?= pdf.netPayNote || '振込予定口座：登録口座' ?></p>
       </article>
     </section>
 
@@ -290,26 +291,19 @@
         <h3>支給内訳</h3>
         <table>
           <tbody>
+            <? if (payItems.length) { for (var i = 0; i < payItems.length; i++) { var item = payItems[i]; ?>
             <tr>
-              <th>基本給</th>
-              <td class="amount" data-field="pay-basic">¥320,000</td>
+              <th><?= item.label || '' ?></th>
+              <td class="amount" data-field="pay-item-<?= i ?>">
+                <div><?= item.amountText || '' ?></div>
+                <? if (item.note) { ?><small><?= item.note ?></small><? } ?>
+              </td>
             </tr>
+            <? } } else { ?>
             <tr>
-              <th>役職手当</th>
-              <td class="amount" data-field="pay-role">¥30,000</td>
+              <td colspan="2" class="amount">支給データがありません。</td>
             </tr>
-            <tr>
-              <th>資格手当</th>
-              <td class="amount" data-field="pay-license">¥15,000</td>
-            </tr>
-            <tr>
-              <th>訪問手当</th>
-              <td class="amount" data-field="pay-visit">¥25,000</td>
-            </tr>
-            <tr>
-              <th>交通費</th>
-              <td class="amount" data-field="pay-transport">¥30,000</td>
-            </tr>
+            <? } ?>
           </tbody>
         </table>
       </div>
@@ -317,50 +311,38 @@
         <h3>控除内訳</h3>
         <table>
           <tbody>
+            <? if (deductionItems.length) { for (var j = 0; j < deductionItems.length; j++) { var deduction = deductionItems[j]; ?>
             <tr>
-              <th>健康保険</th>
-              <td class="amount" data-field="deduction-health">¥19,740</td>
+              <th><?= deduction.label || '' ?></th>
+              <td class="amount" data-field="deduction-item-<?= j ?>">
+                <div><?= deduction.amountText || '' ?></div>
+                <? if (deduction.note) { ?><small><?= deduction.note ?></small><? } ?>
+              </td>
             </tr>
+            <? } } else { ?>
             <tr>
-              <th>厚生年金</th>
-              <td class="amount" data-field="deduction-pension">¥37,800</td>
+              <td colspan="2" class="amount">控除データがありません。</td>
             </tr>
-            <tr>
-              <th>雇用保険</th>
-              <td class="amount" data-field="deduction-employment">¥1,800</td>
-            </tr>
-            <tr>
-              <th>所得税</th>
-              <td class="amount" data-field="deduction-tax">¥8,200</td>
-            </tr>
-            <tr>
-              <th>住民税</th>
-              <td class="amount" data-field="deduction-resident">¥1,000</td>
-            </tr>
+            <? } ?>
           </tbody>
         </table>
       </div>
     </section>
 
-    <div class="note" data-field="note">
-      勤怠・控除内容は労働基準法および就業規則に基づき算出しています。内容に相違がある場合は5営業日以内に総務までご連絡ください。
-    </div>
+    <div class="note" data-field="note"><?!= pdf.noteHtml || '勤怠・控除内容は労働基準法および就業規則に基づき算出しています。' ?></div>
 
     <section class="message">
-      <h4>Message from BellTree</h4>
-      <p>
-        「あなたの働きが、べるつりーの理念である “関係者に最善を提供する” ことにつながっています。」<br />
-        「いつもありがとうございます。」
-      </p>
+      <h4><?= pdf.messageHeading || 'Message from BellTree' ?></h4>
+      <p><?!= pdf.messageBodyHtml || '' ?></p>
     </section>
 
     <footer class="footer">
       <div>
-        <strong>BellTree </strong> ｜ 〒192-0372 東京都八王子市下柚木3-7-2-401<br />
-        代表 042-682-2839 ｜ belltree@belltree1102.com
+        <strong><?= pdf.footerCompany || 'BellTree' ?> </strong> ｜ <?= pdf.footerAddress || '' ?><br />
+        <?= pdf.footerContact || '' ?>
       </div>
       <div>
-        発行日：<span data-field="issued">2024年5月10日</span>
+        発行日：<span data-field="issued"><?= pdf.issuedText || '' ?></span>
       </div>
     </footer>
   </div>

@@ -303,7 +303,9 @@ const PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
   nursingEmployee: 0.0045,
   nursingEmployer: 0.0045,
   childEmployee: 0.0018,
-  childEmployer: 0.0018
+  childEmployer: 0.0018,
+  employmentEmployee: 0,
+  employmentEmployer: 0
 });
 
 const ALBYTE_STAFF_COLUMNS = Object.freeze({
@@ -3146,9 +3148,13 @@ function matchPayrollSocialInsuranceStandard_(amount, standards){
   return fallback || sorted[sorted.length - 1];
 }
 
-function calculatePayrollSocialInsuranceContribution_(standardAmount, rates){
+function calculatePayrollSocialInsuranceContribution_(standardAmount, rates, options){
   const amount = Number(standardAmount) || 0;
   const rateSet = rates || PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS;
+  const compensationBaseCandidate = options && options.compensationAmount != null ? Number(options.compensationAmount) : amount;
+  const compensationBase = Number.isFinite(compensationBaseCandidate) && compensationBaseCandidate > 0
+    ? compensationBaseCandidate
+    : 0;
   const round = (val) => Math.round((Number(val) || 0));
   const healthEmployee = round(amount * (rateSet.healthEmployee || 0));
   const healthEmployer = round(amount * (rateSet.healthEmployer || 0));
@@ -3158,8 +3164,10 @@ function calculatePayrollSocialInsuranceContribution_(standardAmount, rates){
   const nursingEmployer = round(amount * (rateSet.nursingEmployer || 0));
   const childEmployee = round(amount * (rateSet.childEmployee || 0));
   const childEmployer = round(amount * (rateSet.childEmployer || 0));
-  const employeeTotal = healthEmployee + pensionEmployee + nursingEmployee + childEmployee;
-  const employerTotal = healthEmployer + pensionEmployer + nursingEmployer + childEmployer;
+  const employmentEmployee = round(compensationBase * (rateSet.employmentEmployee || 0));
+  const employmentEmployer = round(compensationBase * (rateSet.employmentEmployer || 0));
+  const employeeTotal = healthEmployee + pensionEmployee + nursingEmployee + childEmployee + employmentEmployee;
+  const employerTotal = healthEmployer + pensionEmployer + nursingEmployer + childEmployer + employmentEmployer;
   return {
     healthEmployee,
     healthEmployer,
@@ -3169,6 +3177,8 @@ function calculatePayrollSocialInsuranceContribution_(standardAmount, rates){
     nursingEmployer,
     childEmployee,
     childEmployer,
+    employmentEmployee,
+    employmentEmployer,
     employeeTotal,
     employerTotal
   };
@@ -3182,7 +3192,9 @@ function buildPayrollSocialInsuranceSummaryEntry_(employee, options){
   const monthlyCompensation = estimatePayrollMonthlyCompensation_(employee);
   const applied = override && override.monthlyAmount != null ? override : standard;
   const appliedAmount = applied && applied.monthlyAmount != null ? applied.monthlyAmount : (standard && standard.monthlyAmount != null ? standard.monthlyAmount : 0);
-  const contributions = calculatePayrollSocialInsuranceContribution_(appliedAmount, rates);
+  const contributions = calculatePayrollSocialInsuranceContribution_(appliedAmount, rates, {
+    compensationAmount: monthlyCompensation
+  });
   return {
     employeeId: employee && employee.id ? employee.id : '',
     employeeName: employee && employee.name ? employee.name : '',

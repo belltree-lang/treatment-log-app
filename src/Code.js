@@ -199,7 +199,7 @@ const ALBYTE_DAILY_OVERTIME_ROUNDING_MINUTES = 15;
 const ALBYTE_HOURLY_WAGE_PROPERTY_KEYS = Object.freeze(['ALBYTE_HOURLY_WAGE', 'albyteHourlyWage']);
 
 const PAYROLL_EMPLOYEE_SHEET_NAME = 'PayrollEmployees';
-const PAYROLL_EMPLOYEE_SHEET_HEADER = ['従業員ID','氏名','メール','雇用区分','基本給','時給','個別加算','役職/等級','資格手当','車両手当','社宅控除','源泉徴収','交通費区分','交通費額','歩合ロジック','メモ','更新日時'];
+const PAYROLL_EMPLOYEE_SHEET_HEADER = ['従業員ID','氏名','メール','雇用区分','基本給','時給','個別加算','役職/等級','資格手当','車両手当','社宅控除','住民税','源泉徴収','交通費区分','交通費額','歩合ロジック','メモ','更新日時'];
 const PAYROLL_EMPLOYEE_COLUMNS = Object.freeze({
   id: 0,
   name: 1,
@@ -212,12 +212,13 @@ const PAYROLL_EMPLOYEE_COLUMNS = Object.freeze({
   qualificationAllowance: 8,
   vehicleAllowance: 9,
   housingDeduction: 10,
-  withholding: 11,
-  transportationType: 12,
-  transportationAmount: 13,
-  commissionLogic: 14,
-  note: 15,
-  updatedAt: 16
+  municipalTax: 11,
+  withholding: 12,
+  transportationType: 13,
+  transportationAmount: 14,
+  commissionLogic: 15,
+  note: 16,
+  updatedAt: 17
 });
 const PAYROLL_EMPLOYEE_COLUMN_INDEX = Object.freeze(Object.keys(PAYROLL_EMPLOYEE_COLUMNS).reduce((map, key) => {
   map[key] = PAYROLL_EMPLOYEE_COLUMNS[key] + 1;
@@ -712,12 +713,24 @@ function ensurePayrollEmployeeSheet_(){
     sheet = wb.insertSheet(PAYROLL_EMPLOYEE_SHEET_NAME);
   }
   const needed = PAYROLL_EMPLOYEE_SHEET_HEADER.length;
-  if (sheet.getMaxColumns() < needed) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
-  }
   if (sheet.getLastRow() === 0) {
+    if (sheet.getMaxColumns() < needed) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+    }
     sheet.getRange(1, 1, 1, needed).setValues([PAYROLL_EMPLOYEE_SHEET_HEADER]);
     return sheet;
+  }
+  const currentHeaderWidth = sheet.getLastColumn();
+  const currentHeaderValues = currentHeaderWidth > 0
+    ? sheet.getRange(1, 1, 1, currentHeaderWidth).getDisplayValues()[0]
+    : [];
+  const hasMunicipalTaxColumn = currentHeaderValues.some(label => String(label || '').trim() === '住民税');
+  if (!hasMunicipalTaxColumn) {
+    const insertPosition = Math.min(PAYROLL_EMPLOYEE_COLUMN_INDEX.housingDeduction, sheet.getMaxColumns() || PAYROLL_EMPLOYEE_COLUMN_INDEX.housingDeduction);
+    sheet.insertColumnAfter(insertPosition);
+  }
+  if (sheet.getMaxColumns() < needed) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
   }
   const current = sheet.getRange(1, 1, 1, needed).getDisplayValues()[0];
   const mismatch = current.length < needed || PAYROLL_EMPLOYEE_SHEET_HEADER.some((label, idx) => String(current[idx] || '') !== label);
@@ -2912,6 +2925,7 @@ function readPayrollEmployeeRecords_(){
       const qualificationAllowance = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.qualificationAllowance]);
       const vehicleAllowance = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.vehicleAllowance]);
       const housingDeduction = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.housingDeduction]);
+      const municipalTax = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.municipalTax]);
       const withholding = normalizePayrollWithholdingType_(row[PAYROLL_EMPLOYEE_COLUMNS.withholding]);
       const withholdingLabel = formatPayrollWithholdingLabel_(withholding);
       const transportationType = normalizePayrollTransportationType_(row[PAYROLL_EMPLOYEE_COLUMNS.transportationType]);
@@ -2936,6 +2950,7 @@ function readPayrollEmployeeRecords_(){
         qualificationAllowance,
         vehicleAllowance,
         housingDeduction,
+        municipalTax,
         withholding,
         withholdingLabel,
         transportationType,
@@ -3244,6 +3259,7 @@ function buildPayrollEmployeeResponse_(record, gradeMatch){
     qualificationAllowance: record.qualificationAllowance,
     vehicleAllowance: record.vehicleAllowance,
     housingDeduction: record.housingDeduction,
+    municipalTax: record.municipalTax,
     withholding: record.withholding,
     withholdingLabel: record.withholdingLabel,
     transportationType: record.transportationType,
@@ -3302,6 +3318,7 @@ function payrollSaveEmployee(payload){
     const qualificationAllowance = parsePayrollMoneyValue_(payload && payload.qualificationAllowance);
     const vehicleAllowance = parsePayrollMoneyValue_(payload && payload.vehicleAllowance);
     const housingDeduction = parsePayrollMoneyValue_(payload && payload.housingDeduction);
+    const municipalTax = parsePayrollMoneyValue_(payload && payload.municipalTax);
     const transportationType = normalizePayrollTransportationType_(payload && payload.transportationType);
     const transportationAmount = parsePayrollMoneyValue_(payload && payload.transportationAmount);
     const commissionLogic = normalizePayrollCommissionLogicType_(payload && payload.commissionLogic);
@@ -3336,6 +3353,7 @@ function payrollSaveEmployee(payload){
     values[PAYROLL_EMPLOYEE_COLUMNS.qualificationAllowance] = qualificationAllowance != null ? qualificationAllowance : '';
     values[PAYROLL_EMPLOYEE_COLUMNS.vehicleAllowance] = vehicleAllowance != null ? vehicleAllowance : '';
     values[PAYROLL_EMPLOYEE_COLUMNS.housingDeduction] = housingDeduction != null ? housingDeduction : '';
+    values[PAYROLL_EMPLOYEE_COLUMNS.municipalTax] = municipalTax != null ? municipalTax : '';
     values[PAYROLL_EMPLOYEE_COLUMNS.withholding] = formatPayrollWithholdingLabel_(withholding);
     values[PAYROLL_EMPLOYEE_COLUMNS.transportationType] = formatPayrollTransportationLabel_(transportationType);
     values[PAYROLL_EMPLOYEE_COLUMNS.transportationAmount] = transportationAmount != null ? transportationAmount : '';

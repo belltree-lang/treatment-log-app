@@ -300,6 +300,10 @@ const PAYROLL_SOCIAL_INSURANCE_OVERRIDE_COLUMN_INDEX = Object.freeze(Object.keys
 }, {}));
 const PAYROLL_ROLE_SHEET_NAME = 'PayrollRoles';
 const PAYROLL_ROLE_SHEET_HEADER = ['メール','ロール','拠点'];
+const PAYROLL_OWNER_EMAILS = Object.freeze([
+  'belltree@belltree1102.com',
+  'suzuki@belltree1102.com'
+]);
 const PAYROLL_SOCIAL_INSURANCE_RATE_PROPERTY_KEY = 'payroll_social_insurance_rates';
 const PAYROLL_PDF_ROOT_FOLDER_PROPERTY_KEY = 'PAYROLL_PDF_ROOT_FOLDER_ID';
 const PAYROLL_SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
@@ -9448,12 +9452,24 @@ function getAdminDashboard(payload){
 }
 
 function isAdminUser_(){
+  const me = normalizeEmailKey_((Session.getActiveUser()||{}).getEmail());
+  if (!me) return false;
+  if (PAYROLL_OWNER_EMAILS.some(email => normalizeEmailKey_(email) === me)) {
+    return true;
+  }
   try{
-    const s = sh('通知設定'); const lr=s.getLastRow(); if(lr<2) return false;
+    const s = sh('通知設定');
+    const lr = s.getLastRow();
+    if (lr < 2) return false;
     const vals = s.getRange(2,1,lr-1,3).getDisplayValues(); // [スタッフメール,WebhookURL,管理者]
-    const me = (Session.getActiveUser()||{}).getEmail() || '';
-    return vals.some(r => (String(r[0]||'').toLowerCase()===me.toLowerCase()) && String(r[2]||'').toUpperCase()==='TRUE');
-  }catch(e){ return false; }
+    return vals.some(r => {
+      const rowEmail = normalizeEmailKey_(r && r[0]);
+      const isAdmin = String(r && r[2] || '').trim().toUpperCase() === 'TRUE';
+      return rowEmail && rowEmail === me && isAdmin;
+    });
+  }catch(e){
+    return false;
+  }
 }
 /*** ── 書き込みAPI：runBulkActions ───────────── **/
 function runBulkActions(actions){

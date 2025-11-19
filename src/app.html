@@ -496,7 +496,7 @@ const PATIENT_ID_SEARCH_RESULT_LIMIT = 100;
 const PATIENT_ID_SEARCH_RENDER_LIMIT = 10;
 const PATIENT_ID_SEARCH_CACHE_TTL_MS = 15 * 1000;
 const PATIENT_ID_SEARCH_CACHE_LIMIT = 20;
-const PATIENT_ID_SEARCH_DEBOUNCE_MS = 90;
+const PATIENT_ID_SEARCH_DEBOUNCE_MS = 300;
 let _patientIdIndex = {};
 let _patientIdList = [];
 let _patientIdKanaIndex = {};
@@ -513,6 +513,7 @@ let _patientIdInitialRenderBuffer = null;
 let _patientIdInitialRenderWaiters = [];
 let _patientIdInitialRenderNoticeShown = false;
 let _confirmedPatientId = '';
+let _patientIdSelectionLocked = false;
 
 function parsePatientIdChunkSizeCandidate(candidate){
   if (candidate == null) return NaN;
@@ -1146,10 +1147,12 @@ function splitPatientIdDisplay(text){
 
 function setConfirmedPatientId(id){
   _confirmedPatientId = normalizePatientIdKey(id);
+  _patientIdSelectionLocked = true;
 }
 
 function clearConfirmedPatientId(){
   _confirmedPatientId = '';
+  _patientIdSelectionLocked = false;
 }
 
 function hasConfirmedPatient(){
@@ -1173,8 +1176,23 @@ function clearPatientDisplay(options){
   }
 }
 
-function setPatientIdInputDisplay(id, name){
+function setPatientIdInputDisplay(id, name, options){
+  const opts = Object.assign({ force:false }, options || {});
   const key = normalizePatientIdKey(id);
+  const inputEl = q('pid');
+  const currentInput = inputEl && inputEl.value != null ? String(inputEl.value).trim() : '';
+
+  if (!opts.force && !_patientIdSelectionLocked){
+    const parsedCurrent = splitPatientIdDisplay(currentInput);
+    const currentKey = normalizePatientIdKey(parsedCurrent.id);
+    if (!currentInput && !currentKey){
+      return;
+    }
+    if (!currentKey || currentKey !== key){
+      return;
+    }
+  }
+
   if (!key){
     clearConfirmedPatientId();
     setv('pid', '');
@@ -2581,6 +2599,20 @@ function handlePatientIdKeydown(evt){
 function handlePatientIdInput(){
   unlockInitialPatientIdRender();
   pausePatientIdRender();
+  const inputEl = q('pid');
+  const rawValue = inputEl && inputEl.value != null ? String(inputEl.value) : '';
+  const trimmed = rawValue.trim();
+  _patientIdSelectionLocked = false;
+
+  if (!trimmed){
+    _lastPatientIdSearchText = '';
+    clearPatientSelection({ keepInput: true });
+    _currentHeader = null;
+    refresh();
+    schedulePatientIdSearchUpdate(true);
+    return;
+  }
+
   if (hasConfirmedPatient()){
     clearPatientDisplay({ keepInput: true });
   }
@@ -2930,6 +2962,7 @@ function refresh(){
 
   const patientId = pid();
   if (!patientId){
+    _currentHeader = null;
     if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
     if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
     _icfReportHistoryState = { loading: false, rows: [], error: null };

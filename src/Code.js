@@ -9030,11 +9030,13 @@ function collectTreatmentStaffEmails_(start, end){
   const sheet = sh('施術録');
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return result;
-  const values = sheet.getRange(2,1,lastRow-1,6).getValues();
+  const width = Math.min(TREATMENT_SHEET_HEADER.length, sheet.getMaxColumns());
+  const values = sheet.getRange(2,1,lastRow-1,width).getValues();
   values.forEach(row => {
     const ts = row[0];
     const email = normalizeEmailKey_(row[3]);
-    if (!email) return;
+    const category = width >= 8 ? String(row[7] || '').trim() : '';
+    if (!email || !category) return;
     const when = ts instanceof Date ? ts : new Date(ts);
     if (isNaN(when.getTime()) || when < start || when >= end) return;
     result.add(email);
@@ -9170,6 +9172,7 @@ function sendDailySummaryToChat(targetDate){
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   const sheet = sh('施術録');
   const lastRow = sheet.getLastRow();
+  const width = Math.min(TREATMENT_SHEET_HEADER.length, sheet.getMaxColumns());
   const summary = {
     date: Utilities.formatDate(start, tz, 'yyyy-MM-dd'),
     staffProcessed: 0,
@@ -9182,7 +9185,7 @@ function sendDailySummaryToChat(targetDate){
     return summary;
   }
 
-  const values = sheet.getRange(2,1,lastRow-1,6).getValues();
+  const values = sheet.getRange(2,1,lastRow-1,width).getValues();
   const byStaff = new Map();
   const patientIds = new Set();
 
@@ -9190,7 +9193,9 @@ function sendDailySummaryToChat(targetDate){
     const ts = row[0];
     const rawId = row[1];
     const emailRaw = String(row[3] || '').trim();
-    if (!emailRaw) return;
+    const category = width >= 8 ? String(row[7] || '').trim() : '';
+    if (!emailRaw || !category) return;
+
     const when = ts instanceof Date ? ts : new Date(ts);
     if (isNaN(when.getTime()) || when < start || when >= end) return;
 

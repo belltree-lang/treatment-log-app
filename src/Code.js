@@ -707,12 +707,26 @@ function ensureAuxSheets_(options) {
       '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
     ]);
 
+    ensurePatientNewsConsentDismissedColumn_();
+
     props.setProperty(AUX_SHEETS_INIT_KEY, '1');
   } finally {
     if (locked) {
       lock.releaseLock();
     }
   }
+}
+
+function ensurePatientNewsConsentDismissedColumn_(){
+  const sheet = sh('患者情報');
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const existing = getColFlexible_(headers, LABELS.newsConsentDismissed, PATIENT_COLS_FIXED.newsConsentDismissed, 'NewsConsentDismissed');
+  if (existing) return existing;
+  const newCol = lastCol + 1;
+  sheet.insertColumnsAfter(lastCol, 1);
+  sheet.getRange(1, newCol).setValue('NewsConsentDismissed');
+  return newCol;
 }
 
 function ensureAiReportSheet_(){
@@ -5234,12 +5248,26 @@ function resolveNewsMetaType_(meta){
   return '';
 }
 
+function normalizeNewsMetaType_(metaType){
+  const raw = String(metaType || '').trim();
+  if (!raw) return '';
+  switch (raw) {
+    case 'consent_handout_followup':
+      return 'consent_reminder';
+    case 'consent_doctor_report':
+      return 'consent_verification';
+    default:
+      return raw;
+  }
+}
+
 function isConsentReminderNews_(news){
   if (!news) return false;
   const type = String(news.type || '').trim();
   if (type !== '同意') return false;
-  const metaType = resolveNewsMetaType_(news.meta);
+  const metaType = normalizeNewsMetaType_(resolveNewsMetaType_(news.meta));
   if (metaType === 'consent_reminder') return true;
+  if (metaType === 'consent_verification') return false;
   const message = String(news.message || '');
   return message.indexOf('同意書受渡が必要です') >= 0;
 }
@@ -5378,18 +5406,20 @@ function getNews(pid){
   const normalized = normId_(pid);
   const globalNews = cacheFetch_(GLOBAL_NEWS_CACHE_KEY, fetchGlobalNewsRows_, PATIENT_CACHE_TTL_SECONDS) || [];
   if (!normalized) {
-    return formatNewsOutput_(globalNews);
+    const filteredGlobalNews = globalNews.filter(row => !isConsentReminderNews_(row));
+    return formatNewsOutput_(filteredGlobalNews);
   }
   const patientNews = cacheFetch_(PATIENT_CACHE_KEYS.news(normalized), () => fetchNewsRowsForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
   const header = getPatientHeader(normalized);
   const hasConsentDate = header ? String(header.consentDate || '').trim().length > 0 : false;
   const consentNewsDismissed = header ? !!header.consentNewsDismissed : false;
+  const filteredGlobalNews = globalNews.filter(row => !isConsentReminderNews_(row));
   const filteredPatientNews = patientNews.filter(row => {
     if (!isConsentReminderNews_(row)) return true;
     if (consentNewsDismissed) return false;
     return !hasConsentDate;
   });
-  return formatNewsOutput_(globalNews.concat(filteredPatientNews));
+  return formatNewsOutput_(filteredGlobalNews.concat(filteredPatientNews));
 }
 function clearConsentRelatedNews_(pid){
   const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;
@@ -5438,7 +5468,7 @@ function markNewsClearedByType(pid, type, options){
   const matchPid = String(pid || '').trim();
   const normalizedPid = normId_(matchPid);
   const filterMessage = options && options.messageContains ? String(options.messageContains) : '';
-  const filterMetaType = options && options.metaType ? String(options.metaType).trim() : '';
+  const filterMetaType = options && options.metaType ? normalizeNewsMetaType_(options.metaType) : '';
   const filterRow = options && typeof options.rowNumber === 'number' ? Number(options.rowNumber) : null;
   const metaMatches = options && typeof options.metaMatches === 'object' && options.metaMatches
     ? options.metaMatches
@@ -5468,12 +5498,7 @@ function markNewsClearedByType(pid, type, options){
       meta = parseNewsMetaValue_(metaRaw);
     }
     if (filterMetaType) {
-      let resolvedType = '';
-      if (meta && typeof meta === 'object' && meta.type != null) {
-        resolvedType = String(meta.type);
-      } else if (typeof meta === 'string') {
-        resolvedType = meta;
-      }
+      const resolvedType = normalizeNewsMetaType_(resolveNewsMetaType_(meta));
       if (resolvedType !== filterMetaType) continue;
     }
     if (metaMatches) {
@@ -5484,6 +5509,12 @@ function markNewsClearedByType(pid, type, options){
         const expected = metaMatches[key];
         const actual = meta[key];
         if (expected == null && actual == null) return;
+        if (key === 'type') {
+          if (normalizeNewsMetaType_(resolveNewsMetaType_(actual)) !== normalizeNewsMetaType_(expected)) {
+            metaOk = false;
+          }
+          return;
+        }
         if (String(actual) !== String(expected)) {
           metaOk = false;
         }
@@ -5665,6 +5696,7 @@ function checkConsentExpiration_(){
     if (!row.pid) return;
     const typeText = String(row.type || '').trim();
     const meta = row.meta;
+    const metaType = normalizeNewsMetaType_(resolveNewsMetaType_(meta));
     let expiryKey = '';
     if (meta && typeof meta === 'object' && meta.consentExpiry) {
       expiryKey = String(meta.consentExpiry);
@@ -5677,11 +5709,11 @@ function checkConsentExpiration_(){
     }
     if (typeText !== '同意') return;
     const message = String(row.message || '').trim();
-    if (meta && typeof meta === 'object' && meta.type === 'consent_reminder') {
+    if (metaType === 'consent_reminder') {
       existingKeys.add(row.pid + '|' + expiryKey);
       return;
     }
-    if (meta && typeof meta === 'object' && meta.type === 'consent_doctor_report') {
+    if (metaType === 'consent_verification') {
       existingDoctorReportKeys.add(row.pid + '|' + expiryKey);
       return;
     }
@@ -5756,7 +5788,7 @@ function checkConsentExpiration_(){
         if (!existingDoctorReportKeys.has(reportKey) && !insertedDoctorReportKeys.has(reportKey)) {
           const reportMeta = {
             source: 'auto',
-            type: 'consent_doctor_report',
+            type: 'consent_verification',
             consentExpiry: expiryStr,
             triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
           };
@@ -5783,7 +5815,7 @@ function checkConsentExpiration_(){
     doctorReportRemindersToClear.forEach(pidValue => {
       try {
         markNewsClearedByType(pidValue, '同意', {
-          metaType: 'consent_doctor_report',
+          metaType: 'consent_verification',
           messageContains: '同意期限50日前'
         });
       } catch (err) {
@@ -6351,7 +6383,7 @@ function executeAfterTreatmentJobs_(jobs){
       if (job.presetLabel){
         if (job.presetLabel.indexOf('同意書受渡') >= 0){
           if (job.consentUndecided){
-            addNews('同意','通院日未定です。後日確認してください。');
+            addNews('同意','通院日未定です。後日確認してください。', { type: 'consent_reminder', reason: 'consent_undecided' });
             consentReminderPushed = true;
           } else {
             const visitPlanDate = job.visitPlanDate ? String(job.visitPlanDate).trim() : '';
@@ -6359,7 +6391,7 @@ function executeAfterTreatmentJobs_(jobs){
             const followupMessage = visitPlanDate
               ? `${followupMessageBase}（通院予定：${visitPlanDate}）`
               : followupMessageBase;
-            const meta = { type: 'consent_handout_followup' };
+            const meta = { type: 'consent_reminder', reason: 'handout_followup' };
             if (visitPlanDate) {
               meta.visitPlanDate = visitPlanDate;
             }
@@ -6368,7 +6400,7 @@ function executeAfterTreatmentJobs_(jobs){
         }
       }
       if (job.consentUndecided && !consentReminderPushed){
-        addNews('同意','通院日未定です。後日確認してください。');
+        addNews('同意','通院日未定です。後日確認してください。', { type: 'consent_reminder', reason: 'consent_undecided' });
       }
       if (job.burdenShare){
         updateBurdenShare(pid, job.burdenShare, treatmentMeta ? { meta: treatmentMeta } : undefined);
@@ -6623,7 +6655,17 @@ function updateConsentDate(pid, dateStr, options){
   const s=sh('患者情報'); const head=hit.head;
   const cCons= getColFlexible_(head, LABELS.consent, PATIENT_COLS_FIXED.consent, '同意年月日');
   const cHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
-  const meta = options && options.meta ? options.meta : null;
+  const metaRaw = options && options.meta ? options.meta : null;
+  const metaType = normalizeNewsMetaType_(resolveNewsMetaType_(metaRaw));
+  let meta = metaRaw;
+  if (!metaType) {
+    meta = meta && typeof meta === 'object' ? Object.assign({}, meta) : {};
+    meta.type = 'consent_verification';
+  } else if (meta && typeof meta === 'object') {
+    meta = Object.assign({}, meta, { type: metaType });
+  } else {
+    meta = metaType;
+  }
   const source = meta && meta.source ? String(meta.source) : '';
   const isTreatmentTriggered = source === 'treatment';
 
@@ -6651,6 +6693,7 @@ function dismissConsentReminder(payload){
   if (!pid) throw new Error('患者IDが指定されていません');
   const hit = findPatientRow_(pid);
   if (!hit) throw new Error('患者が見つかりません');
+  ensurePatientNewsConsentDismissedColumn_();
   const s = sh('患者情報');
   const head = hit.head;
   const cDismissed = getColFlexible_(head, LABELS.newsConsentDismissed, PATIENT_COLS_FIXED.newsConsentDismissed, 'NewsConsentDismissed');
@@ -8532,12 +8575,12 @@ function clearDoctorReportReminder(payload) {
     throw new Error('patientIdが空です');
   }
   const newsType = String(payload && payload.newsType || '同意').trim() || '同意';
-  const metaMatches = { type: 'consent_doctor_report' };
+  const metaMatches = { type: 'consent_verification' };
   if (payload && payload.consentExpiry) {
     metaMatches.consentExpiry = String(payload.consentExpiry);
   }
   const options = {
-    metaType: 'consent_doctor_report',
+    metaType: 'consent_verification',
     metaMatches
   };
   if (payload && payload.newsMessage) {

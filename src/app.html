@@ -1339,6 +1339,7 @@ let _consentEditContext = null;
 let _consentModalCallback = null;
 let _latestNewsList = [];
 let _consentHandoutInFlight = false;
+let _consentDismissInFlight = false;
 let _consentVerificationInFlight = false;
 let _doctorReportReminderInFlight = false;
 let _aiReportEditorContext = null;
@@ -3066,6 +3067,7 @@ function loadNews(patientId, next){
         const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
         const showConsentEdit = shouldShowConsentEditButton(n);
         const showVisitPlanEdit = shouldShowVisitPlanEditButton(n);
+        const showConsentDismiss = shouldShowConsentDismissButton(n);
         const showConsentHandout = shouldShowConsentHandoutButton(n);
         const showConsentVerification = shouldShowConsentVerificationButton(n);
         const showHandoverReminder = shouldShowHandoverReminderButton(n);
@@ -3085,6 +3087,9 @@ function loadNews(patientId, next){
         }
         if (showConsentEdit) {
           actionButtons.push('<button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button>');
+        }
+        if (showConsentDismiss) {
+          actionButtons.push(`<button class="btn ghost" onclick="handleConsentDismiss(${idx})">✔ 完了としてマーク</button>`);
         }
         if (showDoctorReport) {
           actionButtons.push(`<button class="btn ok" onclick="handleDoctorReportReminder(${idx})">医師向け報告書を生成</button>`);
@@ -3252,6 +3257,10 @@ function shouldShowConsentVerificationButton(news){
   return metaType === 'consent_verification';
 }
 
+function shouldShowConsentDismissButton(news){
+  return resolveNewsStatus(news) === 'consent-reminder';
+}
+
 function shouldShowConsentEditButton(news){
   if(!news) return false;
   const type = String(news.type || '').trim();
@@ -3351,6 +3360,47 @@ function handleConsentVerification(index){
       alert('再同意取得確認の処理に失敗しました: ' + msg);
     })
     .completeConsentVerificationFromNews(payload);
+}
+
+function handleConsentDismiss(index){
+  if (_consentDismissInFlight) {
+    toast('処理中です。完了までお待ちください。');
+    return;
+  }
+  const list = Array.isArray(_latestNewsList) ? _latestNewsList : [];
+  const idx = Number(index);
+  const news = list[idx];
+  if (!shouldShowConsentDismissButton(news)) {
+    toast('対象のお知らせが見つかりません。');
+    return;
+  }
+  const patientId = pid();
+  if (!patientId) {
+    alert('患者IDを入力してください');
+    return;
+  }
+
+  _consentDismissInFlight = true;
+  showGlobalLoading('処理中です…');
+  const payload = {
+    patientId,
+    newsRow: typeof news.rowNumber === 'number' ? news.rowNumber : null
+  };
+  google.script.run
+    .withSuccessHandler(() => {
+      _consentDismissInFlight = false;
+      hideGlobalLoading();
+      toast('同意書未取得のお知らせを非表示にしました');
+      loadNews(patientId);
+      loadHeader(patientId);
+    })
+    .withFailureHandler(err => {
+      _consentDismissInFlight = false;
+      hideGlobalLoading();
+      const msg = err && err.message ? err.message : String(err || 'エラー');
+      alert('お知らせの更新に失敗しました: ' + msg);
+    })
+    .dismissConsentReminder(payload);
 }
 
 function handleHandoverReminder(index){

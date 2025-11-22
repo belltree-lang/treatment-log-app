@@ -561,6 +561,7 @@ const LABELS = {
   consent:   ['同意年月日','同意日','同意開始日','同意開始'],
   consentHandout: ['配布','配布欄','配布状況','配布日','配布（同意書）'],
   consentContent: ['同意症状','同意内容','施術対象疾患','対象疾患','対象症状','同意書内容','同意記載内容'],
+  newsConsentDismissed: ['NewsConsentDismissed', '同意News非表示', '同意News完了', 'ConsentNewsDismissed'],
   share:     ['負担割合','負担','自己負担','負担率','負担割','負担%','負担％'],
   phone:     ['電話','電話番号','TEL','Tel']
 };
@@ -576,6 +577,7 @@ const PATIENT_COLS_FIXED = {
   consent: 28,   // 同意年月日
   consentHandout: 54, // 配布（同意書取得日）
   consentContent: 25, // 同意症状（Y列）
+  newsConsentDismissed: null, // 同意News非表示（追加列想定）
   phone:   32,   // 電話
   share:   47    // 負担割合
 };
@@ -5222,6 +5224,26 @@ function parseNewsMetaValue_(value){
   }
 }
 
+function resolveNewsMetaType_(meta){
+  if (meta && typeof meta === 'object' && meta.type != null) {
+    return String(meta.type);
+  }
+  if (typeof meta === 'string') {
+    return String(meta);
+  }
+  return '';
+}
+
+function isConsentReminderNews_(news){
+  if (!news) return false;
+  const type = String(news.type || '').trim();
+  if (type !== '同意') return false;
+  const metaType = resolveNewsMetaType_(news.meta);
+  if (metaType === 'consent_reminder') return true;
+  const message = String(news.message || '');
+  return message.indexOf('同意書受渡が必要です') >= 0;
+}
+
 function readNewsRows_(){
   const s = sh('News');
   const lr = s.getLastRow();
@@ -5359,7 +5381,15 @@ function getNews(pid){
     return formatNewsOutput_(globalNews);
   }
   const patientNews = cacheFetch_(PATIENT_CACHE_KEYS.news(normalized), () => fetchNewsRowsForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
-  return formatNewsOutput_(globalNews.concat(patientNews));
+  const header = getPatientHeader(normalized);
+  const hasConsentDate = header ? String(header.consentDate || '').trim().length > 0 : false;
+  const consentNewsDismissed = header ? !!header.consentNewsDismissed : false;
+  const filteredPatientNews = patientNews.filter(row => {
+    if (!isConsentReminderNews_(row)) return true;
+    if (consentNewsDismissed) return false;
+    return !hasConsentDate;
+  });
+  return formatNewsOutput_(globalNews.concat(filteredPatientNews));
 }
 function clearConsentRelatedNews_(pid){
   const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;
@@ -6103,6 +6133,7 @@ function getPatientHeader(pid){
     const cBirth= getColFlexible_(head, LABELS.birth,    PATIENT_COLS_FIXED.birth,    '生年月日');
     const cCons = getColFlexible_(head, LABELS.consent,  PATIENT_COLS_FIXED.consent,  '同意年月日');
     const cConsHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
+    const cNewsConsentDismissed = getColFlexible_(head, LABELS.newsConsentDismissed, PATIENT_COLS_FIXED.newsConsentDismissed, 'NewsConsentDismissed');
     const cShare= getColFlexible_(head, LABELS.share,    PATIENT_COLS_FIXED.share,    '負担割合');
     const cTel  = getColFlexible_(head, LABELS.phone,    PATIENT_COLS_FIXED.phone,    '電話');
     const cConsentContent = getColFlexible_(head, LABELS.consentContent, PATIENT_COLS_FIXED.consentContent, '同意症状');
@@ -6119,6 +6150,7 @@ function getPatientHeader(pid){
     // 同意期限
     const consent = rowV[cCons-1]||'';
     const consentHandout = rowV[cConsHandout-1]||'';
+    const consentNewsDismissed = cNewsConsentDismissed ? toBoolean_(rowV[cNewsConsentDismissed-1]) : false;
     const expiry  = calcConsentExpiry_(consent) || '—';
 
     // 負担割合
@@ -6146,7 +6178,8 @@ function getPatientHeader(pid){
       burden: shareDisp || '',
       monthly, recent,
       status: stat.status,
-      pauseUntil: stat.pauseUntil
+      pauseUntil: stat.pauseUntil,
+      consentNewsDismissed
     };
   }, PATIENT_CACHE_TTL_SECONDS);
 }
@@ -6610,6 +6643,26 @@ function updateConsentDate(pid, dateStr, options){
   const logDetail = isTreatmentTriggered ? '確認日:' + (dateStr || '') : (dateStr || '');
   log_('同意日更新', pid, logDetail);
   invalidatePatientCaches_(pid, { header: true });
+}
+
+function dismissConsentReminder(payload){
+  const pidRaw = payload && payload.patientId ? payload.patientId : payload;
+  const pid = normId_(pidRaw);
+  if (!pid) throw new Error('患者IDが指定されていません');
+  const hit = findPatientRow_(pid);
+  if (!hit) throw new Error('患者が見つかりません');
+  const s = sh('患者情報');
+  const head = hit.head;
+  const cDismissed = getColFlexible_(head, LABELS.newsConsentDismissed, PATIENT_COLS_FIXED.newsConsentDismissed, 'NewsConsentDismissed');
+  if (!cDismissed) {
+    throw new Error('患者情報シートに NewsConsentDismissed 列が見つかりません。列を追加してください。');
+  }
+
+  s.getRange(hit.row, cDismissed).setValue(true);
+  const newsRow = payload && typeof payload.newsRow === 'number' ? Number(payload.newsRow) : null;
+  markNewsClearedByType(pid, '同意', { metaType: 'consent_reminder', rowNumber: newsRow });
+  invalidatePatientCaches_(pid, { header: true, news: true });
+  return { ok: true };
 }
 function updateBurdenShare(pid, shareText, options){
   const hit = findPatientRow_(pid);

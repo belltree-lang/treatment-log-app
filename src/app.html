@@ -3101,7 +3101,7 @@ function loadNews(patientId, next){
           actionButtons.push('<button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button>');
         }
         if (showConsentDismiss) {
-          actionButtons.push(`<button class="btn ghost" onclick="handleConsentDismiss(${idx})">✔ 完了としてマーク</button>`);
+          actionButtons.push(`<button class="btn ghost" onclick="handleConsentDismiss(${idx})">✔ 完了</button>`);
         }
         if (showDoctorReport) {
           actionButtons.push(`<button class="btn ok" onclick="handleDoctorReportReminder(${idx})">医師向け報告書を生成</button>`);

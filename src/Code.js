@@ -94,7 +94,8 @@ const TREATMENT_SHEET_HEADER = [
   '換算人数',
   '新規対応人数',
   '総換算人数',
-  '勤怠反映フラグ'
+  '勤怠反映フラグ',
+  'NewsConsentDismissed'
 ];
 
 const TREATMENT_CATEGORY_DEFINITIONS = {
@@ -708,7 +709,7 @@ function ensureAuxSheets_(options) {
       '担当者(60d)','最終施術日','年次要確認','休止','ミュート解除予定','負担割合整合'
     ]);
 
-    ensurePatientNewsConsentDismissedColumn_();
+    ensureTreatmentNewsConsentDismissedColumn_();
     standardizeConsentNewsMeta_();
 
     props.setProperty(AUX_SHEETS_INIT_KEY, '1');
@@ -719,14 +720,18 @@ function ensureAuxSheets_(options) {
   }
 }
 
-function ensurePatientNewsConsentDismissedColumn_(){
-  const sheet = sh('患者情報');
-  const lastCol = sheet.getLastColumn();
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
-  const existing = getColFlexible_(headers, LABELS.newsConsentDismissed, PATIENT_COLS_FIXED.newsConsentDismissed, 'NewsConsentDismissed');
+function ensureTreatmentNewsConsentDismissedColumn_(){
+  const sheet = sh('施術録');
+  const targetWidth = Math.max(sheet.getLastColumn(), TREATMENT_SHEET_HEADER.length);
+  if (sheet.getMaxColumns() < targetWidth) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), targetWidth - sheet.getMaxColumns());
+  }
+  const width = Math.min(targetWidth, sheet.getMaxColumns());
+  const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+  const existing = resolveColByLabels_(headers, LABELS.newsConsentDismissed, 'NewsConsentDismissed', false);
   if (existing) return existing;
-  const newCol = lastCol + 1;
-  sheet.insertColumnsAfter(lastCol, 1);
+  const newCol = sheet.getLastColumn() + 1;
+  sheet.insertColumnsAfter(sheet.getLastColumn(), 1);
   sheet.getRange(1, newCol).setValue('NewsConsentDismissed');
   return newCol;
 }
@@ -6140,6 +6145,39 @@ function findPatientRow_(pid){
   return null;
 }
 
+function findLatestTreatmentRow_(pid){
+  const normalized = normId_(pid);
+  if (!normalized) return null;
+  const sheet = sh('施術録');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const maxCols = sheet.getMaxColumns();
+  const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
+  const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  let latestIndex = -1;
+  let latestTs = -Infinity;
+  values.forEach((row, idx) => {
+    const pidCell = normId_(row[1]);
+    if (pidCell !== normalized) return;
+    const tsVal = row[0] instanceof Date ? row[0].getTime() : new Date(row[0]).getTime();
+    if (!Number.isFinite(tsVal)) return;
+    if (latestIndex < 0 || tsVal > latestTs) {
+      latestIndex = idx;
+      latestTs = tsVal;
+    }
+  });
+  if (latestIndex < 0) return null;
+  const rowNumber = latestIndex + 2;
+  return {
+    row: rowNumber,
+    head: headers,
+    rowValues: sheet.getRange(rowNumber, 1, 1, width).getDisplayValues()[0],
+    rawValues: values[latestIndex],
+    width
+  };
+}
+
 /***** 負担割合 正規化 *****/
 function normalizeBurdenRatio_(text) {
   if (!text) return null;
@@ -6267,7 +6305,6 @@ function getPatientHeader(pid){
     const cBirth= getColFlexible_(head, LABELS.birth,    PATIENT_COLS_FIXED.birth,    '生年月日');
     const cCons = getColFlexible_(head, LABELS.consent,  PATIENT_COLS_FIXED.consent,  '同意年月日');
     const cConsHandout = getColFlexible_(head, LABELS.consentHandout, PATIENT_COLS_FIXED.consentHandout, '配布');
-    const cNewsConsentDismissed = getColFlexible_(head, LABELS.newsConsentDismissed, PATIENT_COLS_FIXED.newsConsentDismissed, 'NewsConsentDismissed');
     const cShare= getColFlexible_(head, LABELS.share,    PATIENT_COLS_FIXED.share,    '負担割合');
     const cTel  = getColFlexible_(head, LABELS.phone,    PATIENT_COLS_FIXED.phone,    '電話');
     const cConsentContent = getColFlexible_(head, LABELS.consentContent, PATIENT_COLS_FIXED.consentContent, '同意症状');
@@ -6284,8 +6321,17 @@ function getPatientHeader(pid){
     // 同意期限
     const consent = rowV[cCons-1]||'';
     const consentHandout = rowV[cConsHandout-1]||'';
-    const consentNewsDismissed = cNewsConsentDismissed ? toBoolean_(rowV[cNewsConsentDismissed-1]) : false;
     const expiry  = calcConsentExpiry_(consent) || '—';
+
+    const treatmentHit = findLatestTreatmentRow_(pid);
+    let consentNewsDismissed = false;
+    if (treatmentHit) {
+      const cDismissed = resolveColByLabels_(treatmentHit.head, LABELS.newsConsentDismissed, 'NewsConsentDismissed', false);
+      if (cDismissed) {
+        const cell = treatmentHit.rowValues[cDismissed - 1];
+        consentNewsDismissed = !!(typeof cell === 'string' ? cell.trim() : cell);
+      }
+    }
 
     // 負担割合
     const shareRaw  = rowV[cShare-1]||'';
@@ -6793,17 +6839,13 @@ function dismissConsentReminder(payload){
   const pidRaw = payload && payload.patientId ? payload.patientId : payload;
   const pid = normId_(pidRaw);
   if (!pid) throw new Error('患者IDが指定されていません');
-  const hit = findPatientRow_(pid);
-  if (!hit) throw new Error('患者が見つかりません');
-  ensurePatientNewsConsentDismissedColumn_();
-  const s = sh('患者情報');
-  const head = hit.head;
-  const cDismissed = getColFlexible_(head, LABELS.newsConsentDismissed, PATIENT_COLS_FIXED.newsConsentDismissed, 'NewsConsentDismissed');
-  if (!cDismissed) {
-    throw new Error('患者情報シートに NewsConsentDismissed 列が見つかりません。列を追加してください。');
-  }
-
-  s.getRange(hit.row, cDismissed).setValue(true);
+  if (!findPatientRow_(pid)) throw new Error('患者が見つかりません');
+  const treatmentHit = findLatestTreatmentRow_(pid);
+  if (!treatmentHit) throw new Error('施術録シートに対象患者の行が見つかりません');
+  const col = ensureTreatmentNewsConsentDismissedColumn_();
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const dismissedAt = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  sh('施術録').getRange(treatmentHit.row, col).setValue(dismissedAt);
   const newsRow = payload && typeof payload.newsRow === 'number' ? Number(payload.newsRow) : null;
   markNewsClearedByType(pid, '同意', { metaType: 'consent_reminder', rowNumber: newsRow });
   invalidatePatientCaches_(pid, { header: true, news: true });

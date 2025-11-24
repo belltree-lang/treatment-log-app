@@ -111,6 +111,7 @@
             <th>個別加算</th>
             <th>役職/等級</th>
             <th>住民税</th>
+            <th>源泉・扶養</th>
             <th>交通費</th>
             <th>歩合</th>
             <th>更新日時</th>
@@ -180,6 +181,18 @@
         </label>
         <label>源泉徴収
           <select id="withholding"></select>
+        </label>
+        <label>扶養人数
+          <input id="dependentCount" type="number" min="0" max="10" step="1" value="0" />
+          <small class="muted">0〜10の範囲で入力</small>
+        </label>
+        <label>源泉区分
+          <select id="withholdingCategory"></select>
+          <small class="muted">甲欄/乙欄を選択</small>
+        </label>
+        <label>雇用期間区分（乙欄）
+          <select id="withholdingPeriodType"></select>
+          <small class="muted">乙欄の場合の日額扱い判定</small>
         </label>
       </div>
       <datalist id="gradeOptions"></datalist>
@@ -493,7 +506,15 @@ const COMMISSION_OPTIONS = [
 ];
 const WITHHOLDING_OPTIONS = [
   { value:'none', label:'なし（個人事業主扱い）' },
-  { value:'required', label:'あり（10.21%）' }
+  { value:'required', label:'あり' }
+];
+const WITHHOLDING_CATEGORY_OPTIONS = [
+  { value:'ko', label:'甲欄' },
+  { value:'otsu', label:'乙欄' }
+];
+const WITHHOLDING_PERIOD_OPTIONS = [
+  { value:'monthly', label:'通常（月額）' },
+  { value:'daily', label:'日額扱い（乙欄）' }
 ];
 const SOCIAL_INSURANCE_RATE_DEFAULTS = Object.freeze({
   healthEmployee: 0.0495,
@@ -1323,6 +1344,10 @@ function renderTable(){
       ? `${gradeName || ''} (${gradeAmountLabel})`
       : (gradeName || '');
     const municipalTax = formatCurrency(row.municipalTax);
+    const withholdingLabel = row.withholding === 'required'
+      ? `${escapeHtml(row.withholdingLabel || 'あり')} / ${escapeHtml(row.withholdingCategoryLabel || '')}`
+      : '<span class="muted">--</span>';
+    const dependentLabel = row.withholding === 'required' ? `<div class="metric-subtext">扶養${row.dependentCount != null ? escapeHtml(String(row.dependentCount)) : '0'}</div>` : '';
     const transportation = formatTransportation(row);
     const commission = row.commissionLabel ? escapeHtml(row.commissionLabel) : '';
     const updated = row.updatedAt ? escapeHtml(new Date(row.updatedAt).toLocaleString('ja-JP')) : '';
@@ -1337,6 +1362,7 @@ function renderTable(){
       <td>${allowance}</td>
       <td>${grade}</td>
       <td>${municipalTax}</td>
+      <td><div class="metric-main">${withholdingLabel}</div>${dependentLabel}</td>
       <td>${transportation}</td>
       <td>${commission}</td>
       <td>${updated}</td>
@@ -1402,6 +1428,9 @@ function populateForm(employee){
   document.getElementById('transportationAmount').value = employee.transportationAmount != null ? employee.transportationAmount : '';
   document.getElementById('commissionLogic').value = employee.commissionLogic || 'legacy';
   document.getElementById('withholding').value = employee.withholding || 'none';
+  document.getElementById('withholdingCategory').value = employee.withholdingCategory || 'ko';
+  document.getElementById('withholdingPeriodType').value = employee.withholdingPeriodType || 'monthly';
+  document.getElementById('dependentCount').value = employee.dependentCount != null ? employee.dependentCount : 0;
   document.getElementById('employeeNote').value = employee.note || '';
   updateTransportationAmountState();
   updateGradeHint();
@@ -1431,6 +1460,9 @@ function gatherFormData(){
     transportationAmount: document.getElementById('transportationAmount').value,
     commissionLogic: document.getElementById('commissionLogic').value,
     withholding: document.getElementById('withholding').value,
+    withholdingCategory: document.getElementById('withholdingCategory').value,
+    withholdingPeriodType: document.getElementById('withholdingPeriodType').value,
+    dependentCount: document.getElementById('dependentCount').value,
     note: document.getElementById('employeeNote').value
   };
 }
@@ -1800,6 +1832,8 @@ function init(){
   renderOptions(document.getElementById('transportationType'), TRANSPORT_OPTIONS);
   renderOptions(document.getElementById('commissionLogic'), COMMISSION_OPTIONS);
   renderOptions(document.getElementById('withholding'), WITHHOLDING_OPTIONS);
+  renderOptions(document.getElementById('withholdingCategory'), WITHHOLDING_CATEGORY_OPTIONS);
+  renderOptions(document.getElementById('withholdingPeriodType'), WITHHOLDING_PERIOD_OPTIONS);
   const bulkMonthInput = document.getElementById('bulkPayslipMonth');
   if (bulkMonthInput) {
     bulkMonthInput.value = payrollState.bulk.month;

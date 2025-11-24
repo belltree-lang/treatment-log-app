@@ -3125,7 +3125,9 @@ function renderNewsList(list, options){
     if (done) done();
     return;
   }
-  const visibleList = Array.isArray(list) ? list.filter(item => !item.dismissed) : [];
+  const visibleList = Array.isArray(list)
+    ? list.filter(item => !item.dismissed && !item.clearedAt)
+    : [];
   if (!visibleList.length) {
     _latestNewsList = [];
     window._latestNewsList = _latestNewsList;
@@ -3273,6 +3275,10 @@ function normalizeNewsMetaType(metaType){
     case 'consent_verification':
     case 'consent_verification_required':
       return 'consent_verification';
+    case 'consent_handover':
+    case 'consent_handover_pending':
+    case 'handover':
+      return 'handover';
     default:
       return raw;
   }
@@ -3281,14 +3287,19 @@ function normalizeNewsMetaType(metaType){
 function getNewsMetaType(news){
   if(!news || typeof news !== 'object') return '';
   const meta = news.meta;
-  if (!meta) return '';
-  if (typeof meta === 'object' && meta && meta.type != null) {
-    return normalizeNewsMetaType(meta.type);
+  let metaType = '';
+  if (meta && typeof meta === 'object' && meta.type != null) {
+    metaType = normalizeNewsMetaType(meta.type);
+  } else if (typeof meta === 'string') {
+    metaType = normalizeNewsMetaType(meta);
   }
-  if (typeof meta === 'string') {
-    return normalizeNewsMetaType(meta);
+  if (!metaType) {
+    const msg = String(news.message || '');
+    if (msg.indexOf('受渡') >= 0 || msg.indexOf('受け渡し') >= 0) {
+      metaType = 'handover';
+    }
   }
-  return '';
+  return metaType;
 }
 
 function isConsentReminderMessage(message){

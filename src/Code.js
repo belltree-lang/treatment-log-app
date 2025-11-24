@@ -5705,6 +5705,11 @@ function formatNewsRow_(pid, type, msg, meta){
   return [new Date(), String(pid), type, msg, '', metaStr, ''];
 }
 
+function setNewsClearedAt_(sheet, rowNumber){
+  if (!sheet || !rowNumber) return;
+  sheet.getRange(rowNumber, 5).setValue(new Date());
+}
+
 function getNewsDismissedColumn_(){
   const sheet = sh('News');
   const width = sheet.getLastColumn();
@@ -5752,6 +5757,10 @@ function normalizeNewsMetaType_(metaType){
     case 'consent_verification':
     case 'consent_verification_required':
       return 'consent_verification';
+    case 'consent_handover':
+    case 'consent_handover_pending':
+    case 'handover':
+      return 'handover';
     default:
       return raw;
   }
@@ -5766,6 +5775,8 @@ function normalizeConsentNewsMeta_(meta, message){
       normalizedType = 'consent_reminder';
     } else if (msg.indexOf('同意期限50日前') >= 0) {
       normalizedType = 'consent_verification';
+    } else if (msg.indexOf('受渡') >= 0 || msg.indexOf('受け渡し') >= 0) {
+      normalizedType = 'handover';
     }
   }
 
@@ -5843,6 +5854,12 @@ function readNewsRows_(){
       const normalizedMeta = normalizeConsentNewsMeta_(meta, messageText);
       meta = normalizedMeta.meta;
     }
+    const clearedAtValue = width >= 5 ? raw[4] : '';
+    const clearedAtText = String(disp[4] != null ? disp[4] : clearedAtValue || '').trim();
+    let clearedAt = clearedAtText;
+    if (!clearedAt && clearedAtValue instanceof Date) {
+      clearedAt = Utilities.formatDate(clearedAtValue, timezone, 'yyyy-MM-dd HH:mm');
+    }
     const dismissedRaw = width >= 7 ? raw[6] : '';
     const dismissed = toBooleanFromCell_(dismissedRaw);
     const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
@@ -5854,7 +5871,8 @@ function readNewsRows_(){
       type: typeText,
       message: messageText,
       meta,
-      cleared: String(disp[4] != null ? disp[4] : raw[4] || '').trim(),
+      clearedAt,
+      cleared: !!clearedAt,
       dismissed
     });
   }
@@ -5871,6 +5889,7 @@ function fetchNewsRowsForPid_(normalized){
       type: row.type,
       message: row.message,
       meta: row.meta,
+      clearedAt: row.clearedAt,
       dismissed: !!row.dismissed,
       rowNumber: row.rowNumber,
       pid: row.pid
@@ -5886,6 +5905,7 @@ function fetchGlobalNewsRows_(){
       type: row.type,
       message: row.message,
       meta: row.meta,
+      clearedAt: row.clearedAt,
       dismissed: !!row.dismissed,
       rowNumber: row.rowNumber,
       pid: row.pid
@@ -5902,6 +5922,7 @@ function formatNewsOutput_(rows){
         type: row.type,
         message: row.message,
         meta: row.meta,
+        clearedAt: row.clearedAt,
         dismissed: !!row.dismissed,
         rowNumber: row.rowNumber,
         pid: row.pid
@@ -5959,20 +5980,20 @@ function getNews(pid){
   const patientNews = cacheFetch_(PATIENT_CACHE_KEYS.news(normalized), () => fetchNewsRowsForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
   return formatNewsOutput_(globalNews.concat(patientNews));
 }
-function clearConsentRelatedNews_(pid){
-  const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;
-  const vals=s.getRange(2,1,lr-1,5).getValues(); // [TS,pid,type,msg,cleared]
-  for (let i=0;i<vals.length;i++){
-    if(String(vals[i][1])===String(pid)){
-      const typ=String(vals[i][2]||'');
-      const trimmed = typ.trim();
-      if(typ.indexOf('同意')>=0 || typ.indexOf('期限')>=0 || typ.indexOf('予定')>=0 || trimmed === '再同意取得確認' || trimmed === '再同意'){
-        s.getRange(2+i,5).setValue('1');
+  function clearConsentRelatedNews_(pid){
+    const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;
+    const vals=s.getRange(2,1,lr-1,5).getValues(); // [TS,pid,type,msg,cleared]
+    for (let i=0;i<vals.length;i++){
+      if(String(vals[i][1])===String(pid)){
+        const typ=String(vals[i][2]||'');
+        const trimmed = typ.trim();
+        if(typ.indexOf('同意')>=0 || typ.indexOf('期限')>=0 || typ.indexOf('予定')>=0 || trimmed === '再同意取得確認' || trimmed === '再同意'){
+          setNewsClearedAt_(s, 2 + i);
+        }
       }
     }
+    invalidatePatientCaches_(pid, { news: true });
   }
-  invalidatePatientCaches_(pid, { news: true });
-}
 
 function clearNewsByTypes_(pid, types){
   if(!Array.isArray(types) || !types.length) return;
@@ -5989,7 +6010,7 @@ function clearNewsByTypes_(pid, types){
     if(String(vals[i][1]) !== String(pid)) continue;
     const typ = String(vals[i][2] || '').trim();
     if(typeSet.has(typ)){
-      s.getRange(2 + i, 5).setValue('1');
+      setNewsClearedAt_(s, 2 + i);
     }
   }
   invalidatePatientCaches_(pid, { news: true });
@@ -6059,7 +6080,7 @@ function markNewsClearedByType(pid, type, options){
       });
       if (!metaOk) continue;
     }
-    s.getRange(rowNumber, 5).setValue('1');
+    setNewsClearedAt_(s, rowNumber);
     cleared++;
     if (rowPid) {
       touchedPatients.add(rowPid);
@@ -6134,7 +6155,7 @@ function clearNewsByTreatment_(treatmentId){
   }
   const affected = new Set();
   matches.forEach(idx => {
-    s.getRange(2 + idx, clearedCol + 1).setValue('1');
+    setNewsClearedAt_(s, 2 + idx);
     const pid = normId_(vals[idx][1]);
     if (pid) {
       affected.add(pid);
@@ -10595,11 +10616,11 @@ function completeConsentHandoutFromNews(payload) {
   const result = submitTreatment(treatmentPayload);
   const newsType = String(payload && payload.newsType || '同意').trim() || '同意';
   const newsMessage = String(payload && payload.newsMessage || '');
-  const metaType = payload && payload.newsMetaType ? String(payload.newsMetaType) : '';
+  const metaType = normalizeNewsMetaType_(payload && payload.newsMetaType ? payload.newsMetaType : '') || 'handover';
   const rowNumber = payload && typeof payload.newsRow === 'number' ? Number(payload.newsRow) : null;
   const cleared = markNewsClearedByType(pid, newsType, {
     messageContains: newsMessage,
-    metaType: metaType,
+    metaType,
     rowNumber
   });
   const dismissed = dismissHandoverReminder({
@@ -13024,6 +13045,11 @@ function saveHandover(payload) {
     cleared += clearDoctorReportMissingReminder_(pid);
   } catch (e) {
     Logger.log('[saveHandover] failed to clear doctor report missing reminder: ' + (e && e.message ? e.message : e));
+  }
+  try {
+    cleared += markNewsClearedByType(pid, '同意', { metaType: 'handover' });
+  } catch (e) {
+    Logger.log('[saveHandover] failed to clear handover consent news: ' + (e && e.message ? e.message : e));
   }
 
   return { ok:true, fileIds, cleared };

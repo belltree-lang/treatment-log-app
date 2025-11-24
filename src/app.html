@@ -2977,15 +2977,80 @@ function refresh(){
   if (q('hdr')) q('hdr').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('news')) q('news').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('list')) q('list').innerHTML = '<div class="muted">読み込み中…</div>';
-  loadHeader(patientId, () => {
-    refreshReportHistory({ patientId, setStatus: true }).then(() => {
-      loadNews(patientId, () => {
-        loadThisMonth(patientId, () => {
-          hideGlobalLoading();
-        });
-      });
+  let bundleDone = false;
+  let reportHistoryDone = false;
+  const tryFinish = () => {
+    if (bundleDone && reportHistoryDone) {
+      hideGlobalLoading();
+    }
+  };
+
+  refreshReportHistory({ patientId, setStatus: true })
+    .finally(() => {
+      reportHistoryDone = true;
+      tryFinish();
     });
-  });
+
+  google.script.run
+    .withSuccessHandler(bundle => {
+      bundleDone = true;
+      const safeBundle = bundle || {};
+      renderHeaderContent(safeBundle.header || null);
+      renderNewsList(safeBundle.news || [], { patientId });
+      renderThisMonthList(safeBundle.treatments || [], { patientId });
+      tryFinish();
+    })
+    .withFailureHandler(err => {
+      bundleDone = true;
+      console.error('[refresh] bundle failed', err);
+      renderHeaderContent(null, { error: true });
+      renderNewsList([], { patientId, error: true });
+      renderThisMonthList([], { patientId, error: true });
+      tryFinish();
+    })
+    .getPatientBundle(patientId);
+}
+function renderHeaderContent(header, options){
+  const el = q('hdr');
+  if (!el) return;
+  if (options && options.error) {
+    el.innerHTML = '<div class="muted" style="color:#b91c1c">患者情報の取得に失敗しました</div>';
+    _currentHeader = null;
+    return;
+  }
+  const normalizedHeader = header || null;
+  _currentHeader = normalizedHeader;
+  if(!normalizedHeader){
+    el.innerHTML='<div class="muted">患者が見つかりません</div>';
+    return;
+  }
+  const status = normalizedHeader.status==='active'? '🟢稼働中' : normalizedHeader.status==='suspended'? '🟡休止' : '🔴中止';
+  const estCur = normalizedHeader.monthly.current.est? '約'+normalizedHeader.monthly.current.est.toLocaleString()+'円' : '—';
+  const estPrev = normalizedHeader.monthly.previous.est? '約'+normalizedHeader.monthly.previous.est.toLocaleString()+'円' :'—';
+  const consentText = (normalizedHeader.consentContent || '').trim();
+  const consentDisplay = consentText ? escapeHtml(consentText) : '—';
+  el.innerHTML = `
+    <div class="row">
+      <div>
+        <div class="badge">患者ID ${normalizedHeader.patientId}</div>
+        <div style="margin:6px 0 2px">氏名：${normalizedHeader.name||'—'}　（${normalizedHeader.age!=null? normalizedHeader.age+'歳':''} ${normalizedHeader.ageClass||''}）</div>
+        <div>病院名：${normalizedHeader.hospital||'—'}　医師：${normalizedHeader.doctor||'—'}</div>
+        <div>同意書確認日：${normalizedHeader.consentHandoutDate||'—'}　同意日：${normalizedHeader.consentDate||'—'}　次回期限：${normalizedHeader.consentExpiry||'—'}　負担割合：${normalizedHeader.burden||'—'}</div>
+      </div>
+      <div>
+        <div>${status} ${normalizedHeader.pauseUntil? '（ミュート:'+normalizedHeader.pauseUntil+'まで）':''}</div>
+        <div class="muted">当月: ${normalizedHeader.monthly.current.count}回 / ${estCur}　｜　前月: ${normalizedHeader.monthly.previous.count}回 / ${estPrev}</div>
+        <div class="muted">最終施術: ${normalizedHeader.recent.lastTreat||'—'}　最終同意: ${normalizedHeader.recent.lastConsent||'—'}　直近担当: ${normalizedHeader.recent.lastStaff||'—'}</div>
+      </div>
+    </div>
+    <div class="consent-block">
+      <div class="consent-icon" aria-hidden="true">🩺</div>
+      <div class="consent-body">
+        <div class="consent-title">同意内容</div>
+        <div class="consent-text">${consentDisplay}</div>
+      </div>
+    </div>`;
+  setPatientIdInputDisplay(normalizedHeader.patientId, normalizedHeader.name);
 }
 function loadHeader(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
@@ -2994,49 +3059,86 @@ function loadHeader(patientId, next){
   if(!targetPid){ if (done) done(); return; }
   google.script.run
     .withSuccessHandler(h=>{
-      const normalizedHeader = h || null;
-      _currentHeader = normalizedHeader;
-      if(!normalizedHeader){
-        q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>';
-        if (done) done();
-        return;
-      }
-      const status = normalizedHeader.status==='active'? '🟢稼働中' : normalizedHeader.status==='suspended'? '🟡休止' : '🔴中止';
-      const estCur = normalizedHeader.monthly.current.est? '約'+normalizedHeader.monthly.current.est.toLocaleString()+'円' : '—';
-      const estPrev = normalizedHeader.monthly.previous.est? '約'+normalizedHeader.monthly.previous.est.toLocaleString()+'円' : '—';
-      const consentText = (normalizedHeader.consentContent || '').trim();
-      const consentDisplay = consentText ? escapeHtml(consentText) : '—';
-      q('hdr').innerHTML = `
-        <div class="row">
-          <div>
-            <div class="badge">患者ID ${normalizedHeader.patientId}</div>
-            <div style="margin:6px 0 2px">氏名：${normalizedHeader.name||'—'}　（${normalizedHeader.age!=null? normalizedHeader.age+'歳':''} ${normalizedHeader.ageClass||''}）</div>
-            <div>病院名：${normalizedHeader.hospital||'—'}　医師：${normalizedHeader.doctor||'—'}</div>
-            <div>同意書確認日：${normalizedHeader.consentHandoutDate||'—'}　同意日：${normalizedHeader.consentDate||'—'}　次回期限：${normalizedHeader.consentExpiry||'—'}　負担割合：${normalizedHeader.burden||'—'}</div>
-          </div>
-          <div>
-            <div>${status} ${normalizedHeader.pauseUntil? '（ミュート:'+normalizedHeader.pauseUntil+'まで）':''}</div>
-            <div class="muted">当月: ${normalizedHeader.monthly.current.count}回 / ${estCur}　｜　前月: ${normalizedHeader.monthly.previous.count}回 / ${estPrev}</div>
-            <div class="muted">最終施術: ${normalizedHeader.recent.lastTreat||'—'}　最終同意: ${normalizedHeader.recent.lastConsent||'—'}　直近担当: ${normalizedHeader.recent.lastStaff||'—'}</div>
-          </div>
-        </div>
-        <div class="consent-block">
-          <div class="consent-icon" aria-hidden="true">🩺</div>
-          <div class="consent-body">
-            <div class="consent-title">同意内容</div>
-            <div class="consent-text">${consentDisplay}</div>
-          </div>
-        </div>`;
-      setPatientIdInputDisplay(normalizedHeader.patientId, normalizedHeader.name);
+      renderHeaderContent(h || null);
       if (done) done();
     })
     .withFailureHandler(err=>{
       console.error('[loadHeader] failed', err);
-      _currentHeader = null;
-      q('hdr').innerHTML = '<div class="muted" style="color:#b91c1c">患者情報の取得に失敗しました</div>';
+      renderHeaderContent(null, { error: true });
       if (done) done();
     })
     .getPatientHeader(targetPid);
+}
+function buildNewsItemHtml(news, idx){
+  const messageHtml = news && news.htmlMessage
+    ? news.htmlMessage
+    : escapeHtml(news && news.message ? news.message : '').replace(/\n/g,'<br>');
+  const showConsentEdit = shouldShowConsentEditButton(news);
+  const showVisitPlanEdit = shouldShowVisitPlanEditButton(news);
+  const showConsentDismiss = shouldShowConsentDismissButton(news);
+  const showConsentHandout = shouldShowConsentHandoutButton(news);
+  const showConsentVerification = shouldShowConsentVerificationButton(news);
+  const showHandoverReminder = shouldShowHandoverReminderButton(news);
+  const showDoctorReport = shouldShowDoctorReportButton(news);
+  const actionButtons = [];
+  if (showHandoverReminder) {
+    actionButtons.push(`<button class="btn ok" onclick="handleHandoverReminder(${idx})">申し送りを入力</button>`);
+  }
+  if (showConsentHandout) {
+    actionButtons.push(`<button class="btn ok" onclick="handleConsentHandout(${idx})">受渡</button>`);
+  }
+  if (showVisitPlanEdit) {
+    actionButtons.push(`<button class="btn ghost" onclick="handleVisitPlanEdit(${idx})">🗓 通院日を編集</button>`);
+  }
+  if (showConsentVerification) {
+    actionButtons.push(`<button class="btn ok" onclick="handleConsentVerification(${idx})">再同意取得確認</button>`);
+  }
+  if (showConsentEdit) {
+    actionButtons.push('<button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button>');
+  }
+  if (showConsentDismiss) {
+    actionButtons.push(`<button class="btn ghost" onclick="handleConsentDismiss(${idx})">✔ 完了</button>`);
+  }
+  if (showDoctorReport) {
+    actionButtons.push(`<button class="btn ok" onclick="handleDoctorReportReminder(${idx})">医師向け報告書を生成</button>`);
+  }
+  const actions = actionButtons.length
+    ? `<div class="btnrow" style="margin-top:6px">${actionButtons.join('')}</div>`
+    : '';
+  const typeText = String(news && news.type || '');
+  const typeAttr = escapeHtml(typeText.trim());
+  const typeLabel = escapeHtml(typeText);
+  const status = resolveNewsStatus(news);
+  const statusAttr = status ? ` data-status="${escapeHtml(status)}"` : '';
+  return `<div class="news-item" data-type="${typeAttr}"${statusAttr}><div class="muted">${escapeHtml(news && news.when||'')} ／ ${typeLabel}</div><div>${messageHtml}</div>${actions}</div>`;
+}
+function renderNewsList(list, options){
+  const el = q('news');
+  const done = options && options.done;
+  if (!el){ if (done) done(); return; }
+  const hasGlobalFlag = options && Object.prototype.hasOwnProperty.call(options, 'isGlobalRequest');
+  const isGlobalRequest = hasGlobalFlag ? !!options.isGlobalRequest : !(options && options.patientId);
+  if (options && options.error) {
+    _latestNewsList = [];
+    window._latestNewsList = _latestNewsList;
+    el.innerHTML = '<div class="muted" style="color:#b91c1c">Newsの取得に失敗しました</div>';
+    if (done) done();
+    return;
+  }
+  const visibleList = Array.isArray(list) ? list.filter(item => !item.dismissed) : [];
+  if (!visibleList.length) {
+    _latestNewsList = [];
+    window._latestNewsList = _latestNewsList;
+    el.innerHTML = isGlobalRequest
+      ? '<div class="muted">現在表示できるお知らせはありません</div>'
+      : '<div class="muted">Newsはありません</div>';
+    if (done) done();
+    return;
+  }
+  _latestNewsList = visibleList;
+  window._latestNewsList = _latestNewsList;
+  el.innerHTML = _latestNewsList.map((n, idx) => buildNewsItemHtml(n, idx)).join('');
+  if (done) done();
 }
 function loadNews(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
@@ -3053,79 +3155,63 @@ function loadNews(patientId, next){
 
   google.script.run
     .withSuccessHandler(list => {
-      if (!Array.isArray(list) || !list.length){
-        _latestNewsList = [];
-        window._latestNewsList = _latestNewsList;
-        el.innerHTML = isGlobalRequest
-          ? '<div class="muted">現在表示できるお知らせはありません</div>'
-          : '<div class="muted">Newsはありません</div>';
-        if (done) done();
-        return;
-      }
-      const visibleList = list.filter(item => !item.dismissed);
-      if (!visibleList.length) {
-        _latestNewsList = [];
-        window._latestNewsList = _latestNewsList;
-        el.innerHTML = isGlobalRequest
-          ? '<div class="muted">現在表示できるお知らせはありません</div>'
-          : '<div class="muted">Newsはありません</div>';
-        if (done) done();
-        return;
-      }
-
-      _latestNewsList = visibleList;
-      window._latestNewsList = _latestNewsList;
-      el.innerHTML = _latestNewsList.map((n, idx) => {
-        const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
-        const showConsentEdit = shouldShowConsentEditButton(n);
-        const showVisitPlanEdit = shouldShowVisitPlanEditButton(n);
-        const showConsentDismiss = shouldShowConsentDismissButton(n);
-        const showConsentHandout = shouldShowConsentHandoutButton(n);
-        const showConsentVerification = shouldShowConsentVerificationButton(n);
-        const showHandoverReminder = shouldShowHandoverReminderButton(n);
-        const showDoctorReport = shouldShowDoctorReportButton(n);
-        const actionButtons = [];
-        if (showHandoverReminder) {
-          actionButtons.push(`<button class="btn ok" onclick="handleHandoverReminder(${idx})">申し送りを入力</button>`);
-        }
-        if (showConsentHandout) {
-          actionButtons.push(`<button class="btn ok" onclick="handleConsentHandout(${idx})">受渡</button>`);
-        }
-        if (showVisitPlanEdit) {
-          actionButtons.push(`<button class="btn ghost" onclick="handleVisitPlanEdit(${idx})">🗓 通院日を編集</button>`);
-        }
-        if (showConsentVerification) {
-          actionButtons.push(`<button class="btn ok" onclick="handleConsentVerification(${idx})">再同意取得確認</button>`);
-        }
-        if (showConsentEdit) {
-          actionButtons.push('<button class="btn ghost" onclick="openConsentEditModal()">🗓 同意日を編集</button>');
-        }
-        if (showConsentDismiss) {
-          actionButtons.push(`<button class="btn ghost" onclick="handleConsentDismiss(${idx})">✔ 完了</button>`);
-        }
-        if (showDoctorReport) {
-          actionButtons.push(`<button class="btn ok" onclick="handleDoctorReportReminder(${idx})">医師向け報告書を生成</button>`);
-        }
-        const actions = actionButtons.length
-          ? `<div class="btnrow" style="margin-top:6px">${actionButtons.join('')}</div>`
-          : '';
-        const typeText = String(n.type || '');
-        const typeAttr = escapeHtml(typeText.trim());
-        const typeLabel = escapeHtml(typeText);
-        const status = resolveNewsStatus(n);
-        const statusAttr = status ? ` data-status="${escapeHtml(status)}"` : '';
-        return `<div class="news-item" data-type="${typeAttr}"${statusAttr}><div class="muted">${escapeHtml(n.when||'')} ／ ${typeLabel}</div><div>${messageHtml}</div>${actions}</div>`;
-      }).join('');
-      if (done) done();
+      renderNewsList(list, { patientId: targetPid, isGlobalRequest, done });
     })
     .withFailureHandler(err => {
       console.error('[loadNews] failed', err);
-      _latestNewsList = [];
-      window._latestNewsList = _latestNewsList;
-      el.innerHTML = '<div class="muted" style="color:#b91c1c">Newsの取得に失敗しました</div>';
-      if (done) done();
+      renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
     })
     .getNews(targetPid);
+}
+function renderThisMonthList(rows, options){
+  const el = q('list');
+  const done = options && options.done;
+  if (!el){ if (done) done(); return; }
+  if (options && options.error) {
+    const message = options.errorMessage || '施術一覧の取得に失敗しました';
+    el.innerHTML = `<div class="muted" style="color:#b91c1c">${message}</div>`;
+    if (done) done();
+    return;
+  }
+  if(!rows || !rows.length){
+    el.innerHTML='<div class="muted">今月の記録はありません</div>';
+    if (done) done();
+    return;
+  }
+  const rowsHtml = rows.map(r => {
+    const whenText = String(r.when || '');
+    const whenHtml = escapeHtml(whenText);
+    const isoWhen = whenText.replace(' ', 'T');
+    const rawNote = String(r.note || '');
+    const hasNote = rawNote.trim().length > 0;
+    const noteHtml = hasNote ? escapeHtml(rawNote).replace(/\n/g,'<br>') : '<span class="muted">（所見なし）</span>';
+    const tagHtml = renderTreatmentCategoryTag(r);
+    const tagBlock = tagHtml ? `<div class="treatment-tag-wrap">${tagHtml}</div>` : '';
+    const emailHtml = r.email ? `<div class="treatment-meta">登録者：${escapeHtml(r.email)}</div>` : '';
+    const noteForEdit = JSON.stringify(r.note || '').replace(/"/g,'&quot;');
+    return `
+        <tr>
+          <td>${whenHtml}</td>
+          <td>
+            ${tagBlock}
+            <div class="treatment-note">${noteHtml}</div>
+            ${emailHtml}
+          </td>
+          <td class="actions">
+            <button class="btn ghost" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
+            <button class="btn ghost" onclick="editRowTime(${r.row}, '${isoWhen}')">日時</button>
+            <button class="btn warn" onclick="delRow(${r.row})">削除</button>
+
+          </td>
+        </tr>`;
+  }).join('');
+  el.innerHTML = `<table>
+    <thead><tr><th style="width:150px">日時</th><th>所見</th><th style="width:140px">操作</th></tr></thead>
+    <tbody>
+      ${rowsHtml}
+    </tbody>
+  </table>`;
+  if (done) done();
 }
 function loadThisMonth(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
@@ -3133,54 +3219,11 @@ function loadThisMonth(patientId, next){
   const done = typeof next === 'function' ? next : null;
   if(!targetPid){ if (done) done(); return; }
   google.script.run.withSuccessHandler(rows=>{
-    const el=q('list');
-      if(!rows || !rows.length){
-        el.innerHTML='<div class="muted">今月の記録はありません</div>';
-        if (done) done();
-        return;
-      }
-    const rowsHtml = rows.map(r => {
-      const whenText = String(r.when || '');
-      const whenHtml = escapeHtml(whenText);
-      const isoWhen = whenText.replace(' ', 'T');
-      const rawNote = String(r.note || '');
-      const hasNote = rawNote.trim().length > 0;
-      const noteHtml = hasNote ? escapeHtml(rawNote).replace(/\n/g,'<br>') : '<span class="muted">（所見なし）</span>';
-      const tagHtml = renderTreatmentCategoryTag(r);
-      const tagBlock = tagHtml ? `<div class="treatment-tag-wrap">${tagHtml}</div>` : '';
-      const emailHtml = r.email ? `<div class="treatment-meta">登録者：${escapeHtml(r.email)}</div>` : '';
-      const noteForEdit = JSON.stringify(r.note || '').replace(/"/g,'&quot;');
-      return `
-          <tr>
-            <td>${whenHtml}</td>
-            <td>
-              ${tagBlock}
-              <div class="treatment-note">${noteHtml}</div>
-              ${emailHtml}
-            </td>
-            <td class="actions">
-              <button class="btn ghost" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
-              <button class="btn ghost" onclick="editRowTime(${r.row}, '${isoWhen}')">日時</button>
-              <button class="btn warn" onclick="delRow(${r.row})">削除</button>
-
-            </td>
-          </tr>`;
-    }).join('');
-    el.innerHTML = `<table>
-      <thead><tr><th style="width:150px">日時</th><th>所見</th><th style="width:140px">操作</th></tr></thead>
-      <tbody>
-        ${rowsHtml}
-      </tbody>
-    </table>`;
-    if (done) done();
+    renderThisMonthList(rows, { patientId: targetPid, done });
   }).withFailureHandler(err=>{
     console.error('[loadThisMonth] failed', err);
-    const el=q('list');
-    if (el) {
-      const msg = err && err.message ? err.message : String(err || '不明なエラー');
-      el.innerHTML = `<div class="muted" style="color:#b91c1c">施術一覧の取得に失敗しました：${escapeHtml(msg)}</div>`;
-    }
-    if (done) done();
+    const msg = err && err.message ? err.message : String(err || '不明なエラー');
+    renderThisMonthList([], { patientId: targetPid, error: true, errorMessage: `施術一覧の取得に失敗しました：${escapeHtml(msg)}` , done });
   }).listTreatmentsForCurrentMonth(targetPid);
 }
 function editRow(row, note){

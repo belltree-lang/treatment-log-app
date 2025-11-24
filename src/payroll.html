@@ -183,7 +183,7 @@
           <select id="withholding"></select>
         </label>
         <label>扶養人数
-          <input id="dependentCount" type="number" min="0" max="10" step="1" value="0" />
+          <input id="dependentCount" type="number" min="0" max="7" step="1" value="0" />
           <small class="muted">0〜10の範囲で入力</small>
         </label>
         <label>源泉区分
@@ -211,16 +211,16 @@
     <div class="section-header">
       <div>
         <h2>所得税（源泉徴収）設定</h2>
-        <p class="meta-line" id="incomeTaxMeta">国税庁の税額表CSVをアップロードし、必要に応じて再解析します。</p>
+        <p class="meta-line" id="incomeTaxMeta">スプレッドシートの「所得税税額表」タブを参照して税額を決定します。</p>
       </div>
-      <div class="inline-controls">
-        <button id="incomeTaxReloadButton" type="button" class="btn">保存済み税額表を再解析</button>
-      </div>
+        <div class="inline-controls">
+          <button id="incomeTaxReloadButton" type="button" class="btn">税額表を再読み込み</button>
+        </div>
     </div>
     <div class="form-grid">
       <label>税額表（CSVアップロード）
         <input id="incomeTaxFile" type="file" accept=".csv,text/csv" />
-        <small class="muted">国税庁の源泉徴収税額表（Excel）をCSVに変換してアップロードしてください</small>
+        <small class="muted">税額表はスプレッドシート上の「所得税税額表」タブに直接貼り付けてください。CSVアップロードは無効です。</small>
       </label>
     </div>
     <div class="form-actions">
@@ -764,59 +764,27 @@ function fetchIncomeTaxSettings(){
 }
 
 function handleIncomeTaxSave(){
-  if (payrollState.incomeTax.saving) return;
-  const fileInput = document.getElementById('incomeTaxFile');
-  const file = fileInput && fileInput.files && fileInput.files[0];
-  if (!file) {
-    showToast('CSVファイルを選択してください');
-    renderIncomeTaxMeta('CSVファイルを選択してください。');
-    return;
-  }
-  setIncomeTaxFormLoading(true);
-  renderIncomeTaxMeta('CSVをアップロードしています…');
-  google.script.run
-    .withSuccessHandler(res => {
-      setIncomeTaxFormLoading(false);
-      if (!res || res.ok !== true) {
-        const message = res && res.message ? res.message : 'CSVのアップロードに失敗しました';
-        showToast(message);
-        renderIncomeTaxMeta(message);
-        return;
-      }
-      setIncomeTaxStateFromResponse(res);
-      const successMessage = res && res.message
-        ? res.message
-        : formatIncomeTaxResultMessage('税額表のCSVをアップロードしました');
-      renderIncomeTaxSettings();
-      renderIncomeTaxMeta(successMessage);
-      showToast(successMessage);
-      fetchDeductionSummary();
-    })
-    .withFailureHandler(err => {
-      setIncomeTaxFormLoading(false);
-      const message = err && err.message ? err.message : 'CSVのアップロードに失敗しました';
-      showToast(message);
-      renderIncomeTaxMeta(message);
-    })
-    .payrollUploadIncomeTaxCsv(file);
+  const message = '税額表はスプレッドシートの「所得税税額表」タブに直接入力してください。';
+  renderIncomeTaxMeta(message);
+  showToast(message);
 }
 
 function handleIncomeTaxReload(){
   if (payrollState.incomeTax.reloading) return;
   setIncomeTaxReloading(true);
-  renderIncomeTaxMeta('保存済みの税額表を再解析しています…');
+  renderIncomeTaxMeta('税額表を再読み込みしています…');
   google.script.run
     .withSuccessHandler(res => {
       setIncomeTaxReloading(false);
       if (!res || res.ok !== true) {
-        renderIncomeTaxMeta(res && res.message ? res.message : '税額表の再解析に失敗しました');
-        showToast(res && res.message ? res.message : '税額表の再解析に失敗しました');
+        renderIncomeTaxMeta(res && res.message ? res.message : '税額表の再読み込みに失敗しました');
+        showToast(res && res.message ? res.message : '税額表の再読み込みに失敗しました');
         return;
       }
       setIncomeTaxStateFromResponse(res);
       const successMessage = res && res.message
         ? res.message
-        : formatIncomeTaxResultMessage('保存済みの税額表を再解析しました');
+        : formatIncomeTaxResultMessage('税額表を再読み込みしました');
       renderIncomeTaxSettings();
       renderIncomeTaxMeta(successMessage);
       showToast(successMessage);
@@ -824,8 +792,8 @@ function handleIncomeTaxReload(){
     })
     .withFailureHandler(err => {
       setIncomeTaxReloading(false);
-      renderIncomeTaxMeta(err && err.message ? err.message : '税額表の再解析に失敗しました');
-      showToast(err && err.message ? err.message : '税額表の再解析に失敗しました');
+      renderIncomeTaxMeta(err && err.message ? err.message : '税額表の再読み込みに失敗しました');
+      showToast(err && err.message ? err.message : '税額表の再読み込みに失敗しました');
     })
     .payrollReloadIncomeTaxTables();
 }

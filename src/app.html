@@ -3363,13 +3363,7 @@ function shouldShowConsentDismissButton(news){
 }
 
 function shouldShowConsentEditButton(news){
-  if(!news) return false;
-  const type = String(news.type || '').trim();
-  if(type !== '同意') return false;
-  const message = String(news.message || '');
-  if (message.indexOf('通院日未定') >= 0) return false;
-  if (message.indexOf('未定') >= 0 || message.indexOf('確認') >= 0) return true;
-  return message.indexOf('同意書受渡。') >= 0;
+  return false;
 }
 
 function shouldShowVisitPlanEditButton(news){

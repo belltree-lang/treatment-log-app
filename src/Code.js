@@ -71,6 +71,7 @@ const SystemPrompt_DoctorReport_JP = [
 const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー','本文','status','special','期間（月）','参照元レポートID','生成方式'];
 
 const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202503';
+const CONSENT_NEWS_META_STANDARDIZED_KEY = 'CONSENT_NEWS_META_STANDARDIZED_V1';
 const PATIENT_CACHE_TTL_SECONDS = 90;
 const PATIENT_CACHE_KEYS = {
   header: pid => 'patient:header:' + normId_(pid),
@@ -708,6 +709,7 @@ function ensureAuxSheets_(options) {
     ]);
 
     ensurePatientNewsConsentDismissedColumn_();
+    standardizeConsentNewsMeta_();
 
     props.setProperty(AUX_SHEETS_INIT_KEY, '1');
   } finally {
@@ -727,6 +729,60 @@ function ensurePatientNewsConsentDismissedColumn_(){
   sheet.insertColumnsAfter(lastCol, 1);
   sheet.getRange(1, newCol).setValue('NewsConsentDismissed');
   return newCol;
+}
+
+function standardizeConsentNewsMeta_(){
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty(CONSENT_NEWS_META_STANDARDIZED_KEY) === '1') {
+    return;
+  }
+
+  let sheet;
+  try {
+    sheet = sh('News');
+  } catch (err) {
+    Logger.log('[standardizeConsentNewsMeta_] Failed to open News sheet: ' + (err && err.message ? err.message : err));
+    return;
+  }
+
+  const lastRow = sheet.getLastRow();
+  const width = Math.min(6, sheet.getMaxColumns());
+  if (lastRow < 2 || width < 6) {
+    props.setProperty(CONSENT_NEWS_META_STANDARDIZED_KEY, '1');
+    return;
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const updates = [];
+
+  values.forEach((row, idx) => {
+    const type = String(row[2] || '').trim();
+    if (type !== '同意') return;
+    const message = String(row[3] || '');
+    const metaRaw = row[5];
+    const parsedMeta = parseNewsMetaValue_(metaRaw);
+    const normalized = normalizeConsentNewsMeta_(parsedMeta, message);
+    if (!normalized.changed) return;
+    let cellValue = '';
+    if (normalized.meta != null) {
+      try {
+        cellValue = typeof normalized.meta === 'string' ? normalized.meta : JSON.stringify(normalized.meta);
+      } catch (err) {
+        cellValue = String(normalized.meta);
+      }
+    }
+    updates.push({ row: 2 + idx, value: cellValue });
+  });
+
+  updates.forEach(update => {
+    sheet.getRange(update.row, 6).setValue(update.value);
+  });
+
+  props.setProperty(CONSENT_NEWS_META_STANDARDIZED_KEY, '1');
+
+  if (updates.length) {
+    invalidateGlobalNewsCache_();
+  }
 }
 
 function ensureAiReportSheet_(){
@@ -5253,12 +5309,48 @@ function normalizeNewsMetaType_(metaType){
   if (!raw) return '';
   switch (raw) {
     case 'consent_handout_followup':
+    case 'consent_handout_follow-up':
+    case 'consent_handout_followup_required':
+    case 'consent_handout_pending':
       return 'consent_reminder';
     case 'consent_doctor_report':
+    case 'consent_verification':
+    case 'consent_verification_required':
       return 'consent_verification';
     default:
       return raw;
   }
+}
+
+function normalizeConsentNewsMeta_(meta, message){
+  const resolved = resolveNewsMetaType_(meta);
+  let normalizedType = normalizeNewsMetaType_(resolved);
+  if (!normalizedType) {
+    const msg = String(message || '');
+    if (msg.indexOf('同意書受渡が必要です') >= 0) {
+      normalizedType = 'consent_reminder';
+    } else if (msg.indexOf('同意期限50日前') >= 0) {
+      normalizedType = 'consent_verification';
+    }
+  }
+
+  if (!normalizedType) {
+    return { meta, metaType: '', changed: false };
+  }
+
+  let nextMeta = meta;
+  let changed = false;
+  if (!meta || typeof meta !== 'object') {
+    nextMeta = { type: normalizedType };
+    changed = true;
+  } else if (meta.type !== normalizedType) {
+    nextMeta = Object.assign({}, meta, { type: normalizedType });
+    changed = true;
+  } else if (normalizedType !== resolved) {
+    changed = true;
+  }
+
+  return { meta: nextMeta, metaType: normalizedType, changed };
 }
 
 function isConsentReminderNews_(news){
@@ -5270,6 +5362,14 @@ function isConsentReminderNews_(news){
   if (metaType === 'consent_verification') return false;
   const message = String(news.message || '');
   return message.indexOf('同意書受渡が必要です') >= 0;
+}
+
+function shouldHideConsentNews_(news, options){
+  if (!isConsentReminderNews_(news)) return false;
+  const hasConsentDate = options && options.hasConsentDate;
+  const consentNewsDismissed = options && options.consentNewsDismissed;
+  if (consentNewsDismissed) return true;
+  return !!hasConsentDate;
 }
 
 function readNewsRows_(){
@@ -5302,7 +5402,11 @@ function readNewsRows_(){
     const typeText = String(disp[2] != null ? disp[2] : raw[2] || '');
     const messageText = String(disp[3] != null ? disp[3] : raw[3] || '');
     const metaRaw = width >= 6 ? raw[5] : '';
-    const meta = parseNewsMetaValue_(metaRaw);
+    let meta = parseNewsMetaValue_(metaRaw);
+    if (typeText === '同意') {
+      const normalizedMeta = normalizeConsentNewsMeta_(meta, messageText);
+      meta = normalizedMeta.meta;
+    }
     const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
     rows.push({
       ts,
@@ -5403,6 +5507,7 @@ function appendRowsToSheet_(sheetName, rows){
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, width).setValues(rows);
 }
 function getNews(pid){
+  standardizeConsentNewsMeta_();
   const normalized = normId_(pid);
   const globalNews = cacheFetch_(GLOBAL_NEWS_CACHE_KEY, fetchGlobalNewsRows_, PATIENT_CACHE_TTL_SECONDS) || [];
   if (!normalized) {
@@ -5413,12 +5518,9 @@ function getNews(pid){
   const header = getPatientHeader(normalized);
   const hasConsentDate = header ? String(header.consentDate || '').trim().length > 0 : false;
   const consentNewsDismissed = header ? !!header.consentNewsDismissed : false;
-  const filteredGlobalNews = globalNews.filter(row => !isConsentReminderNews_(row));
-  const filteredPatientNews = patientNews.filter(row => {
-    if (!isConsentReminderNews_(row)) return true;
-    if (consentNewsDismissed) return false;
-    return !hasConsentDate;
-  });
+  const consentFilterOptions = { hasConsentDate, consentNewsDismissed };
+  const filteredGlobalNews = globalNews.filter(row => !shouldHideConsentNews_(row, consentFilterOptions));
+  const filteredPatientNews = patientNews.filter(row => !shouldHideConsentNews_(row, consentFilterOptions));
   return formatNewsOutput_(filteredGlobalNews.concat(filteredPatientNews));
 }
 function clearConsentRelatedNews_(pid){

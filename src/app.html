@@ -2994,29 +2994,32 @@ function loadHeader(patientId, next){
   if(!targetPid){ if (done) done(); return; }
   google.script.run
     .withSuccessHandler(h=>{
-      _currentHeader = h || null;
-      if(!h){
+      const normalizedHeader = h
+        ? { ...h, consentNewsDismissed: !!h.consentNewsDismissed }
+        : null;
+      _currentHeader = normalizedHeader;
+      if(!normalizedHeader){
         q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>';
         if (done) done();
         return;
       }
-      const status = h.status==='active'? '🟢稼働中' : h.status==='suspended'? '🟡休止' : '🔴中止';
-      const estCur = h.monthly.current.est? '約'+h.monthly.current.est.toLocaleString()+'円' : '—';
-      const estPrev = h.monthly.previous.est? '約'+h.monthly.previous.est.toLocaleString()+'円' : '—';
-      const consentText = (h.consentContent || '').trim();
+      const status = normalizedHeader.status==='active'? '🟢稼働中' : normalizedHeader.status==='suspended'? '🟡休止' : '🔴中止';
+      const estCur = normalizedHeader.monthly.current.est? '約'+normalizedHeader.monthly.current.est.toLocaleString()+'円' : '—';
+      const estPrev = normalizedHeader.monthly.previous.est? '約'+normalizedHeader.monthly.previous.est.toLocaleString()+'円' : '—';
+      const consentText = (normalizedHeader.consentContent || '').trim();
       const consentDisplay = consentText ? escapeHtml(consentText) : '—';
       q('hdr').innerHTML = `
         <div class="row">
           <div>
-            <div class="badge">患者ID ${h.patientId}</div>
-            <div style="margin:6px 0 2px">氏名：${h.name||'—'}　（${h.age!=null? h.age+'歳':''} ${h.ageClass||''}）</div>
-            <div>病院名：${h.hospital||'—'}　医師：${h.doctor||'—'}</div>
-            <div>同意書確認日：${h.consentHandoutDate||'—'}　同意日：${h.consentDate||'—'}　次回期限：${h.consentExpiry||'—'}　負担割合：${h.burden||'—'}</div>
+            <div class="badge">患者ID ${normalizedHeader.patientId}</div>
+            <div style="margin:6px 0 2px">氏名：${normalizedHeader.name||'—'}　（${normalizedHeader.age!=null? normalizedHeader.age+'歳':''} ${normalizedHeader.ageClass||''}）</div>
+            <div>病院名：${normalizedHeader.hospital||'—'}　医師：${normalizedHeader.doctor||'—'}</div>
+            <div>同意書確認日：${normalizedHeader.consentHandoutDate||'—'}　同意日：${normalizedHeader.consentDate||'—'}　次回期限：${normalizedHeader.consentExpiry||'—'}　負担割合：${normalizedHeader.burden||'—'}</div>
           </div>
           <div>
-            <div>${status} ${h.pauseUntil? '（ミュート:'+h.pauseUntil+'まで）':''}</div>
-            <div class="muted">当月: ${h.monthly.current.count}回 / ${estCur}　｜　前月: ${h.monthly.previous.count}回 / ${estPrev}</div>
-            <div class="muted">最終施術: ${h.recent.lastTreat||'—'}　最終同意: ${h.recent.lastConsent||'—'}　直近担当: ${h.recent.lastStaff||'—'}</div>
+            <div>${status} ${normalizedHeader.pauseUntil? '（ミュート:'+normalizedHeader.pauseUntil+'まで）':''}</div>
+            <div class="muted">当月: ${normalizedHeader.monthly.current.count}回 / ${estCur}　｜　前月: ${normalizedHeader.monthly.previous.count}回 / ${estPrev}</div>
+            <div class="muted">最終施術: ${normalizedHeader.recent.lastTreat||'—'}　最終同意: ${normalizedHeader.recent.lastConsent||'—'}　直近担当: ${normalizedHeader.recent.lastStaff||'—'}</div>
           </div>
         </div>
         <div class="consent-block">
@@ -3026,7 +3029,7 @@ function loadHeader(patientId, next){
             <div class="consent-text">${consentDisplay}</div>
           </div>
         </div>`;
-      setPatientIdInputDisplay(h.patientId, h.name);
+      setPatientIdInputDisplay(normalizedHeader.patientId, normalizedHeader.name);
       if (done) done();
     })
     .withFailureHandler(err=>{
@@ -3061,7 +3064,21 @@ function loadNews(patientId, next){
         if (done) done();
         return;
       }
-      _latestNewsList = list.slice();
+      const shouldHideConsentNews = !!(_currentHeader && _currentHeader.consentNewsDismissed);
+      const visibleList = shouldHideConsentNews
+        ? list.filter(item => !isConsentReminderNews(item))
+        : list.slice();
+      if (!visibleList.length) {
+        _latestNewsList = [];
+        window._latestNewsList = _latestNewsList;
+        el.innerHTML = isGlobalRequest
+          ? '<div class="muted">現在表示できるお知らせはありません</div>'
+          : '<div class="muted">Newsはありません</div>';
+        if (done) done();
+        return;
+      }
+
+      _latestNewsList = visibleList;
       window._latestNewsList = _latestNewsList;
       el.innerHTML = _latestNewsList.map((n, idx) => {
         const messageHtml = escapeHtml(n.message || '').replace(/\n/g,'<br>');
@@ -3422,8 +3439,9 @@ function handleConsentDismiss(index){
       _consentDismissInFlight = false;
       hideGlobalLoading();
       toast('同意書未取得のお知らせを非表示にしました');
-      loadNews(patientId);
-      loadHeader(patientId);
+      loadHeader(patientId, () => {
+        loadNews(patientId);
+      });
     })
     .withFailureHandler(err => {
       _consentDismissInFlight = false;

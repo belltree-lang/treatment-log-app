@@ -5358,6 +5358,16 @@ function normalizeConsentNewsMeta_(meta, message){
   return { meta: nextMeta, metaType: normalizedType, changed };
 }
 
+function isConsentReminderMessage_(message){
+  if (!message) return false;
+  const text = String(message);
+  return (
+    text.indexOf('同意書受渡が必要です') >= 0
+      || text.indexOf('同意書の取得') >= 0
+      || text.indexOf('同意書取得') >= 0
+  );
+}
+
 function isConsentReminderNews_(news){
   if (!news) return false;
   const type = String(news.type || '').trim();
@@ -5365,8 +5375,7 @@ function isConsentReminderNews_(news){
   const metaType = normalizeNewsMetaType_(resolveNewsMetaType_(news.meta));
   if (metaType === 'consent_reminder') return true;
   if (metaType === 'consent_verification') return false;
-  const message = String(news.message || '');
-  return message.indexOf('同意書受渡が必要です') >= 0;
+  return isConsentReminderMessage_(news.message);
 }
 
 function shouldHideConsentNews_(news, options){

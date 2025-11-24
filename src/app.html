@@ -3284,7 +3284,12 @@ function shouldShowConsentVerificationButton(news){
 }
 
 function shouldShowConsentDismissButton(news){
-  return isConsentReminderNews(news);
+  if (!isConsentReminderNews(news)) return false;
+  const header = _currentHeader;
+  if (!header) return true;
+  const dismissed = !!(header.consentNewsDismissed);
+  const hasConsentDate = !!(header.consentDate && String(header.consentDate).trim());
+  return !(dismissed || hasConsentDate);
 }
 
 function shouldShowConsentEditButton(news){

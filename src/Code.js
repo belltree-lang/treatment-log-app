@@ -7002,6 +7002,42 @@ function dismissConsentReminder(payload){
   invalidateGlobalNewsCache_();
   return { ok: true, rowNumber: targetRow };
 }
+
+function dismissHandoverReminder(payload){
+  const pidRaw = payload && payload.patientId ? payload.patientId : payload;
+  const pid = normId_(pidRaw);
+  if (!pid) throw new Error('患者IDが指定されていません');
+  const newsRow = payload && typeof payload.newsRow === 'number' ? Number(payload.newsRow) : null;
+  const newsType = String(payload && payload.newsType || '').trim();
+  const newsMessage = String(payload && payload.newsMessage || '');
+  const newsMetaType = payload && payload.newsMetaType ? normalizeNewsMetaType_(payload.newsMetaType) : '';
+
+  const dismissedCol = getNewsDismissedColumn_();
+  const sheet = sh('News');
+  const targetRow = (() => {
+    if (newsRow && newsRow >= 2) return newsRow;
+    const rows = readNewsRows_();
+    const match = rows.find(row => {
+      if (row.pid !== pid) return false;
+      if (row.cleared || row.dismissed) return false;
+      if (newsType && String(row.type || '').trim() !== newsType) return false;
+      const rowMetaType = normalizeNewsMetaType_(row.meta);
+      if (newsMetaType && rowMetaType && rowMetaType !== newsMetaType) return false;
+      if (newsMessage && String(row.message || '').indexOf(newsMessage) < 0) return false;
+      return true;
+    });
+    return match ? match.rowNumber : null;
+  })();
+
+  if (!targetRow) {
+    throw new Error('対象のお知らせが見つかりません');
+  }
+
+  sheet.getRange(targetRow, dismissedCol).setValue(true);
+  invalidatePatientCaches_(pid, { news: true });
+  invalidateGlobalNewsCache_();
+  return { ok: true, rowNumber: targetRow };
+}
 function updateBurdenShare(pid, shareText, options){
   const hit = findPatientRow_(pid);
   if (!hit) throw new Error('患者が見つかりません');
@@ -10253,11 +10289,19 @@ function completeConsentHandoutFromNews(payload) {
     metaType: metaType,
     rowNumber
   });
+  const dismissed = dismissHandoverReminder({
+    patientId: pid,
+    newsType,
+    newsMessage,
+    newsMetaType: metaType,
+    newsRow: rowNumber
+  });
 
   return {
     ok: true,
     result,
     cleared,
+    dismissed,
     note,
     actions
   };

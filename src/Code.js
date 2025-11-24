@@ -4433,7 +4433,8 @@ function payrollReloadIncomeTaxTables(payload){
         ok: true,
         fetchedAt: saved && saved.fetchedAt ? saved.fetchedAt : null,
         stats: saved && saved.stats ? saved.stats : null,
-        fileName: saved && saved.fileName ? saved.fileName : ''
+        fileName: saved && saved.fileName ? saved.fileName : '',
+        message: '保存済みの税額表を再解析しました（甲欄 ' + (saved && saved.stats ? saved.stats.koDependents : 0) + '件 / 乙欄 ' + (saved && saved.stats ? saved.stats.otsuRows : 0) + '行）'
       };
     } catch (err) {
       return { ok: false, reason: 'parse_failed', message: '保存済みの税額表を再解析できませんでした: ' + (err && err.message ? err.message : err) };
@@ -4482,7 +4483,9 @@ function payrollUploadIncomeTaxCsv(file){
       ok: true,
       fetchedAt: saved && saved.fetchedAt ? saved.fetchedAt : null,
       stats: saved && saved.stats ? saved.stats : { koDependents: koCount, otsuRows: otsuCount },
-      fileName: saved && saved.fileName ? saved.fileName : ''
+      fileName: saved && saved.fileName ? saved.fileName : '',
+      message: '税額表のCSVをアップロードしました（甲欄 ' + (saved && saved.stats ? saved.stats.koDependents : koCount) +
+        '件 / 乙欄 ' + (saved && saved.stats ? saved.stats.otsuRows : otsuCount) + '行）'
     };
   });
 }

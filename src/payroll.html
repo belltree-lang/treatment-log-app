@@ -784,7 +784,9 @@ function handleIncomeTaxSave(){
         return;
       }
       setIncomeTaxStateFromResponse(res);
-      const successMessage = formatIncomeTaxResultMessage('税額表のCSVをアップロードしました');
+      const successMessage = res && res.message
+        ? res.message
+        : formatIncomeTaxResultMessage('税額表のCSVをアップロードしました');
       renderIncomeTaxSettings();
       renderIncomeTaxMeta(successMessage);
       showToast(successMessage);
@@ -812,7 +814,9 @@ function handleIncomeTaxReload(){
         return;
       }
       setIncomeTaxStateFromResponse(res);
-      const successMessage = formatIncomeTaxResultMessage('保存済みの税額表を再解析しました');
+      const successMessage = res && res.message
+        ? res.message
+        : formatIncomeTaxResultMessage('保存済みの税額表を再解析しました');
       renderIncomeTaxSettings();
       renderIncomeTaxMeta(successMessage);
       showToast(successMessage);

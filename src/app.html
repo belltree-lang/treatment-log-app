@@ -3205,17 +3205,45 @@ function renderTreatmentCategoryTag(row){
   return `<span class="${classes.join(' ')}"${titleAttr}>${escapeHtml(text)}</span>`;
 }
 
+function normalizeNewsMetaType(metaType){
+  const raw = String(metaType || '').trim();
+  if (!raw) return '';
+  switch(raw){
+    case 'consent_handout_followup':
+    case 'consent_handout_follow-up':
+    case 'consent_handout_followup_required':
+    case 'consent_handout_pending':
+      return 'consent_reminder';
+    case 'consent_doctor_report':
+    case 'consent_verification':
+    case 'consent_verification_required':
+      return 'consent_verification';
+    default:
+      return raw;
+  }
+}
+
 function getNewsMetaType(news){
   if(!news || typeof news !== 'object') return '';
   const meta = news.meta;
   if (!meta) return '';
   if (typeof meta === 'object' && meta && meta.type != null) {
-    return String(meta.type);
+    return normalizeNewsMetaType(meta.type);
   }
   if (typeof meta === 'string') {
-    return String(meta);
+    return normalizeNewsMetaType(meta);
   }
   return '';
+}
+
+function isConsentReminderNews(news){
+  if(!news) return false;
+  if (String(news.type || '').trim() !== '同意') return false;
+  const metaType = getNewsMetaType(news);
+  if (metaType === 'consent_verification') return false;
+  if (metaType === 'consent_reminder') return true;
+  const message = String(news.message || '');
+  return message.indexOf('同意書受渡が必要です') >= 0;
 }
 
 function resolveNewsStatus(news){
@@ -3229,8 +3257,7 @@ function resolveNewsStatus(news){
     return '';
   }
   if (type !== '同意') return '';
-  if (metaType === 'consent_doctor_report') return 'consent-doctor-report';
-  if (metaType === 'consent_handout_followup') return 'consent-handout-followup';
+  if (metaType === 'consent_verification') return 'consent-doctor-report';
   if (metaType === 'consent_reminder') return 'consent-reminder';
   const message = String(news.message || '');
   if (message.indexOf('同意書受渡が必要です') >= 0) return 'consent-reminder';
@@ -3253,12 +3280,11 @@ function shouldShowConsentVerificationButton(news){
   const type = String(news.type || '').trim();
   if (type !== '同意') return false;
   const metaType = getNewsMetaType(news);
-  if (metaType === 'consent_handout_followup') return false;
   return metaType === 'consent_verification';
 }
 
 function shouldShowConsentDismissButton(news){
-  return resolveNewsStatus(news) === 'consent-reminder';
+  return isConsentReminderNews(news);
 }
 
 function shouldShowConsentEditButton(news){
@@ -3295,7 +3321,7 @@ function shouldShowDoctorReportButton(news){
   if (type !== '同意') return false;
   const metaType = getNewsMetaType(news);
   if (metaType === 'missing_moushiokuri') return false;
-  if (metaType === 'consent_doctor_report') return true;
+  if (metaType === 'consent_verification') return true;
   const message = String(news.message || '');
   return message.indexOf('同意期限50日前') >= 0;
 }

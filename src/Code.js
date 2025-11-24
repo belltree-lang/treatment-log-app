@@ -3779,6 +3779,9 @@ function splitPayrollIncomeTaxRows_(rows){
   const otsuRows = normalized
     .slice(endIndex || normalized.length)
     .filter(row => row.some(cell => String(cell || '').trim() !== ''));
+  if (!koRows.length && !otsuRows.length && normalized.length) {
+    return { koRows: normalized, otsuRows: [] };
+  }
   return { koRows, otsuRows };
 }
 
@@ -3918,6 +3921,21 @@ function buildPayrollIncomeTaxTablesFromCsv_(rawRows){
     .filter(entry => Number.isFinite(entry.min) && Number.isFinite(entry.max) && Number.isFinite(entry.tax))
     .sort((a, b) => a.min - b.min);
   return { ko: mergedKo, otsu: normalizedOtsu };
+}
+
+function persistPayrollIncomeTaxRawSections_(sections, metadata){
+  const koRows = sections && Array.isArray(sections.koRows) ? sections.koRows : [];
+  const otsuRows = sections && Array.isArray(sections.otsuRows) ? sections.otsuRows : [];
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(WITHHOLDING_TAX_TABLE_KO_PROPERTY_KEY, JSON.stringify(koRows));
+  props.setProperty(WITHHOLDING_TAX_TABLE_OTSU_PROPERTY_KEY, JSON.stringify(otsuRows));
+  props.setProperty(WITHHOLDING_TAX_TABLE_META_PROPERTY_KEY, JSON.stringify({
+    fetchedAt: (metadata && metadata.fetchedAt) || new Date().toISOString(),
+    fileName: metadata && metadata.fileName ? metadata.fileName : '',
+    koDependents: koRows.length,
+    otsuRows: otsuRows.length
+  }));
+  return { koRows, otsuRows };
 }
 
 function getPayrollIncomeTaxTables_(){
@@ -4446,15 +4464,19 @@ function payrollUploadIncomeTaxCsv(file){
     } catch (err) {
       return { ok: false, reason: 'parse_failed', message: 'CSVの解析に失敗しました: ' + (err && err.message ? err.message : err) };
     }
-    const sections = splitPayrollIncomeTaxRows_(rows);
-    const tables = buildPayrollIncomeTaxTablesFromCsv_(combinePayrollIncomeTaxRows_(sections.koRows, sections.otsuRows));
+    const metadata = { fetchedAt: new Date().toISOString(), fileName: file && typeof file.getName === 'function' ? file.getName() : '' };
+    const splitted = splitPayrollIncomeTaxRows_(rows);
+    const sections = (splitted && (splitted.koRows.length || splitted.otsuRows.length)) ? splitted : { koRows: rows, otsuRows: [] };
+    const persistedSections = persistPayrollIncomeTaxRawSections_(sections, metadata);
+    const tables = buildPayrollIncomeTaxTablesFromCsv_(combinePayrollIncomeTaxRows_(persistedSections.koRows, persistedSections.otsuRows));
     const koCount = tables && tables.ko ? Object.keys(tables.ko).length : 0;
     const otsuCount = Array.isArray(tables && tables.otsu) ? tables.otsu.length : 0;
     if (!koCount && !otsuCount) {
-      return { ok: false, reason: 'parse_failed', message: '税額表の行を解釈できませんでした。CSVの形式を確認してください。' };
+      const preview = rows.slice(0, 3).map((row, idx) => '行' + (idx + 1) + ': ' + (row && row.length ? row.join(' / ') : '(空行)')).join(' | ');
+      return { ok: false, reason: 'parse_failed', message: '税額表の行を解釈できませんでした。CSVの形式を確認してください。先頭行の例: ' + preview };
     }
     Logger.log('[payrollUploadIncomeTaxCsv] parsed rows=' + rows.length + ', koRows=' + sections.koRows.length + ', otsuRows=' + sections.otsuRows.length);
-    const saved = savePayrollIncomeTaxTables_(tables, { fetchedAt: new Date().toISOString(), fileName: file && typeof file.getName === 'function' ? file.getName() : '' }, sections);
+    const saved = savePayrollIncomeTaxTables_(tables, metadata, persistedSections);
     Logger.log('[payrollUploadIncomeTaxCsv] saved fetchedAt=' + saved.fetchedAt + ', fileName=' + saved.fileName + ', koDependents=' + saved.stats.koDependents + ', otsuRows=' + saved.stats.otsuRows);
     return {
       ok: true,

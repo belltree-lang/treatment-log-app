@@ -191,7 +191,7 @@
           <small class="muted">甲欄/乙欄を選択</small>
         </label>
         <label>雇用期間区分（乙欄）
-          <select id="withholdingPeriodType"></select>
+          <select id="employmentPeriodType"></select>
           <small class="muted">乙欄の場合の日額扱い判定</small>
         </label>
       </div>
@@ -1389,6 +1389,8 @@ function resetForm(){
   document.getElementById('formMeta').textContent = '';
   document.getElementById('deleteButton').hidden = true;
   document.getElementById('employeeBase').value = '';
+  document.getElementById('withholdingCategory').value = 'ko';
+  document.getElementById('employmentPeriodType').value = 'monthly';
   updateTransportationAmountState();
   updateGradeHint();
 }
@@ -1429,7 +1431,7 @@ function populateForm(employee){
   document.getElementById('commissionLogic').value = employee.commissionLogic || 'legacy';
   document.getElementById('withholding').value = employee.withholding || 'none';
   document.getElementById('withholdingCategory').value = employee.withholdingCategory || 'ko';
-  document.getElementById('withholdingPeriodType').value = employee.withholdingPeriodType || 'monthly';
+  document.getElementById('employmentPeriodType').value = employee.employmentPeriodType || employee.withholdingPeriodType || 'monthly';
   document.getElementById('dependentCount').value = employee.dependentCount != null ? employee.dependentCount : 0;
   document.getElementById('employeeNote').value = employee.note || '';
   updateTransportationAmountState();
@@ -1461,7 +1463,7 @@ function gatherFormData(){
     commissionLogic: document.getElementById('commissionLogic').value,
     withholding: document.getElementById('withholding').value,
     withholdingCategory: document.getElementById('withholdingCategory').value,
-    withholdingPeriodType: document.getElementById('withholdingPeriodType').value,
+    employmentPeriodType: document.getElementById('employmentPeriodType').value,
     dependentCount: document.getElementById('dependentCount').value,
     note: document.getElementById('employeeNote').value
   };
@@ -1833,7 +1835,7 @@ function init(){
   renderOptions(document.getElementById('commissionLogic'), COMMISSION_OPTIONS);
   renderOptions(document.getElementById('withholding'), WITHHOLDING_OPTIONS);
   renderOptions(document.getElementById('withholdingCategory'), WITHHOLDING_CATEGORY_OPTIONS);
-  renderOptions(document.getElementById('withholdingPeriodType'), WITHHOLDING_PERIOD_OPTIONS);
+  renderOptions(document.getElementById('employmentPeriodType'), WITHHOLDING_PERIOD_OPTIONS);
   const bulkMonthInput = document.getElementById('bulkPayslipMonth');
   if (bulkMonthInput) {
     bulkMonthInput.value = payrollState.bulk.month;

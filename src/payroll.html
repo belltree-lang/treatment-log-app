@@ -680,6 +680,39 @@ function setIncomeTaxReloading(isLoading){
   if (fileInput) fileInput.disabled = isLoading || payrollState.incomeTax.saving;
 }
 
+function getIncomeTaxStatsSummary(stats){
+  const ko = stats && Number.isFinite(stats.koDependents) ? stats.koDependents : 0;
+  const otsu = stats && Number.isFinite(stats.otsuRows) ? stats.otsuRows : 0;
+  return `甲欄 ${ko}件 / 乙欄 ${otsu}行`;
+}
+
+function setIncomeTaxStateFromResponse(res){
+  const stats = res && res.stats ? res.stats : {};
+  payrollState.incomeTax.fetchedAt = res && res.fetchedAt ? res.fetchedAt : null;
+  payrollState.incomeTax.stats = {
+    koDependents: Number.isFinite(stats.koDependents) ? stats.koDependents : 0,
+    otsuRows: Number.isFinite(stats.otsuRows) ? stats.otsuRows : 0
+  };
+  payrollState.incomeTax.fileName = res && res.fileName ? res.fileName : '';
+}
+
+function formatIncomeTaxMetaSummary(){
+  const fetchedAt = payrollState.incomeTax.fetchedAt
+    ? new Date(payrollState.incomeTax.fetchedAt).toLocaleString('ja-JP')
+    : '未取得';
+  const summary = getIncomeTaxStatsSummary(payrollState.incomeTax.stats);
+  const fileLabel = payrollState.incomeTax.fileName ? ` / ファイル: ${payrollState.incomeTax.fileName}` : '';
+  return `最終取得: ${fetchedAt} / ${summary}${fileLabel}`;
+}
+
+function formatIncomeTaxResultMessage(action){
+  const fetchedAt = payrollState.incomeTax.fetchedAt
+    ? new Date(payrollState.incomeTax.fetchedAt).toLocaleString('ja-JP')
+    : '取得日時不明';
+  const fileLabel = payrollState.incomeTax.fileName || 'ファイル名不明';
+  return `${action}（${getIncomeTaxStatsSummary(payrollState.incomeTax.stats)} / ファイル: ${fileLabel} / 取得日時: ${fetchedAt}）`;
+}
+
 function renderIncomeTaxMeta(message){
   const meta = document.getElementById('incomeTaxMeta');
   if (!meta) return;
@@ -687,15 +720,7 @@ function renderIncomeTaxMeta(message){
     meta.textContent = message;
     return;
   }
-  const fetchedAt = payrollState.incomeTax.fetchedAt
-    ? new Date(payrollState.incomeTax.fetchedAt).toLocaleString('ja-JP')
-    : '未取得';
-  const stats = payrollState.incomeTax.stats;
-  const summary = stats
-    ? `甲欄 ${stats.koDependents || 0}件 / 乙欄 ${stats.otsuRows || 0}行`
-    : '未読み込み';
-  const fileLabel = payrollState.incomeTax.fileName ? ` / ファイル: ${payrollState.incomeTax.fileName}` : '';
-  meta.textContent = `最終取得: ${fetchedAt} / ${summary}${fileLabel}`;
+  meta.textContent = formatIncomeTaxMetaSummary();
 }
 
 function renderIncomeTaxSettings(){
@@ -724,9 +749,11 @@ function fetchIncomeTaxSettings(){
         return;
       }
       const settings = res.settings || {};
-      payrollState.incomeTax.fetchedAt = settings.fetchedAt || null;
-      payrollState.incomeTax.stats = { koDependents: settings.koDependents || 0, otsuRows: settings.otsuRows || 0 };
-      payrollState.incomeTax.fileName = settings.fileName || '';
+      setIncomeTaxStateFromResponse({
+        fetchedAt: settings.fetchedAt || null,
+        stats: { koDependents: settings.koDependents || 0, otsuRows: settings.otsuRows || 0 },
+        fileName: settings.fileName || ''
+      });
       renderIncomeTaxSettings();
     })
     .withFailureHandler(err => {
@@ -742,26 +769,32 @@ function handleIncomeTaxSave(){
   const file = fileInput && fileInput.files && fileInput.files[0];
   if (!file) {
     showToast('CSVファイルを選択してください');
+    renderIncomeTaxMeta('CSVファイルを選択してください。');
     return;
   }
   setIncomeTaxFormLoading(true);
+  renderIncomeTaxMeta('CSVをアップロードしています…');
   google.script.run
     .withSuccessHandler(res => {
       setIncomeTaxFormLoading(false);
       if (!res || res.ok !== true) {
-        showToast(res && res.message ? res.message : 'CSVのアップロードに失敗しました');
+        const message = res && res.message ? res.message : 'CSVのアップロードに失敗しました';
+        showToast(message);
+        renderIncomeTaxMeta(message);
         return;
       }
-      payrollState.incomeTax.fetchedAt = res.fetchedAt || null;
-      payrollState.incomeTax.stats = res.stats || null;
-      payrollState.incomeTax.fileName = res.fileName || '';
-      showToast('税額表を保存しました');
+      setIncomeTaxStateFromResponse(res);
+      const successMessage = formatIncomeTaxResultMessage('税額表のCSVをアップロードしました');
       renderIncomeTaxSettings();
+      renderIncomeTaxMeta(successMessage);
+      showToast(successMessage);
       fetchDeductionSummary();
     })
     .withFailureHandler(err => {
       setIncomeTaxFormLoading(false);
-      showToast(err && err.message ? err.message : 'CSVのアップロードに失敗しました');
+      const message = err && err.message ? err.message : 'CSVのアップロードに失敗しました';
+      showToast(message);
+      renderIncomeTaxMeta(message);
     })
     .payrollUploadIncomeTaxCsv(file);
 }
@@ -778,11 +811,11 @@ function handleIncomeTaxReload(){
         showToast(res && res.message ? res.message : '税額表の再解析に失敗しました');
         return;
       }
-      payrollState.incomeTax.fetchedAt = res.fetchedAt || null;
-      payrollState.incomeTax.stats = res.stats || null;
-      payrollState.incomeTax.fileName = res.fileName || '';
+      setIncomeTaxStateFromResponse(res);
+      const successMessage = formatIncomeTaxResultMessage('保存済みの税額表を再解析しました');
       renderIncomeTaxSettings();
-      showToast('税額表を再解析しました');
+      renderIncomeTaxMeta(successMessage);
+      showToast(successMessage);
       fetchDeductionSummary();
     })
     .withFailureHandler(err => {

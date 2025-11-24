@@ -3064,7 +3064,9 @@ function loadNews(patientId, next){
         if (done) done();
         return;
       }
-      const shouldHideConsentNews = !!(_currentHeader && _currentHeader.consentNewsDismissed);
+      const hasConsentDate = !!(_currentHeader && _currentHeader.consentDate && String(_currentHeader.consentDate).trim());
+      const consentNewsDismissed = !!(_currentHeader && _currentHeader.consentNewsDismissed);
+      const shouldHideConsentNews = hasConsentDate || consentNewsDismissed;
       const visibleList = shouldHideConsentNews
         ? list.filter(item => !isConsentReminderNews(item))
         : list.slice();
@@ -3253,14 +3255,23 @@ function getNewsMetaType(news){
   return '';
 }
 
+function isConsentReminderMessage(message){
+  if (!message) return false;
+  const text = String(message);
+  return (
+    text.indexOf('同意書受渡が必要です') >= 0
+      || text.indexOf('同意書の取得') >= 0
+      || text.indexOf('同意書取得') >= 0
+  );
+}
+
 function isConsentReminderNews(news){
   if(!news) return false;
   if (String(news.type || '').trim() !== '同意') return false;
   const metaType = getNewsMetaType(news);
   if (metaType === 'consent_verification') return false;
   if (metaType === 'consent_reminder') return true;
-  const message = String(news.message || '');
-  return message.indexOf('同意書受渡が必要です') >= 0;
+  return isConsentReminderMessage(news.message);
 }
 
 function resolveNewsStatus(news){
@@ -3276,8 +3287,7 @@ function resolveNewsStatus(news){
   if (type !== '同意') return '';
   if (metaType === 'consent_verification') return 'consent-doctor-report';
   if (metaType === 'consent_reminder') return 'consent-reminder';
-  const message = String(news.message || '');
-  if (message.indexOf('同意書受渡が必要です') >= 0) return 'consent-reminder';
+  if (isConsentReminderMessage(news.message)) return 'consent-reminder';
   return '';
 }
 

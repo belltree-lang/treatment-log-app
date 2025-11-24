@@ -3310,8 +3310,8 @@ function readPayrollEmployeeRecords_(){
       const dependentCount = normalizePayrollDependentCount_(row[PAYROLL_EMPLOYEE_COLUMNS.dependentCount]);
       const withholdingCategory = normalizePayrollWithholdingCategory_(row[PAYROLL_EMPLOYEE_COLUMNS.withholdingCategory]);
       const withholdingCategoryLabel = formatPayrollWithholdingCategoryLabel_(withholdingCategory);
-      const withholdingPeriodType = normalizePayrollWithholdingPeriodType_(row[PAYROLL_EMPLOYEE_COLUMNS.withholdingPeriodType]);
-      const withholdingPeriodLabel = formatPayrollWithholdingPeriodLabel_(withholdingPeriodType);
+      const employmentPeriodType = normalizePayrollWithholdingPeriodType_(row[PAYROLL_EMPLOYEE_COLUMNS.withholdingPeriodType]);
+      const employmentPeriodLabel = formatPayrollWithholdingPeriodLabel_(employmentPeriodType);
       const transportationType = normalizePayrollTransportationType_(row[PAYROLL_EMPLOYEE_COLUMNS.transportationType]);
       const transportationLabel = formatPayrollTransportationLabel_(transportationType);
       const transportationAmount = parsePayrollMoneyValue_(row[PAYROLL_EMPLOYEE_COLUMNS.transportationAmount]);
@@ -3341,8 +3341,10 @@ function readPayrollEmployeeRecords_(){
         withholdingLabel,
         withholdingCategory,
         withholdingCategoryLabel,
-        withholdingPeriodType,
-        withholdingPeriodLabel,
+        withholdingPeriodType: employmentPeriodType,
+        withholdingPeriodLabel: employmentPeriodLabel,
+        employmentPeriodType,
+        employmentPeriodLabel,
         dependentCount,
         transportationType,
         transportationLabel,
@@ -3759,6 +3761,17 @@ function estimatePayrollTaxableCompensation_(employee, options){
   return Math.round(estimatedHourly + extra);
 }
 
+function buildPayrollTaxableBreakdown_(employee, options){
+  const gradeAmount = Math.max(0, Number(options && options.gradeAmount) || 0);
+  const transportationType = normalizePayrollTransportationType_(employee && employee.transportationType);
+  const transportationAmount = Math.max(0, Number(employee && employee.transportationAmount) || 0);
+  const nonTaxableTransportation = transportationType === 'none' ? 0 : transportationAmount;
+  const housingDeduction = Math.max(0, Number(employee && employee.housingDeduction) || 0);
+  const grossCompensation = Math.max(0, estimatePayrollTaxableCompensation_(employee, { gradeAmount }) + transportationAmount);
+  const taxableCompensation = Math.max(0, grossCompensation - nonTaxableTransportation - housingDeduction);
+  return { grossCompensation, taxableCompensation, nonTaxableTransportation, housingDeduction };
+}
+
 function calculatePayrollIncomeTaxFromAnnual_(annualTaxable){
   const taxable = Math.max(0, Number(annualTaxable) || 0);
   const brackets = [
@@ -3777,18 +3790,25 @@ function calculatePayrollIncomeTaxFromAnnual_(annualTaxable){
   return Math.floor(incomeTax + surtax);
 }
 
+function calculatePayrollKoWithholdingTax_(monthlyTaxable, dependents){
+  const clampedDependents = normalizePayrollDependentCount_(dependents);
+  const annualTaxable = Math.max(0, (Number(monthlyTaxable) || 0) * 12 - 480000 - (clampedDependents * 380000));
+  if (annualTaxable <= 0) return 0;
+  const annualTax = calculatePayrollIncomeTaxFromAnnual_(annualTaxable);
+  return Math.floor(annualTax / 12);
+}
+
 function calculatePayrollWithholdingTax_(employee, options){
   if (!employee || employee.withholding !== 'required') return 0;
   const employmentType = employee.employmentType || '';
-  const taxableCompensation = options && options.taxableCompensation != null
-    ? Number(options.taxableCompensation)
-    : estimatePayrollTaxableCompensation_(employee, options);
-  const socialInsurance = options && options.socialInsuranceEmployeeTotal ? Number(options.socialInsuranceEmployeeTotal) : 0;
+  const breakdown = buildPayrollTaxableBreakdown_(employee, options);
   const periodDays = Number(options && options.payPeriodDays);
   const dependents = normalizePayrollDependentCount_(employee.dependentCount);
   const category = normalizePayrollWithholdingCategory_(employee.withholdingCategory);
-  const periodType = normalizePayrollWithholdingPeriodType_(employee.withholdingPeriodType);
-  const base = Math.max(0, taxableCompensation - Math.max(0, socialInsurance));
+  const employmentPeriodType = normalizePayrollWithholdingPeriodType_(employee.employmentPeriodType || employee.withholdingPeriodType);
+  const base = options && options.taxableCompensation != null
+    ? Math.max(0, Number(options.taxableCompensation))
+    : breakdown.taxableCompensation;
   if (!Number.isFinite(base) || base <= 0) return 0;
 
   if (employmentType === 'contractor') {
@@ -3799,42 +3819,36 @@ function calculatePayrollWithholdingTax_(employee, options){
     return Math.floor(base * rate);
   }
 
-  const baseAllowance = category === 'ko' ? 40000 : 0;
-  const dependentAllowance = category === 'ko' ? 31667 : 0;
-  const adjustedDependents = category === 'ko' ? dependents : 0;
   const payDays = Number.isFinite(periodDays) && periodDays > 0 ? periodDays : 30;
-  const normalizedBase = periodType === 'daily'
+  const normalizedBase = employmentPeriodType === 'daily'
     ? (base / payDays) * 30
     : base;
-  const taxableAfterAllowance = Math.max(0, normalizedBase - baseAllowance - (adjustedDependents * dependentAllowance));
-  const annualTaxable = taxableAfterAllowance * 12;
-  const annualTax = calculatePayrollIncomeTaxFromAnnual_(annualTaxable);
-  return Math.floor(annualTax / 12);
+  if (category === 'otsu') {
+    return Math.floor(normalizedBase * 0.03063);
+  }
+  return calculatePayrollKoWithholdingTax_(normalizedBase, dependents);
 }
 
 function buildPayrollDeductionEntry_(employee, options){
   if (!employee) return null;
   const gradeAmount = Number(options && options.gradeAmount) || 0;
-  const socialInsuranceEmployeeTotal = options && options.socialInsuranceEmployeeTotal ? Number(options.socialInsuranceEmployeeTotal) : 0;
   const payPeriodDays = Number(options && options.payPeriodDays);
-  const estimatedTaxable = estimatePayrollTaxableCompensation_(employee, { gradeAmount });
-  const taxableCompensation = Math.max(0, estimatedTaxable - Math.max(0, socialInsuranceEmployeeTotal));
+  const breakdown = buildPayrollTaxableBreakdown_(employee, { gradeAmount });
+  const taxableCompensation = breakdown.taxableCompensation;
   const withholdingAmount = calculatePayrollWithholdingTax_(employee, {
     taxableCompensation,
     withholdingRate: PAYROLL_WITHHOLDING_TAX_RATE,
     gradeAmount,
     payPeriodDays
   });
-  const housingDeduction = Math.max(0, Number(employee.housingDeduction) || 0);
+  const housingDeduction = breakdown.housingDeduction;
   const municipalTax = Math.max(0, Number(employee.municipalTax) || 0);
   const components = [];
-  if (withholdingAmount > 0) {
-    const suffix = employee.employmentType === 'contractor'
-      ? '（業務委託）'
-      : `（${formatPayrollWithholdingCategoryLabel_(employee.withholdingCategory)}${employee.dependentCount != null ? `・扶養${normalizePayrollDependentCount_(employee.dependentCount)}` : ''}）`;
-    const rate = employee.employmentType === 'contractor' ? PAYROLL_WITHHOLDING_TAX_RATE : null;
-    components.push({ type: 'withholding', label: '源泉所得税' + suffix, amount: withholdingAmount, rate });
-  }
+  const suffix = employee.employmentType === 'contractor'
+    ? '（業務委託）'
+    : `（${formatPayrollWithholdingCategoryLabel_(employee.withholdingCategory)}${employee.dependentCount != null ? `・扶養${normalizePayrollDependentCount_(employee.dependentCount)}` : ''}）`;
+  const rate = employee.employmentType === 'contractor' ? PAYROLL_WITHHOLDING_TAX_RATE : null;
+  components.push({ type: 'withholding', label: '源泉所得税' + suffix, amount: withholdingAmount, rate });
   if (housingDeduction > 0) {
     components.push({ type: 'housing', label: '社宅費控除', amount: housingDeduction });
   }
@@ -3967,6 +3981,10 @@ function buildPayrollGradeResponse_(record){
 function buildPayrollEmployeeResponse_(record, gradeMatch){
   if (!record) return null;
   const tz = getConfig('timezone') || 'Asia/Tokyo';
+  const normalizedDependents = normalizePayrollDependentCount_(record.dependentCount);
+  const normalizedCategory = normalizePayrollWithholdingCategory_(record.withholdingCategory);
+  const normalizedEmploymentPeriod = normalizePayrollWithholdingPeriodType_(record.employmentPeriodType || record.withholdingPeriodType);
+  const employmentPeriodLabel = formatPayrollWithholdingPeriodLabel_(normalizedEmploymentPeriod);
   return {
     id: record.id,
     name: record.name,
@@ -3988,11 +4006,13 @@ function buildPayrollEmployeeResponse_(record, gradeMatch){
     municipalTax: record.municipalTax,
     withholding: record.withholding,
     withholdingLabel: record.withholdingLabel,
-    withholdingCategory: record.withholdingCategory,
+    withholdingCategory: normalizedCategory,
     withholdingCategoryLabel: record.withholdingCategoryLabel,
-    withholdingPeriodType: record.withholdingPeriodType,
-    withholdingPeriodLabel: record.withholdingPeriodLabel,
-    dependentCount: record.dependentCount,
+    withholdingPeriodType: normalizedEmploymentPeriod,
+    withholdingPeriodLabel: employmentPeriodLabel,
+    employmentPeriodType: normalizedEmploymentPeriod,
+    employmentPeriodLabel,
+    dependentCount: normalizedDependents,
     transportationType: record.transportationType,
     transportationLabel: record.transportationLabel,
     transportationAmount: record.transportationAmount,
@@ -4136,6 +4156,7 @@ function payrollSaveEmployee(payload){
     }
     const email = String(payload && payload.email || '').trim();
     const employmentType = normalizePayrollEmploymentType_(payload && payload.employmentType);
+    const dependentCount = normalizePayrollDependentCount_(payload && payload.dependentCount);
     if (!employmentType) {
       return { ok: false, reason: 'validation', message: '雇用区分を選択してください。' };
     }
@@ -4156,8 +4177,7 @@ function payrollSaveEmployee(payload){
     const commissionLogic = normalizePayrollCommissionLogicType_(payload && payload.commissionLogic);
     const withholding = normalizePayrollWithholdingType_(payload && payload.withholding);
     const withholdingCategory = normalizePayrollWithholdingCategory_(payload && payload.withholdingCategory);
-    const dependentCount = normalizePayrollDependentCount_(payload && payload.dependentCount);
-    const withholdingPeriodType = normalizePayrollWithholdingPeriodType_(payload && payload.withholdingPeriodType);
+    const employmentPeriodType = normalizePayrollWithholdingPeriodType_(payload && payload.employmentPeriodType);
     const grade = String(payload && payload.grade || '').trim();
     const note = String(payload && payload.note || '').trim();
     let id = String(payload && payload.id || '').trim();
@@ -4219,7 +4239,7 @@ function payrollSaveEmployee(payload){
     values[PAYROLL_EMPLOYEE_COLUMNS.updatedAt] = new Date();
     values[PAYROLL_EMPLOYEE_COLUMNS.dependentCount] = dependentCount;
     values[PAYROLL_EMPLOYEE_COLUMNS.withholdingCategory] = formatPayrollWithholdingCategoryLabel_(withholdingCategory);
-    values[PAYROLL_EMPLOYEE_COLUMNS.withholdingPeriodType] = formatPayrollWithholdingPeriodLabel_(withholdingPeriodType);
+    values[PAYROLL_EMPLOYEE_COLUMNS.withholdingPeriodType] = formatPayrollWithholdingPeriodLabel_(employmentPeriodType);
 
     sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
 

@@ -263,6 +263,8 @@ const PAYROLL_WITHHOLDING_PERIOD_LABELS = Object.freeze({
   monthly: '通常（月額）',
   daily: '日額扱い'
 });
+const PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY = 'PAYROLL_INCOME_TAX_TABLE_URL';
+const PAYROLL_INCOME_TAX_TABLE_CACHE_PROPERTY_KEY = 'PAYROLL_INCOME_TAX_TABLE_CACHE';
 const PAYROLL_GRADE_SHEET_NAME = 'PayrollGrades';
 const PAYROLL_GRADE_SHEET_HEADER = ['グレードID','役職/等級','手当額','メモ','更新日時'];
 const PAYROLL_GRADE_COLUMNS = Object.freeze({
@@ -3734,6 +3736,204 @@ function savePayrollSocialInsuranceRates_(payload){
   return merged;
 }
 
+function sanitizePayrollTaxTableUrl_(url){
+  const text = String(url || '').trim();
+  if (!text) return '';
+  if (!/^https?:\/\//i.test(text)) return '';
+  return text;
+}
+
+function parsePayrollIncomeTaxRange_(label, previousUpper){
+  const numbers = String(label || '').match(/[0-9,]+/g);
+  if (!numbers || !numbers.length) return null;
+  const parsed = numbers.map(val => parsePayrollMoneyValue_(val)).filter(num => Number.isFinite(num));
+  if (!parsed.length) return null;
+  const upper = parsed.length >= 2 ? parsed[parsed.length - 1] : parsed[0];
+  const lower = parsed.length >= 2
+    ? parsed[0]
+    : (Number.isFinite(previousUpper) ? previousUpper + 1 : 0);
+  if (!Number.isFinite(upper) || !Number.isFinite(lower) || upper < 0) return null;
+  const min = Math.max(0, lower);
+  if (upper < min) return null;
+  return { min, max: upper };
+}
+
+function parsePayrollIncomeTaxDependentHeader_(cell){
+  const match = String(cell || '').match(/(\d+)/);
+  if (!match) return null;
+  const num = Number(match[1]);
+  return Number.isFinite(num) ? num : null;
+}
+
+function parsePayrollKoIncomeTaxTable_(rows){
+  const ko = {};
+  let endIndex = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const headerRow = rows[i] || [];
+    const dependents = headerRow.map((cell, idx) => ({
+      count: parsePayrollIncomeTaxDependentHeader_(cell),
+      index: idx
+    })).filter(item => Number.isFinite(item.count) && item.count <= 10);
+    if (!dependents.length || dependents.every(item => item.index === 0)) continue;
+    let previousUpper = null;
+    for (let r = i + 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const isBlank = row.every(cell => String(cell || '').trim() === '');
+      if (isBlank) {
+        endIndex = r;
+        break;
+      }
+      const range = parsePayrollIncomeTaxRange_(row[0], previousUpper);
+      if (!range) continue;
+      previousUpper = range.max;
+      dependents.forEach(dep => {
+        const tax = parsePayrollMoneyValue_(row[dep.index]);
+        if (!Number.isFinite(tax)) return;
+        const key = String(dep.count);
+        if (!ko[key]) ko[key] = [];
+        ko[key].push({ min: range.min, max: range.max, tax });
+      });
+    }
+    break;
+  }
+  if (!endIndex && Object.keys(ko).length) {
+    endIndex = rows.length;
+  }
+  return { ko, endIndex };
+}
+
+function parsePayrollOtsuIncomeTaxTable_(rows, startIndex){
+  const otsu = [];
+  let started = false;
+  let previousUpper = null;
+  for (let i = startIndex; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const first = String(row[0] || '').trim();
+    const second = String(row[1] || '').trim();
+    const isHeaderRow = (!started && (first.includes('金額') || first.includes('乙') || second.includes('税額')));
+    if (!started) {
+      if (isHeaderRow) {
+        started = true;
+        continue;
+      }
+      if (!first || !second) continue;
+      const taxCandidate = parsePayrollMoneyValue_(second);
+      if (!Number.isFinite(taxCandidate)) continue;
+      started = true;
+    }
+    if (started) {
+      if (!first && !second) {
+        if (otsu.length) break;
+        continue;
+      }
+      const range = parsePayrollIncomeTaxRange_(first, previousUpper);
+      const tax = parsePayrollMoneyValue_(second);
+      if (!range || !Number.isFinite(tax)) continue;
+      previousUpper = range.max;
+      otsu.push({ min: range.min, max: range.max, tax });
+    }
+  }
+  return otsu;
+}
+
+function parsePayrollExplicitIncomeTaxRows_(rows){
+  const ko = {};
+  const otsu = [];
+  rows.forEach(row => {
+    if (!Array.isArray(row) || row.length < 5) return;
+    const categoryRaw = String(row[0] || '').trim().toLowerCase();
+    const dependents = normalizePayrollDependentCount_(row[1]);
+    const min = parsePayrollMoneyValue_(row[2]);
+    const max = parsePayrollMoneyValue_(row[3]);
+    const tax = parsePayrollMoneyValue_(row[4]);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(tax)) return;
+    if (categoryRaw === 'otsu' || categoryRaw === '乙' || categoryRaw === '乙欄') {
+      otsu.push({ min, max, tax });
+      return;
+    }
+    const key = String(dependents);
+    if (!ko[key]) ko[key] = [];
+    ko[key].push({ min, max, tax });
+  });
+  return { ko, otsu };
+}
+
+function buildPayrollIncomeTaxTablesFromCsv_(rawRows){
+  const rows = Array.isArray(rawRows) ? rawRows.map(row => (Array.isArray(row) ? row.map(cell => String(cell || '').trim()) : [])) : [];
+  const explicit = parsePayrollExplicitIncomeTaxRows_(rows);
+  const parsedKo = parsePayrollKoIncomeTaxTable_(rows);
+  const otsuStartIndex = Math.max(parsedKo.endIndex || 0, 0);
+  const parsedOtsu = parsePayrollOtsuIncomeTaxTable_(rows, otsuStartIndex);
+  const mergedKo = { ...explicit.ko };
+  Object.keys(parsedKo.ko || {}).forEach(key => {
+    if (!mergedKo[key]) mergedKo[key] = [];
+    mergedKo[key] = mergedKo[key].concat(parsedKo.ko[key]);
+  });
+  const mergedOtsu = (explicit.otsu || []).concat(parsedOtsu || []);
+  Object.keys(mergedKo).forEach(key => {
+    mergedKo[key] = mergedKo[key]
+      .filter(entry => Number.isFinite(entry.min) && Number.isFinite(entry.max) && Number.isFinite(entry.tax))
+      .sort((a, b) => a.min - b.min);
+  });
+  const normalizedOtsu = mergedOtsu
+    .filter(entry => Number.isFinite(entry.min) && Number.isFinite(entry.max) && Number.isFinite(entry.tax))
+    .sort((a, b) => a.min - b.min);
+  return { ko: mergedKo, otsu: normalizedOtsu };
+}
+
+function getPayrollIncomeTaxTables_(){
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty(PAYROLL_INCOME_TAX_TABLE_CACHE_PROPERTY_KEY);
+  if (!raw) return { ko: {}, otsu: [] };
+  try {
+    const parsed = JSON.parse(raw);
+    const ko = parsed && parsed.ko && typeof parsed.ko === 'object' ? parsed.ko : {};
+    const otsu = Array.isArray(parsed && parsed.otsu) ? parsed.otsu : [];
+    return { ko, otsu, fetchedAt: parsed && parsed.fetchedAt ? parsed.fetchedAt : null };
+  } catch (err) {
+    Logger.log('[getPayrollIncomeTaxTables_] Failed to parse cache: ' + (err && err.message ? err.message : err));
+    return { ko: {}, otsu: [] };
+  }
+}
+
+function savePayrollIncomeTaxTables_(tables, metadata){
+  const payload = {
+    ko: tables && tables.ko ? tables.ko : {},
+    otsu: tables && Array.isArray(tables.otsu) ? tables.otsu : [],
+    fetchedAt: (metadata && metadata.fetchedAt) || new Date().toISOString()
+  };
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(PAYROLL_INCOME_TAX_TABLE_CACHE_PROPERTY_KEY, JSON.stringify(payload));
+  return payload;
+}
+
+function lookupPayrollIncomeTax_(tables, category, taxableAmount, dependents){
+  if (!tables || !Number.isFinite(taxableAmount) || taxableAmount <= 0) return null;
+  const amount = Math.max(0, Math.floor(taxableAmount));
+  if (category === 'otsu') {
+    const match = (tables.otsu || []).find(entry => amount >= entry.min && amount <= entry.max);
+    return match ? Math.max(0, Math.round(match.tax)) : null;
+  }
+  const key = String(normalizePayrollDependentCount_(dependents));
+  const candidates = (tables.ko && (tables.ko[key] || tables.ko['fuyou' + key])) || [];
+  const match = candidates.find(entry => amount >= entry.min && amount <= entry.max);
+  if (match) return Math.max(0, Math.round(match.tax));
+  return null;
+}
+
+function getPayrollIncomeTaxSettings_(){
+  const props = PropertiesService.getScriptProperties();
+  const url = (props.getProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY) || '').trim();
+  const cached = getPayrollIncomeTaxTables_();
+  const koKeys = cached && cached.ko ? Object.keys(cached.ko) : [];
+  return {
+    url,
+    fetchedAt: cached && cached.fetchedAt ? cached.fetchedAt : null,
+    koDependents: koKeys.length,
+    otsuRows: Array.isArray(cached && cached.otsu) ? cached.otsu.length : 0
+  };
+}
+
 function estimatePayrollMonthlyCompensation_(employee){
   if (!employee) return 0;
   if (Number.isFinite(employee.baseSalary) && employee.baseSalary > 0) {
@@ -3825,6 +4025,11 @@ function calculatePayrollWithholdingTax_(employee, options){
   const normalizedBase = employmentPeriodType === 'daily'
     ? (base / payDays) * 30
     : base;
+  const taxTables = getPayrollIncomeTaxTables_();
+  const tableAmount = lookupPayrollIncomeTax_(taxTables, category, normalizedBase, dependents);
+  if (tableAmount != null) {
+    return tableAmount;
+  }
   if (category === 'otsu') {
     return Math.floor(normalizedBase * 0.03063);
   }
@@ -3850,7 +4055,7 @@ function buildPayrollDeductionEntry_(employee, options){
     ? '（業務委託）'
     : `（${formatPayrollWithholdingCategoryLabel_(employee.withholdingCategory)}${employee.dependentCount != null ? `・扶養${normalizePayrollDependentCount_(employee.dependentCount)}` : ''}）`;
   const rate = employee.employmentType === 'contractor' ? PAYROLL_WITHHOLDING_TAX_RATE : null;
-  components.push({ type: 'withholding', label: '源泉所得税' + suffix, amount: withholdingAmount, rate });
+  components.push({ type: 'withholding', label: '所得税' + suffix, amount: withholdingAmount, rate });
   if (housingDeduction > 0) {
     components.push({ type: 'housing', label: '社宅費控除', amount: housingDeduction });
   }
@@ -4077,6 +4282,73 @@ function buildPayrollAnnualSummaryResponse_(record, employee){
     metadata: record.metadata || null,
     updatedAt: record.updatedAt ? formatIsoStringWithOffset_(record.updatedAt, tz) : null
   };
+}
+
+function payrollGetIncomeTaxSettings(){
+  return wrapPayrollResponse_('payrollGetIncomeTaxSettings', () => {
+    requirePayrollAccess_();
+    const settings = getPayrollIncomeTaxSettings_();
+    return { ok: true, settings };
+  });
+}
+
+function payrollSaveIncomeTaxCsvUrl(payload){
+  return wrapPayrollResponse_('payrollSaveIncomeTaxCsvUrl', () => {
+    requirePayrollAccess_();
+    const url = sanitizePayrollTaxTableUrl_(payload && payload.url);
+    if (!url) {
+      return { ok: false, reason: 'validation', message: '有効なCSV URLを入力してください。' };
+    }
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY, url);
+    return { ok: true, url };
+  });
+}
+
+function payrollReloadIncomeTaxTables(payload){
+  return wrapPayrollResponse_('payrollReloadIncomeTaxTables', () => {
+    requirePayrollAccess_();
+    const props = PropertiesService.getScriptProperties();
+    const configured = sanitizePayrollTaxTableUrl_(props.getProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY));
+    const url = sanitizePayrollTaxTableUrl_(payload && payload.url) || configured;
+    if (!url) {
+      return { ok: false, reason: 'validation', message: '先に税額表のCSV URLを保存してください。' };
+    }
+    let response;
+    try {
+      response = UrlFetchApp.fetch(url);
+    } catch (err) {
+      return { ok: false, reason: 'fetch_failed', message: 'CSVの取得に失敗しました: ' + (err && err.message ? err.message : err) };
+    }
+    try {
+      if (response && typeof response.getResponseCode === 'function' && response.getResponseCode() >= 400) {
+        return { ok: false, reason: 'fetch_failed', message: 'CSVの取得に失敗しました。HTTP ' + response.getResponseCode() };
+      }
+      const csvText = response && typeof response.getContentText === 'function'
+        ? response.getContentText('UTF-8')
+        : '';
+      if (!csvText) {
+        return { ok: false, reason: 'fetch_failed', message: 'CSVの内容が空です。' };
+      }
+      const rows = Utilities.parseCsv(csvText);
+      const tables = buildPayrollIncomeTaxTablesFromCsv_(rows);
+      const koCount = tables && tables.ko ? Object.keys(tables.ko).length : 0;
+      const otsuCount = tables && tables.otsu ? tables.otsu.length : 0;
+      if (!koCount && !otsuCount) {
+        return { ok: false, reason: 'parse_failed', message: '税額表の行を解釈できませんでした。CSVの形式を確認してください。' };
+      }
+      const saved = savePayrollIncomeTaxTables_(tables, { fetchedAt: new Date().toISOString() });
+      props.setProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY, url);
+      return {
+        ok: true,
+        url,
+        fetchedAt: saved && saved.fetchedAt ? saved.fetchedAt : null,
+        stats: { koDependents: koCount, otsuRows: otsuCount }
+      };
+    } catch (err) {
+      return { ok: false, reason: 'parse_failed', message: 'CSVの解析に失敗しました: ' + (err && err.message ? err.message : err) };
+    }
+  });
 }
 
 function payrollListEmployees(){

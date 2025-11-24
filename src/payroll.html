@@ -210,6 +210,28 @@
   <section class="card">
     <div class="section-header">
       <div>
+        <h2>所得税（源泉徴収）設定</h2>
+        <p class="meta-line" id="incomeTaxMeta">税額表のCSV URLを保存し、必要に応じて再読み込みします。</p>
+      </div>
+      <div class="inline-controls">
+        <button id="incomeTaxReloadButton" type="button" class="btn">税額表を再読み込み</button>
+      </div>
+    </div>
+    <div class="form-grid">
+      <label>税額表 CSV URL
+        <input id="incomeTaxUrl" type="url" placeholder="https://www.nta.go.jp/.../xxx.csv" />
+        <small class="muted">国税庁の源泉徴収税額表（CSV）のURLを入力してください</small>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button id="incomeTaxSaveButton" type="button" class="btn">URLを保存</button>
+      <button id="incomeTaxResetButton" type="button" class="btn ghost">入力をリセット</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-header">
+      <div>
         <h2>控除リスト</h2>
         <p class="meta-line" id="deductionMeta">控除額を集計しています…</p>
       </div>
@@ -221,7 +243,7 @@
           <tr>
             <th>従業員</th>
             <th>課税対象額</th>
-            <th>源泉所得税</th>
+            <th>所得税</th>
             <th>社宅控除</th>
             <th>住民税</th>
             <th>控除計</th>
@@ -551,6 +573,14 @@ let payrollState = {
     loading: false,
     summary: null
   },
+  incomeTax: {
+    url: '',
+    loading: false,
+    saving: false,
+    reloading: false,
+    fetchedAt: null,
+    stats: null
+  },
   socialInsurance: {
     rates: { ...SOCIAL_INSURANCE_RATE_DEFAULTS },
     standards: [],
@@ -633,6 +663,130 @@ function formatTransportation(row){
   if (row.transportationAmount == null) return escapeHtml(type);
   return escapeHtml(`${type} (${formatCurrency(row.transportationAmount)})`);
 }
+
+function setIncomeTaxFormLoading(isSaving){
+  payrollState.incomeTax.saving = isSaving;
+  const saveButton = document.getElementById('incomeTaxSaveButton');
+  if (saveButton) saveButton.disabled = isSaving;
+  const urlInput = document.getElementById('incomeTaxUrl');
+  if (urlInput) urlInput.disabled = isSaving || payrollState.incomeTax.reloading;
+}
+
+function setIncomeTaxReloading(isLoading){
+  payrollState.incomeTax.reloading = isLoading;
+  const reloadButton = document.getElementById('incomeTaxReloadButton');
+  if (reloadButton) reloadButton.disabled = isLoading;
+  const urlInput = document.getElementById('incomeTaxUrl');
+  if (urlInput) urlInput.disabled = isLoading || payrollState.incomeTax.saving;
+}
+
+function renderIncomeTaxMeta(message){
+  const meta = document.getElementById('incomeTaxMeta');
+  if (!meta) return;
+  if (message) {
+    meta.textContent = message;
+    return;
+  }
+  const fetchedAt = payrollState.incomeTax.fetchedAt
+    ? new Date(payrollState.incomeTax.fetchedAt).toLocaleString('ja-JP')
+    : '未取得';
+  const stats = payrollState.incomeTax.stats;
+  const summary = stats
+    ? `甲欄 ${stats.koDependents || 0}件 / 乙欄 ${stats.otsuRows || 0}行`
+    : '未読み込み';
+  meta.textContent = `最終取得: ${fetchedAt} / ${summary}`;
+}
+
+function renderIncomeTaxSettings(){
+  const urlInput = document.getElementById('incomeTaxUrl');
+  if (urlInput) {
+    urlInput.value = payrollState.incomeTax.url || '';
+  }
+  renderIncomeTaxMeta();
+}
+
+function resetIncomeTaxForm(){
+  const urlInput = document.getElementById('incomeTaxUrl');
+  if (urlInput) {
+    urlInput.value = payrollState.incomeTax.url || '';
+  }
+}
+
+function fetchIncomeTaxSettings(){
+  payrollState.incomeTax.loading = true;
+  renderIncomeTaxMeta('設定を取得しています…');
+  google.script.run
+    .withSuccessHandler(res => {
+      payrollState.incomeTax.loading = false;
+      if (!res || res.ok !== true) {
+        renderIncomeTaxMeta(res && res.message ? res.message : '所得税設定の取得に失敗しました');
+        return;
+      }
+      const settings = res.settings || {};
+      payrollState.incomeTax.url = settings.url || '';
+      payrollState.incomeTax.fetchedAt = settings.fetchedAt || null;
+      payrollState.incomeTax.stats = { koDependents: settings.koDependents || 0, otsuRows: settings.otsuRows || 0 };
+      renderIncomeTaxSettings();
+    })
+    .withFailureHandler(err => {
+      payrollState.incomeTax.loading = false;
+      renderIncomeTaxMeta(err && err.message ? err.message : '所得税設定の取得に失敗しました');
+    })
+    .payrollGetIncomeTaxSettings();
+}
+
+function handleIncomeTaxSave(){
+  if (payrollState.incomeTax.saving) return;
+  const urlInput = document.getElementById('incomeTaxUrl');
+  const url = urlInput ? urlInput.value : '';
+  setIncomeTaxFormLoading(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setIncomeTaxFormLoading(false);
+      if (!res || res.ok !== true) {
+        showToast(res && res.message ? res.message : 'URLの保存に失敗しました');
+        return;
+      }
+      payrollState.incomeTax.url = res.url || url;
+      showToast('CSV URLを保存しました');
+      renderIncomeTaxSettings();
+    })
+    .withFailureHandler(err => {
+      setIncomeTaxFormLoading(false);
+      showToast(err && err.message ? err.message : 'URLの保存に失敗しました');
+    })
+    .payrollSaveIncomeTaxCsvUrl({ url });
+}
+
+function handleIncomeTaxReload(){
+  if (payrollState.incomeTax.reloading) return;
+  const urlInput = document.getElementById('incomeTaxUrl');
+  const url = urlInput ? urlInput.value : '';
+  setIncomeTaxReloading(true);
+  renderIncomeTaxMeta('税額表を読み込み中です…');
+  google.script.run
+    .withSuccessHandler(res => {
+      setIncomeTaxReloading(false);
+      if (!res || res.ok !== true) {
+        renderIncomeTaxMeta(res && res.message ? res.message : '税額表の再取得に失敗しました');
+        showToast(res && res.message ? res.message : '税額表の再取得に失敗しました');
+        return;
+      }
+      payrollState.incomeTax.url = res.url || url;
+      payrollState.incomeTax.fetchedAt = res.fetchedAt || null;
+      payrollState.incomeTax.stats = res.stats || null;
+      renderIncomeTaxSettings();
+      showToast('税額表を更新しました');
+      fetchDeductionSummary();
+    })
+    .withFailureHandler(err => {
+      setIncomeTaxReloading(false);
+      renderIncomeTaxMeta(err && err.message ? err.message : '税額表の再取得に失敗しました');
+      showToast(err && err.message ? err.message : '税額表の再取得に失敗しました');
+    })
+    .payrollReloadIncomeTaxTables({ url });
+}
+
 
 function getEmploymentLabel(value){
   const match = EMPLOYMENT_OPTIONS.find(opt => opt.value === value);
@@ -1921,15 +2075,29 @@ function init(){
   }
   document.getElementById('insuranceOverrideReset').addEventListener('click', resetInsuranceOverrideForm);
   document.getElementById('insuranceOverrideDelete').addEventListener('click', handleInsuranceOverrideDelete);
+  const incomeTaxSaveButton = document.getElementById('incomeTaxSaveButton');
+  if (incomeTaxSaveButton) {
+    incomeTaxSaveButton.addEventListener('click', handleIncomeTaxSave);
+  }
+  const incomeTaxReloadButton = document.getElementById('incomeTaxReloadButton');
+  if (incomeTaxReloadButton) {
+    incomeTaxReloadButton.addEventListener('click', handleIncomeTaxReload);
+  }
+  const incomeTaxResetButton = document.getElementById('incomeTaxResetButton');
+  if (incomeTaxResetButton) {
+    incomeTaxResetButton.addEventListener('click', resetIncomeTaxForm);
+  }
   updateTransportationAmountState();
   updateGradeHint();
   renderInsuranceRateForm();
   resetInsuranceStandardForm();
   resetInsuranceOverrideForm();
+  renderIncomeTaxSettings();
   fetchGrades();
   fetchEmployees();
   fetchAttendanceSummary();
   fetchSocialInsuranceSettings();
+  fetchIncomeTaxSettings();
   fetchInsuranceSummary();
 }
 

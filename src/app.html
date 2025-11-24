@@ -2994,9 +2994,7 @@ function loadHeader(patientId, next){
   if(!targetPid){ if (done) done(); return; }
   google.script.run
     .withSuccessHandler(h=>{
-      const normalizedHeader = h
-        ? { ...h, consentNewsDismissed: !!h.consentNewsDismissed }
-        : null;
+      const normalizedHeader = h || null;
       _currentHeader = normalizedHeader;
       if(!normalizedHeader){
         q('hdr').innerHTML='<div class="muted">患者が見つかりません</div>';
@@ -3064,12 +3062,7 @@ function loadNews(patientId, next){
         if (done) done();
         return;
       }
-      const hasConsentDate = !!(_currentHeader && _currentHeader.consentDate && String(_currentHeader.consentDate).trim());
-      const consentNewsDismissed = !!(_currentHeader && _currentHeader.consentNewsDismissed);
-      const shouldHideConsentNews = hasConsentDate || consentNewsDismissed;
-      const visibleList = shouldHideConsentNews
-        ? list.filter(item => !isConsentReminderNews(item))
-        : list.slice();
+      const visibleList = list.filter(item => !item.dismissed);
       if (!visibleList.length) {
         _latestNewsList = [];
         window._latestNewsList = _latestNewsList;
@@ -3312,11 +3305,7 @@ function shouldShowConsentVerificationButton(news){
 
 function shouldShowConsentDismissButton(news){
   if (!isConsentReminderNews(news)) return false;
-  const header = _currentHeader;
-  if (!header) return true;
-  const dismissed = !!(header.consentNewsDismissed);
-  const hasConsentDate = !!(header.consentDate && String(header.consentDate).trim());
-  return !(dismissed || hasConsentDate);
+  return !news.dismissed;
 }
 
 function shouldShowConsentEditButton(news){
@@ -3449,9 +3438,7 @@ function handleConsentDismiss(index){
       _consentDismissInFlight = false;
       hideGlobalLoading();
       toast('同意書未取得のお知らせを非表示にしました');
-      loadHeader(patientId, () => {
-        loadNews(patientId);
-      });
+      loadNews(patientId);
     })
     .withFailureHandler(err => {
       _consentDismissInFlight = false;

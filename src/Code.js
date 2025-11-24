@@ -265,6 +265,9 @@ const PAYROLL_WITHHOLDING_PERIOD_LABELS = Object.freeze({
 });
 const PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY = 'PAYROLL_INCOME_TAX_TABLE_URL';
 const PAYROLL_INCOME_TAX_TABLE_CACHE_PROPERTY_KEY = 'PAYROLL_INCOME_TAX_TABLE_CACHE';
+const WITHHOLDING_TAX_TABLE_KO_PROPERTY_KEY = 'WITHHOLDING_TAX_TABLE_KO';
+const WITHHOLDING_TAX_TABLE_OTSU_PROPERTY_KEY = 'WITHHOLDING_TAX_TABLE_OTSU';
+const WITHHOLDING_TAX_TABLE_META_PROPERTY_KEY = 'WITHHOLDING_TAX_TABLE_META';
 const PAYROLL_GRADE_SHEET_NAME = 'PayrollGrades';
 const PAYROLL_GRADE_SHEET_HEADER = ['グレードID','役職/等級','手当額','メモ','更新日時'];
 const PAYROLL_GRADE_COLUMNS = Object.freeze({
@@ -3743,6 +3746,37 @@ function sanitizePayrollTaxTableUrl_(url){
   return text;
 }
 
+function normalizePayrollIncomeTaxRows_(rows){
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map(row => (Array.isArray(row) ? row.map(cell => String(cell || '').trim()) : []))
+    .filter(row => Array.isArray(row));
+}
+
+function combinePayrollIncomeTaxRows_(koRows, otsuRows){
+  const normalizedKo = normalizePayrollIncomeTaxRows_(koRows);
+  const normalizedOtsu = normalizePayrollIncomeTaxRows_(otsuRows);
+  const combined = normalizedKo.slice();
+  if (normalizedOtsu.length) {
+    if (combined.length) combined.push([]);
+    combined.push(...normalizedOtsu);
+  }
+  return combined;
+}
+
+function splitPayrollIncomeTaxRows_(rows){
+  const normalized = normalizePayrollIncomeTaxRows_(rows);
+  const parsedKo = parsePayrollKoIncomeTaxTable_(normalized);
+  const endIndex = parsedKo && parsedKo.endIndex ? parsedKo.endIndex : 0;
+  const koRows = normalized
+    .slice(0, endIndex || normalized.length)
+    .filter(row => row.some(cell => String(cell || '').trim() !== ''));
+  const otsuRows = normalized
+    .slice(endIndex || normalized.length)
+    .filter(row => row.some(cell => String(cell || '').trim() !== ''));
+  return { koRows, otsuRows };
+}
+
 function parsePayrollIncomeTaxRange_(label, previousUpper){
   const numbers = String(label || '').match(/[0-9,]+/g);
   if (!numbers || !numbers.length) return null;
@@ -3859,7 +3893,7 @@ function parsePayrollExplicitIncomeTaxRows_(rows){
 }
 
 function buildPayrollIncomeTaxTablesFromCsv_(rawRows){
-  const rows = Array.isArray(rawRows) ? rawRows.map(row => (Array.isArray(row) ? row.map(cell => String(cell || '').trim()) : [])) : [];
+  const rows = normalizePayrollIncomeTaxRows_(rawRows);
   const explicit = parsePayrollExplicitIncomeTaxRows_(rows);
   const parsedKo = parsePayrollKoIncomeTaxTable_(rows);
   const otsuStartIndex = Math.max(parsedKo.endIndex || 0, 0);
@@ -3883,6 +3917,35 @@ function buildPayrollIncomeTaxTablesFromCsv_(rawRows){
 
 function getPayrollIncomeTaxTables_(){
   const props = PropertiesService.getScriptProperties();
+  const metaRaw = props.getProperty(WITHHOLDING_TAX_TABLE_META_PROPERTY_KEY);
+  const koRaw = props.getProperty(WITHHOLDING_TAX_TABLE_KO_PROPERTY_KEY);
+  const otsuRaw = props.getProperty(WITHHOLDING_TAX_TABLE_OTSU_PROPERTY_KEY);
+  let meta = {};
+  try {
+    meta = metaRaw ? JSON.parse(metaRaw) : {};
+  } catch (err) {
+    Logger.log('[getPayrollIncomeTaxTables_] Failed to parse meta: ' + (err && err.message ? err.message : err));
+  }
+  if (koRaw || otsuRaw) {
+    let koRows = [];
+    let otsuRows = [];
+    try {
+      koRows = koRaw ? JSON.parse(koRaw) : [];
+    } catch (err) {
+      Logger.log('[getPayrollIncomeTaxTables_] Failed to parse ko rows: ' + (err && err.message ? err.message : err));
+    }
+    try {
+      otsuRows = otsuRaw ? JSON.parse(otsuRaw) : [];
+    } catch (err) {
+      Logger.log('[getPayrollIncomeTaxTables_] Failed to parse otsu rows: ' + (err && err.message ? err.message : err));
+    }
+    const tables = buildPayrollIncomeTaxTablesFromCsv_(combinePayrollIncomeTaxRows_(koRows, otsuRows));
+    return {
+      ...tables,
+      fetchedAt: meta && meta.fetchedAt ? meta.fetchedAt : null,
+      fileName: meta && meta.fileName ? meta.fileName : ''
+    };
+  }
   const raw = props.getProperty(PAYROLL_INCOME_TAX_TABLE_CACHE_PROPERTY_KEY);
   if (!raw) return { ko: {}, otsu: [] };
   try {
@@ -3896,15 +3959,32 @@ function getPayrollIncomeTaxTables_(){
   }
 }
 
-function savePayrollIncomeTaxTables_(tables, metadata){
+function savePayrollIncomeTaxTables_(tables, metadata, rawSections){
   const payload = {
     ko: tables && tables.ko ? tables.ko : {},
     otsu: tables && Array.isArray(tables.otsu) ? tables.otsu : [],
     fetchedAt: (metadata && metadata.fetchedAt) || new Date().toISOString()
   };
+  const stats = {
+    koDependents: Object.keys(payload.ko || {}).length,
+    otsuRows: Array.isArray(payload.otsu) ? payload.otsu.length : 0
+  };
+  const meta = {
+    fetchedAt: payload.fetchedAt,
+    fileName: metadata && metadata.fileName ? metadata.fileName : '',
+    koDependents: stats.koDependents,
+    otsuRows: stats.otsuRows
+  };
   const props = PropertiesService.getScriptProperties();
   props.setProperty(PAYROLL_INCOME_TAX_TABLE_CACHE_PROPERTY_KEY, JSON.stringify(payload));
-  return payload;
+  if (rawSections && rawSections.koRows) {
+    props.setProperty(WITHHOLDING_TAX_TABLE_KO_PROPERTY_KEY, JSON.stringify(rawSections.koRows));
+  }
+  if (rawSections && rawSections.otsuRows) {
+    props.setProperty(WITHHOLDING_TAX_TABLE_OTSU_PROPERTY_KEY, JSON.stringify(rawSections.otsuRows));
+  }
+  props.setProperty(WITHHOLDING_TAX_TABLE_META_PROPERTY_KEY, JSON.stringify(meta));
+  return { ...payload, stats, fileName: meta.fileName };
 }
 
 function lookupPayrollIncomeTax_(tables, category, taxableAmount, dependents){
@@ -3922,15 +4002,13 @@ function lookupPayrollIncomeTax_(tables, category, taxableAmount, dependents){
 }
 
 function getPayrollIncomeTaxSettings_(){
-  const props = PropertiesService.getScriptProperties();
-  const url = (props.getProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY) || '').trim();
   const cached = getPayrollIncomeTaxTables_();
   const koKeys = cached && cached.ko ? Object.keys(cached.ko) : [];
   return {
-    url,
     fetchedAt: cached && cached.fetchedAt ? cached.fetchedAt : null,
     koDependents: koKeys.length,
-    otsuRows: Array.isArray(cached && cached.otsu) ? cached.otsu.length : 0
+    otsuRows: Array.isArray(cached && cached.otsu) ? cached.otsu.length : 0,
+    fileName: cached && cached.fileName ? cached.fileName : ''
   };
 }
 
@@ -4294,14 +4372,7 @@ function payrollGetIncomeTaxSettings(){
 
 function payrollSaveIncomeTaxCsvUrl(payload){
   return wrapPayrollResponse_('payrollSaveIncomeTaxCsvUrl', () => {
-    requirePayrollAccess_();
-    const url = sanitizePayrollTaxTableUrl_(payload && payload.url);
-    if (!url) {
-      return { ok: false, reason: 'validation', message: '有効なCSV URLを入力してください。' };
-    }
-    const props = PropertiesService.getScriptProperties();
-    props.setProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY, url);
-    return { ok: true, url };
+    return { ok: false, reason: 'deprecated', message: '税額表のアップロードに切り替わりました。CSVファイルをアップロードしてください。' };
   });
 }
 
@@ -4309,45 +4380,76 @@ function payrollReloadIncomeTaxTables(payload){
   return wrapPayrollResponse_('payrollReloadIncomeTaxTables', () => {
     requirePayrollAccess_();
     const props = PropertiesService.getScriptProperties();
-    const configured = sanitizePayrollTaxTableUrl_(props.getProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY));
-    const url = sanitizePayrollTaxTableUrl_(payload && payload.url) || configured;
-    if (!url) {
-      return { ok: false, reason: 'validation', message: '先に税額表のCSV URLを保存してください。' };
-    }
-    let response;
+    let existingMeta = {};
     try {
-      response = UrlFetchApp.fetch(url);
+      const parsedMeta = props.getProperty(WITHHOLDING_TAX_TABLE_META_PROPERTY_KEY);
+      existingMeta = parsedMeta ? JSON.parse(parsedMeta) : {};
     } catch (err) {
-      return { ok: false, reason: 'fetch_failed', message: 'CSVの取得に失敗しました: ' + (err && err.message ? err.message : err) };
+      Logger.log('[payrollReloadIncomeTaxTables] Failed to parse meta: ' + (err && err.message ? err.message : err));
+    }
+    let koRows = [];
+    let otsuRows = [];
+    try {
+      const parsedKo = props.getProperty(WITHHOLDING_TAX_TABLE_KO_PROPERTY_KEY);
+      const parsedOtsu = props.getProperty(WITHHOLDING_TAX_TABLE_OTSU_PROPERTY_KEY);
+      koRows = parsedKo ? JSON.parse(parsedKo) : [];
+      otsuRows = parsedOtsu ? JSON.parse(parsedOtsu) : [];
+    } catch (err) {
+      return { ok: false, reason: 'parse_failed', message: '保存済みの税額表を読み込めませんでした: ' + (err && err.message ? err.message : err) };
+    }
+    if ((!koRows || !koRows.length) && (!otsuRows || !otsuRows.length)) {
+      return { ok: false, reason: 'validation', message: '先に税額表CSVをアップロードしてください。' };
     }
     try {
-      if (response && typeof response.getResponseCode === 'function' && response.getResponseCode() >= 400) {
-        return { ok: false, reason: 'fetch_failed', message: 'CSVの取得に失敗しました。HTTP ' + response.getResponseCode() };
-      }
-      const csvText = response && typeof response.getContentText === 'function'
-        ? response.getContentText('UTF-8')
-        : '';
-      if (!csvText) {
-        return { ok: false, reason: 'fetch_failed', message: 'CSVの内容が空です。' };
-      }
-      const rows = Utilities.parseCsv(csvText);
-      const tables = buildPayrollIncomeTaxTablesFromCsv_(rows);
-      const koCount = tables && tables.ko ? Object.keys(tables.ko).length : 0;
-      const otsuCount = tables && tables.otsu ? tables.otsu.length : 0;
-      if (!koCount && !otsuCount) {
-        return { ok: false, reason: 'parse_failed', message: '税額表の行を解釈できませんでした。CSVの形式を確認してください。' };
-      }
-      const saved = savePayrollIncomeTaxTables_(tables, { fetchedAt: new Date().toISOString() });
-      props.setProperty(PAYROLL_INCOME_TAX_TABLE_URL_PROPERTY_KEY, url);
+      const tables = buildPayrollIncomeTaxTablesFromCsv_(combinePayrollIncomeTaxRows_(koRows, otsuRows));
+      const saved = savePayrollIncomeTaxTables_(tables, { fetchedAt: new Date().toISOString(), fileName: existingMeta && existingMeta.fileName ? existingMeta.fileName : '' }, { koRows, otsuRows });
       return {
         ok: true,
-        url,
         fetchedAt: saved && saved.fetchedAt ? saved.fetchedAt : null,
-        stats: { koDependents: koCount, otsuRows: otsuCount }
+        stats: saved && saved.stats ? saved.stats : null,
+        fileName: saved && saved.fileName ? saved.fileName : ''
       };
+    } catch (err) {
+      return { ok: false, reason: 'parse_failed', message: '保存済みの税額表を再解析できませんでした: ' + (err && err.message ? err.message : err) };
+    }
+  });
+}
+
+function payrollUploadIncomeTaxCsv(file){
+  return wrapPayrollResponse_('payrollUploadIncomeTaxCsv', () => {
+    requirePayrollAccess_();
+    if (!file || typeof file.getDataAsString !== 'function') {
+      return { ok: false, reason: 'validation', message: 'CSVファイルを選択してください。' };
+    }
+    let csvText = '';
+    try {
+      csvText = file.getDataAsString('UTF-8');
+    } catch (err) {
+      return { ok: false, reason: 'parse_failed', message: 'CSVの読み込みに失敗しました: ' + (err && err.message ? err.message : err) };
+    }
+    if (!csvText) {
+      return { ok: false, reason: 'validation', message: 'CSVの内容が空です。' };
+    }
+    let rows;
+    try {
+      rows = Utilities.parseCsv(csvText);
     } catch (err) {
       return { ok: false, reason: 'parse_failed', message: 'CSVの解析に失敗しました: ' + (err && err.message ? err.message : err) };
     }
+    const sections = splitPayrollIncomeTaxRows_(rows);
+    const tables = buildPayrollIncomeTaxTablesFromCsv_(combinePayrollIncomeTaxRows_(sections.koRows, sections.otsuRows));
+    const koCount = tables && tables.ko ? Object.keys(tables.ko).length : 0;
+    const otsuCount = Array.isArray(tables && tables.otsu) ? tables.otsu.length : 0;
+    if (!koCount && !otsuCount) {
+      return { ok: false, reason: 'parse_failed', message: '税額表の行を解釈できませんでした。CSVの形式を確認してください。' };
+    }
+    const saved = savePayrollIncomeTaxTables_(tables, { fetchedAt: new Date().toISOString(), fileName: file && typeof file.getName === 'function' ? file.getName() : '' }, sections);
+    return {
+      ok: true,
+      fetchedAt: saved && saved.fetchedAt ? saved.fetchedAt : null,
+      stats: saved && saved.stats ? saved.stats : { koDependents: koCount, otsuRows: otsuCount },
+      fileName: saved && saved.fileName ? saved.fileName : ''
+    };
   });
 }
 

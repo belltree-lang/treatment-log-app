@@ -43,7 +43,8 @@ function normalizeBurdenMultiplier_(burdenRate, insuranceType) {
   if (String(insuranceType || '').trim() === '自費') return 1;
   const raw = Number(burdenRate);
   if (!Number.isFinite(raw) || raw <= 0) return 0;
-  if (raw <= 1) return raw;
+  if (raw < 1) return raw;
+  if (raw < 10) return raw / 10;
   return raw / 10;
 }
 
@@ -54,15 +55,15 @@ function resolveBillingUnitPrice_(params) {
 
 function calculateBillingAmounts_(params) {
   const visits = normalizeVisitCount_(params.visitCount);
-  const unitPrice = resolveBillingUnitPrice_(params);
-  const total = visits * unitPrice;
   const insuranceType = String(params.insuranceType || '').trim();
+  const unitPrice = insuranceType === 'マッサージ' ? 0 : resolveBillingUnitPrice_(params);
+  const total = visits * unitPrice;
   const burdenMultiplier = normalizeBurdenMultiplier_(params.burdenRate, insuranceType);
 
   let billingAmount = 0;
   if (insuranceType === '自費') {
     billingAmount = visits * unitPrice;
-  } else if (insuranceType === '生保' || burdenMultiplier === 0) {
+  } else if (insuranceType === '生保' || insuranceType === 'マッサージ' || burdenMultiplier === 0) {
     billingAmount = 0;
   } else {
     billingAmount = Math.round(visits * unitPrice * burdenMultiplier);

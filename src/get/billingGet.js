@@ -197,14 +197,13 @@ function indexByPatientId_(records) {
   }, {});
 }
 
-function getBillingTreatmentVisitCounts(billingMonth) {
-  const month = normalizeBillingMonthInput(billingMonth);
+function loadTreatmentLogs_() {
   const sheet = ss().getSheetByName(BILLING_TREATMENT_SHEET_NAME);
   if (!sheet) {
     throw new Error('施術録シートが見つかりません: ' + BILLING_TREATMENT_SHEET_NAME);
   }
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return {};
+  if (lastRow < 2) return [];
 
   const width = Math.min(Math.max(sheet.getLastColumn(), 2), sheet.getMaxColumns());
   const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0];
@@ -218,19 +217,38 @@ function getBillingTreatmentVisitCounts(billingMonth) {
   });
 
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
-  const counts = {};
-  values.forEach(row => {
+  return values.map((row, idx) => {
     const pid = normId_(row[colPid - 1]);
-    if (!pid) return;
     const dateCell = row[colDate - 1];
-    const d = dateCell instanceof Date ? dateCell : parseDateFlexible_(dateCell);
-    if (!(d instanceof Date) || isNaN(d.getTime())) return;
-    if (d < month.start || d >= month.end) return;
+    const timestamp = dateCell instanceof Date ? dateCell : parseDateFlexible_(dateCell);
+    return {
+      rowNumber: idx + 2,
+      patientId: pid,
+      timestamp,
+      raw: row
+    };
+  });
+}
+
+function buildVisitCountMap_(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const logs = loadTreatmentLogs_();
+  const counts = {};
+  logs.forEach(log => {
+    const pid = log && log.patientId ? normId_(log.patientId) : '';
+    const ts = log && log.timestamp;
+    if (!pid || !(ts instanceof Date) || isNaN(ts.getTime())) return;
+    if (ts < month.start || ts >= month.end) return;
     const current = counts[pid] || { visitCount: 0 };
     current.visitCount += 1;
     counts[pid] = current;
   });
-  return counts;
+  return { billingMonth: month.key, counts };
+}
+
+function getBillingTreatmentVisitCounts(billingMonth) {
+  const result = buildVisitCountMap_(billingMonth);
+  return result.counts;
 }
 
 function getBillingPatientRecords() {

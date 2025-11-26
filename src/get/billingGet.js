@@ -116,6 +116,19 @@ function normalizeBillingNameKey_(value) {
   return String(value || '').replace(/\s+/g, '').trim();
 }
 
+function normalizeDisabledFlag_(value) {
+  const raw = value == null ? '' : String(value).trim();
+  if (!raw) return 0;
+  const num = Number(raw);
+  if (Number.isFinite(num)) {
+    return num;
+  }
+  if (['無効', '停止', '中止', 'disabled'].indexOf(raw.toLowerCase()) >= 0) {
+    return 2;
+  }
+  return 0;
+}
+
 function normalizeBurdenRateInt_(value) {
   if (value == null || value === '') return 0;
   if (typeof value === 'number') {
@@ -273,60 +286,48 @@ function getBillingBankRecords() {
   const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
 
-  const colName = resolveBillingColumn_(headers, LABELS.name, '名前', { required: true });
-  const colKana = resolveBillingColumn_(headers, LABELS.furigana, 'フリガナ', {});
-  const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { required: true });
-  const colBranch = resolveBillingColumn_(headers, ['支店コード', '支店番号', '支店CD', 'branchCode'], '支店コード', { required: true });
-  const colAccount = resolveBillingColumn_(headers, ['口座番号', '口座No', '口座NO', 'accountNumber', '口座'], '口座番号', { required: true });
+  const colName = resolveBillingColumn_(headers, LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const colKana = resolveBillingColumn_(headers, LABELS.furigana, 'フリガナ', { fallbackLetter: 'B' });
+  const colKanaAlt = resolveBillingColumn_(headers, LABELS.furigana, 'フリガナ', { fallbackLetter: 'R' });
+  const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { required: true, fallbackLetter: 'N' });
+  const colBranch = resolveBillingColumn_(headers, ['支店コード', '支店番号', '支店CD', 'branchCode'], '支店コード', { required: true, fallbackLetter: 'O' });
+  const colRegulation = resolveBillingColumn_(headers, ['規定コード', '規定', '規定CD', '規定コード(1固定)', '1固定'], '規定コード', { fallbackLetter: 'P' });
+  const colAccount = resolveBillingColumn_(headers, ['口座番号', '口座No', '口座NO', 'accountNumber', '口座'], '口座番号', { required: true, fallbackLetter: 'Q' });
+  const colIsNew = resolveBillingColumn_(headers, ['新規', '新患', 'isNew', '新規フラグ', '新規区分'], '新規区分', { fallbackLetter: 'U' });
+  const colDisabled = resolveBillingColumn_(headers, ['利用停止', '停止', '無効', 'ステータス'], '利用停止', { fallbackLetter: 'T' });
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   return values.map(row => {
     const nameKanji = colName ? String(row[colName - 1] || '').trim() : '';
     if (!nameKanji) return null;
+    const disabledFlag = colDisabled ? normalizeDisabledFlag_(row[colDisabled - 1]) : 0;
+    if (disabledFlag === 2) return null;
+    const kanaPrimary = colKana ? String(row[colKana - 1] || '').trim() : '';
+    const kanaSecondary = colKanaAlt ? String(row[colKanaAlt - 1] || '').trim() : '';
+    const regulationCode = colRegulation ? normalizeMoneyValue_(row[colRegulation - 1]) : 0;
+    const isNew = colIsNew ? normalizeZeroOneFlag_(row[colIsNew - 1]) : 0;
     return {
       nameKanji,
-      nameKana: colKana ? String(row[colKana - 1] || '').trim() : '',
+      nameKana: kanaPrimary || kanaSecondary,
       bankCode: colBank ? String(row[colBank - 1] || '').trim() : '',
       branchCode: colBranch ? String(row[colBranch - 1] || '').trim() : '',
+      regulationCode: regulationCode || 1,
       accountNumber: colAccount ? String(row[colAccount - 1] || '').trim() : '',
+      isNew,
       raw: buildPatientRawObject_(headers, row)
     };
   }).filter(Boolean);
 }
 
-function mergeBillingBankInfo_(patientsById, bankRecords) {
-  const merged = Object.assign({}, patientsById);
-  const byKanji = {};
-  const byKana = {};
-
-  (bankRecords || []).forEach(rec => {
-    if (!rec) return;
-    const keyKanji = normalizeBillingNameKey_(rec.nameKanji);
-    const keyKana = normalizeBillingNameKey_(rec.nameKana);
-    if (keyKanji) byKanji[keyKanji] = rec;
-    if (keyKana) byKana[keyKana] = rec;
-  });
-
-  Object.keys(merged).forEach(pid => {
-    const patient = merged[pid];
-    if (!patient) return;
-    const nameKey = normalizeBillingNameKey_(patient.nameKanji);
-    const kanaKey = normalizeBillingNameKey_(patient.nameKana);
-    let bank = null;
-    if (nameKey && byKanji[nameKey]) {
-      bank = byKanji[nameKey];
-    } else if (kanaKey && byKana[kanaKey]) {
-      bank = byKana[kanaKey];
+function buildBankLookupByKanji_(bankRecords) {
+  return (bankRecords || []).reduce((map, rec) => {
+    if (!rec) return map;
+    const key = normalizeBillingNameKey_(rec.nameKanji);
+    if (key && !map[key]) {
+      map[key] = rec;
     }
-    if (bank) {
-      patient.bankCode = patient.bankCode || bank.bankCode || '';
-      patient.branchCode = patient.branchCode || bank.branchCode || '';
-      patient.accountNumber = patient.accountNumber || bank.accountNumber || '';
-      patient.raw = Object.assign({}, bank.raw, patient.raw || {});
-    }
-  });
-
-  return merged;
+    return map;
+  }, {});
 }
 
 function getBillingPaymentResults(billingMonth) {
@@ -357,12 +358,13 @@ function getBillingSourceData(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const patientRecords = getBillingPatientRecords();
   const bankRecords = getBillingBankRecords();
-  const patientMap = mergeBillingBankInfo_(indexByPatientId_(patientRecords), bankRecords);
+  const patientMap = indexByPatientId_(patientRecords);
   return {
     billingMonth: month.key,
     month,
     treatmentVisitCounts: getBillingTreatmentVisitCounts(month),
     patients: patientMap,
+    bankInfoByName: buildBankLookupByKanji_(bankRecords),
     bankStatuses: getBillingPaymentResults(month)
   };
 }

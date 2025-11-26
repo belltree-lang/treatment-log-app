@@ -6,6 +6,14 @@
  */
 
 /**
+ * Return the active spreadsheet (utility retained for compatibility).
+ * @return {SpreadsheetApp.Spreadsheet}
+ */
+function ss() {
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+/**
  * Resolve source data for billing generation (patients, visits, bank statuses).
  * @param {string|Date|Object} billingMonth - YYYYMM string, Date, or normalized month object.
  * @return {Object} normalized source data including month metadata.

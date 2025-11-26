@@ -92,6 +92,7 @@
 </div>
 
 <script>
+const baseUrl = '<?= baseUrl ?>' || '';
 const billingState = {
   loading: false,
   result: null
@@ -116,7 +117,16 @@ function setLoading(isLoading, message){
   }
 }
 
+function ensureBillingRoute(){
+  if(!baseUrl) return;
+  const targetUrl = baseUrl + '?view=billing';
+  if(window.location.href !== targetUrl){
+    window.history.replaceState({}, '', targetUrl);
+  }
+}
+
 function loadBillingPage(){
+  ensureBillingRoute();
   const input = qs('billingMonth');
   if(!input.value){
     input.value = formatDefaultMonth();

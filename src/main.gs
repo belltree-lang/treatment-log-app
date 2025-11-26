@@ -81,6 +81,29 @@ function generateCombinedBillingPdfsEntry(billingMonth, options) {
   return { billingMonth: source.billingMonth, billingJson, pdfs };
 }
 
+/**
+ * Generate all billing outputs (Excel/CSV/PDF) and surface JSON for UI.
+ * @param {string|Date|Object} billingMonth - YYYYMM string, Date, or normalized month object.
+ * @param {Object} [options] - Optional output overrides such as fileName or note.
+ * @return {Object} billingMonth key, billingJson, file metadata, and bank join warnings.
+ */
+function generateInvoices(billingMonth, options) {
+  const source = getBillingSourceData(billingMonth);
+  const billingJson = generateBillingJsonFromSource(source);
+  const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
+  const outputs = generateBillingOutputs(billingJson, outputOptions);
+  const pdfs = generateCombinedBillingPdfs(billingJson, outputOptions);
+  return {
+    billingMonth: source.billingMonth,
+    billingJson,
+    excel: outputs.excel,
+    csv: outputs.csv,
+    history: outputs.history,
+    pdfs,
+    bankJoinWarnings: summarizeBankJoinErrors_(billingJson)
+  };
+}
+
 function applyBillingPaymentResultsEntry(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const bankStatuses = getBillingPaymentResults(month);

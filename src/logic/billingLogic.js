@@ -5,6 +5,12 @@ const BILLING_ELECTRO_PRICE = 100;
 const BILLING_UNIT_PRICE = BILLING_TREATMENT_PRICE + BILLING_ELECTRO_PRICE;
 const BILLING_COMBINE_STATUSES = ['NO_DOCUMENT', 'INSUFFICIENT', 'NOT_FOUND'];
 
+function roundToNearestTen_(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num / 10) * 10;
+}
+
 function normalizeBillingSource_(source) {
   if (!source || typeof source !== 'object') {
     throw new Error('請求生成の入力が不正です');
@@ -66,7 +72,7 @@ function calculateBillingAmounts_(params) {
   } else if (insuranceType === '生保' || insuranceType === 'マッサージ' || burdenMultiplier === 0) {
     billingAmount = 0;
   } else {
-    billingAmount = Math.round(visits * unitPrice * burdenMultiplier);
+    billingAmount = roundToNearestTen_(visits * unitPrice * burdenMultiplier);
   }
 
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);

@@ -22,7 +22,26 @@ function getBillingSource(billingMonth) {
 function generateBillingJsonPreview(billingMonth) {
   const source = getBillingSourceData(billingMonth);
   const billingJson = generateBillingJsonFromSource(source);
-  return { billingMonth: source.billingMonth, billingJson };
+  return { billingMonth: source.billingMonth, billingJson, bankJoinWarnings: summarizeBankJoinErrors_(billingJson) };
+}
+
+function summarizeBankJoinErrors_(billingJson) {
+  const errors = (billingJson || []).filter(item => item && item.bankJoinError);
+  return {
+    count: errors.length,
+    messages: errors.map(item => item.bankJoinMessage).filter(Boolean)
+  };
+}
+
+function alertBankJoinWarnings_(billingJson) {
+  const summary = summarizeBankJoinErrors_(billingJson);
+  if (!summary.count) return summary;
+  const ui = SpreadsheetApp.getUi();
+  ui.alert([
+    '銀行情報が紐づけられない患者が ' + summary.count + ' 名います。',
+    '請求一覧の該当行を確認し、銀行シートを修正して再実行してください。'
+  ].join('\n'));
+  return summary;
 }
 
 /**
@@ -36,7 +55,7 @@ function generateBillingOutputsEntry(billingMonth, options) {
   const billingJson = generateBillingJsonFromSource(source);
   const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
   const outputs = generateBillingOutputs(billingJson, outputOptions);
-  return { billingMonth: source.billingMonth, billingJson, excel: outputs.excel, csv: outputs.csv, history: outputs.history };
+  return { billingMonth: source.billingMonth, billingJson, excel: outputs.excel, csv: outputs.csv, history: outputs.history, bankJoinWarnings: summarizeBankJoinErrors_(billingJson) };
 }
 
 function generateBillingCsvOnlyEntry(billingMonth, options) {
@@ -44,7 +63,7 @@ function generateBillingCsvOnlyEntry(billingMonth, options) {
   const billingJson = generateBillingJsonFromSource(source);
   const csv = createBillingCsvFile(billingJson, Object.assign({}, options, { billingMonth: source.billingMonth }));
   appendBillingHistoryRows(billingJson, { billingMonth: source.billingMonth, memo: options && options.note });
-  return { billingMonth: source.billingMonth, billingJson, csv };
+  return { billingMonth: source.billingMonth, billingJson, csv, bankJoinWarnings: summarizeBankJoinErrors_(billingJson) };
 }
 
 function generateCombinedBillingPdfsEntry(billingMonth, options) {
@@ -110,6 +129,7 @@ function billingGenerateJsonFromMenu() {
   const month = promptBillingMonthInput_();
   const result = generateBillingJsonPreview(month.key);
   SpreadsheetApp.getUi().alert('請求データを生成しました: ' + (result.billingJson ? result.billingJson.length : 0) + ' 件');
+  alertBankJoinWarnings_(result.billingJson);
   return result;
 }
 
@@ -117,6 +137,7 @@ function billingGenerateExcelFromMenu() {
   const month = promptBillingMonthInput_();
   const result = generateBillingOutputsEntry(month.key);
   SpreadsheetApp.getUi().alert('Excel/CSV を出力しました\nExcel: ' + result.excel.name + '\nCSV: ' + result.csv.name);
+  alertBankJoinWarnings_(result.billingJson);
   return result;
 }
 
@@ -124,6 +145,7 @@ function billingGenerateCsvFromMenu() {
   const month = promptBillingMonthInput_();
   const result = generateBillingCsvOnlyEntry(month.key);
   SpreadsheetApp.getUi().alert('CSV を出力しました: ' + result.csv.name);
+  alertBankJoinWarnings_(result.billingJson);
   return result;
 }
 

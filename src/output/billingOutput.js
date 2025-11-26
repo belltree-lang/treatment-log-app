@@ -8,7 +8,8 @@ const BILLING_EXCEL_COLUMNS = {
   accountNumber: columnLetterToNumber_('Q'),
   nameKana: columnLetterToNumber_('R'),
   billingAmount: columnLetterToNumber_('S'),
-  isNew: columnLetterToNumber_('U')
+  isNew: columnLetterToNumber_('U'),
+  bankWarning: columnLetterToNumber_('V')
 };
 
 function normalizeBillingAmount_(item) {
@@ -26,7 +27,7 @@ function buildBillingExcelRows_(billingJson) {
   if (!Array.isArray(billingJson)) {
     throw new Error('請求データが不正です');
   }
-  const maxCol = BILLING_EXCEL_COLUMNS.isNew;
+  const maxCol = BILLING_EXCEL_COLUMNS.bankWarning;
   const header = Array(maxCol).fill('');
   header[BILLING_EXCEL_COLUMNS.nameKanji - 1] = 'nameKanji';
   header[BILLING_EXCEL_COLUMNS.bankCode - 1] = 'bankCode';
@@ -36,6 +37,7 @@ function buildBillingExcelRows_(billingJson) {
   header[BILLING_EXCEL_COLUMNS.nameKana - 1] = 'nameKana';
   header[BILLING_EXCEL_COLUMNS.billingAmount - 1] = 'billingAmount/grandTotal';
   header[BILLING_EXCEL_COLUMNS.isNew - 1] = 'isNew';
+  header[BILLING_EXCEL_COLUMNS.bankWarning - 1] = 'bankWarning';
 
   const sorted = billingJson.slice().sort((a, b) => {
     const aid = Number(a && a.patientId);
@@ -49,13 +51,15 @@ function buildBillingExcelRows_(billingJson) {
   const rows = sorted.map(item => {
     const row = Array(maxCol).fill('');
     row[BILLING_EXCEL_COLUMNS.nameKanji - 1] = item && item.nameKanji ? item.nameKanji : '';
-    row[BILLING_EXCEL_COLUMNS.bankCode - 1] = item && item.bankCode ? item.bankCode : '';
-    row[BILLING_EXCEL_COLUMNS.branchCode - 1] = item && item.branchCode ? item.branchCode : '';
-    row[BILLING_EXCEL_COLUMNS.constantOne - 1] = 1;
-    row[BILLING_EXCEL_COLUMNS.accountNumber - 1] = item && item.accountNumber ? item.accountNumber : '';
+    const hasBank = item && !item.bankJoinError;
+    row[BILLING_EXCEL_COLUMNS.bankCode - 1] = hasBank && item.bankCode ? item.bankCode : '';
+    row[BILLING_EXCEL_COLUMNS.branchCode - 1] = hasBank && item.branchCode ? item.branchCode : '';
+    row[BILLING_EXCEL_COLUMNS.constantOne - 1] = hasBank ? (item.regulationCode != null && item.regulationCode !== '' ? item.regulationCode : 1) : '';
+    row[BILLING_EXCEL_COLUMNS.accountNumber - 1] = hasBank && item.accountNumber ? item.accountNumber : '';
     row[BILLING_EXCEL_COLUMNS.nameKana - 1] = item && item.nameKana ? item.nameKana : '';
     row[BILLING_EXCEL_COLUMNS.billingAmount - 1] = normalizeBillingAmount_(item);
-    row[BILLING_EXCEL_COLUMNS.isNew - 1] = item && item.isNew ? 1 : 0;
+    row[BILLING_EXCEL_COLUMNS.isNew - 1] = hasBank ? (item && item.isNew ? 1 : 0) : '';
+    row[BILLING_EXCEL_COLUMNS.bankWarning - 1] = item && item.bankJoinError ? (item.bankJoinMessage || '⚠銀行情報なし') : '';
     return row;
   });
 

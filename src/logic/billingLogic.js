@@ -17,7 +17,8 @@ function normalizeBillingSource_(source) {
     billingMonth,
     patients: source.patients || {},
     treatmentVisitCounts: source.treatmentVisitCounts || {},
-    bankStatuses: source.bankStatuses || {}
+    bankStatuses: source.bankStatuses || {},
+    bankInfoByName: source.bankInfoByName || {}
   };
 }
 
@@ -76,21 +77,37 @@ function shouldCombineBilling_(bankStatus) {
   return BILLING_COMBINE_STATUSES.indexOf(normalized) >= 0;
 }
 
+function resolveBankRecordForPatient_(patient, bankInfoByName) {
+  const nameKey = normalizeBillingNameKey_(patient && patient.nameKanji);
+  if (!nameKey) return null;
+  return bankInfoByName && bankInfoByName[nameKey];
+}
+
 function generateBillingJsonFromSource(sourceData) {
-  const { billingMonth, patients, treatmentVisitCounts, bankStatuses } = normalizeBillingSource_(sourceData);
+  const { billingMonth, patients, treatmentVisitCounts, bankStatuses, bankInfoByName } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
 
   return patientIds.map(pid => {
     const patient = patients[pid] || {};
-      const bank = bankStatuses[pid] || {};
-      const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
-      const amountCalc = calculateBillingAmounts_({
-        visitCount,
-        insuranceType: patient.insuranceType,
-        burdenRate: patient.burdenRate,
-        unitPrice: patient.unitPrice,
-        carryOverAmount: patient.carryOverAmount
-      });
+    const bank = bankStatuses[pid] || {};
+    const bankRecord = resolveBankRecordForPatient_(patient, bankInfoByName);
+    const bankJoinError = !bankRecord;
+    const bankJoinMessage = bankJoinError
+      ? '銀行情報が見つかりません（氏名：' + (patient.nameKanji || '') + '）'
+      : '';
+    const bankCode = bankJoinError ? '' : (bankRecord.bankCode || '');
+    const branchCode = bankJoinError ? '' : (bankRecord.branchCode || '');
+    const accountNumber = bankJoinError ? '' : (bankRecord.accountNumber || '');
+    const regulationCode = bankJoinError ? '' : (bankRecord.regulationCode != null ? bankRecord.regulationCode : 1);
+    const isNew = bankJoinError ? '' : (bankRecord.isNew ? 1 : 0);
+    const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
+    const amountCalc = calculateBillingAmounts_({
+      visitCount,
+      insuranceType: patient.insuranceType,
+      burdenRate: patient.burdenRate,
+      unitPrice: patient.unitPrice,
+      carryOverAmount: patient.carryOverAmount
+    });
 
     const bankStatus = bank.bankStatus || '';
 
@@ -105,14 +122,17 @@ function generateBillingJsonFromSource(sourceData) {
       unitPrice: amountCalc.unitPrice,
       total: amountCalc.total,
       billingAmount: amountCalc.billingAmount,
-      bankCode: patient.bankCode || '',
-      branchCode: patient.branchCode || '',
-      accountNumber: patient.accountNumber || '',
+      bankCode,
+      branchCode,
+      regulationCode,
+      accountNumber,
       bankStatus,
       carryOverAmount: amountCalc.carryOverAmount,
       grandTotal: amountCalc.grandTotal,
-      isNew: patient.isNew ? 1 : 0,
-      raw: patient.raw || {},
+      isNew,
+      bankJoinError,
+      bankJoinMessage,
+      raw: bankRecord ? Object.assign({}, bankRecord.raw || {}, patient.raw || {}) : (patient.raw || {}),
       shouldCombine: shouldCombineBilling_(bankStatus)
     };
   });

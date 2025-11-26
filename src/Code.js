@@ -9720,11 +9720,12 @@ function doGet(e) {
 function onOpen(){
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('請求処理')
-    .addItem('請求データ生成（施術録 → JSON）','billingGenerateJsonFromMenu')
-    .addItem('請求一覧Excel出力','billingGenerateExcelFromMenu')
+    .addItem('請求データ生成（JSON）','billingGenerateJsonFromMenu')
+    .addItem('請求一覧Excel出力（テンプレ版）','billingGenerateExcelFromMenu')
     .addItem('口座振替CSV出力','billingGenerateCsvFromMenu')
-    .addItem('入金結果反映','billingApplyPaymentResultsFromMenu')
-    .addItem('合算請求書出力','billingGenerateCombinedPdfsFromMenu')
+    .addItem('入金結果PDFの反映（アップロード→解析）','billingApplyPaymentResultPdfFromMenu')
+    .addItem('合算請求書PDF出力（テンプレ版）','billingGenerateCombinedPdfsFromMenu')
+    .addItem('（管理者向け）履歴チェック','billingCheckHistoryFromMenu')
     .addToUi();
   ui.createMenu('請求')
     .addItem('今月の集計（回数+負担割合）','rebuildInvoiceForCurrentMonth')

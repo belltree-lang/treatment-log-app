@@ -74,6 +74,27 @@ function applyBillingPaymentResultPdfEntry(billingMonth, fileId, options) {
   });
 }
 
+function extractDriveFileId_(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/[A-Za-z0-9_-]{25,}/);
+  return match ? match[0] : '';
+}
+
+function promptBillingResultPdfFileId_() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt('入金結果PDFのURLまたはファイルIDを入力してください',
+    '例: https://drive.google.com/file/d/XXXXX/view', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    throw new Error('入金結果PDF入力がキャンセルされました');
+  }
+  const fileId = extractDriveFileId_(response.getResponseText());
+  if (!fileId) {
+    throw new Error('Drive ファイルIDが特定できませんでした');
+  }
+  return fileId;
+}
+
 function promptBillingMonthInput_() {
   const ui = SpreadsheetApp.getUi();
   const today = new Date();
@@ -118,4 +139,65 @@ function billingGenerateCombinedPdfsFromMenu() {
   const result = generateCombinedBillingPdfsEntry(month.key);
   SpreadsheetApp.getUi().alert('合算請求書を ' + result.pdfs.count + ' 件作成しました');
   return result;
+}
+
+function billingApplyPaymentResultPdfFromMenu() {
+  const month = promptBillingMonthInput_();
+  const fileId = promptBillingResultPdfFileId_();
+  const result = applyBillingPaymentResultPdfEntry(month.key, fileId);
+  SpreadsheetApp.getUi().alert([
+    '入金結果PDFを解析しました。',
+    '解析件数: ' + result.parsedCount,
+    'マッチ件数: ' + result.matched,
+    '履歴更新: ' + result.updated + ' 件'
+  ].join('\n'));
+  return result;
+}
+
+function summarizeBillingHistory_(billingMonth) {
+  const sheet = ss().getSheetByName('請求履歴');
+  if (!sheet) {
+    return { billingMonth, exists: false };
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return { billingMonth, exists: true, total: 0, statuses: {}, paidTotal: 0, unpaidTotal: 0 };
+  }
+  const values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  const rows = values.filter(row => row[0] === billingMonth);
+  const statuses = {};
+  let paidTotal = 0;
+  let unpaidTotal = 0;
+  rows.forEach(row => {
+    const status = row[8] || '';
+    statuses[status] = (statuses[status] || 0) + 1;
+    paidTotal += Number(row[6]) || 0;
+    unpaidTotal += Number(row[7]) || 0;
+  });
+
+  return { billingMonth, exists: true, total: rows.length, statuses, paidTotal, unpaidTotal };
+}
+
+function billingCheckHistoryFromMenu() {
+  const month = promptBillingMonthInput_();
+  const summary = summarizeBillingHistory_(month.key);
+  const ui = SpreadsheetApp.getUi();
+  if (!summary.exists) {
+    ui.alert('請求履歴シートが存在しません。');
+    return summary;
+  }
+  const statusTexts = Object.keys(summary.statuses || {}).filter(key => key)
+    .map(key => key + ': ' + summary.statuses[key] + ' 件');
+  const messageLines = [
+    '請求月: ' + summary.billingMonth,
+    '履歴件数: ' + summary.total,
+    '入金合計: ' + summary.paidTotal.toLocaleString('ja-JP') + ' 円',
+    '未入金合計: ' + summary.unpaidTotal.toLocaleString('ja-JP') + ' 円'
+  ];
+  if (statusTexts.length) {
+    messageLines.push('ステータス内訳:');
+    messageLines.push(statusTexts.join(', '));
+  }
+  ui.alert(messageLines.join('\n'));
+  return summary;
 }

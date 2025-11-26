@@ -439,11 +439,14 @@ function getBillingSourceData(billingMonth) {
   const patientRecords = getBillingPatientRecords();
   const bankRecords = getBillingBankRecords();
   const patientMap = indexByPatientId_(patientRecords);
+  const treatmentVisitCounts = getBillingTreatmentVisitCounts(month);
   return {
     billingMonth: month.key,
     month,
-    treatmentVisitCounts: getBillingTreatmentVisitCounts(month),
+    treatmentVisitCounts,
+    visitCounts: treatmentVisitCounts,
     patients: patientMap,
+    patientMap,
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
     bankStatuses: getBillingPaymentResults(month)
   };

@@ -60,6 +60,20 @@ function applyBillingPaymentResultsEntry(billingMonth) {
   return applyPaymentResultsToHistory(month.key, bankStatuses);
 }
 
+function applyBillingPaymentResultPdfEntry(billingMonth, fileId, options) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const source = getBillingSourceData(month);
+  const billingJson = generateBillingJsonFromSource(source);
+  const file = DriveApp.getFileById(fileId);
+  const pdfBlob = file.getBlob();
+  const result = applyPaymentResultPdf(month.key, pdfBlob, billingJson);
+  return Object.assign({}, result, {
+    fileId,
+    fileName: file.getName(),
+    billingJson
+  });
+}
+
 function promptBillingMonthInput_() {
   const ui = SpreadsheetApp.getUi();
   const today = new Date();

@@ -32,6 +32,16 @@ const billingNormalizeVisitCount_ = typeof normalizeVisitCount_ === 'function'
     return Number.isFinite(num) && num > 0 ? num : 0;
   };
 
+const billingNormalizeBurdenRatio_ = typeof normalizeBurdenRatio_ === 'function'
+  ? normalizeBurdenRatio_
+  : function normalizeBurdenRatio_(text) {
+    if (!text) return null;
+    const normalized = String(text).normalize('NFKC').replace(/\s/g, '').replace('％', '%').replace('割', '');
+    if (/^[123]$/.test(normalized)) return Number(normalized) / 10;
+    if (/^(10|20|30)%?$/.test(normalized)) return Number(RegExp.$1) / 100;
+    return null;
+  };
+
 const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
   recNo: ['施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号'],
   name: ['名前', '氏名', '患者名', 'お名前'],
@@ -204,7 +214,7 @@ function normalizeBurdenRateInt_(value) {
     if (value === 10 || value === 20 || value === 30) return value / 10;
     if (value === 0) return 0;
   }
-  const text = String(value).trim();
+  const text = String(value).normalize('NFKC').trim();
   if (!text) return 0;
   const digits = text.replace(/[^0-9.]/g, '');
   if (digits) {
@@ -216,7 +226,7 @@ function normalizeBurdenRateInt_(value) {
       if (num === 10 || num === 20 || num === 30) return num / 10;
     }
   }
-  const ratio = normalizeBurdenRatio_(text);
+  const ratio = billingNormalizeBurdenRatio_(text);
   if (ratio === 0) return 0;
   if (ratio != null) return Math.round(ratio * 10);
   return 0;

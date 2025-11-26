@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>請求書作成</title>
+<style>
+  :root{
+    --bg:#f8fafc;
+    --fg:#111827;
+    --card:#fff;
+    --border:#e5e7eb;
+    --muted:#6b7280;
+    --brand:#2563eb;
+    --danger:#dc2626;
+    --success:#0ea5e9;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif; background:var(--bg); color:var(--fg); }
+  .layout{ display:grid; grid-template-columns:260px 1fr; min-height:100vh; }
+  .sidebar{ background:#0b1b3a; color:#e2e8f0; padding:24px 18px; display:flex; flex-direction:column; gap:16px; }
+  .sidebar h1{ margin:0; font-size:1.2rem; letter-spacing:0.02em; }
+  .sidebar .menu{ display:flex; flex-direction:column; gap:8px; }
+  .sidebar button{ appearance:none; border:0; padding:12px 14px; border-radius:10px; background:rgba(255,255,255,0.08); color:inherit; font-weight:600; cursor:pointer; text-align:left; }
+  .sidebar button:hover{ background:rgba(255,255,255,0.16); }
+  .content{ padding:28px 22px 48px; display:flex; flex-direction:column; gap:16px; }
+  .card{ background:var(--card); border-radius:16px; padding:18px; box-shadow:0 10px 32px rgba(15,23,42,0.08); }
+  .card h2{ margin:0 0 6px; font-size:1.1rem; }
+  .muted{ color:var(--muted); }
+  .controls{ display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  label{ display:flex; flex-direction:column; gap:6px; font-size:0.9rem; color:var(--muted); }
+  input,select{ padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:1rem; background:#fff; color:inherit; }
+  .btn{ appearance:none; border:0; border-radius:10px; padding:10px 14px; background:var(--brand); color:#fff; cursor:pointer; font-weight:700; transition:transform .15s ease, box-shadow .15s ease; }
+  .btn:hover{ transform:translateY(-1px); box-shadow:0 10px 24px rgba(37,99,235,0.18); }
+  .btn.secondary{ background:#e5e7eb; color:#111827; box-shadow:none; }
+  .btn.danger{ background:var(--danger); }
+  .btn.small{ padding:8px 12px; font-size:0.9rem; }
+  table{ width:100%; border-collapse:collapse; margin-top:10px; font-size:0.9rem; }
+  th,td{ border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th{ background:#f3f4f6; }
+  .right{ text-align:right; }
+  .pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:0.8rem; font-weight:600; }
+  .pill.warn{ background:#fef2f2; color:#b91c1c; }
+  .pill.ok{ background:#ecfeff; color:#0f172a; }
+  .downloads{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .download-link{ display:inline-flex; align-items:center; gap:8px; padding:10px 12px; border-radius:10px; background:#eff6ff; color:#1d4ed8; font-weight:600; text-decoration:none; }
+  .download-link svg{ width:16px; height:16px; }
+  .status-line{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .loading{ display:flex; gap:8px; align-items:center; color:var(--muted); }
+  .spinner{ width:16px; height:16px; border-radius:50%; border:3px solid rgba(37,99,235,0.3); border-top-color:var(--brand); animation:spin .8s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  @media (max-width: 900px){
+    .layout{ grid-template-columns:1fr; }
+    .sidebar{ flex-direction:row; flex-wrap:wrap; align-items:center; }
+    .sidebar button{ width:100%; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <h1>請求メニュー</h1>
+    <div class="menu">
+      <button type="button" onclick="loadBillingPage()">請求書作成</button>
+    </div>
+    <p class="muted" style="margin:0; font-size:0.9rem;">請求額の算定ロジックは 4170円/回（鍼灸）・自費は単価入力、生保は0円で固定されています。</p>
+  </aside>
+
+  <main class="content">
+    <section class="card" id="billingControls">
+      <h2>請求書を作成</h2>
+      <p class="muted">対象月を指定すると、請求一覧Excel・口座振替CSV・合算請求書PDFを生成します。</p>
+      <div class="controls">
+        <label>請求月
+          <input type="month" id="billingMonth" />
+        </label>
+        <button class="btn" type="button" onclick="handleBillingGeneration()">請求データを生成</button>
+        <div id="billingStatus" class="status-line"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="status-line" style="margin-bottom:6px">
+        <h2 style="flex:1">生成結果</h2>
+        <div id="bankWarnings" class="pill warn" style="display:none"></div>
+        <div id="billingMonthLabel" class="pill ok" style="display:none"></div>
+      </div>
+      <div id="downloads" class="downloads"></div>
+      <div id="billingResult" class="muted">まだ請求を生成していません。</div>
+    </section>
+  </main>
+</div>
+
+<script>
+const billingState = {
+  loading: false,
+  result: null
+};
+
+function qs(id){ return document.getElementById(id); }
+
+function formatDefaultMonth(){
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  return y + '-' + m;
+}
+
+function setLoading(isLoading, message){
+  billingState.loading = isLoading;
+  const statusEl = qs('billingStatus');
+  if(isLoading){
+    statusEl.innerHTML = `<span class="loading"><span class="spinner" aria-hidden="true"></span>${message || '生成中…'}</span>`;
+  } else {
+    statusEl.textContent = '';
+  }
+}
+
+function loadBillingPage(){
+  const input = qs('billingMonth');
+  if(!input.value){
+    input.value = formatDefaultMonth();
+  }
+  renderBillingResult();
+}
+
+function normalizeYmInput(raw){
+  if(!raw) return '';
+  const cleaned = String(raw).replace(/[^0-9]/g,'');
+  if(cleaned.length === 6) return cleaned;
+  if(cleaned.length === 4) return cleaned + '01';
+  return '';
+}
+
+function handleBillingGeneration(){
+  const ym = normalizeYmInput(qs('billingMonth').value);
+  if(!ym){
+    alert('請求月を入力してください (YYYY-MM)');
+    return;
+  }
+  setLoading(true, '請求データを生成しています…');
+  qs('billingResult').textContent = '請求データを生成中です…';
+  google.script.run
+    .withSuccessHandler(onBillingCompleted)
+    .withFailureHandler(onBillingError)
+    .generateInvoices(ym);
+}
+
+function onBillingCompleted(result){
+  billingState.result = result || null;
+  setLoading(false, '');
+  renderBillingResult();
+}
+
+function onBillingError(err){
+  console.error('[billing generation failed]', err);
+  setLoading(false, '');
+  const msg = err && err.message ? err.message : String(err);
+  alert('請求生成に失敗しました: ' + msg);
+}
+
+function formatCurrency(value){
+  const num = Number(value);
+  if(!Number.isFinite(num)) return '-';
+  return num.toLocaleString('ja-JP') + ' 円';
+}
+
+function renderDownloads(result){
+  const box = qs('downloads');
+  box.innerHTML = '';
+  if(!result) return;
+  const links = [];
+  if(result.excel && result.excel.url){
+    links.push({ label: 'Excelを開く', url: result.excel.url, name: result.excel.name });
+  }
+  if(result.csv && result.csv.url){
+    links.push({ label: 'CSVを開く', url: result.csv.url, name: result.csv.name });
+  }
+  if(result.pdfs && result.pdfs.files && result.pdfs.files.length){
+    links.push({ label: '合算請求書PDF一覧', url: result.pdfs.files[0].url, name: 'PDF (' + result.pdfs.count + '件)' });
+  }
+  if(!links.length){
+    box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
+    return;
+  }
+  box.innerHTML = links.map(link => `
+    <a class="download-link" href="${link.url}" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v14" /><path d="M5 10l7 7 7-7" /><path d="M5 21h14" />
+      </svg>
+      <div>
+        <div>${link.label}</div>
+        <small class="muted" style="display:block;">${link.name || ''}</small>
+      </div>
+    </a>`).join('');
+}
+
+function renderWarnings(result){
+  const warnEl = qs('bankWarnings');
+  if(result && result.bankJoinWarnings && result.bankJoinWarnings.count){
+    warnEl.style.display = 'inline-flex';
+    const messages = result.bankJoinWarnings.messages || [];
+    warnEl.textContent = `銀行情報未紐づけ: ${result.bankJoinWarnings.count}件`;
+    warnEl.title = messages.join('\n');
+  } else {
+    warnEl.style.display = 'none';
+    warnEl.textContent = '';
+    warnEl.removeAttribute('title');
+  }
+}
+
+function renderMonthBadge(result){
+  const label = qs('billingMonthLabel');
+  if(result && result.billingMonth){
+    label.style.display = 'inline-flex';
+    label.textContent = '請求月: ' + result.billingMonth;
+  } else {
+    label.style.display = 'none';
+    label.textContent = '';
+  }
+}
+
+function renderBillingResult(){
+  const box = qs('billingResult');
+  const result = billingState.result;
+  renderDownloads(result);
+  renderWarnings(result);
+  renderMonthBadge(result);
+
+  if(!result || !result.billingJson || !result.billingJson.length){
+    box.innerHTML = '<div class="muted">まだ請求を生成していません。</div>';
+    return;
+  }
+
+  const rows = result.billingJson;
+  const header = ['患者ID','氏名','保険種別','負担','回数','単価','請求額','繰越','合計','銀行状態'];
+  const tableHtml = [
+    '<table><thead><tr>',
+    header.map(h => `<th>${h}</th>`).join(''),
+    '</tr></thead><tbody>',
+    ...rows.map(item => `
+      <tr>
+        <td>${item.patientId || ''}</td>
+        <td>${item.nameKanji || ''}</td>
+        <td>${item.insuranceType || ''}</td>
+        <td>${item.burdenRate ? item.burdenRate + '割' : ''}</td>
+        <td>${item.visitCount || 0}</td>
+        <td class="right">${formatCurrency(item.unitPrice)}</td>
+        <td class="right">${formatCurrency(item.billingAmount)}</td>
+        <td class="right">${formatCurrency(item.carryOverAmount)}</td>
+        <td class="right">${formatCurrency(item.grandTotal)}</td>
+        <td>${item.bankJoinError ? '⚠ ' + (item.bankJoinMessage || '銀行情報なし') : (item.bankStatus || 'OK')}</td>
+      </tr>`),
+    '</tbody></table>'
+  ].join('');
+
+  box.innerHTML = tableHtml;
+}
+
+// 初期化
+loadBillingPage();
+</script>
+</body>
+</html>

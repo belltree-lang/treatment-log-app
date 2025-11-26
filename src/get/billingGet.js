@@ -434,6 +434,18 @@ function getBillingPaymentResults(billingMonth) {
   return map;
 }
 
+function getBillingPaymentResultsIfExists_(billingMonth) {
+  try {
+    return getBillingPaymentResults(billingMonth);
+  } catch (e) {
+    const message = e && e.message ? String(e.message) : '';
+    if (message.indexOf('入金結果シートが見つかりません') >= 0) {
+      return {};
+    }
+    throw e;
+  }
+}
+
 function getBillingSourceData(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const patientRecords = getBillingPatientRecords();
@@ -448,6 +460,6 @@ function getBillingSourceData(billingMonth) {
     patients: patientMap,
     patientMap,
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
-    bankStatuses: getBillingPaymentResults(month)
+    bankStatuses: getBillingPaymentResultsIfExists_(month)
   };
 }

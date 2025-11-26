@@ -44,20 +44,25 @@ function normalizeBurdenMultiplier_(burdenRate, insuranceType) {
   return raw / 10;
 }
 
+function resolveBillingUnitPrice_(params) {
+  const custom = normalizeMoneyNumber_(params.unitPrice);
+  return custom > 0 ? custom : BILLING_UNIT_PRICE;
+}
+
 function calculateBillingAmounts_(params) {
   const visits = normalizeVisitCount_(params.visitCount);
-  const unitPrice = BILLING_UNIT_PRICE;
+  const unitPrice = resolveBillingUnitPrice_(params);
   const total = visits * unitPrice;
   const insuranceType = String(params.insuranceType || '').trim();
   const burdenMultiplier = normalizeBurdenMultiplier_(params.burdenRate, insuranceType);
 
   let billingAmount = 0;
   if (insuranceType === '自費') {
-    billingAmount = total;
+    billingAmount = visits * unitPrice;
   } else if (insuranceType === '生保' || burdenMultiplier === 0) {
     billingAmount = 0;
   } else {
-    billingAmount = Math.round(total * burdenMultiplier);
+    billingAmount = Math.round(visits * unitPrice * burdenMultiplier);
   }
 
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
@@ -77,14 +82,15 @@ function generateBillingJsonFromSource(sourceData) {
 
   return patientIds.map(pid => {
     const patient = patients[pid] || {};
-    const bank = bankStatuses[pid] || {};
-    const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
-    const amountCalc = calculateBillingAmounts_({
-      visitCount,
-      insuranceType: patient.insuranceType,
-      burdenRate: patient.burdenRate,
-      carryOverAmount: patient.carryOverAmount
-    });
+      const bank = bankStatuses[pid] || {};
+      const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
+      const amountCalc = calculateBillingAmounts_({
+        visitCount,
+        insuranceType: patient.insuranceType,
+        burdenRate: patient.burdenRate,
+        unitPrice: patient.unitPrice,
+        carryOverAmount: patient.carryOverAmount
+      });
 
     const bankStatus = bank.bankStatus || '';
 

@@ -176,6 +176,32 @@ function billingApplyPaymentResultPdfFromMenu() {
   return result;
 }
 
+function summarizeVisitCounts_(counts) {
+  const entries = Object.values(counts || {});
+  const totalVisits = entries.reduce((sum, entry) => sum + (Number(entry && entry.visitCount) || 0), 0);
+  return { patientCount: entries.length, totalVisits };
+}
+
+function generateVisitCountPreviewFromMenu() {
+  const month = normalizeBillingMonthInput(new Date());
+  const result = buildVisitCountMap_(month);
+  const summary = summarizeVisitCounts_(result.counts);
+  SpreadsheetApp.getUi().alert([
+    '請求月: ' + result.billingMonth,
+    '対象患者数: ' + summary.patientCount + ' 名',
+    '合計施術回数: ' + summary.totalVisits + ' 回'
+  ].join('\n'));
+  return Object.assign({}, result, summary);
+}
+
+function billingGenerateJsonFromTreatmentLogs() {
+  const month = normalizeBillingMonthInput(new Date());
+  const result = generateBillingJsonPreview(month.key);
+  SpreadsheetApp.getUi().alert('施術録を集計し、請求データを生成しました: ' + (result.billingJson ? result.billingJson.length : 0) + ' 件');
+  alertBankJoinWarnings_(result.billingJson);
+  return result;
+}
+
 function summarizeBillingHistory_(billingMonth) {
   const sheet = ss().getSheetByName('請求履歴');
   if (!sheet) {
@@ -235,8 +261,9 @@ function onOpen() {
     .addItem('（管理者向け）履歴チェック', 'billingCheckHistoryFromMenu')
     .addToUi();
 
-  ui.createMenu('請求')
-    .addItem('今月の集計（回数+負担割合）', 'rebuildInvoiceForCurrentMonth')
+  ui.createMenu('施術録処理')
+    .addItem('今月の施術回数プレビュー', 'generateVisitCountPreviewFromMenu')
+    .addItem('請求データ生成（施術録→billingJson）', 'billingGenerateJsonFromTreatmentLogs')
     .addToUi();
 
   ui.createMenu('請求集計')

@@ -9716,29 +9716,6 @@ function doGet(e) {
            .addMetaTag('viewport','width=device-width, initial-scale=1.0');
 }
 
-/***** メニュー *****/
-function onOpen(){
-  const ui = SpreadsheetApp.getUi();
-  ui.createMenu('請求処理')
-    .addItem('請求データ生成（JSON）','billingGenerateJsonFromMenu')
-    .addItem('請求一覧Excel出力（テンプレ版）','billingGenerateExcelFromMenu')
-    .addItem('口座振替CSV出力','billingGenerateCsvFromMenu')
-    .addItem('入金結果PDFの反映（アップロード→解析）','billingApplyPaymentResultPdfFromMenu')
-    .addItem('合算請求書PDF出力（テンプレ版）','billingGenerateCombinedPdfsFromMenu')
-    .addItem('（管理者向け）履歴チェック','billingCheckHistoryFromMenu')
-    .addToUi();
-  ui.createMenu('請求')
-    .addItem('今月の集計（回数+負担割合）','rebuildInvoiceForCurrentMonth')
-    .addToUi();
-  ui.createMenu('請求集計')
-    .addItem('請求月を指定して集計','promptBillingAggregation')
-    .addToUi();
-  ui.createMenu('勤怠管理')
-    .addItem('勤怠データを今すぐ同期','runVisitAttendanceSyncJobFromMenu')
-    .addItem('日次同期トリガーを確認','ensureVisitAttendanceSyncTriggerFromMenu')
-    .addToUi();
-}
-
 function notifyChat_(message){
   const url = (PropertiesService.getScriptProperties().getProperty('CHAT_WEBHOOK_URL') || '').trim();
   if (!url) { Logger.log('CHAT_WEBHOOK_URL 未設定'); return; }

@@ -58,19 +58,55 @@ function buildBillingExcelRows_(billingJson) {
   return [header].concat(rows);
 }
 
+function copyTemplateSheet_(templateSheetName, destinationSpreadsheet) {
+  const templateName = templateSheetName || '請求一覧_TEMPLATE';
+  const workbook = ss();
+  const templateSheet = workbook.getSheetByName(templateName);
+  if (!templateSheet) {
+    throw new Error('テンプレートシートが見つかりません: ' + templateName);
+  }
+
+  const targetSpreadsheet = destinationSpreadsheet || SpreadsheetApp.create('請求一覧_出力中');
+  const copiedSheet = templateSheet.copyTo(targetSpreadsheet);
+  const newName = '請求一覧_出力中_' + Utilities.getUuid().slice(0, 8);
+  copiedSheet.setName(newName);
+  targetSpreadsheet.setActiveSheet(copiedSheet);
+  targetSpreadsheet.moveActiveSheet(targetSpreadsheet.getSheets().length);
+
+  return { sheet: copiedSheet, spreadsheet: targetSpreadsheet };
+}
+
+function writeBillingExcelRows_(sheet, rows) {
+  if (!sheet || !Array.isArray(rows) || !rows.length) {
+    return 0;
+  }
+  const startRow = 2; // 1行目はテンプレ側ヘッダ
+  const startCol = 1;
+  sheet.getRange(startRow, startCol, rows.length, rows[0].length).setValues(rows);
+  return rows.length;
+}
+
 function createBillingExcelFile(billingJson, options) {
   const opts = options || {};
   const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
   const baseName = opts.fileName || (billingMonth ? '請求一覧_' + billingMonth : '請求一覧');
   const rows = buildBillingExcelRows_(billingJson);
-  const temp = SpreadsheetApp.create(baseName);
-  const sheet = temp.getSheets()[0];
-  sheet.setName('請求一覧');
-  if (rows.length) {
-    sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+  const valueRows = rows.length > 1 ? rows.slice(1) : [];
+  const templateSheetName = opts.templateSheetName || '請求一覧_TEMPLATE';
+  const outputSheetName = opts.outputSheetName || '請求一覧';
+
+  const { sheet, spreadsheet } = copyTemplateSheet_(templateSheetName, SpreadsheetApp.create(baseName));
+  spreadsheet.getSheets().forEach(s => {
+    if (s.getSheetId() !== sheet.getSheetId()) {
+      spreadsheet.deleteSheet(s);
+    }
+  });
+  sheet.setName(outputSheetName);
+  if (valueRows.length) {
+    writeBillingExcelRows_(sheet, valueRows);
   }
 
-  const tempFile = DriveApp.getFileById(temp.getId());
+  const tempFile = DriveApp.getFileById(spreadsheet.getId());
   let folder = null;
   try {
     folder = getParentFolder_();

@@ -252,26 +252,17 @@ function billingCheckHistoryFromMenu() {
 
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
-  ui.createMenu('請求処理')
-    .addItem('請求データ生成（JSON）', 'billingGenerateJsonFromMenu')
-    .addItem('請求一覧Excel出力（テンプレ版）', 'billingGenerateExcelFromMenu')
-    .addItem('口座振替CSV出力', 'billingGenerateCsvFromMenu')
-    .addItem('入金結果PDFの反映（アップロード→解析）', 'billingApplyPaymentResultPdfFromMenu')
-    .addItem('合算請求書PDF出力（テンプレ版）', 'billingGenerateCombinedPdfsFromMenu')
-    .addItem('（管理者向け）履歴チェック', 'billingCheckHistoryFromMenu')
-    .addToUi();
+  const billingMenu = ui.createMenu('請求処理');
+  billingMenu.addItem('請求データ生成（JSON）', 'billingGenerateJsonFromMenu');
+  billingMenu.addItem('請求一覧Excel出力（テンプレ版）', 'billingGenerateExcelFromMenu');
+  billingMenu.addItem('口座振替CSV出力', 'billingGenerateCsvFromMenu');
+  billingMenu.addItem('入金結果PDFの反映（アップロード→解析）', 'billingApplyPaymentResultPdfFromMenu');
+  billingMenu.addItem('合算請求書PDF出力（テンプレ版）', 'billingGenerateCombinedPdfsFromMenu');
+  billingMenu.addItem('（管理者向け）履歴チェック', 'billingCheckHistoryFromMenu');
+  billingMenu.addToUi();
 
-  ui.createMenu('施術録処理')
-    .addItem('今月の施術回数プレビュー', 'generateVisitCountPreviewFromMenu')
-    .addItem('請求データ生成（施術録→billingJson）', 'billingGenerateJsonFromTreatmentLogs')
-    .addToUi();
-
-  ui.createMenu('請求集計')
-    .addItem('請求月を指定して集計', 'promptBillingAggregation')
-    .addToUi();
-
-  ui.createMenu('勤怠管理')
-    .addItem('勤怠データを今すぐ同期', 'runVisitAttendanceSyncJobFromMenu')
-    .addItem('日次同期トリガーを確認', 'ensureVisitAttendanceSyncTriggerFromMenu')
-    .addToUi();
+  const attendanceMenu = ui.createMenu('勤怠管理');
+  attendanceMenu.addItem('勤怠データを今すぐ同期', 'runVisitAttendanceSyncJobFromMenu');
+  attendanceMenu.addItem('日次同期トリガーを確認', 'ensureVisitAttendanceSyncTriggerFromMenu');
+  attendanceMenu.addToUi();
 }

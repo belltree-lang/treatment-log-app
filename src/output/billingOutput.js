@@ -18,6 +18,10 @@ function normalizeBillingAmount_(item) {
   return 0;
 }
 
+function normalizeBillingNameKey_(value) {
+  return String(value || '').replace(/\s+/g, '').trim();
+}
+
 function buildBillingExcelRows_(billingJson) {
   if (!Array.isArray(billingJson)) {
     throw new Error('請求データが不正です');
@@ -239,10 +243,25 @@ function applyPaymentResultsToHistory(billingMonth, bankStatuses) {
   data.forEach((row, idx) => {
     if (row[0] !== billingMonth) return;
     const pid = row[1];
-    const status = statusMap[pid] && statusMap[pid].bankStatus ? statusMap[pid].bankStatus : null;
-    if (!status) return;
+    const statusEntry = statusMap[pid];
+    if (!statusEntry) return;
     const newRow = row.slice();
-    newRow[8] = status;
+    let changed = false;
+
+    if (statusEntry.bankStatus) {
+      newRow[8] = statusEntry.bankStatus;
+      changed = true;
+    }
+    if (statusEntry.paidAmount != null) {
+      const paid = Number(statusEntry.paidAmount) || 0;
+      newRow[6] = paid;
+      const grandTotal = Number(newRow[5]) || 0;
+      const unpaid = statusEntry.unpaidAmount != null ? statusEntry.unpaidAmount : grandTotal - paid;
+      newRow[7] = unpaid;
+      changed = true;
+    }
+
+    if (!changed) return;
     newRow[9] = new Date();
     updates.push({ rowNumber: idx + 2, values: newRow });
   });
@@ -250,6 +269,90 @@ function applyPaymentResultsToHistory(billingMonth, bankStatuses) {
     sheet.getRange(update.rowNumber, 1, 1, update.values.length).setValues([update.values]);
   });
   return { billingMonth, updated: updates.length };
+}
+
+const BILLING_PAYMENT_PDF_STATUS_LABELS = {
+  '回収済み': 'OK',
+  '預金口座振替依頼書なし': 'NO_DOCUMENT',
+  '資金不足': 'INSUFFICIENT',
+  '取引なし': 'NOT_FOUND'
+};
+
+function parseBillingPaymentResultPdf(pdfBlob) {
+  if (!pdfBlob) {
+    throw new Error('入金結果PDFが指定されていません');
+  }
+  const text = pdfBlob.getDataAsString('Shift_JIS');
+  const normalized = text.replace(/\r\n/g, '\n').replace(/[\t ]+/g, ' ');
+  const statusKeys = Object.keys(BILLING_PAYMENT_PDF_STATUS_LABELS).join('|');
+  const regex = new RegExp('([\\p{sc=Han}\\p{L}\\p{N}\\s・･()（）]+?)\\s+([0-9,]+)\\s+(' + statusKeys + ')', 'gu');
+  const entries = [];
+  let match = null;
+  while ((match = regex.exec(normalized)) !== null) {
+    const name = normalizeBillingNameKey_(match[1]);
+    if (!name) continue;
+    const paidAmount = Number(String(match[2] || '0').replace(/,/g, '')) || 0;
+    const statusLabel = match[3];
+    const bankStatus = BILLING_PAYMENT_PDF_STATUS_LABELS[statusLabel] || '';
+    entries.push({ nameKanji: name, paidAmount, bankStatus, statusLabel });
+  }
+
+  if (!entries.length) {
+    const lines = normalized.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    lines.forEach(line => {
+      Object.keys(BILLING_PAYMENT_PDF_STATUS_LABELS).forEach(label => {
+        if (line.indexOf(label) < 0) return;
+        const paidMatch = line.match(/([0-9][0-9,]*)/);
+        const paidAmount = paidMatch ? Number(paidMatch[1].replace(/,/g, '')) || 0 : 0;
+        const name = normalizeBillingNameKey_(line.replace(label, '').replace(paidMatch ? paidMatch[1] : '', ''));
+        if (!name) return;
+        entries.push({ nameKanji: name, paidAmount, bankStatus: BILLING_PAYMENT_PDF_STATUS_LABELS[label], statusLabel: label });
+      });
+    });
+  }
+
+  return entries;
+}
+
+function buildPaymentResultStatusMap_(parsedEntries, billingJson) {
+  const nameIndex = {};
+  (billingJson || []).forEach(item => {
+    if (item && item.nameKanji) {
+      nameIndex[normalizeBillingNameKey_(item.nameKanji)] = item;
+    }
+  });
+
+  const statusMap = {};
+  const unmatched = [];
+
+  parsedEntries.forEach(entry => {
+    const key = normalizeBillingNameKey_(entry.nameKanji);
+    const target = nameIndex[key];
+    if (!target || !target.patientId) {
+      unmatched.push(entry);
+      return;
+    }
+    const paidAmount = Number(entry.paidAmount) || 0;
+    const grandTotal = normalizeBillingAmount_(target);
+    statusMap[target.patientId] = {
+      bankStatus: entry.bankStatus || '',
+      paidAmount,
+      unpaidAmount: grandTotal - paidAmount
+    };
+  });
+
+  return { statusMap, unmatched, matched: Object.keys(statusMap).length };
+}
+
+function applyPaymentResultPdf(billingMonth, pdfBlob, billingJson) {
+  const parsedEntries = parseBillingPaymentResultPdf(pdfBlob);
+  const mapping = buildPaymentResultStatusMap_(parsedEntries, billingJson);
+  const historyResult = applyPaymentResultsToHistory(billingMonth, mapping.statusMap);
+  return Object.assign({ billingMonth }, historyResult, {
+    parsedCount: parsedEntries.length,
+    matched: mapping.matched,
+    unmatched: mapping.unmatched
+  });
 }
 
 const BILLING_COMBINED_INVOICE_TEMPLATE_ID = '1CLy0facEX8_CFFiswIywSGxvan0dUKVw';

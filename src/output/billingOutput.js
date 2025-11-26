@@ -252,10 +252,132 @@ function applyPaymentResultsToHistory(billingMonth, bankStatuses) {
   return { billingMonth, updated: updates.length };
 }
 
+const BILLING_COMBINED_INVOICE_TEMPLATE_ID = '1CLy0facEX8_CFFiswIywSGxvan0dUKVw';
+const BILLING_STANDARD_INVOICE_TEMPLATE_ID = '15__-XmSsDcMV2mFzsekxuGMYcNWtm2CN';
+
+const BILLING_PDF_OVERLAY_POSITIONS = {
+  nameKanji: { x: 0.63, y: 0.26, fontSize: 16, align: 'left', weight: '700' },
+  address: { x: 0.63, y: 0.23, fontSize: 11, align: 'left' },
+  billingMonth: { x: 0.22, y: 0.35, fontSize: 13, align: 'left' },
+  combinedTotal: { x: 0.80, y: 0.63, fontSize: 16, align: 'right', weight: '700' },
+  carryOver: { x: 0.80, y: 0.69, fontSize: 14, align: 'right' },
+  combineNote: { x: 0.63, y: 0.75, fontSize: 12, align: 'left', weight: '600' }
+};
+
+function resolveBillingPdfTemplates_(options) {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    combined: (options && options.combinedTemplateId) || props.getProperty('BILLING_COMBINED_INVOICE_TEMPLATE_ID') ||
+      BILLING_COMBINED_INVOICE_TEMPLATE_ID,
+    standard: (options && options.standardTemplateId) || props.getProperty('BILLING_STANDARD_INVOICE_TEMPLATE_ID') ||
+      BILLING_STANDARD_INVOICE_TEMPLATE_ID
+  };
+}
+
+function normalizeBillingCarryOver_(item) {
+  if (!item) return 0;
+  if (item.carryOverAmount != null && item.carryOverAmount !== '') return Number(item.carryOverAmount) || 0;
+  if (item.raw && item.raw.carryOverAmount != null) return Number(item.raw.carryOverAmount) || 0;
+  return 0;
+}
+
+function resolveBillingAddress_(item) {
+  if (!item || !item.raw) return '';
+  const raw = item.raw;
+  const candidates = ['住所', '住所1', '住所２', '住所2', 'address', 'Address'];
+  for (let i = 0; i < candidates.length; i++) {
+    const key = candidates[i];
+    if (raw.hasOwnProperty(key) && raw[key] != null && String(raw[key]).trim()) {
+      return String(raw[key]).trim();
+    }
+  }
+  return '';
+}
+
+function formatBillingCurrency_(value) {
+  const num = Number(value);
+  if (!isFinite(num)) return '0';
+  return Math.round(num).toLocaleString('ja-JP');
+}
+
+function createBillingPdfOverlay_(pngBlob, overlay) {
+  const image = ImagesService.openImage(pngBlob);
+  const width = image.getWidth();
+  const height = image.getHeight();
+  const backgroundUrl = 'data:image/png;base64,' + Utilities.base64Encode(pngBlob.getBytes());
+
+  const pos = BILLING_PDF_OVERLAY_POSITIONS;
+  const fields = [];
+  if (overlay.address) {
+    fields.push(Object.assign({ text: overlay.address }, pos.address));
+  }
+  if (overlay.nameKanji) {
+    fields.push(Object.assign({ text: overlay.nameKanji }, pos.nameKanji));
+  }
+  if (overlay.billingMonth) {
+    fields.push(Object.assign({ text: overlay.billingMonth }, pos.billingMonth));
+  }
+  if (overlay.combinedTotal) {
+    fields.push(Object.assign({ text: overlay.combinedTotal }, pos.combinedTotal));
+  }
+  if (overlay.carryOver) {
+    fields.push(Object.assign({ text: overlay.carryOver }, pos.carryOver));
+  }
+  if (overlay.combineNote) {
+    fields.push(Object.assign({ text: overlay.combineNote }, pos.combineNote));
+  }
+
+  const textLayer = fields.map(field => {
+    const left = Math.round(field.x * width);
+    const top = Math.round(field.y * height);
+    const fontSize = field.fontSize || 12;
+    const weight = field.weight || '400';
+    const align = field.align || 'left';
+    const content = escapeHtml_ ? escapeHtml_(field.text) : field.text;
+    return '<div style="position:absolute;left:' + left + 'px;top:' + top +
+      'px;font-size:' + fontSize + 'px;font-family:\'Noto Sans JP\', \"Noto Sans\", sans-serif;font-weight:' + weight +
+      ';text-align:' + align + ';white-space:nowrap;">' + content + '</div>';
+  }).join('');
+
+  const html = '<!doctype html><html><head><style>@page { size: ' + width + 'px ' + height + 'px; margin: 0; } body { margin: 0; padding: 0; }' +
+    '</style></head><body>' +
+    '<div style="position:relative;width:' + width + 'px;height:' + height + 'px;background:url(' + backgroundUrl +
+    ') center center / contain no-repeat;">' + textLayer + '</div></body></html>';
+
+  const blob = HtmlService.createHtmlOutput(html).getBlob().getAs(MimeType.PDF);
+  return blob;
+}
+
+function selectBillingTemplateBlob_(templates, useCombined) {
+  const id = useCombined ? templates.combined : templates.standard;
+  if (!id) {
+    throw new Error('請求書テンプレートIDが設定されていません');
+  }
+  const file = DriveApp.getFileById(id);
+  return file.getBlob();
+}
+
+function buildCombinedBillingPdfBlob_(item, billingMonth, templates) {
+  const carryOver = normalizeBillingCarryOver_(item);
+  const total = normalizeBillingAmount_(item);
+  const templateBlob = selectBillingTemplateBlob_(templates, carryOver > 0 || (item && item.shouldCombine));
+  const pngBlob = templateBlob.getAs(MimeType.PNG);
+  const overlay = {
+    nameKanji: item && item.nameKanji ? item.nameKanji : '',
+    address: resolveBillingAddress_(item),
+    billingMonth: billingMonth ? String(billingMonth) : '',
+    combinedTotal: formatBillingCurrency_(total),
+    carryOver: carryOver ? formatBillingCurrency_(carryOver) : '',
+    combineNote: '未入金があるため合算請求となります'
+  };
+  return createBillingPdfOverlay_(pngBlob, overlay);
+}
+
 function generateCombinedBillingPdfs(billingJson, options) {
   const opts = options || {};
   const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
   const targets = (billingJson || []).filter(item => item && item.shouldCombine);
+  const templates = resolveBillingPdfTemplates_(opts);
   const results = [];
   let folder = null;
   try {
@@ -266,24 +388,8 @@ function generateCombinedBillingPdfs(billingJson, options) {
 
   targets.forEach(item => {
     const title = '合算請求書_' + billingMonth + '_' + (item.patientId || '');
-    const doc = DocumentApp.create(title);
-    const body = doc.getBody();
-    body.appendParagraph('合算請求書');
-    body.appendParagraph('請求月: ' + billingMonth);
-    body.appendParagraph('患者ID: ' + (item.patientId || ''));
-    body.appendParagraph('氏名: ' + (item.nameKanji || ''));
-    body.appendParagraph('請求金額: ' + normalizeBillingAmount_(item));
-    body.appendParagraph('未入金額: ' + (item && item.carryOverAmount != null ? item.carryOverAmount : 0));
-    body.appendParagraph('未入金分を含む合算請求となります。');
-
-    const docFile = DriveApp.getFileById(doc.getId());
-    if (folder) {
-      folder.addFile(docFile);
-      DriveApp.getRootFolder().removeFile(docFile);
-    }
-    const pdfBlob = docFile.getBlob().getAs(MimeType.PDF).setName(title + '.pdf');
+    const pdfBlob = buildCombinedBillingPdfBlob_(item, billingMonth, templates).setName(title + '.pdf');
     const pdfFile = folder ? folder.createFile(pdfBlob) : DriveApp.createFile(pdfBlob);
-    docFile.setTrashed(true);
     results.push({
       patientId: item.patientId,
       fileId: pdfFile.getId(),

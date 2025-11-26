@@ -38,3 +38,70 @@ function generateBillingOutputsEntry(billingMonth, options) {
   const outputs = generateBillingOutputs(billingJson, outputOptions);
   return { billingMonth: source.billingMonth, billingJson, excel: outputs.excel, csv: outputs.csv, history: outputs.history };
 }
+
+function generateBillingCsvOnlyEntry(billingMonth, options) {
+  const source = getBillingSourceData(billingMonth);
+  const billingJson = generateBillingJsonFromSource(source);
+  const csv = createBillingCsvFile(billingJson, Object.assign({}, options, { billingMonth: source.billingMonth }));
+  appendBillingHistoryRows(billingJson, { billingMonth: source.billingMonth, memo: options && options.note });
+  return { billingMonth: source.billingMonth, billingJson, csv };
+}
+
+function generateCombinedBillingPdfsEntry(billingMonth, options) {
+  const source = getBillingSourceData(billingMonth);
+  const billingJson = generateBillingJsonFromSource(source);
+  const pdfs = generateCombinedBillingPdfs(billingJson, Object.assign({}, options, { billingMonth: source.billingMonth }));
+  return { billingMonth: source.billingMonth, billingJson, pdfs };
+}
+
+function applyBillingPaymentResultsEntry(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const bankStatuses = getBillingPaymentResults(month);
+  return applyPaymentResultsToHistory(month.key, bankStatuses);
+}
+
+function promptBillingMonthInput_() {
+  const ui = SpreadsheetApp.getUi();
+  const today = new Date();
+  const defaultYm = Utilities.formatDate(today, Session.getScriptTimeZone() || 'Asia/Tokyo', 'yyyyMM');
+  const response = ui.prompt('請求月を入力してください (YYYYMM)', defaultYm, ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    throw new Error('請求月入力がキャンセルされました');
+  }
+  return normalizeBillingMonthInput(response.getResponseText());
+}
+
+function billingGenerateJsonFromMenu() {
+  const month = promptBillingMonthInput_();
+  const result = generateBillingJsonPreview(month.key);
+  SpreadsheetApp.getUi().alert('請求データを生成しました: ' + (result.billingJson ? result.billingJson.length : 0) + ' 件');
+  return result;
+}
+
+function billingGenerateExcelFromMenu() {
+  const month = promptBillingMonthInput_();
+  const result = generateBillingOutputsEntry(month.key);
+  SpreadsheetApp.getUi().alert('Excel/CSV を出力しました\nExcel: ' + result.excel.name + '\nCSV: ' + result.csv.name);
+  return result;
+}
+
+function billingGenerateCsvFromMenu() {
+  const month = promptBillingMonthInput_();
+  const result = generateBillingCsvOnlyEntry(month.key);
+  SpreadsheetApp.getUi().alert('CSV を出力しました: ' + result.csv.name);
+  return result;
+}
+
+function billingApplyPaymentResultsFromMenu() {
+  const month = promptBillingMonthInput_();
+  const result = applyBillingPaymentResultsEntry(month.key);
+  SpreadsheetApp.getUi().alert('請求履歴を更新しました: ' + result.updated + ' 件');
+  return result;
+}
+
+function billingGenerateCombinedPdfsFromMenu() {
+  const month = promptBillingMonthInput_();
+  const result = generateCombinedBillingPdfsEntry(month.key);
+  SpreadsheetApp.getUi().alert('合算請求書を ' + result.pdfs.count + ' 件作成しました');
+  return result;
+}

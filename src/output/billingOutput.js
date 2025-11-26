@@ -1,15 +1,46 @@
 /***** Output layer: billing Excel/CSV/history generation *****/
 
+const billingColumnLetterToNumber_ = typeof columnLetterToNumber_ === 'function'
+  ? columnLetterToNumber_
+  : function columnLetterToNumberFallback_(letter) {
+    const raw = String(letter || '').trim().toUpperCase();
+    if (!raw || !/^[A-Z]+$/.test(raw)) return null;
+    let num = 0;
+    for (let i = 0; i < raw.length; i++) {
+      num = num * 26 + (raw.charCodeAt(i) - 64);
+    }
+    return num;
+  };
+
+const billingGetParentFolder_ = typeof getParentFolder_ === 'function'
+  ? getParentFolder_
+  : function getParentFolderFallback_() {
+    const props = PropertiesService.getScriptProperties();
+    const configured = ((props.getProperty('PARENT_FOLDER_ID') || '') || '').trim();
+    const appFallback = typeof APP !== 'undefined' ? (APP.PARENT_FOLDER_ID || '').trim() : '';
+    const candidateId = configured || appFallback;
+    if (candidateId) {
+      try { return DriveApp.getFolderById(candidateId); } catch (err) {}
+    }
+    try {
+      const workbook = SpreadsheetApp.getActiveSpreadsheet();
+      const file = DriveApp.getFileById(workbook.getId());
+      const parents = file.getParents();
+      if (parents.hasNext()) return parents.next();
+    } catch (err2) {}
+    return DriveApp.getRootFolder();
+  };
+
 const BILLING_EXCEL_COLUMNS = {
-  nameKanji: columnLetterToNumber_('F'),
-  bankCode: columnLetterToNumber_('N'),
-  branchCode: columnLetterToNumber_('O'),
-  constantOne: columnLetterToNumber_('P'),
-  accountNumber: columnLetterToNumber_('Q'),
-  nameKana: columnLetterToNumber_('R'),
-  billingAmount: columnLetterToNumber_('S'),
-  isNew: columnLetterToNumber_('U'),
-  bankWarning: columnLetterToNumber_('V')
+  nameKanji: billingColumnLetterToNumber_('F'),
+  bankCode: billingColumnLetterToNumber_('N'),
+  branchCode: billingColumnLetterToNumber_('O'),
+  constantOne: billingColumnLetterToNumber_('P'),
+  accountNumber: billingColumnLetterToNumber_('Q'),
+  nameKana: billingColumnLetterToNumber_('R'),
+  billingAmount: billingColumnLetterToNumber_('S'),
+  isNew: billingColumnLetterToNumber_('U'),
+  bankWarning: billingColumnLetterToNumber_('V')
 };
 
 function normalizeBillingAmount_(item) {
@@ -117,7 +148,7 @@ function createBillingExcelFile(billingJson, options) {
   const tempFile = DriveApp.getFileById(spreadsheet.getId());
   let folder = null;
   try {
-    folder = getParentFolder_();
+    folder = billingGetParentFolder_();
   } catch (e) {
     folder = null;
   }
@@ -168,7 +199,7 @@ function createBillingCsvFile(billingJson, options) {
   const blob = Utilities.newBlob(csv, 'text/csv', baseName + '.csv');
   let folder = null;
   try {
-    folder = getParentFolder_();
+    folder = billingGetParentFolder_();
   } catch (e) {
     folder = null;
   }
@@ -488,7 +519,7 @@ function generateCombinedBillingPdfs(billingJson, options) {
   const results = [];
   let folder = null;
   try {
-    folder = getParentFolder_();
+    folder = billingGetParentFolder_();
   } catch (e) {
     folder = null;
   }

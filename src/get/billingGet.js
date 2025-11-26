@@ -1,5 +1,64 @@
 /***** Get layer: billing data retrieval *****/
 
+/**
+ * Provide local fallbacks for shared helpers so the billing pipeline can run
+ * without depending on Code.js ordering.
+ */
+const billingNormalizeHeaderKey_ = typeof normalizeHeaderKey_ === 'function'
+  ? normalizeHeaderKey_
+  : function normalizeHeaderKey_(s) {
+    if (!s) return '';
+    const z2h = String(s).normalize('NFKC');
+    const noSpace = z2h.replace(/\s+/g, '');
+    const noPunct = noSpace.replace(/[（）\(\)\[\]【】:：・\-＿_]/g, '');
+    return noPunct.toLowerCase();
+  };
+
+const billingBuildHeaderMap_ = typeof buildHeaderMap_ === 'function'
+  ? buildHeaderMap_
+  : function buildHeaderMap_(headersRow) {
+    const map = {};
+    (headersRow || []).forEach((header, idx) => {
+      const key = billingNormalizeHeaderKey_(header);
+      if (key && !map[key]) map[key] = idx + 1;
+    });
+    return map;
+  };
+
+const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
+  recNo: ['施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号'],
+  name: ['名前', '氏名', '患者名', 'お名前'],
+  hospital: ['病院名', '医療機関', '病院'],
+  doctor: ['医師', '主治医', '担当医'],
+  furigana: ['ﾌﾘｶﾞﾅ', 'ふりがな', 'フリガナ'],
+  birth: ['生年月日', '誕生日', '生年', '生年月'],
+  consent: ['同意年月日', '同意日', '同意開始日', '同意開始'],
+  consentHandout: ['配布', '配布欄', '配布状況', '配布日', '配布（同意書）'],
+  consentContent: ['同意症状', '同意内容', '施術対象疾患', '対象疾患', '対象症状', '同意書内容', '同意記載内容'],
+  share: ['負担割合', '負担', '自己負担', '負担率', '負担割', '負担%', '負担％'],
+  phone: ['電話', '電話番号', 'TEL', 'Tel']
+};
+
+const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? PATIENT_COLS_FIXED : {
+  recNo: 3,
+  name: 4,
+  hospital: 5,
+  furigana: 6,
+  birth: 7,
+  doctor: 26,
+  consent: 28,
+  consentHandout: 54,
+  consentContent: 25,
+  phone: 32,
+  share: 47
+};
+
+const billingSs = typeof ss === 'function'
+  ? ss
+  : function ss() {
+    return SpreadsheetApp.getActiveSpreadsheet();
+  };
+
 const BILLING_PATIENT_RAW_COL_LIMIT = columnLetterToNumber_('BJ');
 const BILLING_TREATMENT_SHEET_NAME = '施術録';
 const BILLING_PAYMENT_RESULT_SHEET_PREFIX = '入金結果_';
@@ -75,9 +134,9 @@ function columnNumberToLetter_(num) {
 
 function resolveBillingColumn_(headers, labelCandidates, fieldLabel, options) {
   const opts = options || {};
-  const headerMap = buildHeaderMap_(headers);
+  const headerMap = billingBuildHeaderMap_(headers);
   for (let i = 0; i < labelCandidates.length; i++) {
-    const key = normalizeHeaderKey_(labelCandidates[i]);
+    const key = billingNormalizeHeaderKey_(labelCandidates[i]);
     if (key && headerMap[key]) {
       return headerMap[key];
     }
@@ -198,7 +257,7 @@ function indexByPatientId_(records) {
 }
 
 function loadTreatmentLogs_() {
-  const sheet = ss().getSheetByName(BILLING_TREATMENT_SHEET_NAME);
+  const sheet = billingSs().getSheetByName(BILLING_TREATMENT_SHEET_NAME);
   if (!sheet) {
     throw new Error('施術録シートが見つかりません: ' + BILLING_TREATMENT_SHEET_NAME);
   }
@@ -211,7 +270,7 @@ function loadTreatmentLogs_() {
     required: true,
     fallbackIndex: 1
   });
-  const colPid = resolveBillingColumn_(headers, LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {
+  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {
     required: true,
     fallbackIndex: 2
   });
@@ -252,18 +311,21 @@ function getBillingTreatmentVisitCounts(billingMonth) {
 }
 
 function getBillingPatientRecords() {
-  const sheet = sh(BILLING_PATIENT_SHEET_NAME);
+  const sheet = billingSs().getSheetByName(BILLING_PATIENT_SHEET_NAME);
+  if (!sheet) {
+    throw new Error('患者情報シートが見つかりません: ' + BILLING_PATIENT_SHEET_NAME);
+  }
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const rawColCount = Math.min(sheet.getLastColumn(), BILLING_PATIENT_RAW_COL_LIMIT);
   const headers = sheet.getRange(1, 1, 1, rawColCount).getDisplayValues()[0];
   const values = sheet.getRange(2, 1, lastRow - 1, rawColCount).getValues();
 
-  const colPid = resolveBillingColumn_(headers, LABELS.recNo, '患者ID', { required: true, fallbackIndex: PATIENT_COLS_FIXED.recNo });
-  const colName = resolveBillingColumn_(headers, LABELS.name, '名前', { fallbackIndex: PATIENT_COLS_FIXED.name });
-  const colKana = resolveBillingColumn_(headers, LABELS.furigana, 'フリガナ', { fallbackIndex: PATIENT_COLS_FIXED.furigana });
+  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo, '患者ID', { required: true, fallbackIndex: BILLING_PATIENT_COLS_FIXED.recNo });
+  const colName = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.name });
+  const colKana = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.furigana });
   const colInsurance = resolveBillingColumn_(headers, ['保険区分', '保険種別', '保険タイプ', '保険'], '保険区分', {});
-  const colBurden = resolveBillingColumn_(headers, LABELS.share, '負担割合', { fallbackIndex: PATIENT_COLS_FIXED.share });
+  const colBurden = resolveBillingColumn_(headers, BILLING_LABELS.share, '負担割合', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.share });
   const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）'], '単価', {});
   const colAddress = resolveBillingColumn_(headers, ['住所', '住所1', '住所２', '住所2', 'address', 'Address'], '住所', {});
   const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { fallbackLetter: 'N' });
@@ -294,7 +356,7 @@ function getBillingPatientRecords() {
 }
 
 function getBillingBankRecords() {
-  const sheet = ss().getSheetByName(BILLING_BANK_SHEET_NAME);
+  const sheet = billingSs().getSheetByName(BILLING_BANK_SHEET_NAME);
   if (!sheet) {
     throw new Error('銀行情報シートが見つかりません: ' + BILLING_BANK_SHEET_NAME);
   }
@@ -304,9 +366,9 @@ function getBillingBankRecords() {
   const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
 
-  const colName = resolveBillingColumn_(headers, LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
-  const colKana = resolveBillingColumn_(headers, LABELS.furigana, 'フリガナ', { fallbackLetter: 'B' });
-  const colKanaAlt = resolveBillingColumn_(headers, LABELS.furigana, 'フリガナ', { fallbackLetter: 'R' });
+  const colName = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const colKana = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', { fallbackLetter: 'B' });
+  const colKanaAlt = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', { fallbackLetter: 'R' });
   const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { required: true, fallbackLetter: 'N' });
   const colBranch = resolveBillingColumn_(headers, ['支店コード', '支店番号', '支店CD', 'branchCode'], '支店コード', { required: true, fallbackLetter: 'O' });
   const colRegulation = resolveBillingColumn_(headers, ['規定コード', '規定', '規定CD', '規定コード(1固定)', '1固定'], '規定コード', { fallbackLetter: 'P' });
@@ -351,7 +413,7 @@ function buildBankLookupByKanji_(bankRecords) {
 function getBillingPaymentResults(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const sheetName = BILLING_PAYMENT_RESULT_SHEET_PREFIX + month.key;
-  const sheet = ss().getSheetByName(sheetName);
+  const sheet = billingSs().getSheetByName(sheetName);
   if (!sheet) {
     throw new Error('入金結果シートが見つかりません: ' + sheetName);
   }
@@ -359,7 +421,7 @@ function getBillingPaymentResults(billingMonth) {
   if (lastRow < 2) return {};
   const lastCol = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
-  const colPid = resolveBillingColumn_(headers, LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', { required: true });
+  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', { required: true });
   const colStatus = resolveBillingColumn_(headers, ['bankStatus', '入金ステータス', 'ステータス', '状態', '結果'], '入金ステータス', { required: true });
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const map = {};

@@ -36,9 +36,24 @@ function testMassageBillingExclusion() {
   assert.strictEqual(result.grandTotal, 2000, '繰越額のみが合計に残る');
 }
 
+function testBillingAmountRoundsToNearestTen() {
+  const result = calculateBillingAmounts_({
+    visitCount: 6,
+    insuranceType: '鍼灸',
+    burdenRate: 3,
+    unitPrice: 4170,
+    carryOverAmount: 0
+  });
+
+  assert.strictEqual(result.visits, 6, '施術回数が正しく反映される');
+  assert.strictEqual(result.unitPrice, 4170, '単価がデフォルト料金で設定される');
+  assert.strictEqual(result.billingAmount, 7510, '請求額は10円単位に四捨五入される');
+}
+
 function run() {
   testBurdenRateDigitConversion();
   testMassageBillingExclusion();
+  testBillingAmountRoundsToNearestTen();
   console.log('billingLogic tests passed');
 }
 

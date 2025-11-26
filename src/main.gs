@@ -88,20 +88,27 @@ function generateCombinedBillingPdfsEntry(billingMonth, options) {
  * @return {Object} billingMonth key, billingJson, file metadata, and bank join warnings.
  */
 function generateInvoices(billingMonth, options) {
-  const source = getBillingSourceData(billingMonth);
-  const billingJson = generateBillingJsonFromSource(source);
-  const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
-  const outputs = generateBillingOutputs(billingJson, outputOptions);
-  const pdfs = generateCombinedBillingPdfs(billingJson, outputOptions);
-  return {
-    billingMonth: source.billingMonth,
-    billingJson,
-    excel: outputs.excel,
-    csv: outputs.csv,
-    history: outputs.history,
-    pdfs,
-    bankJoinWarnings: summarizeBankJoinErrors_(billingJson)
-  };
+  try {
+    const source = getBillingSourceData(billingMonth);
+    const billingJson = generateBillingJsonFromSource(source);
+    const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
+    const outputs = generateBillingOutputs(billingJson, outputOptions);
+    const pdfs = generateCombinedBillingPdfs(billingJson, outputOptions);
+    return {
+      billingMonth: source.billingMonth,
+      billingJson,
+      excel: outputs.excel,
+      csv: outputs.csv,
+      history: outputs.history,
+      pdfs,
+      bankJoinWarnings: summarizeBankJoinErrors_(billingJson)
+    };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    const stack = err && err.stack ? '\n' + err.stack : '';
+    console.error('[generateInvoices] failed:', msg, stack);
+    throw new Error('請求生成中にエラーが発生しました: ' + msg);
+  }
 }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

@@ -25,6 +25,13 @@ const billingBuildHeaderMap_ = typeof buildHeaderMap_ === 'function'
     return map;
   };
 
+const billingNormalizeVisitCount_ = typeof normalizeVisitCount_ === 'function'
+  ? normalizeVisitCount_
+  : function normalizeVisitCount_(value) {
+    const num = Number(value && value.visitCount != null ? value.visitCount : value);
+    return Number.isFinite(num) && num > 0 ? num : 0;
+  };
+
 const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
   recNo: ['施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号'],
   name: ['名前', '氏名', '患者名', 'お名前'],
@@ -308,6 +315,18 @@ function buildVisitCountMap_(billingMonth) {
 function getBillingTreatmentVisitCounts(billingMonth) {
   const result = buildVisitCountMap_(billingMonth);
   return result.counts;
+}
+
+function extractMonthlyVisitCounts(billingMonth) {
+  const counts = getBillingTreatmentVisitCounts(billingMonth) || {};
+  const normalized = {};
+  Object.keys(counts).forEach(pid => {
+    const visitCount = billingNormalizeVisitCount_(counts[pid]);
+    if (visitCount > 0) {
+      normalized[pid] = visitCount;
+    }
+  });
+  return normalized;
 }
 
 function getBillingPatientRecords() {

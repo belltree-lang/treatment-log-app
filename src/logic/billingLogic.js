@@ -13,10 +13,12 @@ function normalizeBillingSource_(source) {
   if (!billingMonth) {
     throw new Error('請求月が指定されていません');
   }
+  const patientMap = source.patients || source.patientMap || {};
+  const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
   return {
     billingMonth,
-    patients: source.patients || {},
-    treatmentVisitCounts: source.treatmentVisitCounts || {},
+    patients: patientMap,
+    treatmentVisitCounts: visitCounts,
     bankStatuses: source.bankStatuses || {},
     bankInfoByName: source.bankInfoByName || {}
   };
@@ -83,6 +85,40 @@ function resolveBankRecordForPatient_(patient, bankInfoByName) {
   return bankInfoByName && bankInfoByName[nameKey];
 }
 
+function buildBankJoinResult_(patient, bankInfoByName) {
+  const bankRecord = resolveBankRecordForPatient_(patient, bankInfoByName);
+  const nameLabel = patient && patient.nameKanji ? patient.nameKanji : '';
+  if (!bankRecord) {
+    return {
+      bankJoinError: true,
+      bankJoinMessage: '銀行情報が不足しています（氏名：' + nameLabel + '）',
+      bankCode: '',
+      branchCode: '',
+      accountNumber: '',
+      regulationCode: '',
+      isNew: '',
+      bankRecord: null
+    };
+  }
+
+  const missing = ['bankCode', 'branchCode', 'accountNumber'].filter(field => !bankRecord[field]);
+  const bankJoinError = missing.length > 0;
+  const bankJoinMessage = bankJoinError
+    ? '銀行情報が不足しています（氏名：' + nameLabel + '、不足項目: ' + missing.join(', ') + '）'
+    : '';
+
+  return {
+    bankJoinError,
+    bankJoinMessage,
+    bankCode: bankRecord.bankCode || '',
+    branchCode: bankRecord.branchCode || '',
+    accountNumber: bankRecord.accountNumber || '',
+    regulationCode: bankRecord.regulationCode != null ? bankRecord.regulationCode : 1,
+    isNew: bankRecord.isNew ? 1 : 0,
+    bankRecord
+  };
+}
+
 function generateBillingJsonFromSource(sourceData) {
   const { billingMonth, patients, treatmentVisitCounts, bankStatuses, bankInfoByName } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
@@ -90,16 +126,7 @@ function generateBillingJsonFromSource(sourceData) {
   return patientIds.map(pid => {
     const patient = patients[pid] || {};
     const bank = bankStatuses[pid] || {};
-    const bankRecord = resolveBankRecordForPatient_(patient, bankInfoByName);
-    const bankJoinError = !bankRecord;
-    const bankJoinMessage = bankJoinError
-      ? '銀行情報が見つかりません（氏名：' + (patient.nameKanji || '') + '）'
-      : '';
-    const bankCode = bankJoinError ? '' : (bankRecord.bankCode || '');
-    const branchCode = bankJoinError ? '' : (bankRecord.branchCode || '');
-    const accountNumber = bankJoinError ? '' : (bankRecord.accountNumber || '');
-    const regulationCode = bankJoinError ? '' : (bankRecord.regulationCode != null ? bankRecord.regulationCode : 1);
-    const isNew = bankJoinError ? '' : (bankRecord.isNew ? 1 : 0);
+    const bankJoin = buildBankJoinResult_(patient, bankInfoByName);
     const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
     const amountCalc = calculateBillingAmounts_({
       visitCount,
@@ -122,17 +149,17 @@ function generateBillingJsonFromSource(sourceData) {
       unitPrice: amountCalc.unitPrice,
       total: amountCalc.total,
       billingAmount: amountCalc.billingAmount,
-      bankCode,
-      branchCode,
-      regulationCode,
-      accountNumber,
+      bankCode: bankJoin.bankCode,
+      branchCode: bankJoin.branchCode,
+      regulationCode: bankJoin.regulationCode,
+      accountNumber: bankJoin.accountNumber,
       bankStatus,
       carryOverAmount: amountCalc.carryOverAmount,
       grandTotal: amountCalc.grandTotal,
-      isNew,
-      bankJoinError,
-      bankJoinMessage,
-      raw: bankRecord ? Object.assign({}, bankRecord.raw || {}, patient.raw || {}) : (patient.raw || {}),
+      isNew: bankJoin.isNew,
+      bankJoinError: bankJoin.bankJoinError,
+      bankJoinMessage: bankJoin.bankJoinMessage,
+      raw: bankJoin.bankRecord ? Object.assign({}, bankJoin.bankRecord.raw || {}, patient.raw || {}) : (patient.raw || {}),
       shouldCombine: shouldCombineBilling_(bankStatus)
     };
   });

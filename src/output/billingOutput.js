@@ -1,7 +1,7 @@
 
 /***** Output layer: billing Excel/CSV/history generation *****/
 
-const BILLING_TEMPLATE_SPREADSHEET_ID = '1ajnW9Fuvu0YzUUkfTmw0CrbhrM3lM5tt5OA1dK2_CoQ';
+const BILLING_TEMPLATE_SPREADSHEET_ID = '19bsk9rN5HRAGeaQ0hjvr6VTOOHBxDAGoD80nLs6hChk';
 const BILLING_TEMPLATE_SHEET_NAME = '請求一覧_TEMPLATE';
 
 const billingColumnLetterToNumber_ = typeof columnLetterToNumber_ === 'function'
@@ -109,11 +109,15 @@ function copyTemplateSheet_(templateSheetName, copyName) {
     throw new Error('請求テンプレートシート「' + templateName + '」が見つかりません。');
   }
 
-  const targetSpreadsheet = templateSpreadsheet.copy(copyName || '請求一覧_出力中');
-  const copiedSheet = targetSpreadsheet.getSheetByName(templateName);
-  if (!copiedSheet) {
-    throw new Error('テンプレートシートが見つかりません: ' + templateName);
-  }
+  const targetSpreadsheet = SpreadsheetApp.create(copyName || '請求一覧_出力中');
+  const copiedSheet = templateSheet.copyTo(targetSpreadsheet);
+  copiedSheet.setName(templateName);
+
+  targetSpreadsheet.getSheets().forEach(sheet => {
+    if (sheet.getSheetId() !== copiedSheet.getSheetId() && targetSpreadsheet.getSheets().length > 1) {
+      targetSpreadsheet.deleteSheet(sheet);
+    }
+  });
 
   targetSpreadsheet.setActiveSheet(copiedSheet);
   targetSpreadsheet.moveActiveSheet(targetSpreadsheet.getSheets().length);

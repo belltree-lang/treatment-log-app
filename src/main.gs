@@ -5,6 +5,19 @@
  * callers can preview JSON or generate Excel/CSV files for a given billing month.
  */
 
+function doGet(e) {
+  const template = HtmlService.createTemplateFromFile('billing');
+  template.baseUrl = ScriptApp.getService().getUrl() || '';
+  return template
+    .evaluate()
+    .setTitle('請求処理アプリ')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
 /**
  * Return the active spreadsheet (utility retained for compatibility).
  * @return {SpreadsheetApp.Spreadsheet}

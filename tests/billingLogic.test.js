@@ -4,11 +4,14 @@ const vm = require('vm');
 const assert = require('assert');
 
 const billingLogicCode = fs.readFileSync(path.join(__dirname, '../src/logic/billingLogic.js'), 'utf8');
-const context = {};
+const context = {
+  normalizeBillingNameKey_: value => String(value || '').trim()
+};
 vm.createContext(context);
 vm.runInContext(billingLogicCode, context);
 
 const { calculateBillingAmounts_, normalizeBurdenMultiplier_ } = context;
+const { generateBillingJsonFromSource } = context;
 
 if (typeof calculateBillingAmounts_ !== 'function' || typeof normalizeBurdenMultiplier_ !== 'function') {
   throw new Error('Billing logic functions failed to load in the test context');
@@ -50,10 +53,25 @@ function testBillingAmountRoundsToNearestTen() {
   assert.strictEqual(result.billingAmount, 7510, '請求額は10円単位に四捨五入される');
 }
 
+function testPaidStatusIsIncludedInBillingJson() {
+  const source = {
+    billingMonth: '202501',
+    patients: { '001': { nameKanji: '山田太郎', burdenRate: 1, insuranceType: '鍼灸', unitPrice: 1000 } },
+    treatmentVisitCounts: { '001': 2 },
+    bankStatuses: { '001': { bankStatus: 'OK', paidStatus: '回収' } },
+    bankInfoByName: {}
+  };
+
+  const billingJson = generateBillingJsonFromSource(source);
+  assert.strictEqual(billingJson[0].paidStatus, '回収', 'BillingJson に領収状態が含まれる');
+  assert.strictEqual(billingJson[0].bankStatus, 'OK', '従来の入金ステータスも維持される');
+}
+
 function run() {
   testBurdenRateDigitConversion();
   testMassageBillingExclusion();
   testBillingAmountRoundsToNearestTen();
+  testPaidStatusIsIncludedInBillingJson();
   console.log('billingLogic tests passed');
 }
 

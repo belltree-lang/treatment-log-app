@@ -56,7 +56,7 @@
   }
 </style>
 </head>
-<body>
+<body data-view="billing">
 <div class="layout">
   <aside class="sidebar">
     <h1>請求メニュー</h1>
@@ -92,183 +92,11 @@
 </div>
 
 <script>
-const baseUrl = '<?= baseUrl ?>' || '';
-const billingState = {
-  loading: false,
-  result: null
-};
-
-function qs(id){ return document.getElementById(id); }
-
-function formatDefaultMonth(){
-  const today = new Date();
-  const y = today.getFullYear();
-  const m = String(today.getMonth() + 1).padStart(2, '0');
-  return y + '-' + m;
-}
-
-function setLoading(isLoading, message){
-  billingState.loading = isLoading;
-  const statusEl = qs('billingStatus');
-  if(isLoading){
-    statusEl.innerHTML = `<span class="loading"><span class="spinner" aria-hidden="true"></span>${message || '生成中…'}</span>`;
-  } else {
-    statusEl.textContent = '';
-  }
-}
-
-function ensureBillingRoute(){
-  if(!baseUrl) return;
-  const targetUrl = baseUrl + '?view=billing';
-  if(window.location.href !== targetUrl){
-    window.history.replaceState({}, '', targetUrl);
-  }
-}
-
-function loadBillingPage(){
-  ensureBillingRoute();
-  const input = qs('billingMonth');
-  if(!input.value){
-    input.value = formatDefaultMonth();
-  }
-  renderBillingResult();
-}
-
-function normalizeYmInput(raw){
-  if(!raw) return '';
-  const cleaned = String(raw).replace(/[^0-9]/g,'');
-  if(cleaned.length === 6) return cleaned;
-  if(cleaned.length === 4) return cleaned + '01';
-  return '';
-}
-
-function handleBillingGeneration(){
-  const ym = normalizeYmInput(qs('billingMonth').value);
-  if(!ym){
-    alert('請求月を入力してください (YYYY-MM)');
-    return;
-  }
-  setLoading(true, '請求データを生成しています…');
-  qs('billingResult').textContent = '請求データを生成中です…';
-  google.script.run
-    .withSuccessHandler(onBillingCompleted)
-    .withFailureHandler(onBillingError)
-    .generateInvoices(ym);
-}
-
-function onBillingCompleted(result){
-  billingState.result = result || null;
-  setLoading(false, '');
-  renderBillingResult();
-}
-
-function onBillingError(err){
-  console.error('[billing generation failed]', err);
-  setLoading(false, '');
-  const msg = err && err.message ? err.message : String(err);
-  alert('請求生成に失敗しました: ' + msg);
-}
-
-function formatCurrency(value){
-  const num = Number(value);
-  if(!Number.isFinite(num)) return '-';
-  return num.toLocaleString('ja-JP') + ' 円';
-}
-
-function renderDownloads(result){
-  const box = qs('downloads');
-  box.innerHTML = '';
-  if(!result) return;
-  const links = [];
-  if(result.excel && result.excel.url){
-    links.push({ label: 'Excelを開く', url: result.excel.url, name: result.excel.name });
-  }
-  if(result.csv && result.csv.url){
-    links.push({ label: 'CSVを開く', url: result.csv.url, name: result.csv.name });
-  }
-  if(result.pdfs && result.pdfs.files && result.pdfs.files.length){
-    links.push({ label: '合算請求書PDF一覧', url: result.pdfs.files[0].url, name: 'PDF (' + result.pdfs.count + '件)' });
-  }
-  if(!links.length){
-    box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
-    return;
-  }
-  box.innerHTML = links.map(link => `
-    <a class="download-link" href="${link.url}" target="_blank" rel="noopener">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 3v14" /><path d="M5 10l7 7 7-7" /><path d="M5 21h14" />
-      </svg>
-      <div>
-        <div>${link.label}</div>
-        <small class="muted" style="display:block;">${link.name || ''}</small>
-      </div>
-    </a>`).join('');
-}
-
-function renderWarnings(result){
-  const warnEl = qs('bankWarnings');
-  if(result && result.bankJoinWarnings && result.bankJoinWarnings.count){
-    warnEl.style.display = 'inline-flex';
-    const messages = result.bankJoinWarnings.messages || [];
-    warnEl.textContent = `銀行情報未紐づけ: ${result.bankJoinWarnings.count}件`;
-    warnEl.title = messages.join('\n');
-  } else {
-    warnEl.style.display = 'none';
-    warnEl.textContent = '';
-    warnEl.removeAttribute('title');
-  }
-}
-
-function renderMonthBadge(result){
-  const label = qs('billingMonthLabel');
-  if(result && result.billingMonth){
-    label.style.display = 'inline-flex';
-    label.textContent = '請求月: ' + result.billingMonth;
-  } else {
-    label.style.display = 'none';
-    label.textContent = '';
-  }
-}
-
-function renderBillingResult(){
-  const box = qs('billingResult');
-  const result = billingState.result;
-  renderDownloads(result);
-  renderWarnings(result);
-  renderMonthBadge(result);
-
-  if(!result || !result.billingJson || !result.billingJson.length){
-    box.innerHTML = '<div class="muted">まだ請求を生成していません。</div>';
-    return;
-  }
-
-  const rows = result.billingJson;
-  const header = ['患者ID','氏名','保険種別','負担','回数','単価','請求額','繰越','合計','銀行状態'];
-  const tableHtml = [
-    '<table><thead><tr>',
-    header.map(h => `<th>${h}</th>`).join(''),
-    '</tr></thead><tbody>',
-    ...rows.map(item => `
-      <tr>
-        <td>${item.patientId || ''}</td>
-        <td>${item.nameKanji || ''}</td>
-        <td>${item.insuranceType || ''}</td>
-        <td>${item.burdenRate ? item.burdenRate + '割' : ''}</td>
-        <td>${item.visitCount || 0}</td>
-        <td class="right">${formatCurrency(item.unitPrice)}</td>
-        <td class="right">${formatCurrency(item.billingAmount)}</td>
-        <td class="right">${formatCurrency(item.carryOverAmount)}</td>
-        <td class="right">${formatCurrency(item.grandTotal)}</td>
-        <td>${item.bankJoinError ? '⚠ ' + (item.bankJoinMessage || '銀行情報なし') : (item.bankStatus || 'OK')}</td>
-      </tr>`),
-    '</tbody></table>'
-  ].join('');
-
-  box.innerHTML = tableHtml;
-}
-
-// 初期化
-loadBillingPage();
+  window.APP_CONFIG = Object.assign({}, window.APP_CONFIG, {
+    baseUrl: '<?= baseUrl ?>' || '',
+    view: 'billing'
+  });
+  <?!= HtmlService.createHtmlOutputFromFile('main.js').getContent(); ?>
 </script>
 </body>
 </html>

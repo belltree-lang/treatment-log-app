@@ -56,7 +56,7 @@
   }
 </style>
 </head>
-<body data-view="billing">
+<body data-view="billing" data-base-url="<?= baseUrl ?>">
 <div class="layout">
   <aside class="sidebar">
     <h1>請求メニュー</h1>
@@ -92,11 +92,7 @@
 </div>
 
 <script>
-  window.APP_CONFIG = Object.assign({}, window.APP_CONFIG, {
-    baseUrl: '<?= baseUrl ?>' || '',
-    view: 'billing'
-  });
-  <?!= HtmlService.createHtmlOutputFromFile('main.js').getContent(); ?>
+<?!= HtmlService.createHtmlOutputFromFile('main.js').getContent(); ?>
 </script>
 </body>
 </html>

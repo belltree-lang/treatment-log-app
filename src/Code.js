@@ -6897,6 +6897,12 @@ function getPatientHeader(pid){
   const normalized = normId_(pid);
   if (!normalized) return null;
   const cacheKey = PATIENT_CACHE_KEYS.header(normalized);
+  try {
+    SpreadsheetApp.flush();
+    Utilities.sleep(60);
+  } catch (err) {
+    console.warn('[getPatientHeader] cache bypass failed', err);
+  }
   return cacheFetch_(cacheKey, () => {
     ensureAuxSheets_();
     const hit = findPatientRow_(pid);
@@ -6937,7 +6943,7 @@ function getPatientHeader(pid){
     const recent  = getRecentActivity_(pid);
     const stat    = getStatus_(pid);
 
-    return {
+    const header = {
       patientId:String(normId_(pid)),
       name: rowV[cName-1]||'',
       furigana: rowV[cFuri-1]||'',
@@ -6955,6 +6961,14 @@ function getPatientHeader(pid){
       status: stat.status,
       pauseUntil: stat.pauseUntil
     };
+
+    try {
+      console.log('[getPatientHeader]', String(normId_(pid)), JSON.stringify(header));
+    } catch (err) {
+      console.warn('[getPatientHeader] log failed', err);
+    }
+
+    return header;
   }, PATIENT_CACHE_TTL_SECONDS);
 }
 

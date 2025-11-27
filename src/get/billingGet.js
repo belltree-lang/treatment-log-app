@@ -119,6 +119,7 @@ const BILLING_PAYMENT_RESULT_SHEET_PREFIX = '入金結果_';
 const BILLING_PATIENT_SHEET_NAME = '患者情報';
 const BILLING_BANK_SHEET_NAME = '銀行情報';
 const BILLING_BANK_STATUS_ALLOWLIST = ['OK', 'NO_DOCUMENT', 'INSUFFICIENT', 'NOT_FOUND'];
+const BILLING_PAID_STATUS_ALLOWLIST = ['回収', '未回収', '手続き中', '手続中', 'エラー'];
 
 /**
  * YYYYMM 形式の請求月を正規化
@@ -297,6 +298,17 @@ function normalizeBankStatus_(value) {
   const normalized = raw.toUpperCase().replace(/[-\s]+/g, '_');
   if (BILLING_BANK_STATUS_ALLOWLIST.indexOf(normalized) >= 0) {
     return normalized;
+  }
+  return normalized;
+}
+
+function normalizePaidStatus_(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = raw.replace(/\s+/g, '');
+  const matched = BILLING_PAID_STATUS_ALLOWLIST.find(label => label === normalized);
+  if (matched) {
+    return matched === '手続中' ? '手続き中' : matched;
   }
   return normalized;
 }
@@ -489,13 +501,17 @@ function getBillingPaymentResults(billingMonth) {
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', { required: true });
   const colStatus = resolveBillingColumn_(headers, ['bankStatus', '入金ステータス', 'ステータス', '状態', '結果'], '入金ステータス', { required: true });
+  const colPaidStatus = resolveBillingColumn_(headers, ['領収状態', '領収', 'paidStatus'], '領収状態', {});
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const map = {};
   values.forEach(row => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
     const status = normalizeBankStatus_(row[colStatus - 1]);
     if (!pid || !status) return;
-    map[pid] = { bankStatus: status };
+    map[pid] = {
+      bankStatus: status,
+      paidStatus: colPaidStatus ? normalizePaidStatus_(row[colPaidStatus - 1]) : ''
+    };
   });
   return map;
 }
@@ -528,4 +544,41 @@ function getBillingSourceData(billingMonth) {
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
     bankStatuses: getBillingPaymentResultsIfExists_(month)
   };
+}
+
+function extractUnpaidBillingHistory(targetBillingMonth) {
+  const month = normalizeBillingMonthInput(targetBillingMonth);
+  const sheet = billingSs().getSheetByName('請求履歴');
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  const targetKeyNum = Number(month.key);
+
+  return values.map(row => {
+    const billingMonth = row[0] ? String(row[0]).trim() : '';
+    const entryMonthNum = Number(billingMonth.replace(/\D/g, '')) || 0;
+    return {
+      billingMonth,
+      patientId: billingNormalizePatientId_(row[1]),
+      nameKanji: row[2] || '',
+      billingAmount: Number(row[3]) || 0,
+      carryOverAmount: Number(row[4]) || 0,
+      grandTotal: Number(row[5]) || 0,
+      paidAmount: Number(row[6]) || 0,
+      unpaidAmount: Number(row[7]) || 0,
+      bankStatus: row[8] || '',
+      updatedAt: billingParseDateFlexible_(row[9]) || null,
+      memo: row[10] || '',
+      entryMonthNum
+    };
+  }).filter(entry => {
+    if (!entry.patientId || !entry.billingMonth) return false;
+    if (!entry.entryMonthNum || entry.entryMonthNum >= targetKeyNum) return false;
+    return entry.unpaidAmount > 0;
+  }).map(entry => {
+    const clone = Object.assign({}, entry);
+    delete clone.entryMonthNum;
+    return clone;
+  });
 }

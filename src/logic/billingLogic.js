@@ -144,6 +144,7 @@ function generateBillingJsonFromSource(sourceData) {
     });
 
     const bankStatus = bank.bankStatus || '';
+    const paidStatus = bank.paidStatus || '';
 
     return {
       billingMonth,
@@ -161,6 +162,7 @@ function generateBillingJsonFromSource(sourceData) {
       regulationCode: bankJoin.regulationCode,
       accountNumber: bankJoin.accountNumber,
       bankStatus,
+      paidStatus,
       carryOverAmount: amountCalc.carryOverAmount,
       grandTotal: amountCalc.grandTotal,
       isNew: bankJoin.isNew,

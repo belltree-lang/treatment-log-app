@@ -5,6 +5,8 @@ const assert = require('assert');
 
 const billingGetCode = fs.readFileSync(path.join(__dirname, '../src/get/billingGet.js'), 'utf8');
 
+let workbook = null;
+
 const context = {
   columnLetterToNumber_: letter => {
     if (!letter) return 0;
@@ -17,16 +19,41 @@ const context = {
     }
     return result;
   },
-  columnNumberToLetter_: () => ''
+  columnNumberToLetter_: () => '',
+  PropertiesService: {
+    getScriptProperties: () => ({
+      getProperty: () => ''
+    })
+  },
+  SpreadsheetApp: {
+    getActiveSpreadsheet: () => workbook
+  },
+  Session: {
+    getScriptTimeZone: () => 'Asia/Tokyo'
+  },
+  Utilities: {
+    formatDate: (date, tz, format) => {
+      if (format === 'yyyyMM') {
+        const year = date.getFullYear();
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        return `${year}${month}`;
+      }
+      return '';
+    }
+  }
 };
 
 vm.createContext(context);
 vm.runInContext(billingGetCode, context);
 
 const { normalizeBurdenRateInt_ } = context;
+const { extractUnpaidBillingHistory } = context;
 
 if (typeof normalizeBurdenRateInt_ !== 'function') {
   throw new Error('normalizeBurdenRateInt_ failed to load in the test context');
+}
+if (typeof extractUnpaidBillingHistory !== 'function') {
+  throw new Error('extractUnpaidBillingHistory failed to load in the test context');
 }
 
 function testFullWidthDigitsAreParsed() {
@@ -40,9 +67,32 @@ function testAsciiInputsRemainCompatible() {
   assert.strictEqual(normalizeBurdenRateInt_(0.2), 2, '数値入力もそのまま正規化される');
 }
 
+function testExtractUnpaidBillingHistory() {
+  const sheetValues = [
+    ['202501', '001', '山田太郎', 1000, 0, 1000, 500, 500, 'OK', new Date('2025-02-01'), ''],
+    ['202412', '002', '佐藤花子', 2000, 0, 2000, 0, 2000, '', '', ''],
+    ['202411', '003', '田中一郎', 3000, 0, 3000, 3000, 0, '', '', '']
+  ];
+
+  const historySheet = {
+    getLastRow: () => sheetValues.length + 1,
+    getRange: () => ({ getValues: () => sheetValues })
+  };
+
+  workbook = {
+    getSheetByName: name => (name === '請求履歴' ? historySheet : null)
+  };
+
+  const entries = extractUnpaidBillingHistory('202502');
+  assert.strictEqual(entries.length, 2, '対象月以前の未回収のみ抽出される');
+  assert.deepStrictEqual(entries.map(e => e.billingMonth), ['202501', '202412'], '古い請求月順に保持される');
+  assert.strictEqual(entries[0].unpaidAmount, 500, '未回収額が保持される');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
+  testExtractUnpaidBillingHistory();
   console.log('billingGet burden rate tests passed');
 }
 

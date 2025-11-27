@@ -9625,6 +9625,23 @@ function normalizeEmailKey_(email){
   return String(email || '').trim().toLowerCase();
 }
 
+function postJsonWebhook_(webhookUrl, payload){
+  if (!webhookUrl) {
+    throw new Error('Webhook URL が設定されていません');
+  }
+  const response = UrlFetchApp.fetch(webhookUrl, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload || {})
+  });
+  const status = typeof response.getResponseCode === 'function' ? response.getResponseCode() : null;
+  const body = typeof response.getContentText === 'function' ? response.getContentText() : '';
+  if (status && status >= 400) {
+    throw new Error(`Webhook status ${status}: ${body}`);
+  }
+  return { status, body };
+}
+
 function getWebhookConfig_(){
   const props = PropertiesService.getScriptProperties().getProperties() || {};
   const map = new Map();
@@ -9901,6 +9918,7 @@ function sendDailySummaryToChat(targetDate){
   }
   const start = new Date(base.getFullYear(), base.getMonth(), base.getDate());
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const targetDayKey = Utilities.formatDate(start, tz, 'yyyy-MM-dd');
   const sheet = sh('施術録');
   const lastRow = sheet.getLastRow();
   const width = Math.min(TREATMENT_SHEET_HEADER.length, sheet.getMaxColumns());
@@ -9909,7 +9927,8 @@ function sendDailySummaryToChat(targetDate){
     staffProcessed: 0,
     posted: 0,
     skipped: 0,
-    totalTreatments: 0
+    totalTreatments: 0,
+    errors: []
   };
   if (lastRow < 2) {
     Logger.log('[sendDailySummaryToChat] 施術録にデータがありません');
@@ -9928,7 +9947,9 @@ function sendDailySummaryToChat(targetDate){
     if (!emailRaw || !category) return;
 
     const when = ts instanceof Date ? ts : new Date(ts);
-    if (isNaN(when.getTime()) || when < start || when >= end) return;
+    if (isNaN(when.getTime())) return;
+    const dayKey = Utilities.formatDate(when, tz, 'yyyy-MM-dd');
+    if (dayKey !== targetDayKey) return;
 
     const key = emailRaw.toLowerCase();
     const entry = byStaff.get(key) || { email: emailRaw, count: 0, patientIds: new Set(), recordNames: new Set(), extras: new Set() };
@@ -10006,17 +10027,29 @@ function sendDailySummaryToChat(targetDate){
     }
 
     try {
-      UrlFetchApp.fetch(webhookUrl, {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify({ text: message })
-      });
+      const response = postJsonWebhook_(webhookUrl, { text: message });
+      if (response && response.status) {
+        Logger.log(`[sendDailySummaryToChat] webhook response staff=${entry.email} status=${response.status}`);
+      }
       summary.posted += 1;
     } catch (err) {
-      Logger.log(`[sendDailySummaryToChat] 送信失敗 staff=${entry.email} err=${err}`);
+      const errMsg = `[sendDailySummaryToChat] 送信失敗 staff=${entry.email} err=${err}`;
+      Logger.log(errMsg);
+      summary.errors.push(errMsg);
       summary.skipped += 1;
     }
   });
+
+  if (summary.errors.length) {
+    const adminWebhook = PropertiesService.getScriptProperties().getProperty('CHAT_WEBHOOK_URL_ADMIN') || defaultUrl;
+    if (adminWebhook) {
+      try {
+        postJsonWebhook_(adminWebhook, { text: `施術記録通知の送信に失敗しました\n${summary.errors.join('\n')}` });
+      } catch (err) {
+        Logger.log(`[sendDailySummaryToChat] 管理者への通知に失敗 err=${err}`);
+      }
+    }
+  }
 
   return summary;
 }

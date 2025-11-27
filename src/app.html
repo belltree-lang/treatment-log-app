@@ -497,6 +497,9 @@ const PATIENT_ID_SEARCH_RENDER_LIMIT = 10;
 const PATIENT_ID_SEARCH_CACHE_TTL_MS = 15 * 1000;
 const PATIENT_ID_SEARCH_CACHE_LIMIT = 20;
 const PATIENT_ID_SEARCH_DEBOUNCE_MS = 300;
+const PATIENT_INFO_MAX_ATTEMPTS = 3;
+const PATIENT_INFO_RETRY_DELAY_MIN_MS = 150;
+const PATIENT_INFO_RETRY_DELAY_MAX_MS = 250;
 let _patientIdIndex = {};
 let _patientIdList = [];
 let _patientIdKanaIndex = {};
@@ -515,6 +518,9 @@ let _patientIdInitialRenderNoticeShown = false;
 let _confirmedPatientId = '';
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
+let _patientInfoLoadInFlight = false;
+let _queuedPatientIdForLoad = null;
+let _patientInfoRequestToken = 0;
 
 function parsePatientIdChunkSizeCandidate(candidate){
   if (candidate == null) return NaN;
@@ -589,6 +595,23 @@ function determinePatientIdRenderChunkSize(){
 
 function nowMs(){
   return Date.now();
+}
+
+function waitMs(ms){
+  return new Promise(resolve => {
+    const delay = typeof ms === 'number' && ms > 0 ? ms : 0;
+    setTimeout(resolve, delay);
+  });
+}
+
+function isActivePatientInfoRequest(token){
+  return token == null || token === _patientInfoRequestToken;
+}
+
+function patientInfoRetryDelay(){
+  const min = PATIENT_INFO_RETRY_DELAY_MIN_MS;
+  const max = PATIENT_INFO_RETRY_DELAY_MAX_MS;
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function isPatientIdRenderPaused(){
@@ -1707,6 +1730,7 @@ function refreshReportHistory(options){
   const opts = options || {};
   const targetPid = opts.patientId || pid();
   const setStatus = !!opts.setStatus;
+  const requestToken = opts.requestToken;
   return new Promise(resolve => {
     const finalize = () => resolve();
     if (!targetPid) {
@@ -1724,6 +1748,9 @@ function refreshReportHistory(options){
 
     google.script.run
       .withSuccessHandler(res => {
+        if (!isActivePatientInfoRequest(requestToken)) {
+          return finalize();
+        }
         const rows = Array.isArray(res && res.reports) ? res.reports : [];
         _icfReportHistoryState.loading = false;
         _icfReportHistoryState.rows = rows;
@@ -1733,6 +1760,9 @@ function refreshReportHistory(options){
         finalize();
       })
       .withFailureHandler(err => {
+        if (!isActivePatientInfoRequest(requestToken)) {
+          return finalize();
+        }
         console.error('[refreshReportHistory] failed', err);
         _icfReportHistoryState.loading = false;
         _icfReportHistoryState.rows = [];
@@ -2981,26 +3011,85 @@ function setSuspend(){ const p=pid(); if(!p) return; if(!confirm('休止にし�
 function setStop(){ const p=pid(); if(!p) return; if(!confirm('中止にします。続行？')) return;
   google.script.run.withSuccessHandler(()=>{ alert('中止に設定'); refresh(); }).markStop(p); }
 
-/* 画面更新 */
-function refresh(){
-  resetIcfSummaries();
+function renderEmptyPatientState(){
+  _currentHeader = null;
+  if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
+  if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
+  _icfReportHistoryState = { loading: false, rows: [], error: null };
+  renderIcfReportHistory();
+  loadNews('', () => {
+    hideGlobalLoading();
+  });
+}
 
-  const patientId = pid();
-  if (!patientId){
-    _currentHeader = null;
-    if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
-    if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
-    _icfReportHistoryState = { loading: false, rows: [], error: null };
-    renderIcfReportHistory();
-    loadNews('', () => {
-      hideGlobalLoading();
-    });
-    return;
-  }
-
+function setPatientLoadingPlaceholders(){
   if (q('hdr')) q('hdr').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('news')) q('news').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('list')) q('list').innerHTML = '<div class="muted">読み込み中…</div>';
+}
+
+function fetchPatientBundle(patientId){
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(bundle => resolve(bundle || {}))
+      .withFailureHandler(err => reject(err))
+      .getPatientBundle(patientId);
+  });
+}
+
+function renderPatientBundleResponse(bundle, patientId, options){
+  const opts = options || {};
+  if (!isActivePatientInfoRequest(opts.requestToken)) return;
+  if (opts.error) {
+    renderHeaderContent(null, { error: true });
+    renderNewsList([], { patientId, error: true });
+    renderThisMonthList([], { patientId, error: true });
+    return;
+  }
+  const safeBundle = bundle || {};
+  const header = safeBundle.header || null;
+  if (!header || !header.patientId) {
+    renderHeaderContent(null, { error: true });
+    renderNewsList([], { patientId, error: true });
+    renderThisMonthList([], { patientId, error: true });
+    return;
+  }
+  renderHeaderContent(header);
+  renderNewsList(safeBundle.news || [], { patientId });
+  renderThisMonthList(safeBundle.treatments || [], { patientId });
+}
+
+function processQueuedPatientInfoLoad(){
+  if (_patientInfoLoadInFlight) return;
+  const nextId = _queuedPatientIdForLoad;
+  _queuedPatientIdForLoad = null;
+  const requestToken = ++_patientInfoRequestToken;
+  _patientInfoLoadInFlight = true;
+
+  loadPatientInfoWithRetry(nextId, { requestToken })
+    .catch(err => {
+      console.error('[refresh] patient load failed', err);
+    })
+    .finally(() => {
+      _patientInfoLoadInFlight = false;
+      if (_queuedPatientIdForLoad !== null) {
+        processQueuedPatientInfoLoad();
+      }
+    });
+}
+
+function loadPatientInfoWithRetry(patientId, options){
+  resetIcfSummaries();
+  const targetPatientId = normalizePatientIdKey(patientId);
+  const requestToken = options && options.requestToken;
+
+  if (!targetPatientId){
+    renderEmptyPatientState();
+    return Promise.resolve();
+  }
+
+  setPatientLoadingPlaceholders();
+
   let bundleDone = false;
   let reportHistoryDone = false;
   const tryFinish = () => {
@@ -3009,30 +3098,48 @@ function refresh(){
     }
   };
 
-  refreshReportHistory({ patientId, setStatus: true })
+  refreshReportHistory({ patientId: targetPatientId, setStatus: true, requestToken })
     .finally(() => {
       reportHistoryDone = true;
       tryFinish();
     });
 
-  google.script.run
-    .withSuccessHandler(bundle => {
-      bundleDone = true;
-      const safeBundle = bundle || {};
-      renderHeaderContent(safeBundle.header || null);
-      renderNewsList(safeBundle.news || [], { patientId });
-      renderThisMonthList(safeBundle.treatments || [], { patientId });
-      tryFinish();
-    })
-    .withFailureHandler(err => {
-      bundleDone = true;
-      console.error('[refresh] bundle failed', err);
-      renderHeaderContent(null, { error: true });
-      renderNewsList([], { patientId, error: true });
-      renderThisMonthList([], { patientId, error: true });
-      tryFinish();
-    })
-    .getPatientBundle(patientId);
+  let attempt = 0;
+  const attemptFetch = () => {
+    attempt++;
+    return fetchPatientBundle(targetPatientId)
+      .then(bundle => {
+        const hasHeader = bundle && bundle.header && bundle.header.patientId;
+        if (hasHeader || attempt >= PATIENT_INFO_MAX_ATTEMPTS) {
+          bundleDone = true;
+          renderPatientBundleResponse(bundle, targetPatientId, { requestToken, error: !hasHeader && attempt >= PATIENT_INFO_MAX_ATTEMPTS });
+          tryFinish();
+          return bundle;
+        }
+        return waitMs(patientInfoRetryDelay()).then(attemptFetch);
+      })
+      .catch(err => {
+        if (attempt < PATIENT_INFO_MAX_ATTEMPTS) {
+          return waitMs(patientInfoRetryDelay()).then(attemptFetch);
+        }
+        bundleDone = true;
+        renderPatientBundleResponse(null, targetPatientId, { requestToken, error: true });
+        tryFinish();
+        throw err;
+      });
+  };
+
+  return attemptFetch();
+}
+
+/* 画面更新 */
+function refresh(targetPatientId){
+  const normalizedTarget = normalizePatientIdKey(targetPatientId != null ? targetPatientId : pid());
+  _queuedPatientIdForLoad = normalizedTarget;
+  if (_patientInfoLoadInFlight) {
+    return;
+  }
+  processQueuedPatientInfoLoad();
 }
 function renderHeaderContent(header, options){
   const el = q('hdr');

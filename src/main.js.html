@@ -55,23 +55,22 @@ function handleBillingGeneration() {
     alert('請求月を入力してください (YYYY-MM)');
     return;
   }
-  setBillingLoading(true, '請求データを生成しています…');
-  qs('billingResult').textContent = '請求データを生成中です…';
+  setBillingLoading(true);
   google.script.run
     .withSuccessHandler(onBillingCompleted)
-    .withFailureHandler(onBillingError)
-    .generateInvoices(ym);
+    .withFailureHandler(onBillingFailed)
+    .generateInvoices(ym, {});
 }
 
 function onBillingCompleted(result) {
   billingState.result = result || null;
-  setBillingLoading(false, '');
+  setBillingLoading(false);
   renderBillingResult();
 }
 
-function onBillingError(err) {
+function onBillingFailed(err) {
   console.error('[billing generation failed]', err);
-  setBillingLoading(false, '');
+  setBillingLoading(false);
   const msg = err && err.message ? err.message : String(err);
   alert('請求生成に失敗しました: ' + msg);
 }

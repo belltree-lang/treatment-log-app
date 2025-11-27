@@ -1,6 +1,7 @@
 const billingState = {
   loading: false,
-  result: null
+  result: null,
+  statusMessage: ''
 };
 
 function qs(id) {
@@ -23,13 +24,12 @@ function normalizeYm(raw) {
 }
 
 function setBillingLoading(flag, message) {
-  const el = qs('billingStatus');
-  if (!el) return;
+  billingState.loading = !!flag;
+  billingState.statusMessage = flag ? (message || '生成中…') : '';
   if (flag) {
-    el.innerHTML = `<span class="loading"><span class="spinner"></span>${message || '生成中…'}</span>`;
-  } else {
-    el.textContent = '';
+    billingState.result = null;
   }
+  renderBillingResult();
 }
 
 function getBillingBaseUrl() {
@@ -64,26 +64,17 @@ function handleBillingGeneration() {
 
 function onBillingCompleted(result) {
   billingState.result = result || null;
-  setBillingLoading(false);
-
-  const downloads = qs('downloads');
-  if (downloads) {
-    const links = [];
-    if (result?.excel?.url) links.push({ label: 'Excelダウンロード', url: result.excel.url });
-    if (result?.csv?.url) links.push({ label: 'CSVダウンロード', url: result.csv.url });
-    if (result?.pdfs?.url) links.push({ label: 'PDFダウンロード', url: result.pdfs.url });
-    downloads.innerHTML = links.length
-      ? links.map(link => `<a class="download-link" href="${link.url}" target="_blank" rel="noopener">${link.label}</a>`).join('')
-      : '<div class="muted">出力ファイルはまだありません。</div>';
-  }
-
+  billingState.loading = false;
+  billingState.statusMessage = '生成が完了しました';
   renderBillingResult();
 }
 
 function onBillingFailed(err) {
   console.error('[billing generation failed]', err);
-  setBillingLoading(false);
   const msg = err && err.message ? err.message : String(err);
+  billingState.loading = false;
+  billingState.statusMessage = '請求生成に失敗しました';
+  renderBillingResult();
   alert('請求生成に失敗しました: ' + msg);
 }
 
@@ -93,15 +84,53 @@ function formatCurrency(value) {
   return num.toLocaleString('ja-JP') + ' 円';
 }
 
+function renderBillingStatus(result) {
+  const el = qs('billingStatus');
+  if (!el) return;
+  if (billingState.loading) {
+    el.innerHTML = `<span class="loading"><span class="spinner"></span>${billingState.statusMessage || '生成中…'}</span>`;
+    return;
+  }
+  if (billingState.statusMessage) {
+    el.textContent = billingState.statusMessage;
+    return;
+  }
+  if (result) {
+    el.textContent = '生成が完了しました';
+    return;
+  }
+  el.textContent = '';
+}
+
 function renderDownloads(result) {
   const box = qs('downloads');
   if (!box) return;
   box.innerHTML = '';
-  if (!result) return;
+  if (billingState.loading) {
+    box.innerHTML = `<div class="loading"><span class="spinner"></span>ファイル生成中…</div>`;
+    return;
+  }
+  if (!result) {
+    box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
+    return;
+  }
   const links = [];
   if (result.excel && result.excel.url) links.push({ label: 'Excelダウンロード', url: result.excel.url, name: result.excel.name });
   if (result.csv && result.csv.url) links.push({ label: 'CSVダウンロード', url: result.csv.url, name: result.csv.name });
-  if (result.pdfs && result.pdfs.url) links.push({ label: 'PDFダウンロード', url: result.pdfs.url, name: result.pdfs.name });
+  const pdfLinks = [];
+  if (result.pdfs) {
+    if (result.pdfs.url) {
+      pdfLinks.push({ label: 'PDFダウンロード', url: result.pdfs.url, name: result.pdfs.name });
+    }
+    if (Array.isArray(result.pdfs.files)) {
+      result.pdfs.files.forEach((file, idx) => {
+        if (!file || !file.url) return;
+        const suffix = result.pdfs.files.length > 1 ? ` (${file.patientId || idx + 1})` : '';
+        pdfLinks.push({ label: 'PDFダウンロード' + suffix, url: file.url, name: file.name });
+      });
+    }
+  }
+  links.push(...pdfLinks);
   if (!links.length) {
     box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
     return;
@@ -149,10 +178,15 @@ function renderBillingResult() {
   const box = qs('billingResult');
   if (!box) return;
   const result = billingState.result;
+  renderBillingStatus(result);
   renderDownloads(result);
   renderWarnings(result);
   renderMonthBadge(result);
 
+  if (billingState.loading) {
+    box.innerHTML = '<div class="loading"><span class="spinner"></span>請求データを生成中です…</div>';
+    return;
+  }
   if (!result || !result.billingJson || !result.billingJson.length) {
     box.innerHTML = '<div class="muted">まだ請求を生成していません。</div>';
     return;

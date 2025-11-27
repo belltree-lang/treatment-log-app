@@ -536,7 +536,9 @@ function generateCombinedBillingPdfs(billingJson, options) {
     });
   });
 
-  return { billingMonth, count: results.length, files: results };
+  const summaryUrl = results.length === 1 ? results[0].url : '';
+  const summaryName = results.length === 1 ? results[0].name : '';
+  return { billingMonth, count: results.length, files: results, url: summaryUrl, name: summaryName };
 }
 
 function generateBillingOutputs(billingJson, options) {

@@ -2,7 +2,7 @@
  * Billing entry points for Apps Script deployment.
  *
  * These helper functions wire the Get/Logic/Output layers together so that
- * callers can preview JSON or generate Excel/CSV files for a given billing month.
+ * callers can preview JSON or generate patient invoice PDFs for a given billing month.
  */
 
 function doGet(e) {
@@ -43,93 +43,25 @@ function getBillingSource(billingMonth) {
 function generateBillingJsonPreview(billingMonth) {
   const source = getBillingSourceData(billingMonth);
   const billingJson = generateBillingJsonFromSource(source);
-  return { billingMonth: source.billingMonth, billingJson, bankJoinWarnings: summarizeBankJoinErrors_(billingJson) };
-}
-
-function summarizeBankJoinErrors_(billingJson) {
-  const errors = (billingJson || []).filter(item => item && item.bankJoinError);
-  return {
-    count: errors.length,
-    messages: errors.map(item => item.bankJoinMessage).filter(Boolean)
-  };
-}
-
-function alertBankJoinWarnings_(billingJson) {
-  const summary = summarizeBankJoinErrors_(billingJson);
-  if (!summary.count) return summary;
-  const ui = SpreadsheetApp.getUi();
-  ui.alert([
-    '銀行情報が紐づけられない患者が ' + summary.count + ' 名います。',
-    '請求一覧の該当行を確認し、銀行シートを修正して再実行してください。'
-  ].join('\n'));
-  return summary;
+  return { billingMonth: source.billingMonth, billingJson };
 }
 
 /**
- * Generate billing Excel/CSV outputs and record history.
- * @param {string|Date|Object} billingMonth - YYYYMM string, Date, or normalized month object.
- * @param {Object} [options] - Optional overrides such as fileName or note.
- * @return {Object} billingMonth key, generated JSON, and output metadata.
- */
-function generateBillingOutputsEntry(billingMonth, options) {
-  const source = getBillingSourceData(billingMonth);
-  const billingJson = generateBillingJsonFromSource(source);
-  const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
-  const outputs = generateBillingOutputs(billingJson, outputOptions);
-  return { billingMonth: source.billingMonth, billingJson, excel: outputs.excel, csv: outputs.csv, history: outputs.history, bankJoinWarnings: summarizeBankJoinErrors_(billingJson) };
-}
-
-function generateBillingCsvOnlyEntry(billingMonth, options) {
-  const source = getBillingSourceData(billingMonth);
-  const billingJson = generateBillingJsonFromSource(source);
-  const csv = createBillingCsvFile(billingJson, Object.assign({}, options, { billingMonth: source.billingMonth }));
-  appendBillingHistoryRows(billingJson, { billingMonth: source.billingMonth, memo: options && options.note });
-  return { billingMonth: source.billingMonth, billingJson, csv, bankJoinWarnings: summarizeBankJoinErrors_(billingJson) };
-}
-
-function generateCombinedBillingPdfsEntry(billingMonth, options) {
-  const source = getBillingSourceData(billingMonth);
-  const billingJson = generateBillingJsonFromSource(source);
-  const pdfs = generateCombinedBillingPdfs(billingJson, Object.assign({}, options, { billingMonth: source.billingMonth }));
-  return { billingMonth: source.billingMonth, billingJson, pdfs };
-}
-
-/**
- * Generate all billing outputs (Excel/CSV/PDF) and surface JSON for UI.
+ * Generate invoice PDFs and surface JSON for UI.
  * @param {string|Date|Object} billingMonth - YYYYMM string, Date, or normalized month object.
  * @param {Object} [options] - Optional output overrides such as fileName or note.
- * @return {Object} billingMonth key, billingJson, file metadata, and bank join warnings.
+ * @return {Object} billingMonth key, billingJson, and saved file metadata.
  */
 function generateInvoices(billingMonth, options) {
   try {
     const source = getBillingSourceData(billingMonth);
     const billingJson = generateBillingJsonFromSource(source);
     const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
-    const outputs = generateBillingOutputs(billingJson, outputOptions);
-    if (!outputs || !outputs.excel || !outputs.excel.url) {
-      return {
-        billingMonth: source.billingMonth,
-        billingJson,
-        excel: outputs && outputs.excel ? { url: outputs.excel.url || '', name: outputs.excel.name || '' } : null,
-        csv: outputs && outputs.csv ? { url: outputs.csv.url || '', name: outputs.csv.name || '' } : null,
-        pdfs: null,
-        bankJoinWarnings: summarizeBankJoinErrors_(billingJson)
-      };
-    }
-
-    const pdfs = generateCombinedBillingPdfs(billingJson, outputOptions);
+    const pdfs = generateInvoicePdfs(billingJson, outputOptions);
     return {
       billingMonth: source.billingMonth,
       billingJson,
-      excel: outputs && outputs.excel ? { url: outputs.excel.url, name: outputs.excel.name } : null,
-      csv: outputs && outputs.csv ? { url: outputs.csv.url, name: outputs.csv.name } : null,
-      pdfs: pdfs ? {
-        url: pdfs.url || '',
-        name: pdfs.name || '',
-        count: typeof pdfs.count === 'number' ? pdfs.count : (Array.isArray(pdfs.files) ? pdfs.files.length : 0),
-        files: pdfs.files || []
-      } : null,
-      bankJoinWarnings: summarizeBankJoinErrors_(billingJson)
+      files: pdfs.files
     };
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
@@ -195,23 +127,6 @@ function billingGenerateJsonFromMenu() {
   const month = promptBillingMonthInput_();
   const result = generateBillingJsonPreview(month.key);
   SpreadsheetApp.getUi().alert('請求データを生成しました: ' + (result.billingJson ? result.billingJson.length : 0) + ' 件');
-  alertBankJoinWarnings_(result.billingJson);
-  return result;
-}
-
-function billingGenerateExcelFromMenu() {
-  const month = promptBillingMonthInput_();
-  const result = generateBillingOutputsEntry(month.key);
-  SpreadsheetApp.getUi().alert('Excel/CSV を出力しました\nExcel: ' + result.excel.name + '\nCSV: ' + result.csv.name);
-  alertBankJoinWarnings_(result.billingJson);
-  return result;
-}
-
-function billingGenerateCsvFromMenu() {
-  const month = promptBillingMonthInput_();
-  const result = generateBillingCsvOnlyEntry(month.key);
-  SpreadsheetApp.getUi().alert('CSV を出力しました: ' + result.csv.name);
-  alertBankJoinWarnings_(result.billingJson);
   return result;
 }
 
@@ -219,13 +134,6 @@ function billingApplyPaymentResultsFromMenu() {
   const month = promptBillingMonthInput_();
   const result = applyBillingPaymentResultsEntry(month.key);
   SpreadsheetApp.getUi().alert('請求履歴を更新しました: ' + result.updated + ' 件');
-  return result;
-}
-
-function billingGenerateCombinedPdfsFromMenu() {
-  const month = promptBillingMonthInput_();
-  const result = generateCombinedBillingPdfsEntry(month.key);
-  SpreadsheetApp.getUi().alert('合算請求書を ' + result.pdfs.count + ' 件作成しました');
   return result;
 }
 
@@ -294,10 +202,7 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
   const billingMenu = ui.createMenu('請求処理');
   billingMenu.addItem('請求データ生成（JSON）', 'billingGenerateJsonFromMenu');
-  billingMenu.addItem('請求一覧Excel出力（テンプレ版）', 'billingGenerateExcelFromMenu');
-  billingMenu.addItem('口座振替CSV出力', 'billingGenerateCsvFromMenu');
   billingMenu.addItem('入金結果PDFの反映（アップロード→解析）', 'billingApplyPaymentResultPdfFromMenu');
-  billingMenu.addItem('合算請求書PDF出力（テンプレ版）', 'billingGenerateCombinedPdfsFromMenu');
   billingMenu.addItem('（管理者向け）履歴チェック', 'billingCheckHistoryFromMenu');
   billingMenu.addToUi();
 

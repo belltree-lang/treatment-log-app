@@ -1,58 +1,13 @@
+/***** Output layer: billing invoice PDF generation *****/
 
-/***** Output layer: billing Excel/CSV/history generation *****/
-
-const BILLING_TEMPLATE_SPREADSHEET_ID = '19bsk9rN5HRAGeaQ0hjvr6VTOOHBxDAGoD80nLs6hChk';
-const BILLING_TEMPLATE_SHEET_NAME = '請求一覧_TEMPLATE';
-const BILLING_TRANSPORT_UNIT_PRICE = 33;
-const BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
-
-const billingColumnLetterToNumber_ = typeof columnLetterToNumber_ === 'function'
-  ? columnLetterToNumber_
-  : function columnLetterToNumberFallback_(letter) {
-    const raw = String(letter || '').trim().toUpperCase();
-    if (!raw || !/^[A-Z]+$/.test(raw)) return null;
-    let num = 0;
-    for (let i = 0; i < raw.length; i++) {
-      num = num * 26 + (raw.charCodeAt(i) - 64);
-    }
-    return num;
-  };
-
-const billingGetParentFolder_ = typeof getParentFolder_ === 'function'
-  ? getParentFolder_
-  : function getParentFolderFallback_() {
-    const props = PropertiesService.getScriptProperties();
-    const configured = ((props.getProperty('PARENT_FOLDER_ID') || '') || '').trim();
-    const appFallback = typeof APP !== 'undefined' ? (APP.PARENT_FOLDER_ID || '').trim() : '';
-    const candidateId = configured || appFallback;
-    if (candidateId) {
-      try { return DriveApp.getFolderById(candidateId); } catch (err) {}
-    }
-    try {
-      const workbook = SpreadsheetApp.getActiveSpreadsheet();
-      const file = DriveApp.getFileById(workbook.getId());
-      const parents = file.getParents();
-      if (parents.hasNext()) return parents.next();
-    } catch (err2) {}
-    return DriveApp.getRootFolder();
-  };
-
-const BILLING_EXCEL_COLUMNS = {
-  nameKanji: billingColumnLetterToNumber_('F'),
-  bankCode: billingColumnLetterToNumber_('N'),
-  branchCode: billingColumnLetterToNumber_('O'),
-  constantOne: billingColumnLetterToNumber_('P'),
-  accountNumber: billingColumnLetterToNumber_('Q'),
-  nameKana: billingColumnLetterToNumber_('R'),
-  billingAmount: billingColumnLetterToNumber_('S'),
-  isNew: billingColumnLetterToNumber_('U'),
-  bankWarning: billingColumnLetterToNumber_('V')
-};
+const INVOICE_PARENT_FOLDER_ID = '1EG-GB3PbaUr9C1LJWlaf_idqoYF-19Ux';
+const INVOICE_FILE_PREFIX = '請求書';
+const BILLING_TRANSPORT_UNIT_PRICE = typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined' ? BILLING_TRANSPORT_UNIT_PRICE : 33;
 
 function normalizeBillingAmount_(item) {
   if (!item) return 0;
-  if (item.grandTotal != null && item.grandTotal !== '') return item.grandTotal;
-  if (item.billingAmount != null && item.billingAmount !== '') return item.billingAmount;
+  if (item.grandTotal != null && item.grandTotal !== '') return Number(item.grandTotal) || 0;
+  if (item.treatmentAmount != null && item.treatmentAmount !== '') return Number(item.treatmentAmount) || 0;
   return 0;
 }
 
@@ -75,187 +30,123 @@ function normalizeInvoiceVisitCount_(value) {
   return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
-function buildBillingExcelRows_(billingJson) {
-  if (!Array.isArray(billingJson)) {
-    throw new Error('請求データが不正です');
-  }
-  const maxCol = BILLING_EXCEL_COLUMNS.bankWarning;
-  const header = Array(maxCol).fill('');
-  header[BILLING_EXCEL_COLUMNS.nameKanji - 1] = 'nameKanji';
-  header[BILLING_EXCEL_COLUMNS.bankCode - 1] = 'bankCode';
-  header[BILLING_EXCEL_COLUMNS.branchCode - 1] = 'branchCode';
-  header[BILLING_EXCEL_COLUMNS.constantOne - 1] = '1固定';
-  header[BILLING_EXCEL_COLUMNS.accountNumber - 1] = 'accountNumber';
-  header[BILLING_EXCEL_COLUMNS.nameKana - 1] = 'nameKana';
-  header[BILLING_EXCEL_COLUMNS.billingAmount - 1] = 'billingAmount/grandTotal';
-  header[BILLING_EXCEL_COLUMNS.isNew - 1] = 'isNew';
-  header[BILLING_EXCEL_COLUMNS.bankWarning - 1] = 'bankWarning';
-
-  const sorted = billingJson.slice().sort((a, b) => {
-    const aid = Number(a && a.patientId);
-    const bid = Number(b && b.patientId);
-    if (isNaN(aid) && isNaN(bid)) return 0;
-    if (isNaN(aid)) return 1;
-    if (isNaN(bid)) return -1;
-    return aid - bid;
-  });
-
-  const rows = sorted.map(item => {
-    const row = Array(maxCol).fill('');
-    row[BILLING_EXCEL_COLUMNS.nameKanji - 1] = item && item.nameKanji ? item.nameKanji : '';
-    const hasBank = item && !item.bankJoinError;
-    row[BILLING_EXCEL_COLUMNS.bankCode - 1] = hasBank && item.bankCode ? item.bankCode : '';
-    row[BILLING_EXCEL_COLUMNS.branchCode - 1] = hasBank && item.branchCode ? item.branchCode : '';
-    row[BILLING_EXCEL_COLUMNS.constantOne - 1] = hasBank ? (item.regulationCode != null && item.regulationCode !== '' ? item.regulationCode : 1) : '';
-    row[BILLING_EXCEL_COLUMNS.accountNumber - 1] = hasBank && item.accountNumber ? item.accountNumber : '';
-    row[BILLING_EXCEL_COLUMNS.nameKana - 1] = item && item.nameKana ? item.nameKana : '';
-    row[BILLING_EXCEL_COLUMNS.billingAmount - 1] = normalizeBillingAmount_(item);
-    row[BILLING_EXCEL_COLUMNS.isNew - 1] = hasBank ? (item && item.isNew ? 1 : 0) : '';
-    row[BILLING_EXCEL_COLUMNS.bankWarning - 1] = item && item.bankJoinError ? (item.bankJoinMessage || '⚠銀行情報なし') : '';
-    return row;
-  });
-
-  return [header].concat(rows);
+function normalizeBillingCarryOver_(item) {
+  if (!item) return 0;
+  if (item.carryOverAmount != null && item.carryOverAmount !== '') return Number(item.carryOverAmount) || 0;
+  if (item.raw && item.raw.carryOverAmount != null) return Number(item.raw.carryOverAmount) || 0;
+  return 0;
 }
 
-function copyTemplateSheet_(templateSheetName, copyName) {
-  const templateName = templateSheetName || BILLING_TEMPLATE_SHEET_NAME;
-  const templateSpreadsheet = SpreadsheetApp.openById(BILLING_TEMPLATE_SPREADSHEET_ID);
-  const templateSheet = templateSpreadsheet.getSheetByName(templateName);
-  if (!templateSheet) {
-    throw new Error('請求テンプレートシート「' + templateName + '」が見つかりません。');
+function formatBillingCurrency_(value) {
+  const num = Number(value);
+  if (!isFinite(num)) return '0';
+  return Math.round(num).toLocaleString('ja-JP');
+}
+
+function normalizeBillingMonthLabel_(billingMonth) {
+  const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
+  if (digits.length >= 6) {
+    const year = digits.slice(0, 4);
+    const month = digits.slice(4, 6).padStart(2, '0');
+    return year + '年' + month + '月';
   }
+  return billingMonth || '';
+}
 
-  const targetSpreadsheet = SpreadsheetApp.create(copyName || '請求一覧_出力中');
-  const copiedSheet = templateSheet.copyTo(targetSpreadsheet);
-  copiedSheet.setName(templateName);
+function formatInvoiceFileName_(billingMonth) {
+  const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
+  if (digits.length >= 6) {
+    const year = digits.slice(0, 4);
+    const month = digits.slice(4, 6).padStart(2, '0');
+    return year + '-' + month + '_' + INVOICE_FILE_PREFIX + '.pdf';
+  }
+  return INVOICE_FILE_PREFIX + '.pdf';
+}
 
-  targetSpreadsheet.getSheets().forEach(sheet => {
-    if (sheet.getSheetId() !== copiedSheet.getSheetId() && targetSpreadsheet.getSheets().length > 1) {
-      targetSpreadsheet.deleteSheet(sheet);
+function buildInvoiceTemplateData_(item) {
+  const visits = normalizeInvoiceVisitCount_(item && item.visitCount);
+  const unitPrice = normalizeInvoiceMoney_(item && item.unitPrice);
+  const monthLabel = normalizeBillingMonthLabel_(item && item.billingMonth);
+  const rows = [
+    { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
+    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: normalizeInvoiceMoney_(item && item.treatmentAmount) },
+    { label: '交通費', detail: formatBillingCurrency_(BILLING_TRANSPORT_UNIT_PRICE) + '円 × ' + visits + '回', amount: normalizeInvoiceMoney_(item && item.transportAmount) }
+  ];
+
+  return Object.assign({}, item, {
+    monthLabel,
+    rows,
+    grandTotal: normalizeInvoiceMoney_(item && item.grandTotal)
+  });
+}
+
+function createInvoicePdfBlob_(item) {
+  const template = HtmlService.createTemplateFromFile('invoice_template');
+  template.data = buildInvoiceTemplateData_(item || {});
+  const html = template.evaluate().setWidth(1240).setHeight(1754);
+  const fileName = formatInvoiceFileName_(item && item.billingMonth);
+  return html.getBlob().getAs(MimeType.PDF).setName(fileName);
+}
+
+function ensureInvoiceRootFolder_() {
+  if (!INVOICE_PARENT_FOLDER_ID) {
+    throw new Error('請求書の保存先フォルダIDが設定されていません');
+  }
+  return DriveApp.getFolderById(INVOICE_PARENT_FOLDER_ID);
+}
+
+function ensureSubFolder_(parentFolder, name) {
+  const folders = parentFolder.getFoldersByName(name);
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+  return parentFolder.createFolder(name);
+}
+
+function ensureInvoiceFolderForPatient_(patientName, billingMonth) {
+  const root = ensureInvoiceRootFolder_();
+  const safeName = (patientName || '患者未設定').replace(/[\\/]/g, '_');
+  const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
+  const year = (digits.length >= 6 ? digits.slice(0, 4) : '未設定年').replace(/[\\/]/g, '_');
+  const patientFolder = ensureSubFolder_(root, safeName);
+  return ensureSubFolder_(patientFolder, year);
+}
+
+function removeExistingInvoiceFiles_(folder, fileName) {
+  const files = folder.getFilesByName(fileName);
+  while (files.hasNext()) {
+    const file = files.next();
+    try {
+      file.setTrashed(true);
+    } catch (e) {
+      // ignore cleanup errors
     }
+  }
+}
+
+function saveInvoicePdf(item, pdfBlob) {
+  const folder = ensureInvoiceFolderForPatient_(item && item.nameKanji, item && item.billingMonth);
+  const fileName = pdfBlob.getName();
+  removeExistingInvoiceFiles_(folder, fileName);
+  const file = folder.createFile(pdfBlob);
+  return { fileId: file.getId(), url: file.getUrl(), name: file.getName() };
+}
+
+function generateInvoicePdf(item) {
+  const blob = createInvoicePdfBlob_(item);
+  return saveInvoicePdf(item, blob);
+}
+
+function generateInvoicePdfs(billingJson, options) {
+  const billingMonth = (options && options.billingMonth) || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
+  const files = (billingJson || []).map(item => {
+    const meta = generateInvoicePdf(item);
+    return Object.assign({}, meta, { patientId: item && item.patientId, nameKanji: item && item.nameKanji });
   });
-
-  targetSpreadsheet.setActiveSheet(copiedSheet);
-  targetSpreadsheet.moveActiveSheet(targetSpreadsheet.getSheets().length);
-
-  return { sheet: copiedSheet, spreadsheet: targetSpreadsheet };
+  return { billingMonth, files };
 }
 
-function writeBillingExcelRows_(sheet, rows) {
-  if (!sheet || !Array.isArray(rows) || !rows.length) {
-    return 0;
-  }
-  const startRow = 2; // 1行目はテンプレ側ヘッダ
-  const startCol = 1;
-  sheet.getRange(startRow, startCol, rows.length, rows[0].length).setValues(rows);
-  return rows.length;
-}
-
-function convertSpreadsheetToExcelBlob_(file, baseName) {
-  if (!file || typeof file.getBlob !== 'function') {
-    throw new Error('Excel出力用のファイルが不正です');
-  }
-  const mimeType = typeof file.getMimeType === 'function' ? file.getMimeType() : '';
-  if (mimeType && mimeType !== MimeType.GOOGLE_SHEETS) {
-    throw new Error('スプレッドシート以外のファイルをExcelに変換することはできません');
-  }
-
-  const blob = file.getBlob();
-  if (!blob || typeof blob.getAs !== 'function' || typeof blob.setName !== 'function') {
-    throw new Error('Excel出力用のBlobが不正です');
-  }
-
-  return blob.getAs(MimeType.MICROSOFT_EXCEL).setName(baseName + '.xlsx');
-}
-
-function createBillingExcelFile(billingJson, options) {
-  const opts = options || {};
-  const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
-  const baseName = opts.fileName || (billingMonth ? '請求一覧_' + billingMonth : '請求一覧');
-  const rows = buildBillingExcelRows_(billingJson);
-  const valueRows = rows.length > 1 ? rows.slice(1) : [];
-  const templateSheetName = opts.templateSheetName || BILLING_TEMPLATE_SHEET_NAME;
-  const outputSheetName = opts.outputSheetName || '請求一覧';
-
-  const { sheet, spreadsheet } = copyTemplateSheet_(templateSheetName, baseName);
-  spreadsheet.getSheets().forEach(s => {
-    if (s.getSheetId() !== sheet.getSheetId()) {
-      spreadsheet.deleteSheet(s);
-    }
-  });
-  sheet.setName(outputSheetName);
-  if (valueRows.length) {
-    writeBillingExcelRows_(sheet, valueRows);
-  }
-
-  const tempFile = DriveApp.getFileById(spreadsheet.getId());
-  let folder = null;
-  try {
-    folder = billingGetParentFolder_();
-  } catch (e) {
-    folder = null;
-  }
-  if (folder) {
-    folder.addFile(tempFile);
-    DriveApp.getRootFolder().removeFile(tempFile);
-  }
-
-  const excelBlob = convertSpreadsheetToExcelBlob_(tempFile, baseName);
-  const outFile = folder ? folder.createFile(excelBlob) : DriveApp.createFile(excelBlob);
-  tempFile.setTrashed(true);
-
-  return {
-    fileId: outFile.getId(),
-    url: outFile.getUrl(),
-    name: outFile.getName(),
-    rowCount: rows.length ? rows.length - 1 : 0,
-    billingMonth
-  };
-}
-
-function escapeBillingCsvCell_(value) {
-  const text = value == null ? '' : String(value);
-  if (/[",\n]/.test(text)) {
-    return '"' + text.replace(/"/g, '""') + '"';
-  }
-  return text;
-}
-
-function createBillingCsvFile(billingJson, options) {
-  const opts = options || {};
-  const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
-  const baseName = opts.fileName || (billingMonth ? '口座振替_' + billingMonth : '口座振替');
-  const sorted = Array.isArray(billingJson) ? billingJson.slice().sort((a, b) => {
-    const aid = Number(a && a.patientId);
-    const bid = Number(b && b.patientId);
-    if (isNaN(aid) && isNaN(bid)) return 0;
-    if (isNaN(aid)) return 1;
-    if (isNaN(bid)) return -1;
-    return aid - bid;
-  }) : [];
-  const rows = sorted.map(item => [
-    item && item.nameKanji ? item.nameKanji : '',
-    item && item.nameKana ? item.nameKana : '',
-    normalizeBillingAmount_(item)
-  ]);
-  const csv = rows.map(row => row.map(escapeBillingCsvCell_).join(',')).join('\r\n');
-  const blob = Utilities.newBlob(csv, 'text/csv', baseName + '.csv');
-  let folder = null;
-  try {
-    folder = billingGetParentFolder_();
-  } catch (e) {
-    folder = null;
-  }
-  const file = folder ? folder.createFile(blob) : DriveApp.createFile(blob);
-  return {
-    fileId: file.getId(),
-    url: file.getUrl(),
-    name: file.getName(),
-    rowCount: rows.length,
-    billingMonth
-  };
-}
+/***** Billing history and payment result utilities (retained for compatibility) *****/
 
 function ensureBillingHistorySheet_() {
   const SHEET_NAME = '請求履歴';
@@ -286,7 +177,7 @@ function appendBillingHistoryRows(billingJson, options) {
   const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
   const memo = opts.memo || '';
   const rows = (billingJson || []).map(item => {
-    const billingAmount = item && item.billingAmount != null ? item.billingAmount : 0;
+    const billingAmount = item && item.treatmentAmount != null ? item.treatmentAmount : 0;
     const carryOver = item && item.carryOverAmount != null ? item.carryOverAmount : 0;
     const paid = item && item.paidAmount != null ? item.paidAmount : 0;
     const grandTotal = normalizeBillingAmount_(item);
@@ -358,336 +249,58 @@ const BILLING_PAYMENT_PDF_STATUS_LABELS = {
 };
 
 function parseBillingPaymentResultPdf(pdfBlob) {
-  if (!pdfBlob) {
-    throw new Error('入金結果PDFが指定されていません');
-  }
-  const text = pdfBlob.getDataAsString('Shift_JIS');
-  const normalized = text.replace(/\r\n/g, '\n').replace(/[\t ]+/g, ' ');
-  const statusKeys = Object.keys(BILLING_PAYMENT_PDF_STATUS_LABELS).join('|');
-  const regex = new RegExp('([\\p{sc=Han}\\p{L}\\p{N}\\s・･()（）]+?)\\s+([0-9,]+)\\s+(' + statusKeys + ')', 'gu');
+  const content = pdfBlob.getDataAsString();
+  const lines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const entries = [];
-  let match = null;
-  while ((match = regex.exec(normalized)) !== null) {
-    const name = normalizeBillingNameKey_(match[1]);
-    if (!name) continue;
-    const paidAmount = Number(String(match[2] || '0').replace(/,/g, '')) || 0;
-    const statusLabel = match[3];
+  lines.forEach(line => {
+    const paidMatch = line.match(/([0-9,]+)円/);
+    const statusLabel = Object.keys(BILLING_PAYMENT_PDF_STATUS_LABELS).find(label => line.indexOf(label) >= 0) || '';
+    const nameMatch = line.match(/^(.*?)(回収済み|預金口座振替依頼書なし|資金不足|取引なし)/);
+    if (!nameMatch) return;
+    const name = normalizeBillingNameKey_(nameMatch[1]);
+    const paidAmount = paidMatch ? Number(paidMatch[1].replace(/,/g, '')) : 0;
     const bankStatus = BILLING_PAYMENT_PDF_STATUS_LABELS[statusLabel] || '';
     entries.push({ nameKanji: name, paidAmount, bankStatus, statusLabel });
-  }
-
-  if (!entries.length) {
-    const lines = normalized.split(/\n+/).map(line => line.trim()).filter(Boolean);
-    lines.forEach(line => {
-      Object.keys(BILLING_PAYMENT_PDF_STATUS_LABELS).forEach(label => {
-        if (line.indexOf(label) < 0) return;
-        const paidMatch = line.match(/([0-9][0-9,]*)/);
-        const paidAmount = paidMatch ? Number(paidMatch[1].replace(/,/g, '')) || 0 : 0;
-        const name = normalizeBillingNameKey_(line.replace(label, '').replace(paidMatch ? paidMatch[1] : '', ''));
-        if (!name) return;
-        entries.push({ nameKanji: name, paidAmount, bankStatus: BILLING_PAYMENT_PDF_STATUS_LABELS[label], statusLabel: label });
-      });
-    });
-  }
-
+  });
   return entries;
 }
 
-function buildPaymentResultStatusMap_(parsedEntries, billingJson) {
+function applyPaymentResultPdf(billingMonth, pdfBlob, billingJson) {
+  const parsed = parseBillingPaymentResultPdf(pdfBlob);
   const nameIndex = {};
   (billingJson || []).forEach(item => {
-    if (item && item.nameKanji) {
-      nameIndex[normalizeBillingNameKey_(item.nameKanji)] = item;
+    const key = normalizeBillingNameKey_(item.nameKanji);
+    if (key && !nameIndex[key]) {
+      nameIndex[key] = item;
     }
   });
 
-  const statusMap = {};
-  const unmatched = [];
-
-  parsedEntries.forEach(entry => {
+  const matched = [];
+  parsed.forEach(entry => {
     const key = normalizeBillingNameKey_(entry.nameKanji);
     const target = nameIndex[key];
-    if (!target || !target.patientId) {
-      unmatched.push(entry);
-      return;
-    }
-    const paidAmount = Number(entry.paidAmount) || 0;
-    const grandTotal = normalizeBillingAmount_(target);
-    statusMap[target.patientId] = {
-      bankStatus: entry.bankStatus || '',
-      paidAmount,
-      unpaidAmount: grandTotal - paidAmount
-    };
-  });
-
-  return { statusMap, unmatched, matched: Object.keys(statusMap).length };
-}
-
-function applyPaymentResultPdf(billingMonth, pdfBlob, billingJson) {
-  const parsedEntries = parseBillingPaymentResultPdf(pdfBlob);
-  const mapping = buildPaymentResultStatusMap_(parsedEntries, billingJson);
-  const historyResult = applyPaymentResultsToHistory(billingMonth, mapping.statusMap);
-  return Object.assign({ billingMonth }, historyResult, {
-    parsedCount: parsedEntries.length,
-    matched: mapping.matched,
-    unmatched: mapping.unmatched
-  });
-}
-
-const BILLING_COMBINED_INVOICE_TEMPLATE_ID = '1CLy0facEX8_CFFiswIywSGxvan0dUKVw';
-const BILLING_STANDARD_INVOICE_TEMPLATE_ID = '15__-XmSsDcMV2mFzsekxuGMYcNWtm2CN';
-
-const BILLING_PDF_OVERLAY_POSITIONS = {
-  nameKanji: { x: 0.63, y: 0.26, fontSize: 16, align: 'left', weight: '700' },
-  address: { x: 0.63, y: 0.23, fontSize: 11, align: 'left' },
-  billingMonth: { x: 0.22, y: 0.35, fontSize: 13, align: 'left' },
-  combinedTotal: { x: 0.80, y: 0.63, fontSize: 16, align: 'right', weight: '700' },
-  carryOver: { x: 0.80, y: 0.69, fontSize: 14, align: 'right' },
-  combineNote: { x: 0.63, y: 0.75, fontSize: 12, align: 'left', weight: '600' }
-};
-
-function resolveBillingPdfTemplates_(options) {
-  const props = PropertiesService.getScriptProperties();
-  return {
-    combined: (options && options.combinedTemplateId) || props.getProperty('BILLING_COMBINED_INVOICE_TEMPLATE_ID') ||
-      BILLING_COMBINED_INVOICE_TEMPLATE_ID,
-    standard: (options && options.standardTemplateId) || props.getProperty('BILLING_STANDARD_INVOICE_TEMPLATE_ID') ||
-      BILLING_STANDARD_INVOICE_TEMPLATE_ID
-  };
-}
-
-function normalizeBillingMonthLabel_(billingMonth) {
-  const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
-  if (digits.length >= 6) {
-    const year = digits.slice(0, 4);
-    const month = digits.slice(4, 6).padStart(2, '0');
-    return year + '年' + month + '月';
-  }
-  return billingMonth || '';
-}
-
-function normalizeBurdenRateIntForInvoice_(burdenRate) {
-  if (burdenRate == null || burdenRate === '') return 0;
-  const num = Number(burdenRate);
-  if (Number.isFinite(num)) {
-    if (num > 0 && num < 1) return Math.round(num * 10);
-    if (num >= 1 && num < 10) return Math.round(num);
-    if (num >= 10 && num <= 100) return Math.round(num / 10);
-  }
-
-  const normalized = String(burdenRate).normalize('NFKC').replace(/\s+/g, '').replace('％', '%');
-  const withoutUnits = normalized.replace(/割|分/g, '').replace('%', '');
-  const parsed = Number(withoutUnits);
-  if (!Number.isFinite(parsed)) return 0;
-  if (normalized.indexOf('%') >= 0) return Math.round(parsed / 10);
-  if (parsed > 0 && parsed < 10) return Math.round(parsed);
-  if (parsed >= 10 && parsed <= 100) return Math.round(parsed / 10);
-  return 0;
-}
-
-function resolveInvoiceTreatmentUnitPrice_(insuranceType, burdenRate, unitPrice) {
-  const type = String(insuranceType || '').trim();
-  if (type === '自費') {
-    const custom = normalizeInvoiceMoney_(unitPrice);
-    return custom > 0 ? custom : 0;
-  }
-  if (type === '生保' || type === 'マッサージ') return 0;
-  const normalizedRate = normalizeBurdenRateIntForInvoice_(burdenRate);
-  return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedRate] || 0;
-}
-
-function calculateInvoiceChargeBreakdown_(item) {
-  const visits = normalizeInvoiceVisitCount_(item && item.visitCount);
-  const insuranceType = item && item.insuranceType ? item.insuranceType : '';
-  const treatmentUnitPrice = resolveInvoiceTreatmentUnitPrice_(insuranceType, item && item.burdenRate, item && item.unitPrice);
-  const treatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
-  const transportAmount = visits > 0 ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
-  const carryOverAmount = normalizeBillingCarryOver_(item);
-  const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
-
-  return {
-    visits,
-    treatmentUnitPrice,
-    treatmentAmount,
-    transportAmount,
-    transportUnitPrice: BILLING_TRANSPORT_UNIT_PRICE,
-    carryOverAmount,
-    grandTotal
-  };
-}
-
-function buildBillingInvoiceHtml_(item, billingMonth) {
-  const breakdown = calculateInvoiceChargeBreakdown_(item || {});
-  const monthLabel = normalizeBillingMonthLabel_(billingMonth || (item && item.billingMonth));
-  const nameKanji = item && item.nameKanji ? item.nameKanji : '';
-  const address = resolveBillingAddress_(item);
-  const combineNote = (breakdown.carryOverAmount > 0 || (item && item.shouldCombine))
-    ? '未入金があるため合算請求となります'
-    : '';
-  const dueDateLabel = '口座振替日：毎月20日（祝日等は翌営業日）';
-
-  const rows = [
-    { label: '前月繰越', amount: breakdown.carryOverAmount },
-    { label: '施術料（' + formatBillingCurrency_(breakdown.treatmentUnitPrice) + '円 × ' + breakdown.visits + '回）', amount: breakdown.treatmentAmount },
-    { label: '交通費（' + formatBillingCurrency_(BILLING_TRANSPORT_UNIT_PRICE) + '円 × ' + breakdown.visits + '回）', amount: breakdown.transportAmount }
-  ];
-
-  const currencyRows = rows.map(row => '<div class="row"><div class="label">' + row.label + '</div><div class="amount">' + formatBillingCurrency_(row.amount) + '円</div></div>').join('');
-
-  return '<!doctype html><html><head><meta charset="UTF-8">' +
-    '<style>' +
-    'body{font-family:\'Noto Sans JP\',-apple-system,\'Segoe UI\',sans-serif;margin:0;padding:28px;background:#f5f7fb;color:#0f172a;}' +
-    '.invoice{max-width:720px;margin:0 auto;background:#fff;padding:28px 32px;border-radius:18px;box-shadow:0 14px 48px rgba(15,23,42,0.12);}' +
-    '.title{display:flex;flex-direction:column;gap:4px;margin-bottom:18px;}' +
-    '.title h1{margin:0;font-size:22px;letter-spacing:0.04em;}' +
-    '.title .subtitle{color:#475569;font-weight:600;}' +
-    '.meta{display:flex;flex-direction:column;gap:4px;margin-bottom:16px;}' +
-    '.meta .label{color:#475569;font-size:13px;}' +
-    '.panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;margin-bottom:18px;}' +
-    '.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px dashed #e2e8f0;font-weight:600;}' +
-    '.row:last-child{border-bottom:none;}' +
-    '.label{color:#1f2937;font-size:14px;}' +
-    '.amount{font-size:16px;}' +
-    '.total{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-top:2px solid #1d4ed8;margin-top:6px;font-size:18px;font-weight:700;color:#1d4ed8;}' +
-    '.note{margin-top:8px;color:#dc2626;font-weight:600;}' +
-    '.footer{margin-top:16px;color:#475569;font-size:13px;}' +
-    '</style></head><body>' +
-    '<div class="invoice">' +
-    '<div class="title"><h1>べるつりー訪問鍼灸マッサージ</h1><div class="subtitle">' + monthLabel + ' ご請求書</div></div>' +
-    '<div class="meta"><div class="label">氏名</div><div>' + nameKanji + '</div>' +
-    (address ? '<div class="label">住所</div><div>' + address + '</div>' : '') +
-    '</div>' +
-    '<div class="panel">' + currencyRows +
-    '<div class="total"><div>合計</div><div>' + formatBillingCurrency_(breakdown.grandTotal) + '円</div></div>' +
-    '</div>' +
-    (combineNote ? '<div class="note">' + combineNote + '</div>' : '') +
-    '<div class="footer">' + dueDateLabel + '</div>' +
-    '</div></body></html>';
-}
-
-function normalizeBillingCarryOver_(item) {
-  if (!item) return 0;
-  if (item.carryOverAmount != null && item.carryOverAmount !== '') return Number(item.carryOverAmount) || 0;
-  if (item.raw && item.raw.carryOverAmount != null) return Number(item.raw.carryOverAmount) || 0;
-  return 0;
-}
-
-function resolveBillingAddress_(item) {
-  if (!item || !item.raw) return '';
-  const raw = item.raw;
-  const candidates = ['住所', '住所1', '住所２', '住所2', 'address', 'Address'];
-  for (let i = 0; i < candidates.length; i++) {
-    const key = candidates[i];
-    if (raw.hasOwnProperty(key) && raw[key] != null && String(raw[key]).trim()) {
-      return String(raw[key]).trim();
-    }
-  }
-  return '';
-}
-
-function formatBillingCurrency_(value) {
-  const num = Number(value);
-  if (!isFinite(num)) return '0';
-  return Math.round(num).toLocaleString('ja-JP');
-}
-
-function createBillingPdfOverlay_(pngBlob, overlay) {
-  const image = ImagesService.openImage(pngBlob);
-  const width = image.getWidth();
-  const height = image.getHeight();
-  const backgroundUrl = 'data:image/png;base64,' + Utilities.base64Encode(pngBlob.getBytes());
-
-  const pos = BILLING_PDF_OVERLAY_POSITIONS;
-  const fields = [];
-  if (overlay.address) {
-    fields.push(Object.assign({ text: overlay.address }, pos.address));
-  }
-  if (overlay.nameKanji) {
-    fields.push(Object.assign({ text: overlay.nameKanji }, pos.nameKanji));
-  }
-  if (overlay.billingMonth) {
-    fields.push(Object.assign({ text: overlay.billingMonth }, pos.billingMonth));
-  }
-  if (overlay.combinedTotal) {
-    fields.push(Object.assign({ text: overlay.combinedTotal }, pos.combinedTotal));
-  }
-  if (overlay.carryOver) {
-    fields.push(Object.assign({ text: overlay.carryOver }, pos.carryOver));
-  }
-  if (overlay.combineNote) {
-    fields.push(Object.assign({ text: overlay.combineNote }, pos.combineNote));
-  }
-
-  const textLayer = fields.map(field => {
-    const left = Math.round(field.x * width);
-    const top = Math.round(field.y * height);
-    const fontSize = field.fontSize || 12;
-    const weight = field.weight || '400';
-    const align = field.align || 'left';
-    const content = escapeHtml_ ? escapeHtml_(field.text) : field.text;
-    return '<div style="position:absolute;left:' + left + 'px;top:' + top +
-      'px;font-size:' + fontSize + 'px;font-family:\'Noto Sans JP\', \"Noto Sans\", sans-serif;font-weight:' + weight +
-      ';text-align:' + align + ';white-space:nowrap;">' + content + '</div>';
-  }).join('');
-
-  const html = '<!doctype html><html><head><style>@page { size: ' + width + 'px ' + height + 'px; margin: 0; } body { margin: 0; padding: 0; }' +
-    '</style></head><body>' +
-    '<div style="position:relative;width:' + width + 'px;height:' + height + 'px;background:url(' + backgroundUrl +
-    ') center center / contain no-repeat;">' + textLayer + '</div></body></html>';
-
-  const blob = HtmlService.createHtmlOutput(html).getBlob().getAs(MimeType.PDF);
-  return blob;
-}
-
-function selectBillingTemplateBlob_(templates, useCombined) {
-  const id = useCombined ? templates.combined : templates.standard;
-  if (!id) {
-    throw new Error('請求書テンプレートIDが設定されていません');
-  }
-  const file = DriveApp.getFileById(id);
-  return file.getBlob();
-}
-
-function buildCombinedBillingPdfBlob_(item, billingMonth) {
-  const html = buildBillingInvoiceHtml_(item, billingMonth);
-  const output = HtmlService.createHtmlOutput(html)
-    .setWidth(820)
-    .setHeight(1180);
-  return output.getBlob().getAs(MimeType.PDF);
-}
-
-function generateCombinedBillingPdfs(billingJson, options) {
-  const opts = options || {};
-  const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
-  const targets = (billingJson || []).filter(item => item && item.shouldCombine);
-  const results = [];
-  let folder = null;
-  try {
-    folder = billingGetParentFolder_();
-  } catch (e) {
-    folder = null;
-  }
-
-  targets.forEach(item => {
-    const title = '合算請求書_' + billingMonth + '_' + (item.patientId || '');
-    const pdfBlob = buildCombinedBillingPdfBlob_(item, billingMonth).setName(title + '.pdf');
-    const pdfFile = folder ? folder.createFile(pdfBlob) : DriveApp.createFile(pdfBlob);
-    results.push({
-      patientId: item.patientId,
-      fileId: pdfFile.getId(),
-      url: pdfFile.getUrl(),
-      name: pdfFile.getName()
+    if (!target) return;
+    matched.push({
+      patientId: target.patientId,
+      billingMonth,
+      paidAmount: entry.paidAmount,
+      unpaidAmount: normalizeBillingAmount_(target) - entry.paidAmount,
+      bankStatus: entry.bankStatus,
+      statusLabel: entry.statusLabel
     });
   });
 
-  const summaryUrl = results.length === 1 ? results[0].url : '';
-  const summaryName = results.length === 1 ? results[0].name : '';
-  return { billingMonth, count: results.length, files: results, url: summaryUrl, name: summaryName };
-}
+  const statusMap = matched.reduce((map, entry) => {
+    map[entry.patientId] = entry;
+    return map;
+  }, {});
+  const historyResult = applyPaymentResultsToHistory(billingMonth, statusMap);
 
-function generateBillingOutputs(billingJson, options) {
-  const excel = createBillingExcelFile(billingJson, options);
-  const csv = createBillingCsvFile(billingJson, options);
-  const history = appendBillingHistoryRows(billingJson, { billingMonth: excel.billingMonth || csv.billingMonth, memo: options && options.note });
-  return { excel, csv, history };
+  return {
+    billingMonth,
+    parsedCount: parsed.length,
+    matched: matched.length,
+    updated: historyResult.updated,
+    entries: matched
+  };
 }

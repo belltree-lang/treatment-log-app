@@ -2,7 +2,19 @@
 
 const INVOICE_PARENT_FOLDER_ID = '1EG-GB3PbaUr9C1LJWlaf_idqoYF-19Ux';
 const INVOICE_FILE_PREFIX = '請求書';
-const BILLING_TRANSPORT_UNIT_PRICE = typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined' ? BILLING_TRANSPORT_UNIT_PRICE : 33;
+const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeof globalThis.BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
+  ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
+  : 33;
+
+function convertSpreadsheetToExcelBlob_(file, exportName) {
+  if (!file || typeof file.getMimeType !== 'function' || file.getMimeType() !== MimeType.GOOGLE_SHEETS) {
+    throw new Error('スプレッドシート以外のファイルをExcelに変換することはできません');
+  }
+
+  const blob = file.getBlob();
+  const name = (exportName && String(exportName).trim()) || 'export';
+  return blob.getAs(MimeType.MICROSOFT_EXCEL).setName(name + '.xlsx');
+}
 
 function normalizeBillingAmount_(item) {
   if (!item) return 0;

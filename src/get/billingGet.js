@@ -14,6 +14,20 @@ const billingNormalizeHeaderKey_ = typeof normalizeHeaderKey_ === 'function'
     return noPunct.toLowerCase();
   };
 
+const billingNormalizePatientId_ = typeof normId_ === 'function'
+  ? normId_
+  : function normIdFallback_(value) {
+    return String(value || '').trim();
+  };
+
+const billingParseDateFlexible_ = typeof parseDateFlexible_ === 'function'
+  ? parseDateFlexible_
+  : function parseDateFlexibleFallback_(value) {
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return isNaN(parsed.getTime()) ? null : parsed;
+  };
+
 const billingBuildHeaderMap_ = typeof buildHeaderMap_ === 'function'
   ? buildHeaderMap_
   : function buildHeaderMap_(headersRow) {
@@ -70,11 +84,34 @@ const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? P
   share: 47
 };
 
-const billingSs = typeof ss === 'function'
-  ? ss
-  : function ss() {
-    return SpreadsheetApp.getActiveSpreadsheet();
-  };
+function resolveBillingSpreadsheet_() {
+  const scriptProps = typeof PropertiesService !== 'undefined'
+    ? PropertiesService.getScriptProperties()
+    : null;
+  const configuredId = (scriptProps && scriptProps.getProperty('SSID'))
+    || (typeof APP !== 'undefined' ? (APP.SSID || '') : '');
+
+  if (configuredId) {
+    try {
+      return SpreadsheetApp.openById(configuredId);
+    } catch (err) {
+      console.warn('[billing] Failed to open SSID from config:', configuredId, err);
+    }
+  }
+
+  if (typeof ss === 'function') {
+    try {
+      const workbook = ss();
+      if (workbook) return workbook;
+    } catch (err2) {
+      console.warn('[billing] Fallback ss() failed', err2);
+    }
+  }
+
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+const billingSs = resolveBillingSpreadsheet_;
 
 const BILLING_PATIENT_RAW_COL_LIMIT = columnLetterToNumber_('BJ');
 const BILLING_TREATMENT_SHEET_NAME = '施術録';
@@ -294,9 +331,9 @@ function loadTreatmentLogs_() {
 
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
   return values.map((row, idx) => {
-    const pid = normId_(row[colPid - 1]);
+    const pid = billingNormalizePatientId_(row[colPid - 1]);
     const dateCell = row[colDate - 1];
-    const timestamp = dateCell instanceof Date ? dateCell : parseDateFlexible_(dateCell);
+    const timestamp = dateCell instanceof Date ? dateCell : billingParseDateFlexible_(dateCell);
     return {
       rowNumber: idx + 2,
       patientId: pid,
@@ -311,7 +348,7 @@ function buildVisitCountMap_(billingMonth) {
   const logs = loadTreatmentLogs_();
   const counts = {};
   logs.forEach(log => {
-    const pid = log && log.patientId ? normId_(log.patientId) : '';
+    const pid = log && log.patientId ? billingNormalizePatientId_(log.patientId) : '';
     const ts = log && log.timestamp;
     if (!pid || !(ts instanceof Date) || isNaN(ts.getTime())) return;
     if (ts < month.start || ts >= month.end) return;
@@ -364,7 +401,7 @@ function getBillingPatientRecords() {
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
 
   return values.map(row => {
-    const pid = normId_(row[colPid - 1]);
+    const pid = billingNormalizePatientId_(row[colPid - 1]);
     if (!pid) return null;
     return {
       patientId: pid,
@@ -455,7 +492,7 @@ function getBillingPaymentResults(billingMonth) {
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const map = {};
   values.forEach(row => {
-    const pid = normId_(row[colPid - 1]);
+    const pid = billingNormalizePatientId_(row[colPid - 1]);
     const status = normalizeBankStatus_(row[colStatus - 1]);
     if (!pid || !status) return;
     map[pid] = { bankStatus: status };

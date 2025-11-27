@@ -110,10 +110,14 @@ function generateInvoices(billingMonth, options) {
     return {
       billingMonth: source.billingMonth,
       billingJson,
-      excel: outputs.excel,
-      csv: outputs.csv,
-      history: outputs.history,
-      pdfs,
+      excel: outputs && outputs.excel ? { url: outputs.excel.url, name: outputs.excel.name } : null,
+      csv: outputs && outputs.csv ? { url: outputs.csv.url, name: outputs.csv.name } : null,
+      pdfs: pdfs ? {
+        url: pdfs.url || '',
+        name: pdfs.name || '',
+        count: typeof pdfs.count === 'number' ? pdfs.count : (Array.isArray(pdfs.files) ? pdfs.files.length : 0),
+        files: pdfs.files || []
+      } : null,
       bankJoinWarnings: summarizeBankJoinErrors_(billingJson)
     };
   } catch (err) {

@@ -1,4 +1,8 @@
+
 /***** Output layer: billing Excel/CSV/history generation *****/
+
+const BILLING_TEMPLATE_SPREADSHEET_ID = '1ajnW9Fuvu0YzUUkfTmw0CrbhrM3lM5tt5OA1dK2_CoQ';
+const BILLING_TEMPLATE_SHEET_NAME = '請求一覧_TEMPLATE';
 
 const billingColumnLetterToNumber_ = typeof columnLetterToNumber_ === 'function'
   ? columnLetterToNumber_
@@ -97,18 +101,15 @@ function buildBillingExcelRows_(billingJson) {
   return [header].concat(rows);
 }
 
-function copyTemplateSheet_(templateSheetName, destinationSpreadsheet) {
-  const templateName = templateSheetName || '請求一覧_TEMPLATE';
-  const workbook = ss();
-  const templateSheet = workbook.getSheetByName(templateName);
-  if (!templateSheet) {
+function copyTemplateSheet_(templateSheetName, copyName) {
+  const templateName = templateSheetName || BILLING_TEMPLATE_SHEET_NAME;
+  const templateSpreadsheet = SpreadsheetApp.openById(BILLING_TEMPLATE_SPREADSHEET_ID);
+  const targetSpreadsheet = templateSpreadsheet.copy(copyName || '請求一覧_出力中');
+  const copiedSheet = targetSpreadsheet.getSheetByName(templateName);
+  if (!copiedSheet) {
     throw new Error('テンプレートシートが見つかりません: ' + templateName);
   }
 
-  const targetSpreadsheet = destinationSpreadsheet || SpreadsheetApp.create('請求一覧_出力中');
-  const copiedSheet = templateSheet.copyTo(targetSpreadsheet);
-  const newName = '請求一覧_出力中_' + Utilities.getUuid().slice(0, 8);
-  copiedSheet.setName(newName);
   targetSpreadsheet.setActiveSheet(copiedSheet);
   targetSpreadsheet.moveActiveSheet(targetSpreadsheet.getSheets().length);
 
@@ -131,10 +132,10 @@ function createBillingExcelFile(billingJson, options) {
   const baseName = opts.fileName || (billingMonth ? '請求一覧_' + billingMonth : '請求一覧');
   const rows = buildBillingExcelRows_(billingJson);
   const valueRows = rows.length > 1 ? rows.slice(1) : [];
-  const templateSheetName = opts.templateSheetName || '請求一覧_TEMPLATE';
+  const templateSheetName = opts.templateSheetName || BILLING_TEMPLATE_SHEET_NAME;
   const outputSheetName = opts.outputSheetName || '請求一覧';
 
-  const { sheet, spreadsheet } = copyTemplateSheet_(templateSheetName, SpreadsheetApp.create(baseName));
+  const { sheet, spreadsheet } = copyTemplateSheet_(templateSheetName, baseName);
   spreadsheet.getSheets().forEach(s => {
     if (s.getSheetId() !== sheet.getSheetId()) {
       spreadsheet.deleteSheet(s);

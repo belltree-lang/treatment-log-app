@@ -65,6 +65,18 @@ function handleBillingGeneration() {
 function onBillingCompleted(result) {
   billingState.result = result || null;
   setBillingLoading(false);
+
+  const downloads = qs('downloads');
+  if (downloads) {
+    const links = [];
+    if (result?.excel?.url) links.push({ label: 'Excelダウンロード', url: result.excel.url });
+    if (result?.csv?.url) links.push({ label: 'CSVダウンロード', url: result.csv.url });
+    if (result?.pdfs?.url) links.push({ label: 'PDFダウンロード', url: result.pdfs.url });
+    downloads.innerHTML = links.length
+      ? links.map(link => `<a class="download-link" href="${link.url}" target="_blank" rel="noopener">${link.label}</a>`).join('')
+      : '<div class="muted">出力ファイルはまだありません。</div>';
+  }
+
   renderBillingResult();
 }
 
@@ -87,15 +99,9 @@ function renderDownloads(result) {
   box.innerHTML = '';
   if (!result) return;
   const links = [];
-  if (result.excel && result.excel.url) {
-    links.push({ label: 'Excelを開く', url: result.excel.url, name: result.excel.name });
-  }
-  if (result.csv && result.csv.url) {
-    links.push({ label: 'CSVを開く', url: result.csv.url, name: result.csv.name });
-  }
-  if (result.pdfs && result.pdfs.files && result.pdfs.files.length) {
-    links.push({ label: '合算請求書PDF一覧', url: result.pdfs.files[0].url, name: 'PDF (' + result.pdfs.count + '件)' });
-  }
+  if (result.excel && result.excel.url) links.push({ label: 'Excelダウンロード', url: result.excel.url, name: result.excel.name });
+  if (result.csv && result.csv.url) links.push({ label: 'CSVダウンロード', url: result.csv.url, name: result.csv.name });
+  if (result.pdfs && result.pdfs.url) links.push({ label: 'PDFダウンロード', url: result.pdfs.url, name: result.pdfs.name });
   if (!links.length) {
     box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
     return;
@@ -187,6 +193,14 @@ function initBillingPage() {
 }
 
 (function bootstrap() {
+  const body = document.body;
+  if (body && body.dataset) {
+    window.APP_CONFIG = Object.assign({}, window.APP_CONFIG, {
+      view: body.dataset.view || (window.APP_CONFIG && window.APP_CONFIG.view) || '',
+      baseUrl: body.dataset.baseUrl || (window.APP_CONFIG && window.APP_CONFIG.baseUrl) || ''
+    });
+  }
+
   const view = (window.APP_CONFIG && window.APP_CONFIG.view) || '';
   if (view === 'billing') {
     initBillingPage();

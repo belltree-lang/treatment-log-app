@@ -514,6 +514,7 @@ let _patientIdInitialRenderWaiters = [];
 let _patientIdInitialRenderNoticeShown = false;
 let _confirmedPatientId = '';
 let _patientIdSelectionLocked = false;
+let _patientIdInputEditing = false;
 
 function parsePatientIdChunkSizeCandidate(candidate){
   if (candidate == null) return NaN;
@@ -1167,6 +1168,12 @@ function clearPatientSelection(options){
   clearConfirmedPatientId();
 }
 
+function isPatientIdInputActive(){
+  const input = q('pid');
+  if (!input || typeof document === 'undefined'){ return false; }
+  return document.activeElement === input;
+}
+
 function clearPatientDisplay(options){
   const opts = Object.assign({ keepInput:false, force:false }, options || {});
   const hadConfirmed = hasConfirmedPatient();
@@ -1181,8 +1188,12 @@ function setPatientIdInputDisplay(id, name, options){
   const key = normalizePatientIdKey(id);
   const inputEl = q('pid');
   const currentInput = inputEl && inputEl.value != null ? String(inputEl.value).trim() : '';
+  const editing = _patientIdInputEditing && isPatientIdInputActive();
 
   if (!opts.force && !_patientIdSelectionLocked){
+    if (editing){
+      return;
+    }
     const parsedCurrent = splitPatientIdDisplay(currentInput);
     const currentKey = normalizePatientIdKey(parsedCurrent.id);
     if (!currentInput && !currentKey){
@@ -1226,11 +1237,15 @@ function setPatientIdInputDisplay(id, name, options){
 }
 
 function ensurePatientIdDisplayFromInput(options){
-  const opts = Object.assign({ showError:false, allowPlainOnMiss:false, clearOnReject:false }, options || {});
+  const opts = Object.assign({ showError:false, allowPlainOnMiss:false, clearOnReject:false, skipIfEditing:false }, options || {});
   const inputEl = q('pid');
   if (!inputEl) return null;
   const rawInput = String(inputEl.value || '');
   const trimmed = rawInput.trim();
+  const editing = _patientIdInputEditing && isPatientIdInputActive();
+  if (opts.skipIfEditing && editing){
+    return { skipped: true };
+  }
   if (!trimmed){
     clearConfirmedPatientId();
     setv('pid', '');
@@ -2524,8 +2539,13 @@ function loadPidList(){
     try {
       const result = ensurePatientIdDisplayFromInput({
         allowPlainOnMiss: !_patientIdList.length,
-        clearOnReject: !!_patientIdList.length
+        clearOnReject: !!_patientIdList.length,
+        skipIfEditing: true
       });
+      if (result && result.skipped){
+        schedulePatientIdSearchUpdate(true);
+        return;
+      }
       if (!result && _patientIdList.length){
         clearPatientDisplay({ keepInput: false, force: true });
       }
@@ -2600,6 +2620,7 @@ function handlePatientIdKeydown(evt){
 function handlePatientIdInput(){
   unlockInitialPatientIdRender();
   pausePatientIdRender();
+  _patientIdInputEditing = true;
   const inputEl = q('pid');
   const rawValue = inputEl && inputEl.value != null ? String(inputEl.value) : '';
   const trimmed = rawValue.trim();
@@ -2622,11 +2643,13 @@ function handlePatientIdInput(){
 
 function handlePatientIdFocus(){
   unlockInitialPatientIdRender();
+  _patientIdInputEditing = true;
   schedulePatientIdSearchUpdate();
 }
 
 function handlePatientIdConfirm(evt){
   unlockInitialPatientIdRender();
+  _patientIdInputEditing = false;
   const inputEl = evt && evt.target ? evt.target : q('pid');
   const rawValue = inputEl && inputEl.value != null ? String(inputEl.value) : '';
   const trimmed = rawValue.trim();
@@ -2652,6 +2675,7 @@ function handlePatientIdConfirm(evt){
 }
 
 function handlePatientIdBlur(evt){
+  _patientIdInputEditing = false;
   const result = ensurePatientIdDisplayFromInput({
     allowPlainOnMiss: !_patientIdList.length,
     clearOnReject: !!_patientIdList.length

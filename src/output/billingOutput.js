@@ -135,6 +135,23 @@ function writeBillingExcelRows_(sheet, rows) {
   return rows.length;
 }
 
+function convertSpreadsheetToExcelBlob_(file, baseName) {
+  if (!file || typeof file.getBlob !== 'function') {
+    throw new Error('Excel出力用のファイルが不正です');
+  }
+  const mimeType = typeof file.getMimeType === 'function' ? file.getMimeType() : '';
+  if (mimeType && mimeType !== MimeType.GOOGLE_SHEETS) {
+    throw new Error('スプレッドシート以外のファイルをExcelに変換することはできません');
+  }
+
+  const blob = file.getBlob();
+  if (!blob || typeof blob.getAs !== 'function' || typeof blob.setName !== 'function') {
+    throw new Error('Excel出力用のBlobが不正です');
+  }
+
+  return blob.getAs(MimeType.MICROSOFT_EXCEL).setName(baseName + '.xlsx');
+}
+
 function createBillingExcelFile(billingJson, options) {
   const opts = options || {};
   const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
@@ -167,7 +184,7 @@ function createBillingExcelFile(billingJson, options) {
     DriveApp.getRootFolder().removeFile(tempFile);
   }
 
-  const excelBlob = tempFile.getBlob().getAs(MimeType.MICROSOFT_EXCEL).setName(baseName + '.xlsx');
+  const excelBlob = convertSpreadsheetToExcelBlob_(tempFile, baseName);
   const outFile = folder ? folder.createFile(excelBlob) : DriveApp.createFile(excelBlob);
   tempFile.setTrashed(true);
 

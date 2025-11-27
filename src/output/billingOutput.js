@@ -104,6 +104,11 @@ function buildBillingExcelRows_(billingJson) {
 function copyTemplateSheet_(templateSheetName, copyName) {
   const templateName = templateSheetName || BILLING_TEMPLATE_SHEET_NAME;
   const templateSpreadsheet = SpreadsheetApp.openById(BILLING_TEMPLATE_SPREADSHEET_ID);
+  const templateSheet = templateSpreadsheet.getSheetByName(templateName);
+  if (!templateSheet) {
+    throw new Error('請求テンプレートシート「' + templateName + '」が見つかりません。');
+  }
+
   const targetSpreadsheet = templateSpreadsheet.copy(copyName || '請求一覧_出力中');
   const copiedSheet = targetSpreadsheet.getSheetByName(templateName);
   if (!copiedSheet) {

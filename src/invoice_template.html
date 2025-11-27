@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>請求書</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    @page { size: A4; margin: 18mm; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Noto Sans JP', 'Noto Sans', -apple-system, 'Segoe UI', sans-serif; margin: 0; color: #0f172a; }
+    .wrapper { display: flex; flex-direction: column; gap: 16px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; }
+    .brand { font-weight: 700; font-size: 20px; letter-spacing: 0.04em; }
+    .meta { text-align: right; color: #475569; font-size: 12px; }
+    .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; background: #f8fafc; }
+    .section-title { font-weight: 700; margin: 0 0 6px; font-size: 14px; }
+    .info { display: grid; grid-template-columns: 100px 1fr; row-gap: 6px; column-gap: 8px; font-size: 14px; }
+    .info .label { color: #475569; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+    th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; }
+    th { background: #e5f0ff; font-weight: 700; }
+    td.amount { text-align: right; }
+    tfoot td { font-weight: 700; background: #edf2f7; }
+    .note { color: #475569; font-size: 12px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header class="header">
+      <div>
+        <div class="brand">べるつりー訪問鍼灸マッサージ</div>
+        <div class="note">月次請求書</div>
+      </div>
+      <div class="meta">
+        <div>請求月: <?= data.monthLabel ?></div>
+        <div>発行日: <?= Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Tokyo', 'yyyy年MM月dd日') ?></div>
+      </div>
+    </header>
+
+    <section class="card">
+      <h3 class="section-title">請求先</h3>
+      <div class="info">
+        <div class="label">氏名</div>
+        <div><?= data.nameKanji ?></div>
+        <div class="label">住所</div>
+        <div><?= data.address || '―' ?></div>
+        <div class="label">保険区分</div>
+        <div><?= data.insuranceType || '―' ?> / <?= data.burdenRate ? data.burdenRate + '割' : '―' ?></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3 class="section-title">ご請求内容</h3>
+      <table>
+        <thead>
+          <tr><th>項目</th><th>詳細</th><th class="amount">金額</th></tr>
+        </thead>
+        <tbody>
+          <? data.rows.forEach(function(row) { ?>
+            <tr>
+              <td><?= row.label ?></td>
+              <td><?= row.detail || '' ?></td>
+              <td class="amount"><?= formatBillingCurrency_(row.amount) ?> 円</td>
+            </tr>
+          <? }); ?>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2">合計</td>
+            <td class="amount"><?= formatBillingCurrency_(data.grandTotal) ?> 円</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="note">前月繰越を含む合計金額です。口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+    </section>
+  </div>
+</body>
+</html>

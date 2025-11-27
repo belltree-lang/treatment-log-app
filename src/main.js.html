@@ -110,56 +110,21 @@ function renderDownloads(result) {
     box.innerHTML = `<div class="loading"><span class="spinner"></span>ファイル生成中…</div>`;
     return;
   }
-  if (!result) {
+  const files = (result && Array.isArray(result.files)) ? result.files.filter(file => file && file.url) : [];
+  if (!files.length) {
     box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
     return;
   }
-  const links = [];
-  if (result.excel && result.excel.url) links.push({ label: 'Excelダウンロード', url: result.excel.url, name: result.excel.name });
-  if (result.csv && result.csv.url) links.push({ label: 'CSVダウンロード', url: result.csv.url, name: result.csv.name });
-  const pdfLinks = [];
-  if (result.pdfs) {
-    if (result.pdfs.url) {
-      pdfLinks.push({ label: 'PDFダウンロード', url: result.pdfs.url, name: result.pdfs.name });
-    }
-    if (Array.isArray(result.pdfs.files)) {
-      result.pdfs.files.forEach((file, idx) => {
-        if (!file || !file.url) return;
-        const suffix = result.pdfs.files.length > 1 ? ` (${file.patientId || idx + 1})` : '';
-        pdfLinks.push({ label: 'PDFダウンロード' + suffix, url: file.url, name: file.name });
-      });
-    }
-  }
-  links.push(...pdfLinks);
-  if (!links.length) {
-    box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
-    return;
-  }
-  box.innerHTML = links.map(link => `
+  box.innerHTML = files.map(link => `
     <a class="download-link" href="${link.url}" target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 3v14" /><path d="M5 10l7 7 7-7" /><path d="M5 21h14" />
       </svg>
       <div>
-        <div>${link.label}</div>
-        <small class="muted" style="display:block;">${link.name || ''}</small>
+        <div>${link.name || '請求書PDF'}</div>
+        <small class="muted" style="display:block;">${link.nameKanji || link.patientId || ''}</small>
       </div>
     </a>`).join('');
-}
-
-function renderWarnings(result) {
-  const warnEl = qs('bankWarnings');
-  if (!warnEl) return;
-  if (result && result.bankJoinWarnings && result.bankJoinWarnings.count) {
-    warnEl.style.display = 'inline-flex';
-    const messages = result.bankJoinWarnings.messages || [];
-    warnEl.textContent = `銀行情報未紐づけ: ${result.bankJoinWarnings.count}件`;
-    warnEl.title = messages.join('\n');
-  } else {
-    warnEl.style.display = 'none';
-    warnEl.textContent = '';
-    warnEl.removeAttribute('title');
-  }
 }
 
 function renderMonthBadge(result) {
@@ -180,7 +145,6 @@ function renderBillingResult() {
   const result = billingState.result;
   renderBillingStatus(result);
   renderDownloads(result);
-  renderWarnings(result);
   renderMonthBadge(result);
 
   if (billingState.loading) {
@@ -193,7 +157,7 @@ function renderBillingResult() {
   }
 
   const rows = result.billingJson;
-  const header = ['患者ID','氏名','保険種別','負担','回数','単価','請求額','繰越','合計','銀行状態'];
+  const header = ['患者ID','氏名','住所','保険種別','負担','回数','単価','施術料','交通費','繰越','合計'];
   const tableHtml = [
     '<table><thead><tr>',
     header.map(h => `<th>${h}</th>`).join(''),
@@ -202,14 +166,15 @@ function renderBillingResult() {
       <tr>
         <td>${item.patientId || ''}</td>
         <td>${item.nameKanji || ''}</td>
+        <td>${item.address || ''}</td>
         <td>${item.insuranceType || ''}</td>
         <td>${item.burdenRate ? item.burdenRate + '割' : ''}</td>
         <td>${item.visitCount || 0}</td>
         <td class="right">${formatCurrency(item.unitPrice)}</td>
-        <td class="right">${formatCurrency(item.billingAmount)}</td>
+        <td class="right">${formatCurrency(item.treatmentAmount)}</td>
+        <td class="right">${formatCurrency(item.transportAmount)}</td>
         <td class="right">${formatCurrency(item.carryOverAmount)}</td>
         <td class="right">${formatCurrency(item.grandTotal)}</td>
-        <td>${item.bankJoinError ? '⚠ ' + (item.bankJoinMessage || '銀行情報なし') : (item.bankStatus || 'OK')}</td>
       </tr>`),
     '</tbody></table>'
   ].join('');

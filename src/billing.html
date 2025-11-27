@@ -69,7 +69,7 @@
   <main class="content">
     <section class="card" id="billingControls">
       <h2>請求書を作成</h2>
-      <p class="muted">対象月を指定すると、請求一覧Excel・口座振替CSV・合算請求書PDFを生成します。</p>
+      <p class="muted">対象月を指定すると、患者ごとの請求書PDFを生成してDriveに保存します。</p>
       <div class="controls">
         <label>請求月
           <input type="month" id="billingMonth" />
@@ -82,7 +82,6 @@
     <section class="card">
       <div class="status-line" style="margin-bottom:6px">
         <h2 style="flex:1">生成結果</h2>
-        <div id="bankWarnings" class="pill warn" style="display:none"></div>
         <div id="billingMonthLabel" class="pill ok" style="display:none"></div>
       </div>
       <div id="downloads" class="downloads"></div>

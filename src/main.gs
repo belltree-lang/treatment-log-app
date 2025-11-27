@@ -106,6 +106,17 @@ function generateInvoices(billingMonth, options) {
     const billingJson = generateBillingJsonFromSource(source);
     const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
     const outputs = generateBillingOutputs(billingJson, outputOptions);
+    if (!outputs || !outputs.excel || !outputs.excel.url) {
+      return {
+        billingMonth: source.billingMonth,
+        billingJson,
+        excel: outputs && outputs.excel ? { url: outputs.excel.url || '', name: outputs.excel.name || '' } : null,
+        csv: outputs && outputs.csv ? { url: outputs.csv.url || '', name: outputs.csv.name || '' } : null,
+        pdfs: null,
+        bankJoinWarnings: summarizeBankJoinErrors_(billingJson)
+      };
+    }
+
     const pdfs = generateCombinedBillingPdfs(billingJson, outputOptions);
     return {
       billingMonth: source.billingMonth,

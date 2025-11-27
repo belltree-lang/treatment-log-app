@@ -2,8 +2,8 @@
 
 const INVOICE_PARENT_FOLDER_ID = '1EG-GB3PbaUr9C1LJWlaf_idqoYF-19Ux';
 const INVOICE_FILE_PREFIX = '請求書';
-const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeof globalThis.BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
-  ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
+const TRANSPORT_PRICE = (typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
+  ? BILLING_TRANSPORT_UNIT_PRICE
   : 33;
 
 function convertSpreadsheetToExcelBlob_(file, exportName) {
@@ -82,7 +82,7 @@ function buildInvoiceTemplateData_(item) {
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: normalizeInvoiceMoney_(item && item.treatmentAmount) },
-    { label: '交通費', detail: formatBillingCurrency_(BILLING_TRANSPORT_UNIT_PRICE) + '円 × ' + visits + '回', amount: normalizeInvoiceMoney_(item && item.transportAmount) }
+    { label: '交通費', detail: formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回', amount: normalizeInvoiceMoney_(item && item.transportAmount) }
   ];
 
   return Object.assign({}, item, {

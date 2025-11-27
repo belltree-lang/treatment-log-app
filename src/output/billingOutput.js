@@ -3,6 +3,8 @@
 
 const BILLING_TEMPLATE_SPREADSHEET_ID = '19bsk9rN5HRAGeaQ0hjvr6VTOOHBxDAGoD80nLs6hChk';
 const BILLING_TEMPLATE_SHEET_NAME = '請求一覧_TEMPLATE';
+const BILLING_TRANSPORT_UNIT_PRICE = 33;
+const BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
 const billingColumnLetterToNumber_ = typeof columnLetterToNumber_ === 'function'
   ? columnLetterToNumber_
@@ -56,6 +58,21 @@ function normalizeBillingAmount_(item) {
 
 function normalizeBillingNameKey_(value) {
   return String(value || '').replace(/\s+/g, '').trim();
+}
+
+function normalizeInvoiceMoney_(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+  const text = String(value || '').replace(/,/g, '').trim();
+  if (!text) return 0;
+  const num = Number(text);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function normalizeInvoiceVisitCount_(value) {
+  const num = Number(value && value.visitCount != null ? value.visitCount : value);
+  return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
 function buildBillingExcelRows_(billingJson) {
@@ -439,6 +456,115 @@ function resolveBillingPdfTemplates_(options) {
   };
 }
 
+function normalizeBillingMonthLabel_(billingMonth) {
+  const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
+  if (digits.length >= 6) {
+    const year = digits.slice(0, 4);
+    const month = digits.slice(4, 6).padStart(2, '0');
+    return year + '年' + month + '月';
+  }
+  return billingMonth || '';
+}
+
+function normalizeBurdenRateIntForInvoice_(burdenRate) {
+  if (burdenRate == null || burdenRate === '') return 0;
+  const num = Number(burdenRate);
+  if (Number.isFinite(num)) {
+    if (num > 0 && num < 1) return Math.round(num * 10);
+    if (num >= 1 && num < 10) return Math.round(num);
+    if (num >= 10 && num <= 100) return Math.round(num / 10);
+  }
+
+  const normalized = String(burdenRate).normalize('NFKC').replace(/\s+/g, '').replace('％', '%');
+  const withoutUnits = normalized.replace(/割|分/g, '').replace('%', '');
+  const parsed = Number(withoutUnits);
+  if (!Number.isFinite(parsed)) return 0;
+  if (normalized.indexOf('%') >= 0) return Math.round(parsed / 10);
+  if (parsed > 0 && parsed < 10) return Math.round(parsed);
+  if (parsed >= 10 && parsed <= 100) return Math.round(parsed / 10);
+  return 0;
+}
+
+function resolveInvoiceTreatmentUnitPrice_(insuranceType, burdenRate, unitPrice) {
+  const type = String(insuranceType || '').trim();
+  if (type === '自費') {
+    const custom = normalizeInvoiceMoney_(unitPrice);
+    return custom > 0 ? custom : 0;
+  }
+  if (type === '生保' || type === 'マッサージ') return 0;
+  const normalizedRate = normalizeBurdenRateIntForInvoice_(burdenRate);
+  return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedRate] || 0;
+}
+
+function calculateInvoiceChargeBreakdown_(item) {
+  const visits = normalizeInvoiceVisitCount_(item && item.visitCount);
+  const insuranceType = item && item.insuranceType ? item.insuranceType : '';
+  const treatmentUnitPrice = resolveInvoiceTreatmentUnitPrice_(insuranceType, item && item.burdenRate, item && item.unitPrice);
+  const treatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
+  const transportAmount = visits > 0 ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const carryOverAmount = normalizeBillingCarryOver_(item);
+  const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
+
+  return {
+    visits,
+    treatmentUnitPrice,
+    treatmentAmount,
+    transportAmount,
+    transportUnitPrice: BILLING_TRANSPORT_UNIT_PRICE,
+    carryOverAmount,
+    grandTotal
+  };
+}
+
+function buildBillingInvoiceHtml_(item, billingMonth) {
+  const breakdown = calculateInvoiceChargeBreakdown_(item || {});
+  const monthLabel = normalizeBillingMonthLabel_(billingMonth || (item && item.billingMonth));
+  const nameKanji = item && item.nameKanji ? item.nameKanji : '';
+  const address = resolveBillingAddress_(item);
+  const combineNote = (breakdown.carryOverAmount > 0 || (item && item.shouldCombine))
+    ? '未入金があるため合算請求となります'
+    : '';
+  const dueDateLabel = '口座振替日：毎月20日（祝日等は翌営業日）';
+
+  const rows = [
+    { label: '前月繰越', amount: breakdown.carryOverAmount },
+    { label: '施術料（' + formatBillingCurrency_(breakdown.treatmentUnitPrice) + '円 × ' + breakdown.visits + '回）', amount: breakdown.treatmentAmount },
+    { label: '交通費（' + formatBillingCurrency_(BILLING_TRANSPORT_UNIT_PRICE) + '円 × ' + breakdown.visits + '回）', amount: breakdown.transportAmount }
+  ];
+
+  const currencyRows = rows.map(row => '<div class="row"><div class="label">' + row.label + '</div><div class="amount">' + formatBillingCurrency_(row.amount) + '円</div></div>').join('');
+
+  return '<!doctype html><html><head><meta charset="UTF-8">' +
+    '<style>' +
+    'body{font-family:\'Noto Sans JP\',-apple-system,\'Segoe UI\',sans-serif;margin:0;padding:28px;background:#f5f7fb;color:#0f172a;}' +
+    '.invoice{max-width:720px;margin:0 auto;background:#fff;padding:28px 32px;border-radius:18px;box-shadow:0 14px 48px rgba(15,23,42,0.12);}' +
+    '.title{display:flex;flex-direction:column;gap:4px;margin-bottom:18px;}' +
+    '.title h1{margin:0;font-size:22px;letter-spacing:0.04em;}' +
+    '.title .subtitle{color:#475569;font-weight:600;}' +
+    '.meta{display:flex;flex-direction:column;gap:4px;margin-bottom:16px;}' +
+    '.meta .label{color:#475569;font-size:13px;}' +
+    '.panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;margin-bottom:18px;}' +
+    '.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px dashed #e2e8f0;font-weight:600;}' +
+    '.row:last-child{border-bottom:none;}' +
+    '.label{color:#1f2937;font-size:14px;}' +
+    '.amount{font-size:16px;}' +
+    '.total{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-top:2px solid #1d4ed8;margin-top:6px;font-size:18px;font-weight:700;color:#1d4ed8;}' +
+    '.note{margin-top:8px;color:#dc2626;font-weight:600;}' +
+    '.footer{margin-top:16px;color:#475569;font-size:13px;}' +
+    '</style></head><body>' +
+    '<div class="invoice">' +
+    '<div class="title"><h1>べるつりー訪問鍼灸マッサージ</h1><div class="subtitle">' + monthLabel + ' ご請求書</div></div>' +
+    '<div class="meta"><div class="label">氏名</div><div>' + nameKanji + '</div>' +
+    (address ? '<div class="label">住所</div><div>' + address + '</div>' : '') +
+    '</div>' +
+    '<div class="panel">' + currencyRows +
+    '<div class="total"><div>合計</div><div>' + formatBillingCurrency_(breakdown.grandTotal) + '円</div></div>' +
+    '</div>' +
+    (combineNote ? '<div class="note">' + combineNote + '</div>' : '') +
+    '<div class="footer">' + dueDateLabel + '</div>' +
+    '</div></body></html>';
+}
+
 function normalizeBillingCarryOver_(item) {
   if (!item) return 0;
   if (item.carryOverAmount != null && item.carryOverAmount !== '') return Number(item.carryOverAmount) || 0;
@@ -522,27 +648,18 @@ function selectBillingTemplateBlob_(templates, useCombined) {
   return file.getBlob();
 }
 
-function buildCombinedBillingPdfBlob_(item, billingMonth, templates) {
-  const carryOver = normalizeBillingCarryOver_(item);
-  const total = normalizeBillingAmount_(item);
-  const templateBlob = selectBillingTemplateBlob_(templates, carryOver > 0 || (item && item.shouldCombine));
-  const pngBlob = templateBlob.getAs(MimeType.PNG);
-  const overlay = {
-    nameKanji: item && item.nameKanji ? item.nameKanji : '',
-    address: resolveBillingAddress_(item),
-    billingMonth: billingMonth ? String(billingMonth) : '',
-    combinedTotal: formatBillingCurrency_(total),
-    carryOver: carryOver ? formatBillingCurrency_(carryOver) : '',
-    combineNote: '未入金があるため合算請求となります'
-  };
-  return createBillingPdfOverlay_(pngBlob, overlay);
+function buildCombinedBillingPdfBlob_(item, billingMonth) {
+  const html = buildBillingInvoiceHtml_(item, billingMonth);
+  const output = HtmlService.createHtmlOutput(html)
+    .setWidth(820)
+    .setHeight(1180);
+  return output.getBlob().getAs(MimeType.PDF);
 }
 
 function generateCombinedBillingPdfs(billingJson, options) {
   const opts = options || {};
   const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
   const targets = (billingJson || []).filter(item => item && item.shouldCombine);
-  const templates = resolveBillingPdfTemplates_(opts);
   const results = [];
   let folder = null;
   try {
@@ -553,7 +670,7 @@ function generateCombinedBillingPdfs(billingJson, options) {
 
   targets.forEach(item => {
     const title = '合算請求書_' + billingMonth + '_' + (item.patientId || '');
-    const pdfBlob = buildCombinedBillingPdfBlob_(item, billingMonth, templates).setName(title + '.pdf');
+    const pdfBlob = buildCombinedBillingPdfBlob_(item, billingMonth).setName(title + '.pdf');
     const pdfFile = folder ? folder.createFile(pdfBlob) : DriveApp.createFile(pdfBlob);
     results.push({
       patientId: item.patientId,

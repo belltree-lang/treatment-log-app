@@ -75,6 +75,23 @@ function formatBillingMonthForFile_(billingMonth) {
   return billingMonth || '';
 }
 
+function formatBillingMonthCompact_(billingMonth) {
+  const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
+  if (digits.length >= 6) {
+    return digits.slice(0, 6);
+  }
+  return '';
+}
+
+function formatInvoiceDateLabel_() {
+  try {
+    const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+    return Utilities.formatDate(new Date(), tz, 'yyyyMMdd');
+  } catch (e) {
+    return '';
+  }
+}
+
 function sanitizeFileName_(text) {
   const raw = String(text || '').trim();
   return raw ? raw.replace(/[\\/\r\n]/g, '_') : '請求書';
@@ -82,8 +99,8 @@ function sanitizeFileName_(text) {
 
 function formatInvoiceFileName_(item) {
   const baseName = sanitizeFileName_(item && (item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
-  const ymLabel = formatBillingMonthForFile_(item && item.billingMonth);
-  return baseName + '_' + (ymLabel || 'YYYY-MM') + '_請求書.pdf';
+  const dateLabel = formatInvoiceDateLabel_();
+  return baseName + '_' + (dateLabel || 'YYYYMMDD') + '_請求書.pdf';
 }
 
 function buildInvoiceTemplateData_(item) {
@@ -127,12 +144,10 @@ function ensureSubFolder_(parentFolder, name) {
 }
 
 function formatResponsibleFolderName_(billingMonth, responsibleName) {
-  const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
-  const year = digits.length >= 6 ? digits.slice(0, 4) : '未設定年';
-  const monthNum = digits.length >= 6 ? Number(digits.slice(4, 6)) : null;
-  const monthLabel = monthNum ? monthNum + '月' : '未設定月';
+  const ym = formatBillingMonthCompact_(billingMonth);
+  const ymLabel = ym || '請求月未設定';
   const safeName = sanitizeFileName_(responsibleName || '担当者未設定');
-  return year + '年' + monthLabel + '分請求書_' + safeName;
+  return ymLabel + '請求書_' + safeName;
 }
 
 function ensureInvoiceFolderForResponsible_(item) {

@@ -8,9 +8,11 @@ const BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
 const billingResolveStaffDisplayName_ = typeof resolveStaffDisplayName_ === 'function'
   ? resolveStaffDisplayName_
-  : function fallbackResolveStaffDisplayName_(email) {
+  : function fallbackResolveStaffDisplayName_(email, directory) {
     const normalized = String(email || '').trim();
     if (!normalized) return '';
+    const key = normalized.toLowerCase();
+    if (directory && directory[key]) return directory[key];
     const parts = normalized.split('@');
     return parts[0] || normalized;
   };
@@ -32,11 +34,15 @@ function normalizeBillingSource_(source) {
   const patientMap = source.patients || source.patientMap || {};
   const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
   const staffByPatient = source.staffByPatient || {};
+  const staffDirectory = source.staffDirectory || {};
+  const staffDisplayByPatient = source.staffDisplayByPatient || {};
   return {
     billingMonth,
     patients: patientMap,
     treatmentVisitCounts: visitCounts,
-    staffByPatient
+    staffByPatient,
+    staffDirectory,
+    staffDisplayByPatient
   };
 }
 
@@ -112,14 +118,19 @@ function resolveBillingAddress_(patient) {
 }
 
 function generateBillingJsonFromSource(sourceData) {
-  const { billingMonth, patients, treatmentVisitCounts, staffByPatient } = normalizeBillingSource_(sourceData);
+  const { billingMonth, patients, treatmentVisitCounts, staffByPatient, staffDirectory, staffDisplayByPatient } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
 
   return patientIds.map(pid => {
     const patient = patients[pid] || {};
     const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
-    const responsibleEmail = staffByPatient[pid] || '';
-    const responsibleName = billingResolveStaffDisplayName_(responsibleEmail);
+    const staffEmails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : (staffByPatient[pid] ? [staffByPatient[pid]] : []);
+    const resolvedStaffNames = Array.isArray(staffDisplayByPatient[pid]) ? staffDisplayByPatient[pid] : [];
+    const responsibleNames = resolvedStaffNames.length
+      ? resolvedStaffNames
+      : staffEmails.map(email => billingResolveStaffDisplayName_(email, staffDirectory)).filter(Boolean);
+    const responsibleEmail = staffEmails.length ? staffEmails[0] : '';
+    const responsibleName = responsibleNames.join('・');
     const amountCalc = calculateBillingAmounts_({
       visitCount,
       insuranceType: patient.insuranceType,
@@ -143,7 +154,9 @@ function generateBillingJsonFromSource(sourceData) {
       carryOverAmount: amountCalc.carryOverAmount,
       grandTotal: amountCalc.grandTotal,
       responsibleEmail,
-      responsibleName
+      responsibleNames,
+      responsibleName,
+      payerType: patient.payerType || ''
     };
   });
 }

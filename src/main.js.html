@@ -2,8 +2,24 @@ const billingState = {
   loading: false,
   result: null,
   prepared: null,
-  statusMessage: ''
+  statusMessage: '',
+  edits: {},
+  editing: null
 };
+
+const BILLING_INSURANCE_OPTIONS = ['後期高齢', '国保', '社保', '生保', '自費', 'マッサージ'];
+const BILLING_BURDEN_OPTIONS = [
+  { value: 1, label: '1割' },
+  { value: 2, label: '2割' },
+  { value: 3, label: '3割' },
+  { value: '自費', label: '自費' }
+];
+const BILLING_PAYER_OPTIONS = ['保険', '自費'];
+const BILLING_TREATMENT_PRICE = 4070;
+const BILLING_ELECTRO_PRICE = 100;
+const BILLING_UNIT_PRICE = BILLING_TREATMENT_PRICE + BILLING_ELECTRO_PRICE;
+const BILLING_TRANSPORT_UNIT_PRICE = 33;
+const BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
 function qs(id) {
   return document.getElementById(id);
@@ -30,8 +46,70 @@ function setBillingLoading(flag, message) {
   renderBillingResult();
 }
 
+function normalizeEditNumber(value) {
+  if (value === '' || value === null || value === undefined) return 0;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function normalizeBurdenRateDisplay(value) {
+  if (value === '自費') return '自費';
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return '';
+  return num + '割';
+}
+
+function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice) {
+  const type = String(insuranceType || '').trim();
+  if (type === '自費') {
+    const custom = normalizeEditNumber(customUnitPrice);
+    return custom > 0 ? custom : 0;
+  }
+  if (type === '生保' || type === 'マッサージ') return 0;
+  const normalizedBurden = burdenRate === '自費' ? 0 : Number(burdenRate);
+  return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedBurden] || BILLING_UNIT_PRICE;
+}
+
+function recalculateBillingRow(row) {
+  const visits = normalizeEditNumber(row.visitCount);
+  const unitPrice = resolveFrontEndUnitPrice(row.insuranceType, row.burdenRate, row.unitPrice);
+  const treatmentAmount = visits > 0 ? unitPrice * visits : 0;
+  const transportAmount = visits > 0 ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const carryOverAmount = normalizeEditNumber(row.carryOverAmount);
+  const grandTotal = treatmentAmount + transportAmount + carryOverAmount;
+  return Object.assign({}, row, {
+    unitPrice,
+    treatmentAmount,
+    transportAmount,
+    carryOverAmount,
+    grandTotal
+  });
+}
+
 function getBillingBaseUrl() {
   return (window.APP_CONFIG && window.APP_CONFIG.baseUrl) || '';
+}
+
+function getMergedBillingRows() {
+  const baseRows = (billingState.result && billingState.result.billingJson) || [];
+  return baseRows.map(row => {
+    const edits = billingState.edits[row.patientId] || {};
+    const merged = Object.assign({}, row, edits);
+    return recalculateBillingRow(merged);
+  });
+}
+
+function commitBillingEdit(patientId, field, value) {
+  const pid = String(patientId || '').trim();
+  if (!pid) return;
+  billingState.edits[pid] = Object.assign({}, billingState.edits[pid] || {}, { [field]: value });
+  billingState.editing = null;
+  renderBillingResult();
+}
+
+function startBillingEdit(patientId, field) {
+  billingState.editing = { patientId, field };
+  renderBillingResult();
 }
 
 function ensureBillingRoute() {
@@ -65,6 +143,8 @@ function onBillingPrepared(result) {
   billingState.prepared = result || null;
   billingState.loading = false;
   billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
+  billingState.edits = {};
+  billingState.editing = null;
   renderBillingResult();
 }
 
@@ -77,7 +157,9 @@ function handleBillingPdfGeneration() {
   google.script.run
     .withSuccessHandler(onBillingPdfCompleted)
     .withFailureHandler(onBillingFailed)
-    .generateInvoicesFromCache(billingState.prepared.billingMonth, {});
+    .applyBillingEditsAndGenerateInvoices(billingState.prepared.billingMonth, {
+      edits: Object.keys(billingState.edits || {}).map(pid => Object.assign({ patientId: pid }, billingState.edits[pid]))
+    });
 }
 
 function onBillingPdfCompleted(result) {
@@ -85,6 +167,8 @@ function onBillingPdfCompleted(result) {
   billingState.prepared = result || billingState.prepared;
   billingState.loading = false;
   billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
+  billingState.edits = {};
+  billingState.editing = null;
   renderBillingResult();
 }
 
@@ -179,8 +263,49 @@ function renderBillingResult() {
     return;
   }
 
-  const rows = result.billingJson;
-  const header = ['患者ID','氏名','担当者','住所','保険種別','負担','回数','単価','施術料','交通費','繰越','合計'];
+  const rows = getMergedBillingRows();
+  const header = ['患者ID','氏名','担当者','住所','保険種別','保険者','負担','回数','単価','施術料','交通費','繰越','合計'];
+
+  function renderEditableCell(item, field, alignRight) {
+    const editing = billingState.editing && billingState.editing.patientId === item.patientId && billingState.editing.field === field;
+    const baseAttrs = `data-edit-field="${field}" data-edit-patient="${item.patientId}"`;
+    const editClass = alignRight ? 'cell-edit inline-editor right' : 'cell-edit inline-editor';
+    const viewClass = alignRight ? 'cell-edit right' : 'cell-edit';
+    if (editing) {
+      if (field === 'insuranceType') {
+        return `<select class="${editClass}" ${baseAttrs}>${BILLING_INSURANCE_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.insuranceType ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
+      }
+      if (field === 'burdenRate') {
+        return `<select class="${editClass}" ${baseAttrs}>${BILLING_BURDEN_OPTIONS.map(opt => `<option value="${opt.value}" ${String(opt.value) === String(item.burdenRate) ? 'selected' : ''}>${opt.label}</option>`).join('')}</select>`;
+      }
+      if (field === 'payerType') {
+        return `<select class="${editClass}" ${baseAttrs}>${BILLING_PAYER_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.payerType ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
+      }
+      if (field === 'unitPrice' || field === 'carryOverAmount') {
+        const val = normalizeEditNumber(item[field]);
+        return `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" />`;
+      }
+    }
+
+    const display = (() => {
+      switch (field) {
+        case 'insuranceType':
+          return item.insuranceType || '編集';
+        case 'burdenRate':
+          return normalizeBurdenRateDisplay(item.burdenRate) || '編集';
+        case 'payerType':
+          return item.payerType || '編集';
+        case 'unitPrice':
+          return formatCurrency(item.unitPrice);
+        case 'carryOverAmount':
+          return formatCurrency(item.carryOverAmount);
+        default:
+          return item[field] || '';
+      }
+    })();
+    return `<button type="button" class="${viewClass}" ${baseAttrs} aria-label="${field} を編集">${display}</button>`;
+  }
+
   const tableHtml = [
     '<table><thead><tr>',
     header.map(h => `<th>${h}</th>`).join(''),
@@ -189,21 +314,50 @@ function renderBillingResult() {
       <tr>
         <td>${item.patientId || ''}</td>
         <td>${item.nameKanji || ''}</td>
-        <td>${item.responsibleName || item.responsibleEmail || ''}</td>
+        <td>${item.responsibleName || (item.responsibleNames && item.responsibleNames.join('・')) || item.responsibleEmail || ''}</td>
         <td>${item.address || ''}</td>
-        <td>${item.insuranceType || ''}</td>
-        <td>${item.burdenRate ? item.burdenRate + '割' : ''}</td>
+        <td>${renderEditableCell(item, 'insuranceType')}</td>
+        <td>${renderEditableCell(item, 'payerType')}</td>
+        <td>${renderEditableCell(item, 'burdenRate')}</td>
         <td>${item.visitCount || 0}</td>
-        <td class="right">${formatCurrency(item.unitPrice)}</td>
+        <td class="right">${renderEditableCell(item, 'unitPrice', true)}</td>
         <td class="right">${formatCurrency(item.treatmentAmount)}</td>
         <td class="right">${formatCurrency(item.transportAmount)}</td>
-        <td class="right">${formatCurrency(item.carryOverAmount)}</td>
+        <td class="right">${renderEditableCell(item, 'carryOverAmount', true)}</td>
         <td class="right">${formatCurrency(item.grandTotal)}</td>
       </tr>`),
     '</tbody></table>'
   ].join('');
 
   box.innerHTML = tableHtml;
+  attachBillingEditHandlers();
+}
+
+function attachBillingEditHandlers() {
+  const box = qs('billingResult');
+  if (!box) return;
+  box.querySelectorAll('button.cell-edit').forEach(btn => {
+    btn.onclick = function () {
+      const pid = this.getAttribute('data-edit-patient');
+      const field = this.getAttribute('data-edit-field');
+      startBillingEdit(pid, field);
+    };
+  });
+  box.querySelectorAll('select.inline-editor, input.inline-editor').forEach(input => {
+    input.onchange = function () {
+      const pid = this.getAttribute('data-edit-patient');
+      const field = this.getAttribute('data-edit-field');
+      let value = this.value;
+      if (field === 'burdenRate' && value !== '自費') {
+        value = Number(value);
+      }
+      if (field === 'unitPrice' || field === 'carryOverAmount') {
+        value = Number(value);
+      }
+      commitBillingEdit(pid, field, value);
+    };
+    input.onblur = input.onchange;
+  });
 }
 
 function initBillingPage() {

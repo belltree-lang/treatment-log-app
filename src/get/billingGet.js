@@ -340,6 +340,11 @@ function loadTreatmentLogs_() {
     required: true,
     fallbackIndex: 2
   });
+  const colCreatedBy = resolveBillingColumn_(headers,
+    ['createdbyemail', 'createdby', '記録者', '作成者', '担当者', '担当メール', '入力者', '編集者'],
+    '作成者',
+    { fallbackLetter: 'E' }
+  );
 
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
   return values.map((row, idx) => {
@@ -350,6 +355,7 @@ function loadTreatmentLogs_() {
       rowNumber: idx + 2,
       patientId: pid,
       timestamp,
+      createdByEmail: colCreatedBy ? String(row[colCreatedBy - 1] || '').trim() : '',
       raw: row
     };
   });
@@ -359,6 +365,7 @@ function buildVisitCountMap_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const logs = loadTreatmentLogs_();
   const counts = {};
+  const latestStaffByPatient = {};
   logs.forEach(log => {
     const pid = log && log.patientId ? billingNormalizePatientId_(log.patientId) : '';
     const ts = log && log.timestamp;
@@ -367,8 +374,19 @@ function buildVisitCountMap_(billingMonth) {
     const current = counts[pid] || { visitCount: 0 };
     current.visitCount += 1;
     counts[pid] = current;
+
+    if (log && log.createdByEmail) {
+      const existing = latestStaffByPatient[pid];
+      if (!existing || !existing.timestamp || ts > existing.timestamp) {
+        latestStaffByPatient[pid] = { email: log.createdByEmail, timestamp: ts };
+      }
+    }
   });
-  return { billingMonth: month.key, counts };
+  const staffByPatient = Object.keys(latestStaffByPatient).reduce((map, pid) => {
+    map[pid] = latestStaffByPatient[pid].email || '';
+    return map;
+  }, {});
+  return { billingMonth: month.key, counts, staffByPatient };
 }
 
 function getBillingTreatmentVisitCounts(billingMonth) {
@@ -533,7 +551,8 @@ function getBillingSourceData(billingMonth) {
   const patientRecords = getBillingPatientRecords();
   const bankRecords = getBillingBankRecords();
   const patientMap = indexByPatientId_(patientRecords);
-  const treatmentVisitCounts = getBillingTreatmentVisitCounts(month);
+  const visitCountsResult = buildVisitCountMap_(month);
+  const treatmentVisitCounts = visitCountsResult.counts;
   return {
     billingMonth: month.key,
     month,
@@ -542,7 +561,8 @@ function getBillingSourceData(billingMonth) {
     patients: patientMap,
     patientMap,
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
-    bankStatuses: getBillingPaymentResultsIfExists_(month)
+    bankStatuses: getBillingPaymentResultsIfExists_(month),
+    staffByPatient: visitCountsResult.staffByPatient || {}
   };
 }
 

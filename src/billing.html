@@ -69,12 +69,13 @@
   <main class="content">
     <section class="card" id="billingControls">
       <h2>請求書を作成</h2>
-      <p class="muted">対象月を指定すると、患者ごとの請求書PDFを生成してDriveに保存します。</p>
+      <p class="muted">対象月を指定し、まず集計のみを実行します。内容確認後に PDF 生成・担当者別フォルダ振り分けを実行してください。</p>
       <div class="controls">
         <label>請求月
           <input type="month" id="billingMonth" />
         </label>
-        <button class="btn" type="button" onclick="handleBillingGeneration()">請求データを生成</button>
+        <button class="btn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
+        <button class="btn secondary" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
         <div id="billingStatus" class="status-line"></div>
       </div>
     </section>

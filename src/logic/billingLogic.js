@@ -6,6 +6,15 @@ const BILLING_UNIT_PRICE = BILLING_TREATMENT_PRICE + BILLING_ELECTRO_PRICE;
 const BILLING_TRANSPORT_UNIT_PRICE = 33;
 const BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
+const billingResolveStaffDisplayName_ = typeof resolveStaffDisplayName_ === 'function'
+  ? resolveStaffDisplayName_
+  : function fallbackResolveStaffDisplayName_(email) {
+    const normalized = String(email || '').trim();
+    if (!normalized) return '';
+    const parts = normalized.split('@');
+    return parts[0] || normalized;
+  };
+
 function roundToNearestTen_(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return 0;
@@ -22,10 +31,12 @@ function normalizeBillingSource_(source) {
   }
   const patientMap = source.patients || source.patientMap || {};
   const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
+  const staffByPatient = source.staffByPatient || {};
   return {
     billingMonth,
     patients: patientMap,
-    treatmentVisitCounts: visitCounts
+    treatmentVisitCounts: visitCounts,
+    staffByPatient
   };
 }
 
@@ -101,12 +112,14 @@ function resolveBillingAddress_(patient) {
 }
 
 function generateBillingJsonFromSource(sourceData) {
-  const { billingMonth, patients, treatmentVisitCounts } = normalizeBillingSource_(sourceData);
+  const { billingMonth, patients, treatmentVisitCounts, staffByPatient } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
 
   return patientIds.map(pid => {
     const patient = patients[pid] || {};
     const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
+    const responsibleEmail = staffByPatient[pid] || '';
+    const responsibleName = billingResolveStaffDisplayName_(responsibleEmail);
     const amountCalc = calculateBillingAmounts_({
       visitCount,
       insuranceType: patient.insuranceType,
@@ -128,7 +141,9 @@ function generateBillingJsonFromSource(sourceData) {
       treatmentAmount: amountCalc.treatmentAmount,
       transportAmount: amountCalc.transportAmount,
       carryOverAmount: amountCalc.carryOverAmount,
-      grandTotal: amountCalc.grandTotal
+      grandTotal: amountCalc.grandTotal,
+      responsibleEmail,
+      responsibleName
     };
   });
 }

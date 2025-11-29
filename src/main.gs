@@ -87,7 +87,9 @@ function buildPreparedBillingPayload_(billingMonth) {
     billingMonth: source.billingMonth,
     billingJson,
     preparedAt: new Date().toISOString(),
-    staffByPatient: source.staffByPatient || {}
+    staffByPatient: source.staffByPatient || {},
+    staffDirectory: source.staffDirectory || {},
+    staffDisplayByPatient: source.staffDisplayByPatient || {}
   };
 }
 
@@ -148,6 +150,90 @@ function generateInvoicesFromCache(billingMonth, options) {
     throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
   }
   return generatePreparedInvoices_(prepared, options);
+}
+
+function normalizeBillingEditBurden_(value) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw === '自費') return '自費';
+  const num = Number(raw);
+  if (Number.isFinite(num) && num > 0) {
+    if (num > 0 && num <= 1) return Math.round(num * 10);
+    if (num < 10) return Math.round(num);
+  }
+  return null;
+}
+
+function normalizeBillingEdits_(maybeEdits) {
+  if (!Array.isArray(maybeEdits)) return [];
+  return maybeEdits.map(edit => {
+    const pid = edit && edit.patientId ? String(edit.patientId).trim() : '';
+    if (!pid) return null;
+    const burden = normalizeBillingEditBurden_(edit.burdenRate);
+    return {
+      patientId: pid,
+      insuranceType: edit.insuranceType != null ? String(edit.insuranceType).trim() : undefined,
+      burdenRate: burden !== null ? burden : undefined,
+      unitPrice: edit.unitPrice != null ? Number(edit.unitPrice) || 0 : undefined,
+      carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
+      payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined
+    };
+  }).filter(Boolean);
+}
+
+function applyBillingPatientEdits_(edits) {
+  if (!Array.isArray(edits) || !edits.length) return { updated: 0 };
+  const sheet = billingSs().getSheetByName(BILLING_PATIENT_SHEET_NAME);
+  if (!sheet) {
+    throw new Error('患者情報シートが見つかりません: ' + BILLING_PATIENT_SHEET_NAME);
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { updated: 0 };
+  const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo, '患者ID', { required: true, fallbackIndex: BILLING_PATIENT_COLS_FIXED.recNo });
+  const colInsurance = resolveBillingColumn_(headers, ['保険区分', '保険種別', '保険タイプ', '保険'], '保険区分', {});
+  const colBurden = resolveBillingColumn_(headers, BILLING_LABELS.share, '負担割合', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.share });
+  const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）'], '単価', {});
+  const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
+  const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const editMap = edits.reduce((map, edit) => {
+    map[billingNormalizePatientId_(edit.patientId)] = edit;
+    return map;
+  }, {});
+  const updates = [];
+
+  values.forEach((row, idx) => {
+    const pid = billingNormalizePatientId_(row[colPid - 1]);
+    const edit = editMap[pid];
+    if (!edit) return;
+    const newRow = row.slice();
+    if (colInsurance && edit.insuranceType !== undefined) newRow[colInsurance - 1] = edit.insuranceType;
+    if (colBurden && edit.burdenRate !== undefined) newRow[colBurden - 1] = edit.burdenRate;
+    if (colUnitPrice && edit.unitPrice !== undefined) newRow[colUnitPrice - 1] = edit.unitPrice;
+    if (colCarryOver && edit.carryOverAmount !== undefined) newRow[colCarryOver - 1] = edit.carryOverAmount;
+    if (colPayer && edit.payerType !== undefined) newRow[colPayer - 1] = edit.payerType;
+    updates.push({ rowNumber: idx + 2, values: newRow });
+  });
+
+  updates.forEach(update => {
+    sheet.getRange(update.rowNumber, 1, 1, update.values.length).setValues([update.values]);
+  });
+  return { updated: updates.length };
+}
+
+function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
+  const opts = options || {};
+  const edits = normalizeBillingEdits_(opts.edits);
+  if (edits.length) {
+    applyBillingPatientEdits_(edits);
+  }
+  const prepared = buildPreparedBillingPayload_(billingMonth);
+  savePreparedBilling_(prepared);
+  return generatePreparedInvoices_(prepared, opts);
 }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

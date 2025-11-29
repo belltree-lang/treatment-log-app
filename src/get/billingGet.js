@@ -70,6 +70,12 @@ const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
   phone: ['電話', '電話番号', 'TEL', 'Tel']
 };
 
+const billingNormalizeEmailKey_ = typeof normalizeEmailKey_ === 'function'
+  ? normalizeEmailKey_
+  : function normalizeEmailKey_(email) {
+    return String(email || '').trim().toLowerCase();
+  };
+
 const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? PATIENT_COLS_FIXED : {
   recNo: 3,
   name: 4,
@@ -230,6 +236,50 @@ function normalizeBillingNameKey_(value) {
   return String(value || '').replace(/\s+/g, '').trim();
 }
 
+function loadBillingStaffDirectory_() {
+  const sheet = billingSs().getSheetByName('スタッフ一覧');
+  if (!sheet) return {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return {};
+
+  const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const colName = resolveBillingColumn_(headers, ['名前', '氏名', 'スタッフ名'], '氏名', { fallbackLetter: 'A' });
+  const colEmail = resolveBillingColumn_(headers, ['メール', 'メールアドレス', 'email', 'Email'], 'メールアドレス', { fallbackLetter: 'K' });
+  if (!colName || !colEmail) return {};
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  return values.reduce((map, row) => {
+    const emailRaw = row[colEmail - 1];
+    const name = colName ? String(row[colName - 1] || '').trim() : '';
+    const emailKey = billingNormalizeEmailKey_(emailRaw);
+    if (!name || !emailKey) return map;
+    if (!map[emailKey]) {
+      map[emailKey] = name;
+    }
+    return map;
+  }, {});
+}
+
+function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
+  const result = {};
+  const directory = staffDirectory || {};
+  Object.keys(staffByPatient || {}).forEach(pid => {
+    const emails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : [staffByPatient[pid]];
+    const seen = new Set();
+    const names = [];
+    emails.forEach(email => {
+      const key = billingNormalizeEmailKey_(email);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      const resolved = directory[key] || '';
+      names.push(resolved || email || '');
+    });
+    result[pid] = names.filter(Boolean);
+  });
+  return result;
+}
+
 function normalizeDisabledFlag_(value) {
   const raw = value == null ? '' : String(value).trim();
   if (!raw) return 0;
@@ -365,7 +415,7 @@ function buildVisitCountMap_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const logs = loadTreatmentLogs_();
   const counts = {};
-  const latestStaffByPatient = {};
+  const staffHistoryByPatient = {};
   logs.forEach(log => {
     const pid = log && log.patientId ? billingNormalizePatientId_(log.patientId) : '';
     const ts = log && log.timestamp;
@@ -376,17 +426,32 @@ function buildVisitCountMap_(billingMonth) {
     counts[pid] = current;
 
     if (log && log.createdByEmail) {
-      const existing = latestStaffByPatient[pid];
+      const normalizedEmail = billingNormalizeEmailKey_(log.createdByEmail);
+      if (!normalizedEmail) return;
+      if (!staffHistoryByPatient[pid]) {
+        staffHistoryByPatient[pid] = {};
+      }
+      const existing = staffHistoryByPatient[pid][normalizedEmail];
       if (!existing || !existing.timestamp || ts > existing.timestamp) {
-        latestStaffByPatient[pid] = { email: log.createdByEmail, timestamp: ts };
+        staffHistoryByPatient[pid][normalizedEmail] = { email: log.createdByEmail, timestamp: ts };
       }
     }
   });
-  const staffByPatient = Object.keys(latestStaffByPatient).reduce((map, pid) => {
-    map[pid] = latestStaffByPatient[pid].email || '';
+  const staffByPatient = Object.keys(staffHistoryByPatient).reduce((map, pid) => {
+    const staffEntries = staffHistoryByPatient[pid];
+    const sorted = Object.keys(staffEntries)
+      .map(key => staffEntries[key])
+      .sort((a, b) => {
+        const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+        const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+        return bTime - aTime;
+      })
+      .map(entry => entry.email || '')
+      .filter(email => !!email);
+    map[pid] = sorted;
     return map;
   }, {});
-  return { billingMonth: month.key, counts, staffByPatient };
+  return { billingMonth: month.key, counts, staffByPatient, staffHistoryByPatient };
 }
 
 function getBillingTreatmentVisitCounts(billingMonth) {
@@ -424,6 +489,7 @@ function getBillingPatientRecords() {
   const colBurden = resolveBillingColumn_(headers, BILLING_LABELS.share, '負担割合', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.share });
   const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）'], '単価', {});
   const colAddress = resolveBillingColumn_(headers, ['住所', '住所1', '住所２', '住所2', 'address', 'Address'], '住所', {});
+  const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
   const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { fallbackLetter: 'N' });
   const colBranch = resolveBillingColumn_(headers, ['支店コード', '支店番号', '支店CD', 'branchCode'], '支店コード', { fallbackLetter: 'O' });
   const colAccount = resolveBillingColumn_(headers, ['口座番号', '口座No', '口座NO', 'accountNumber', '口座'], '口座番号', { fallbackLetter: 'Q' });
@@ -442,6 +508,7 @@ function getBillingPatientRecords() {
       burdenRate: colBurden ? normalizeBurdenRateInt_(row[colBurden - 1]) : 0,
       unitPrice: colUnitPrice ? normalizeMoneyValue_(row[colUnitPrice - 1]) : 0,
       address: colAddress ? String(row[colAddress - 1] || '').trim() : '',
+      payerType: colPayer ? String(row[colPayer - 1] || '').trim() : '',
       bankCode: colBank ? String(row[colBank - 1] || '').trim() : '',
       branchCode: colBranch ? String(row[colBranch - 1] || '').trim() : '',
       accountNumber: colAccount ? String(row[colAccount - 1] || '').trim() : '',
@@ -553,6 +620,8 @@ function getBillingSourceData(billingMonth) {
   const patientMap = indexByPatientId_(patientRecords);
   const visitCountsResult = buildVisitCountMap_(month);
   const treatmentVisitCounts = visitCountsResult.counts;
+  const staffDirectory = loadBillingStaffDirectory_();
+  const staffDisplayByPatient = buildStaffDisplayByPatient_(visitCountsResult.staffByPatient || {}, staffDirectory);
   return {
     billingMonth: month.key,
     month,
@@ -562,7 +631,9 @@ function getBillingSourceData(billingMonth) {
     patientMap,
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
     bankStatuses: getBillingPaymentResultsIfExists_(month),
-    staffByPatient: visitCountsResult.staffByPatient || {}
+    staffByPatient: visitCountsResult.staffByPatient || {},
+    staffDirectory,
+    staffDisplayByPatient
   };
 }
 

@@ -65,14 +65,25 @@ function normalizeBillingMonthLabel_(billingMonth) {
   return billingMonth || '';
 }
 
-function formatInvoiceFileName_(billingMonth) {
+function formatBillingMonthForFile_(billingMonth) {
   const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
   if (digits.length >= 6) {
     const year = digits.slice(0, 4);
     const month = digits.slice(4, 6).padStart(2, '0');
-    return year + '-' + month + '_' + INVOICE_FILE_PREFIX + '.pdf';
+    return year + '-' + month;
   }
-  return INVOICE_FILE_PREFIX + '.pdf';
+  return billingMonth || '';
+}
+
+function sanitizeFileName_(text) {
+  const raw = String(text || '').trim();
+  return raw ? raw.replace(/[\\/\r\n]/g, '_') : '請求書';
+}
+
+function formatInvoiceFileName_(item) {
+  const baseName = sanitizeFileName_(item && (item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
+  const ymLabel = formatBillingMonthForFile_(item && item.billingMonth);
+  return baseName + '_' + (ymLabel || 'YYYY-MM') + '_請求書.pdf';
 }
 
 function buildInvoiceTemplateData_(item) {
@@ -96,7 +107,7 @@ function createInvoicePdfBlob_(item) {
   const template = HtmlService.createTemplateFromFile('invoice_template');
   template.data = buildInvoiceTemplateData_(item || {});
   const html = template.evaluate().setWidth(1240).setHeight(1754);
-  const fileName = formatInvoiceFileName_(item && item.billingMonth);
+  const fileName = formatInvoiceFileName_(item);
   return html.getBlob().getAs(MimeType.PDF).setName(fileName);
 }
 
@@ -115,13 +126,19 @@ function ensureSubFolder_(parentFolder, name) {
   return parentFolder.createFolder(name);
 }
 
-function ensureInvoiceFolderForPatient_(patientName, billingMonth) {
-  const root = ensureInvoiceRootFolder_();
-  const safeName = (patientName || '患者未設定').replace(/[\\/]/g, '_');
+function formatResponsibleFolderName_(billingMonth, responsibleName) {
   const digits = (billingMonth ? String(billingMonth) : '').replace(/\D/g, '');
-  const year = (digits.length >= 6 ? digits.slice(0, 4) : '未設定年').replace(/[\\/]/g, '_');
-  const patientFolder = ensureSubFolder_(root, safeName);
-  return ensureSubFolder_(patientFolder, year);
+  const year = digits.length >= 6 ? digits.slice(0, 4) : '未設定年';
+  const monthNum = digits.length >= 6 ? Number(digits.slice(4, 6)) : null;
+  const monthLabel = monthNum ? monthNum + '月' : '未設定月';
+  const safeName = sanitizeFileName_(responsibleName || '担当者未設定');
+  return year + '年' + monthLabel + '分請求書_' + safeName;
+}
+
+function ensureInvoiceFolderForResponsible_(item) {
+  const root = ensureInvoiceRootFolder_();
+  const folderName = formatResponsibleFolderName_(item && item.billingMonth, item && item.responsibleName);
+  return ensureSubFolder_(root, folderName);
 }
 
 function removeExistingInvoiceFiles_(folder, fileName) {
@@ -137,7 +154,7 @@ function removeExistingInvoiceFiles_(folder, fileName) {
 }
 
 function saveInvoicePdf(item, pdfBlob) {
-  const folder = ensureInvoiceFolderForPatient_(item && item.nameKanji, item && item.billingMonth);
+  const folder = ensureInvoiceFolderForResponsible_(item);
   const fileName = pdfBlob.getName();
   removeExistingInvoiceFiles_(folder, fileName);
   const file = folder.createFile(pdfBlob);

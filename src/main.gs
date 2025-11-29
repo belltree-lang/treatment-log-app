@@ -35,15 +35,77 @@ function getBillingSource(billingMonth) {
   return getBillingSourceData(billingMonth);
 }
 
+const BILLING_CACHE_PREFIX = 'billing:prepared:';
+const BILLING_CACHE_TTL_SECONDS = 21600; // 6 hours
+
+function buildBillingCacheKey_(billingMonthKey) {
+  const monthKey = String(billingMonthKey || '').trim();
+  if (!monthKey) return '';
+  return BILLING_CACHE_PREFIX + monthKey;
+}
+
+function getBillingCache_() {
+  try {
+    return CacheService.getScriptCache();
+  } catch (err) {
+    console.warn('[billing] CacheService unavailable', err);
+    return null;
+  }
+}
+
+function loadPreparedBilling_(billingMonthKey) {
+  const key = buildBillingCacheKey_(billingMonthKey);
+  if (!key) return null;
+  const cache = getBillingCache_();
+  if (!cache) return null;
+  const cached = cache.get(key);
+  if (!cached) return null;
+  try {
+    return JSON.parse(cached);
+  } catch (err) {
+    console.warn('[billing] Failed to parse prepared cache', err);
+    return null;
+  }
+}
+
+function savePreparedBilling_(payload) {
+  const key = buildBillingCacheKey_(payload && payload.billingMonth);
+  if (!key) return;
+  const cache = getBillingCache_();
+  if (!cache) return;
+  try {
+    cache.put(key, JSON.stringify(payload), BILLING_CACHE_TTL_SECONDS);
+  } catch (err) {
+    console.warn('[billing] Failed to cache prepared billing', err);
+  }
+}
+
+function buildPreparedBillingPayload_(billingMonth) {
+  const source = getBillingSourceData(billingMonth);
+  const billingJson = generateBillingJsonFromSource(source);
+  return {
+    billingMonth: source.billingMonth,
+    billingJson,
+    preparedAt: new Date().toISOString(),
+    staffByPatient: source.staffByPatient || {}
+  };
+}
+
+function prepareBillingData(billingMonth) {
+  const prepared = buildPreparedBillingPayload_(billingMonth);
+  savePreparedBilling_(prepared);
+  return prepared;
+}
+
 /**
  * Generate billing JSON without creating files (preview use case).
  * @param {string|Date|Object} billingMonth - YYYYMM string, Date, or normalized month object.
  * @return {Object} billingMonth key and generated JSON array.
  */
 function generateBillingJsonPreview(billingMonth) {
-  const source = getBillingSourceData(billingMonth);
-  const billingJson = generateBillingJsonFromSource(source);
-  return { billingMonth: source.billingMonth, billingJson };
+  const prepared = buildPreparedBillingPayload_(billingMonth);
+  savePreparedBilling_(prepared);
+  return prepared;
 }
 
 /**
@@ -54,21 +116,38 @@ function generateBillingJsonPreview(billingMonth) {
  */
 function generateInvoices(billingMonth, options) {
   try {
-    const source = getBillingSourceData(billingMonth);
-    const billingJson = generateBillingJsonFromSource(source);
-    const outputOptions = Object.assign({}, options, { billingMonth: source.billingMonth });
-    const pdfs = generateInvoicePdfs(billingJson, outputOptions);
-    return {
-      billingMonth: source.billingMonth,
-      billingJson,
-      files: pdfs.files
-    };
+    const prepared = buildPreparedBillingPayload_(billingMonth);
+    savePreparedBilling_(prepared);
+    return generatePreparedInvoices_(prepared, options);
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     const stack = err && err.stack ? '\n' + err.stack : '';
     console.error('[generateInvoices] failed:', msg, stack);
     throw new Error('請求生成中にエラーが発生しました: ' + msg);
   }
+}
+
+function generatePreparedInvoices_(prepared, options) {
+  if (!prepared || !prepared.billingJson) {
+    throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
+  }
+  const outputOptions = Object.assign({}, options, { billingMonth: prepared.billingMonth });
+  const pdfs = generateInvoicePdfs(prepared.billingJson, outputOptions);
+  return {
+    billingMonth: prepared.billingMonth,
+    billingJson: prepared.billingJson,
+    files: pdfs.files,
+    preparedAt: prepared.preparedAt || null
+  };
+}
+
+function generateInvoicesFromCache(billingMonth, options) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const prepared = loadPreparedBilling_(month.key);
+  if (!prepared || !prepared.billingJson) {
+    throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
+  }
+  return generatePreparedInvoices_(prepared, options);
 }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

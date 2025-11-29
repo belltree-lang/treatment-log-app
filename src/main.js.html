@@ -1,6 +1,7 @@
 const billingState = {
   loading: false,
   result: null,
+  prepared: null,
   statusMessage: ''
 };
 
@@ -26,9 +27,6 @@ function normalizeYm(raw) {
 function setBillingLoading(flag, message) {
   billingState.loading = !!flag;
   billingState.statusMessage = flag ? (message || '生成中…') : '';
-  if (flag) {
-    billingState.result = null;
-  }
   renderBillingResult();
 }
 
@@ -49,23 +47,44 @@ function loadBillingPage() {
   initBillingPage();
 }
 
-function handleBillingGeneration() {
+function handleBillingAggregation() {
   const ym = normalizeYm(qs('billingMonth').value);
   if (!ym) {
     alert('請求月を入力してください (YYYY-MM)');
     return;
   }
-  setBillingLoading(true);
+  setBillingLoading(true, '集計中…');
   google.script.run
-    .withSuccessHandler(onBillingCompleted)
+    .withSuccessHandler(onBillingPrepared)
     .withFailureHandler(onBillingFailed)
-    .generateInvoices(ym, {});
+    .prepareBillingData(ym);
 }
 
-function onBillingCompleted(result) {
+function onBillingPrepared(result) {
   billingState.result = result || null;
+  billingState.prepared = result || null;
   billingState.loading = false;
-  billingState.statusMessage = '生成が完了しました';
+  billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
+  renderBillingResult();
+}
+
+function handleBillingPdfGeneration() {
+  if (!billingState.prepared || !billingState.prepared.billingMonth) {
+    alert('先に「請求データを集計」を実行してください。');
+    return;
+  }
+  setBillingLoading(true, 'PDF生成中…');
+  google.script.run
+    .withSuccessHandler(onBillingPdfCompleted)
+    .withFailureHandler(onBillingFailed)
+    .generateInvoicesFromCache(billingState.prepared.billingMonth, {});
+}
+
+function onBillingPdfCompleted(result) {
+  billingState.result = result || null;
+  billingState.prepared = result || billingState.prepared;
+  billingState.loading = false;
+  billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
   renderBillingResult();
 }
 
@@ -73,7 +92,7 @@ function onBillingFailed(err) {
   console.error('[billing generation failed]', err);
   const msg = err && err.message ? err.message : String(err);
   billingState.loading = false;
-  billingState.statusMessage = '請求生成に失敗しました';
+  billingState.statusMessage = '請求処理に失敗しました';
   renderBillingResult();
   alert('請求生成に失敗しました: ' + msg);
 }
@@ -95,8 +114,10 @@ function renderBillingStatus(result) {
     el.textContent = billingState.statusMessage;
     return;
   }
-  if (result) {
-    el.textContent = '生成が完了しました';
+  if (billingState.prepared) {
+    el.textContent = result && result.files && result.files.length
+      ? 'PDF生成が完了しました'
+      : '集計済み（PDF未生成）';
     return;
   }
   el.textContent = '';
@@ -112,7 +133,9 @@ function renderDownloads(result) {
   }
   const files = (result && Array.isArray(result.files)) ? result.files.filter(file => file && file.url) : [];
   if (!files.length) {
-    box.innerHTML = '<div class="muted">出力ファイルはまだありません。</div>';
+    box.innerHTML = billingState.prepared
+      ? '<div class="muted">集計済みです。PDF生成ボタンを押してください。</div>'
+      : '<div class="muted">出力ファイルはまだありません。</div>';
     return;
   }
   box.innerHTML = files.map(link => `
@@ -157,7 +180,7 @@ function renderBillingResult() {
   }
 
   const rows = result.billingJson;
-  const header = ['患者ID','氏名','住所','保険種別','負担','回数','単価','施術料','交通費','繰越','合計'];
+  const header = ['患者ID','氏名','担当者','住所','保険種別','負担','回数','単価','施術料','交通費','繰越','合計'];
   const tableHtml = [
     '<table><thead><tr>',
     header.map(h => `<th>${h}</th>`).join(''),
@@ -166,6 +189,7 @@ function renderBillingResult() {
       <tr>
         <td>${item.patientId || ''}</td>
         <td>${item.nameKanji || ''}</td>
+        <td>${item.responsibleName || item.responsibleEmail || ''}</td>
         <td>${item.address || ''}</td>
         <td>${item.insuranceType || ''}</td>
         <td>${item.burdenRate ? item.burdenRate + '割' : ''}</td>

@@ -4,7 +4,8 @@ const billingState = {
   prepared: null,
   statusMessage: '',
   edits: {},
-  editing: null
+  editing: null,
+  sort: { field: null, direction: 'asc' }
 };
 
 const BILLING_INSURANCE_OPTIONS = ['後期高齢', '国保', '社保', '生保', '自費', 'マッサージ'];
@@ -97,6 +98,80 @@ function getMergedBillingRows() {
     const merged = Object.assign({}, row, edits);
     return recalculateBillingRow(merged);
   });
+}
+
+function getResponsibleDisplay(item) {
+  if (!item) return '';
+  if (item.responsibleName) return item.responsibleName;
+  if (Array.isArray(item.responsibleNames) && item.responsibleNames.length) {
+    return item.responsibleNames.join('・');
+  }
+  return item.responsibleEmail || '';
+}
+
+function resolveBurdenSortValue(value) {
+  if (value === '自費') return 99;
+  const num = Number(value);
+  if (Number.isFinite(num)) return num;
+  return 0;
+}
+
+function resolveBillingSortValue(row, field) {
+  switch (field) {
+    case 'nameKanji':
+      return row.nameKanji || '';
+    case 'insuranceType':
+      return row.insuranceType || '';
+    case 'burdenRate':
+      return resolveBurdenSortValue(row.burdenRate);
+    case 'unitPrice':
+      return Number(row.unitPrice) || 0;
+    case 'visitCount':
+      return Number(row.visitCount) || 0;
+    case 'grandTotal':
+      return Number(row.grandTotal) || 0;
+    case 'responsible':
+      return getResponsibleDisplay(row);
+    case 'address':
+      return row.address || '';
+    case 'patientId':
+      return row.patientId || '';
+    default:
+      return null;
+  }
+}
+
+function sortBillingRows(rows) {
+  const sort = billingState.sort || {};
+  if (!sort.field) return rows;
+  const dir = sort.direction === 'desc' ? -1 : 1;
+  return rows.slice().sort((a, b) => {
+    const va = resolveBillingSortValue(a, sort.field);
+    const vb = resolveBillingSortValue(b, sort.field);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'number' && typeof vb === 'number') {
+      return (va - vb) * dir;
+    }
+    return String(va).localeCompare(String(vb), 'ja') * dir;
+  });
+}
+
+function getDisplayBillingRows() {
+  const merged = getMergedBillingRows();
+  return sortBillingRows(merged);
+}
+
+function toggleBillingSort(field) {
+  if (!field) return;
+  const current = billingState.sort || {};
+  if (current.field === field) {
+    billingState.sort = { field, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+  } else {
+    billingState.sort = { field, direction: 'asc' };
+  }
+  renderBillingResult();
 }
 
 function commitBillingEdit(patientId, field, value) {
@@ -263,8 +338,32 @@ function renderBillingResult() {
     return;
   }
 
-  const rows = getMergedBillingRows();
-  const header = ['患者ID','氏名','担当者','住所','保険種別','保険者','負担','回数','単価','施術料','交通費','繰越','合計'];
+  const rows = getDisplayBillingRows();
+  const header = [
+    { key: 'patientId', label: '患者ID', sortable: true },
+    { key: 'nameKanji', label: '氏名', sortable: true },
+    { key: 'responsible', label: '担当者', sortable: true },
+    { key: 'address', label: '住所', sortable: true },
+    { key: 'insuranceType', label: '保険種別', sortable: true },
+    { key: 'payerType', label: '保険者', sortable: false },
+    { key: 'burdenRate', label: '負担', sortable: true },
+    { key: 'visitCount', label: '回数', sortable: true },
+    { key: 'unitPrice', label: '単価', sortable: true },
+    { key: 'treatmentAmount', label: '施術料', sortable: false },
+    { key: 'transportAmount', label: '交通費', sortable: false },
+    { key: 'carryOverAmount', label: '繰越', sortable: false },
+    { key: 'grandTotal', label: '合計', sortable: true }
+  ];
+
+  function renderSortHeaderCell(h) {
+    if (!h.sortable) {
+      return `<th>${h.label}</th>`;
+    }
+    const active = billingState.sort && billingState.sort.field === h.key;
+    const indicator = active ? (billingState.sort.direction === 'asc' ? '▲' : '▼') : '';
+    const thClass = h.sortable ? 'sortable' : '';
+    return `<th class="${thClass}"><button type="button" class="sort-header" data-sort-key="${h.key}">${h.label}${indicator ? `<span class="sort-indicator">${indicator}</span>` : ''}</button></th>`;
+  }
 
   function renderEditableCell(item, field, alignRight) {
     const editing = billingState.editing && billingState.editing.patientId === item.patientId && billingState.editing.field === field;
@@ -308,13 +407,13 @@ function renderBillingResult() {
 
   const tableHtml = [
     '<table><thead><tr>',
-    header.map(h => `<th>${h}</th>`).join(''),
+    header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',
     ...rows.map(item => `
       <tr>
         <td>${item.patientId || ''}</td>
         <td>${item.nameKanji || ''}</td>
-        <td>${item.responsibleName || (item.responsibleNames && item.responsibleNames.join('・')) || item.responsibleEmail || ''}</td>
+        <td>${getResponsibleDisplay(item)}</td>
         <td>${item.address || ''}</td>
         <td>${renderEditableCell(item, 'insuranceType')}</td>
         <td>${renderEditableCell(item, 'payerType')}</td>
@@ -331,6 +430,7 @@ function renderBillingResult() {
 
   box.innerHTML = tableHtml;
   attachBillingEditHandlers();
+  attachBillingSortHandlers();
 }
 
 function attachBillingEditHandlers() {
@@ -357,6 +457,17 @@ function attachBillingEditHandlers() {
       commitBillingEdit(pid, field, value);
     };
     input.onblur = input.onchange;
+  });
+}
+
+function attachBillingSortHandlers() {
+  const box = qs('billingResult');
+  if (!box) return;
+  box.querySelectorAll('button.sort-header').forEach(btn => {
+    btn.onclick = function () {
+      const field = this.getAttribute('data-sort-key');
+      toggleBillingSort(field);
+    };
   });
 }
 

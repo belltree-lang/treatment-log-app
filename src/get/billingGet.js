@@ -622,6 +622,13 @@ function getBillingSourceData(billingMonth) {
   const treatmentVisitCounts = visitCountsResult.counts;
   const staffDirectory = loadBillingStaffDirectory_();
   const staffDisplayByPatient = buildStaffDisplayByPatient_(visitCountsResult.staffByPatient || {}, staffDirectory);
+  const unpaidHistory = extractUnpaidBillingHistory(month);
+  const carryOverByPatient = (unpaidHistory || []).reduce((map, entry) => {
+    const pid = billingNormalizePatientId_(entry.patientId);
+    if (!pid) return map;
+    map[pid] = (map[pid] || 0) + (Number(entry.unpaidAmount) || 0);
+    return map;
+  }, {});
   return {
     billingMonth: month.key,
     month,
@@ -633,7 +640,9 @@ function getBillingSourceData(billingMonth) {
     bankStatuses: getBillingPaymentResultsIfExists_(month),
     staffByPatient: visitCountsResult.staffByPatient || {},
     staffDirectory,
-    staffDisplayByPatient
+    staffDisplayByPatient,
+    unpaidHistory,
+    carryOverByPatient
   };
 }
 

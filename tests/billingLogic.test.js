@@ -67,11 +67,33 @@ function testPaidStatusIsIncludedInBillingJson() {
   assert.strictEqual(billingJson[0].bankStatus, 'OK', '従来の入金ステータスも維持される');
 }
 
+function testCarryOverIncludesUnpaidHistory() {
+  const source = {
+    billingMonth: '202503',
+    patients: {
+      '010': {
+        nameKanji: 'テスト太郎',
+        burdenRate: 3,
+        insuranceType: '鍼灸',
+        carryOverAmount: 500
+      }
+    },
+    treatmentVisitCounts: { '010': 2 },
+    carryOverByPatient: { '010': 1500 }
+  };
+
+  const billingJson = generateBillingJsonFromSource(source);
+  assert.strictEqual(billingJson[0].carryOverAmount, 2000, '患者シートの繰越と未回収が合算される');
+  assert.strictEqual(billingJson[0].carryOverFromHistory, 1500, '未回収分が別途保持される');
+  assert.strictEqual(billingJson[0].grandTotal, 4566, '合計には繰越を含めた金額が反映される');
+}
+
 function run() {
   testBurdenRateDigitConversion();
   testMassageBillingExclusion();
   testBillingAmountRoundsToNearestTen();
   testPaidStatusIsIncludedInBillingJson();
+  testCarryOverIncludesUnpaidHistory();
   console.log('billingLogic tests passed');
 }
 

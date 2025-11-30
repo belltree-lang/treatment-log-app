@@ -44,6 +44,7 @@ function normalizeBillingSource_(source) {
   const staffDirectory = source.staffDirectory || {};
   const staffDisplayByPatient = source.staffDisplayByPatient || {};
   const bankStatuses = source.bankStatuses || {};
+  const carryOverByPatient = source.carryOverByPatient || {};
   return {
     billingMonth,
     patients: patientMap,
@@ -51,7 +52,8 @@ function normalizeBillingSource_(source) {
     staffByPatient,
     staffDirectory,
     staffDisplayByPatient,
-    bankStatuses
+    bankStatuses,
+    carryOverByPatient
   };
 }
 
@@ -137,7 +139,8 @@ function generateBillingJsonFromSource(sourceData) {
     staffByPatient,
     staffDirectory,
     staffDisplayByPatient,
-    bankStatuses
+    bankStatuses,
+    carryOverByPatient
   } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
 
@@ -151,12 +154,14 @@ function generateBillingJsonFromSource(sourceData) {
       : staffEmails.map(email => billingResolveStaffDisplayName_(email, staffDirectory)).filter(Boolean);
     const responsibleEmail = staffEmails.length ? staffEmails[0] : '';
     const responsibleName = responsibleNames.join('・');
+    const carryOverFromPatient = normalizeMoneyNumber_(patient.carryOverAmount);
+    const carryOverFromHistory = normalizeMoneyNumber_(carryOverByPatient[pid]);
     const amountCalc = calculateBillingAmounts_({
       visitCount,
       insuranceType: patient.insuranceType,
       burdenRate: patient.burdenRate,
       unitPrice: patient.unitPrice,
-      carryOverAmount: patient.carryOverAmount
+      carryOverAmount: carryOverFromPatient + carryOverFromHistory
     });
 
     const bankStatusEntry = bankStatuses && bankStatuses[pid];
@@ -174,6 +179,7 @@ function generateBillingJsonFromSource(sourceData) {
       treatmentAmount: amountCalc.treatmentAmount,
       transportAmount: amountCalc.transportAmount,
       carryOverAmount: amountCalc.carryOverAmount,
+      carryOverFromHistory,
       billingAmount: amountCalc.billingAmount,
       total: amountCalc.total,
       grandTotal: amountCalc.grandTotal,

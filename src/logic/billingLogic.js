@@ -23,6 +23,13 @@ function roundToNearestTen_(value) {
   return Math.round(num / 10) * 10;
 }
 
+function normalizeBurdenMultiplier_(burdenRate, insuranceType) {
+  const type = String(insuranceType || '').trim();
+  if (type === '自費') return 1;
+  const rateInt = normalizeBurdenRateInt_(burdenRate);
+  return rateInt > 0 ? rateInt / 10 : 0;
+}
+
 function normalizeBillingSource_(source) {
   if (!source || typeof source !== 'object') {
     throw new Error('請求生成の入力が不正です');
@@ -36,13 +43,15 @@ function normalizeBillingSource_(source) {
   const staffByPatient = source.staffByPatient || {};
   const staffDirectory = source.staffDirectory || {};
   const staffDisplayByPatient = source.staffDisplayByPatient || {};
+  const bankStatuses = source.bankStatuses || {};
   return {
     billingMonth,
     patients: patientMap,
     treatmentVisitCounts: visitCounts,
     staffByPatient,
     staffDirectory,
-    staffDisplayByPatient
+    staffDisplayByPatient,
+    bankStatuses
   };
 }
 
@@ -87,20 +96,23 @@ function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice) {
     return custom > 0 ? custom : 0;
   }
   if (type === '生保' || type === 'マッサージ') return 0;
-  const normalizedRate = normalizeBurdenRateInt_(burdenRate);
-  return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedRate] || BILLING_UNIT_PRICE;
+  return BILLING_UNIT_PRICE;
 }
 
 function calculateBillingAmounts_(params) {
   const visits = normalizeVisitCount_(params.visitCount);
   const insuranceType = String(params.insuranceType || '').trim();
   const unitPrice = resolveInvoiceUnitPrice_(insuranceType, params.burdenRate, params.unitPrice);
-  const treatmentAmount = visits > 0 ? unitPrice * visits : 0;
-  const transportAmount = visits > 0 ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const isMassage = insuranceType === 'マッサージ';
+  const treatmentAmount = visits > 0 && !isMassage ? unitPrice * visits : 0;
+  const transportAmount = visits > 0 && !isMassage ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const burdenMultiplier = normalizeBurdenMultiplier_(params.burdenRate, insuranceType);
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
-  const grandTotal = treatmentAmount + transportAmount + carryOverAmount;
+  const billingAmount = roundToNearestTen_(treatmentAmount * burdenMultiplier);
+  const total = treatmentAmount + transportAmount;
+  const grandTotal = billingAmount + transportAmount + carryOverAmount;
 
-  return { visits, unitPrice, treatmentAmount, transportAmount, carryOverAmount, grandTotal };
+  return { visits, unitPrice, treatmentAmount, transportAmount, carryOverAmount, billingAmount, total, grandTotal };
 }
 
 function resolveBillingAddress_(patient) {
@@ -118,7 +130,15 @@ function resolveBillingAddress_(patient) {
 }
 
 function generateBillingJsonFromSource(sourceData) {
-  const { billingMonth, patients, treatmentVisitCounts, staffByPatient, staffDirectory, staffDisplayByPatient } = normalizeBillingSource_(sourceData);
+  const {
+    billingMonth,
+    patients,
+    treatmentVisitCounts,
+    staffByPatient,
+    staffDirectory,
+    staffDisplayByPatient,
+    bankStatuses
+  } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
 
   return patientIds.map(pid => {
@@ -139,6 +159,8 @@ function generateBillingJsonFromSource(sourceData) {
       carryOverAmount: patient.carryOverAmount
     });
 
+    const bankStatusEntry = bankStatuses && bankStatuses[pid];
+
     return {
       billingMonth,
       patientId: pid,
@@ -152,11 +174,15 @@ function generateBillingJsonFromSource(sourceData) {
       treatmentAmount: amountCalc.treatmentAmount,
       transportAmount: amountCalc.transportAmount,
       carryOverAmount: amountCalc.carryOverAmount,
+      billingAmount: amountCalc.billingAmount,
+      total: amountCalc.total,
       grandTotal: amountCalc.grandTotal,
       responsibleEmail,
       responsibleNames,
       responsibleName,
-      payerType: patient.payerType || ''
+      payerType: patient.payerType || '',
+      bankStatus: bankStatusEntry && bankStatusEntry.bankStatus ? bankStatusEntry.bankStatus : '',
+      paidStatus: bankStatusEntry && bankStatusEntry.paidStatus ? bankStatusEntry.paidStatus : ''
     };
   });
 }

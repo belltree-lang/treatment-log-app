@@ -5,6 +5,27 @@ const INVOICE_FILE_PREFIX = '請求書';
 const TRANSPORT_PRICE = (typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
   ? BILLING_TRANSPORT_UNIT_PRICE
   : 33;
+const INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
+
+const normalizeInvoiceBurdenRateInt_ = typeof normalizeBurdenRateInt_ === 'function'
+  ? normalizeBurdenRateInt_
+  : function fallbackNormalizeInvoiceBurdenRateInt_(burdenRate) {
+    if (burdenRate == null || burdenRate === '') return 0;
+    const num = Number(burdenRate);
+    if (Number.isFinite(num)) {
+      if (num > 0 && num < 1) return Math.round(num * 10);
+      if (num >= 1 && num < 10) return Math.round(num);
+      if (num >= 10 && num <= 100) return Math.round(num / 10);
+    }
+    const normalized = String(burdenRate).normalize('NFKC').replace(/\s+/g, '').replace('％', '%');
+    const withoutUnits = normalized.replace(/割|分/g, '').replace('%', '');
+    const parsed = Number(withoutUnits);
+    if (!Number.isFinite(parsed)) return 0;
+    if (normalized.indexOf('%') >= 0) return Math.round(parsed / 10);
+    if (parsed > 0 && parsed < 10) return Math.round(parsed);
+    if (parsed >= 10 && parsed <= 100) return Math.round(parsed / 10);
+    return 0;
+  };
 
 function convertSpreadsheetToExcelBlob_(file, exportName) {
   if (!file || typeof file.getMimeType !== 'function' || file.getMimeType() !== MimeType.GOOGLE_SHEETS) {
@@ -148,6 +169,49 @@ function formatResponsibleFolderName_(billingMonth, responsibleName) {
   const ymLabel = ym || '請求月未設定';
   const safeName = sanitizeFileName_(responsibleName || '担当者未設定');
   return ymLabel + '請求書_' + safeName;
+}
+
+function calculateInvoiceChargeBreakdown_(params) {
+  const visits = normalizeInvoiceVisitCount_(params && params.visitCount);
+  const insuranceType = params && params.insuranceType ? String(params.insuranceType).trim() : '';
+  const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
+  const carryOverAmount = normalizeInvoiceMoney_(params && params.carryOverAmount);
+
+  const treatmentUnitPrice = (insuranceType === '生保' || insuranceType === '自費' || insuranceType === 'マッサージ')
+    ? 0
+    : (INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0);
+  const treatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
+  const transportAmount = visits > 0 && treatmentUnitPrice > 0 ? TRANSPORT_PRICE * visits : 0;
+  const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
+
+  return { treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal, visits };
+}
+
+function buildBillingInvoiceHtml_(item, billingMonth) {
+  const targetMonth = billingMonth || (item && item.billingMonth) || '';
+  const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth: targetMonth }));
+  const monthLabel = normalizeBillingMonthLabel_(targetMonth);
+  const visits = breakdown.visits || 0;
+  const treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
+  const transportUnitPrice = TRANSPORT_PRICE;
+  const totalLabel = formatBillingCurrency_(breakdown.grandTotal) + '円';
+
+  const name = (item && item.nameKanji) || '';
+  const address = (item && item.address) || (item && item.raw && item.raw['住所']) || '';
+
+  return [
+    '<div class="billing-invoice">',
+    '<h1>べるつりー訪問鍼灸マッサージ</h1>',
+    `<h2>${monthLabel} ご請求書</h2>`,
+    name ? `<p class="patient-name">${name} 様</p>` : '',
+    address ? `<p class="patient-address">${address}</p>` : '',
+    '<div class="charge-breakdown">',
+    `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）</p>`,
+    `<p>交通費（${formatBillingCurrency_(transportUnitPrice)}円 × ${visits}回）</p>`,
+    `<p class="grand-total">合計: ${totalLabel}</p>`,
+    '</div>',
+    '</div>'
+  ].filter(Boolean).join('');
 }
 
 function ensureInvoiceFolderForResponsible_(item) {

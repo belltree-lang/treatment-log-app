@@ -84,6 +84,28 @@ function testExcelBlobIsReturnedWithoutConversion() {
   assert.strictEqual(tracker.setNameCalledWith, 'already_excel.xlsx', '既存の Excel にも名称設定が行われる');
 }
 
+function testBillingAmountFallsBackToTotals() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { normalizeBillingAmount_ } = context;
+
+  const amountFromParts = normalizeBillingAmount_({
+    billingAmount: '2,000',
+    transportAmount: '330',
+    carryOverAmount: 500
+  });
+  assert.strictEqual(amountFromParts, 2830, '請求額・交通費・繰越の合算を返す');
+
+  const amountFromTotal = normalizeBillingAmount_({
+    total: 2500,
+    carryOverAmount: 400,
+    carryOverFromHistory: 100
+  });
+  assert.strictEqual(amountFromTotal, 3000, 'total があれば繰越を加算して返す');
+}
+
 function testCustomUnitPriceForSelfPaidInvoice() {
   const context = createContext();
   vm.createContext(context);
@@ -195,6 +217,7 @@ function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
   testExcelBlobIsReturnedWithoutConversion();
+  testBillingAmountFallsBackToTotals();
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
   testInsuranceBillingIsRoundedToNearestTen();

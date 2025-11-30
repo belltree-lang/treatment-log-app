@@ -142,6 +142,38 @@ function testInsuranceBillingIsRoundedToNearestTen() {
   assert.strictEqual(breakdown.grandTotal, 3151, '合計も四捨五入後の施術料を利用する');
 }
 
+function testWelfareBillingStillAddsTransport() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: '生保',
+    visitCount: 5,
+    carryOverAmount: 0
+  });
+
+  assert.strictEqual(breakdown.treatmentAmount, 0, '生保は施術料が0円のまま');
+  assert.strictEqual(breakdown.transportAmount, 165, '生保でも交通費が回数分計上される');
+  assert.strictEqual(breakdown.grandTotal, 165, '交通費のみの請求でも合計に反映される');
+}
+
+function testMassageBillingDoesNotChargeTransport() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: 'マッサージ',
+    visitCount: 4,
+    carryOverAmount: 200
+  });
+
+  assert.strictEqual(breakdown.treatmentAmount, 0, 'マッサージは施術料が0円のまま');
+  assert.strictEqual(breakdown.transportAmount, 0, 'マッサージでは交通費を請求しない');
+  assert.strictEqual(breakdown.grandTotal, 200, '繰越のみの場合は交通費なしで合計される');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
@@ -149,6 +181,8 @@ function run() {
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
   testInsuranceBillingIsRoundedToNearestTen();
+  testWelfareBillingStillAddsTransport();
+  testMassageBillingDoesNotChargeTransport();
   console.log('billingOutput blob guard tests passed');
 }
 

@@ -226,7 +226,9 @@ function calculateInvoiceChargeBreakdown_(params) {
   const treatmentAmount = (insuranceType === '自費' || insuranceType === '生保' || insuranceType === 'マッサージ')
     ? rawTreatmentAmount
     : roundToNearestTen_(rawTreatmentAmount);
-  const transportAmount = visits > 0 && treatmentUnitPrice > 0 ? TRANSPORT_PRICE * visits : 0;
+  const transportAmount = visits > 0 && insuranceType !== 'マッサージ'
+    ? TRANSPORT_PRICE * visits
+    : 0;
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
 
   return { treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal, visits };

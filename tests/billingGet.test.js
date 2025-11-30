@@ -67,6 +67,11 @@ function testAsciiInputsRemainCompatible() {
   assert.strictEqual(normalizeBurdenRateInt_(0.2), 2, '数値入力もそのまま正規化される');
 }
 
+function testPercentageInputsAreRounded() {
+  assert.strictEqual(normalizeBurdenRateInt_('25%'), 3, '百分率入力は10%刻みに丸められる');
+  assert.strictEqual(normalizeBurdenRateInt_(' ５０ ％ '), 5, '全角・スペース混在でもパーセントを解釈する');
+}
+
 function testExtractUnpaidBillingHistory() {
   const sheetValues = [
     ['202501', '001', '山田太郎', 1000, 0, 1000, 500, 500, 'OK', new Date('2025-02-01'), ''],
@@ -92,6 +97,7 @@ function testExtractUnpaidBillingHistory() {
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
+  testPercentageInputsAreRounded();
   testExtractUnpaidBillingHistory();
   console.log('billingGet burden rate tests passed');
 }

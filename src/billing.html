@@ -30,8 +30,9 @@
   .controls{ display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
   label{ display:flex; flex-direction:column; gap:6px; font-size:0.9rem; color:var(--muted); }
   input,select{ padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:1rem; background:#fff; color:inherit; }
-  .btn{ appearance:none; border:0; border-radius:10px; padding:10px 14px; background:var(--brand); color:#fff; cursor:pointer; font-weight:700; transition:transform .15s ease, box-shadow .15s ease; }
-  .btn:hover{ transform:translateY(-1px); box-shadow:0 10px 24px rgba(37,99,235,0.18); }
+    .btn{ appearance:none; border:0; border-radius:10px; padding:10px 14px; background:var(--brand); color:#fff; cursor:pointer; font-weight:700; transition:transform .15s ease, box-shadow .15s ease; }
+    .btn:hover{ transform:translateY(-1px); box-shadow:0 10px 24px rgba(37,99,235,0.18); }
+    .btn:disabled{ opacity:0.6; cursor:not-allowed; box-shadow:none; transform:none; }
   .btn.secondary{ background:#e5e7eb; color:#111827; box-shadow:none; }
   .btn.danger{ background:var(--danger); }
   .btn.small{ padding:8px 12px; font-size:0.9rem; }
@@ -77,8 +78,8 @@
         <label>請求月
           <input type="month" id="billingMonth" />
         </label>
-        <button class="btn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
-        <button class="btn secondary" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
+          <button class="btn" id="billingAggregateBtn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
+          <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
         <div id="billingStatus" class="status-line"></div>
       </div>
     </section>

@@ -33,6 +33,28 @@ function getDefaultMonth() {
   return y + '-' + m;
 }
 
+function updateBillingControls() {
+  const monthInput = qs('billingMonth');
+  const aggregateBtn = qs('billingAggregateBtn');
+  const pdfBtn = qs('billingPdfBtn');
+  const loading = billingState.loading;
+
+  if (monthInput) {
+    monthInput.disabled = loading;
+  }
+  if (aggregateBtn) {
+    aggregateBtn.disabled = loading;
+    aggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
+  }
+  if (pdfBtn) {
+    const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
+    const disabled = loading || !prepared;
+    pdfBtn.disabled = disabled;
+    pdfBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
+    pdfBtn.title = disabled && !prepared ? '先に「請求データを集計」を実行してください' : '';
+  }
+}
+
 function normalizeYm(raw) {
   if (!raw) return '';
   const cleaned = String(raw).replace(/[^0-9]/g, '');
@@ -322,6 +344,7 @@ function renderMonthBadge(result) {
 }
 
 function renderBillingResult() {
+  updateBillingControls();
   const box = qs('billingResult');
   if (!box) return;
   const result = billingState.result;
@@ -477,6 +500,7 @@ function initBillingPage() {
   if (input && !input.value) {
     input.value = getDefaultMonth();
   }
+  updateBillingControls();
   renderBillingResult();
 }
 

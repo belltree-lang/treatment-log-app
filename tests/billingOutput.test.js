@@ -106,11 +106,31 @@ function testCustomUnitPriceForSelfPaidInvoice() {
   assert.strictEqual(result.grandTotal, 11066, '繰越分も含めて合計が算出される');
 }
 
+function testFullWidthInputsAreNormalized() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: '自費',
+    unitPrice: '５,０００',
+    burdenRate: '',
+    visitCount: '２',
+    carryOverAmount: '１，０００'
+  });
+
+  assert.strictEqual(breakdown.visits, 2, '全角の回数も計上される');
+  assert.strictEqual(breakdown.treatmentUnitPrice, 5000, '全角の単価が正しく解釈される');
+  assert.strictEqual(breakdown.transportAmount, 66, '全角入力でも交通費が算出される');
+  assert.strictEqual(breakdown.grandTotal, 11066, '全角入力でも合計が正しく算出される');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
   testExcelBlobIsReturnedWithoutConversion();
   testCustomUnitPriceForSelfPaidInvoice();
+  testFullWidthInputsAreNormalized();
   console.log('billingOutput blob guard tests passed');
 }
 

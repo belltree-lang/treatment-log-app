@@ -88,12 +88,28 @@ function testCarryOverIncludesUnpaidHistory() {
   assert.strictEqual(billingJson[0].grandTotal, 4566, '合計には繰越を含めた金額が反映される');
 }
 
+function testFullWidthNumbersAreParsed() {
+  const result = calculateBillingAmounts_({
+    visitCount: '４',
+    insuranceType: '自費',
+    burdenRate: '１',
+    unitPrice: '４,１７０',
+    carryOverAmount: '１，５００'
+  });
+
+  assert.strictEqual(result.visits, 4, '全角の回数も集計対象になる');
+  assert.strictEqual(result.unitPrice, 4170, '全角の単価も正しく解釈される');
+  assert.strictEqual(result.carryOverAmount, 1500, '全角の繰越額も数値化される');
+  assert.strictEqual(result.grandTotal, 18312, '全角入力でも合計が正しく算出される');
+}
+
 function run() {
   testBurdenRateDigitConversion();
   testMassageBillingExclusion();
   testBillingAmountRoundsToNearestTen();
   testPaidStatusIsIncludedInBillingJson();
   testCarryOverIncludesUnpaidHistory();
+  testFullWidthNumbersAreParsed();
   console.log('billingLogic tests passed');
 }
 

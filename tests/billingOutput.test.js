@@ -174,6 +174,23 @@ function testMassageBillingDoesNotChargeTransport() {
   assert.strictEqual(breakdown.grandTotal, 200, '繰越のみの場合は交通費なしで合計される');
 }
 
+function testCarryOverHistoryIsIncluded() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: '鍼灸',
+    burdenRate: 1,
+    visitCount: 1,
+    carryOverAmount: 500,
+    carryOverFromHistory: 200
+  });
+
+  assert.strictEqual(breakdown.treatmentAmount, 420, '施術料は四捨五入後の負担額で計算される');
+  assert.strictEqual(breakdown.grandTotal, 1153, '未回収分も繰越に合算される');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
@@ -183,6 +200,7 @@ function run() {
   testInsuranceBillingIsRoundedToNearestTen();
   testWelfareBillingStillAddsTransport();
   testMassageBillingDoesNotChargeTransport();
+  testCarryOverHistoryIsIncluded();
   console.log('billingOutput blob guard tests passed');
 }
 

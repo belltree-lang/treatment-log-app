@@ -125,12 +125,30 @@ function testFullWidthInputsAreNormalized() {
   assert.strictEqual(breakdown.grandTotal, 11066, '全角入力でも合計が正しく算出される');
 }
 
+function testInsuranceBillingIsRoundedToNearestTen() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: '鍼灸',
+    burdenRate: 1,
+    visitCount: 7,
+    carryOverAmount: 0
+  });
+
+  assert.strictEqual(breakdown.treatmentAmount, 2920, '施術料は10円単位で四捨五入される');
+  assert.strictEqual(breakdown.transportAmount, 231, '交通費は回数分計上される');
+  assert.strictEqual(breakdown.grandTotal, 3151, '合計も四捨五入後の施術料を利用する');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
   testExcelBlobIsReturnedWithoutConversion();
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
+  testInsuranceBillingIsRoundedToNearestTen();
   console.log('billingOutput blob guard tests passed');
 }
 

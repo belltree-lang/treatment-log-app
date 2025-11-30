@@ -102,9 +102,13 @@ function normalizeInvoiceVisitCount_(value) {
 
 function normalizeBillingCarryOver_(item) {
   if (!item) return 0;
-  if (item.carryOverAmount != null && item.carryOverAmount !== '') return Number(item.carryOverAmount) || 0;
-  if (item.raw && item.raw.carryOverAmount != null) return Number(item.raw.carryOverAmount) || 0;
-  return 0;
+  const directCarryOver = (item.carryOverAmount != null && item.carryOverAmount !== '')
+    ? normalizeInvoiceMoney_(item.carryOverAmount)
+    : (item.raw && item.raw.carryOverAmount != null)
+      ? normalizeInvoiceMoney_(item.raw.carryOverAmount)
+      : 0;
+  const historyCarryOver = normalizeInvoiceMoney_(item.carryOverFromHistory);
+  return directCarryOver + historyCarryOver;
 }
 
 function formatBillingCurrency_(value) {
@@ -212,7 +216,7 @@ function calculateInvoiceChargeBreakdown_(params) {
   const visits = normalizeInvoiceVisitCount_(params && params.visitCount);
   const insuranceType = params && params.insuranceType ? String(params.insuranceType).trim() : '';
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
-  const carryOverAmount = normalizeInvoiceMoney_(params && params.carryOverAmount);
+  const carryOverAmount = normalizeBillingCarryOver_(params);
 
   const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
     if (insuranceType === '自費') {
@@ -241,7 +245,7 @@ function calculateInvoiceChargeBreakdown_(params) {
     const visits = breakdown.visits || 0;
   const treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
   const transportUnitPrice = TRANSPORT_PRICE;
-  const carryOverAmount = normalizeInvoiceMoney_(item && item.carryOverAmount);
+  const carryOverAmount = normalizeBillingCarryOver_(item);
   const totalLabel = formatBillingCurrency_(breakdown.grandTotal) + '円';
 
     const name = escapeHtml_((item && item.nameKanji) || '');

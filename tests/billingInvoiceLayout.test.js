@@ -22,8 +22,9 @@ function createContext(overrides = {}) {
 const context = createContext();
 
 const { calculateInvoiceChargeBreakdown_, buildBillingInvoiceHtml_ } = context;
+const { buildInvoiceTemplateData_ } = context;
 
-if (typeof calculateInvoiceChargeBreakdown_ !== 'function' || typeof buildBillingInvoiceHtml_ !== 'function') {
+if (typeof calculateInvoiceChargeBreakdown_ !== 'function' || typeof buildBillingInvoiceHtml_ !== 'function' || typeof buildInvoiceTemplateData_ !== 'function') {
   throw new Error('Invoice helpers failed to load in the test context');
 }
 
@@ -92,11 +93,32 @@ function testInvoiceHtmlEscapesUserInput() {
   assert(html.includes('東京都 &lt;b&gt;江東区&lt;/b&gt;'), '住所もHTMLエスケープされる');
 }
 
+function testInvoiceTemplateUsesBurdenAdjustedBreakdown() {
+  const data = buildInvoiceTemplateData_({
+    billingMonth: '202512',
+    visitCount: 4,
+    burdenRate: '1割',
+    insuranceType: '鍼灸',
+    unitPrice: 4170,
+    carryOverAmount: 1000,
+    raw: { '住所': '東京都江東区1-2-3' }
+  });
+
+  assert.strictEqual(data.monthLabel, '2025年12月', '請求月は年月表記に整形される');
+  assert.strictEqual(data.address, '東京都江東区1-2-3', '住所はrawの値も参照される');
+  assert.strictEqual(data.treatmentUnitPrice, 417, '単価は負担割合に応じた金額が使われる');
+  assert.strictEqual(data.rows[1].detail.includes('417円'), true, '施術料の明細にも負担後単価が反映される');
+  assert.strictEqual(data.rows[1].amount, 1668, '施術料の合計は患者負担額が利用される');
+  assert.strictEqual(data.rows[2].amount, 132, '交通費は訪問回数に基づいて計算される');
+  assert.strictEqual(data.grandTotal, 2800, '合計は内訳の合計と一致する');
+}
+
 function run() {
   testInvoiceChargeBreakdown();
   testInvoiceChargeBreakdownUsesCustomTransportPrice();
   testInvoiceHtmlIncludesBreakdown();
   testInvoiceHtmlEscapesUserInput();
+  testInvoiceTemplateUsesBurdenAdjustedBreakdown();
   console.log('billingInvoiceLayout tests passed');
 }
 

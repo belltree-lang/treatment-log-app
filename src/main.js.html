@@ -1,4 +1,3 @@
-<script>
 const billingState = {
   loading: false,
   result: null,
@@ -523,4 +522,9 @@ function initBillingPage() {
     initBillingPage();
   }
 })();
-</script>
+
+if (typeof window !== 'undefined') {
+  window.loadBillingPage = loadBillingPage;
+  window.handleBillingAggregation = handleBillingAggregation;
+  window.handleBillingPdfGeneration = handleBillingPdfGeneration;
+}

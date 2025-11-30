@@ -72,14 +72,25 @@ function normalizeInvoiceMoney_(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : 0;
   }
-  const text = String(value || '').replace(/,/g, '').trim();
+  const text = String(value || '')
+    .normalize('NFKC')
+    .replace(/[，,]/g, '')
+    .trim();
   if (!text) return 0;
   const num = Number(text);
   return Number.isFinite(num) ? num : 0;
 }
 
 function normalizeInvoiceVisitCount_(value) {
-  const num = Number(value && value.visitCount != null ? value.visitCount : value);
+  const source = value && value.visitCount != null ? value.visitCount : value;
+  if (typeof source === 'number') {
+    return Number.isFinite(source) && source > 0 ? source : 0;
+  }
+  const normalized = String(source || '')
+    .normalize('NFKC')
+    .replace(/[，,]/g, '')
+    .trim();
+  const num = Number(normalized);
   return Number.isFinite(num) && num > 0 ? num : 0;
 }
 

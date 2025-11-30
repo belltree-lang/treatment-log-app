@@ -297,24 +297,26 @@ function normalizeBurdenRateInt_(value) {
   if (value == null || value === '') return 0;
   if (typeof value === 'number') {
     if (!isFinite(value)) return 0;
-    if (value <= 1) return Math.round(value * 10);
-    if (value <= 3) return Math.round(value);
-    if (value === 10 || value === 20 || value === 30) return value / 10;
     if (value === 0) return 0;
+    if (value < 1) return Math.round(value * 10);
+    if (value < 10) return Math.round(value);
+    if (value <= 100) return Math.round(value / 10);
   }
   const text = String(value).normalize('NFKC').trim();
   if (!text) return 0;
-  const digits = text.replace(/[^0-9.]/g, '');
-  if (digits) {
-    const num = Number(digits);
-    if (!isNaN(num)) {
-      if (num === 0) return 0;
-      if (num <= 1) return Math.round(num * 10);
-      if (num <= 3) return Math.round(num);
-      if (num === 10 || num === 20 || num === 30) return num / 10;
-    }
+
+  const normalized = text.replace(/\s+/g, '').replace('％', '%');
+  const withoutUnits = normalized.replace(/割|分/g, '').replace('%', '');
+  const parsed = Number(withoutUnits);
+  if (Number.isFinite(parsed)) {
+    if (parsed === 0) return 0;
+    if (normalized.indexOf('%') >= 0) return Math.round(parsed / 10);
+    if (parsed < 1) return Math.round(parsed * 10);
+    if (parsed < 10) return Math.round(parsed);
+    if (parsed <= 100) return Math.round(parsed / 10);
   }
-  const ratio = billingNormalizeBurdenRatio_(text);
+
+  const ratio = billingNormalizeBurdenRatio_(normalized);
   if (ratio === 0) return 0;
   if (ratio != null) return Math.round(ratio * 10);
   return 0;

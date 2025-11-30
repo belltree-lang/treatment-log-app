@@ -4,11 +4,17 @@ const vm = require('vm');
 const assert = require('assert');
 
 const billingLogicCode = fs.readFileSync(path.join(__dirname, '../src/logic/billingLogic.js'), 'utf8');
-const context = {
-  normalizeBillingNameKey_: value => String(value || '').trim()
-};
-vm.createContext(context);
-vm.runInContext(billingLogicCode, context);
+
+function createLogicContext(overrides = {}) {
+  const ctx = Object.assign({
+    normalizeBillingNameKey_: value => String(value || '').trim()
+  }, overrides);
+  vm.createContext(ctx);
+  vm.runInContext(billingLogicCode, ctx);
+  return ctx;
+}
+
+const context = createLogicContext();
 
 const { calculateBillingAmounts_, normalizeBurdenMultiplier_ } = context;
 const { generateBillingJsonFromSource } = context;
@@ -88,6 +94,20 @@ function testCarryOverIncludesUnpaidHistory() {
   assert.strictEqual(billingJson[0].grandTotal, 4566, '合計には繰越を含めた金額が反映される');
 }
 
+function testCustomTransportUnitPriceIsUsed() {
+  const customContext = createLogicContext({ BILLING_TRANSPORT_UNIT_PRICE: 50 });
+  const { calculateBillingAmounts_ } = customContext;
+
+  const result = calculateBillingAmounts_({
+    visitCount: 2,
+    insuranceType: '鍼灸',
+    burdenRate: 3
+  });
+
+  assert.strictEqual(result.transportAmount, 100, '交通費が上書き単価で計算される');
+  assert.strictEqual(result.grandTotal, 2600, '合計も上書き単価を反映する');
+}
+
 function testFullWidthNumbersAreParsed() {
   const result = calculateBillingAmounts_({
     visitCount: '４',
@@ -109,6 +129,7 @@ function run() {
   testBillingAmountRoundsToNearestTen();
   testPaidStatusIsIncludedInBillingJson();
   testCarryOverIncludesUnpaidHistory();
+  testCustomTransportUnitPriceIsUsed();
   testFullWidthNumbersAreParsed();
   console.log('billingLogic tests passed');
 }

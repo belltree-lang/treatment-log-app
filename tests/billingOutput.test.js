@@ -67,9 +67,32 @@ function testSpreadsheetBlobIsConverted() {
   assert.strictEqual(tracker.setNameCalledWith, 'export_name.xlsx', 'setName が適切なファイル名で呼ばれる');
 }
 
+function testCustomUnitPriceForSelfPaidInvoice() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { calculateInvoiceChargeBreakdown_ } = context;
+  assert.strictEqual(typeof calculateInvoiceChargeBreakdown_, 'function', '請求額計算の関数が定義されている');
+
+  const result = calculateInvoiceChargeBreakdown_({
+    insuranceType: '自費',
+    unitPrice: 5000,
+    burdenRate: '',
+    visitCount: 2,
+    carryOverAmount: 1000
+  });
+
+  assert.strictEqual(result.treatmentUnitPrice, 5000, '自費の場合はカスタム単価を使用する');
+  assert.strictEqual(result.treatmentAmount, 10000, '単価と訪問回数から施術料が算出される');
+  assert.strictEqual(result.transportAmount, 66, '自費でも交通費が計上される');
+  assert.strictEqual(result.grandTotal, 11066, '繰越分も含めて合計が算出される');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
+  testCustomUnitPriceForSelfPaidInvoice();
   console.log('billingOutput blob guard tests passed');
 }
 

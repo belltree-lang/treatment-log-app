@@ -177,9 +177,14 @@ function calculateInvoiceChargeBreakdown_(params) {
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
   const carryOverAmount = normalizeInvoiceMoney_(params && params.carryOverAmount);
 
-  const treatmentUnitPrice = (insuranceType === '生保' || insuranceType === '自費' || insuranceType === 'マッサージ')
-    ? 0
-    : (INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0);
+  const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
+    if (insuranceType === '自費') {
+      const custom = normalizeInvoiceMoney_(params && params.unitPrice);
+      return custom > 0 ? custom : 0;
+    }
+    if (insuranceType === '生保' || insuranceType === 'マッサージ') return 0;
+    return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
+  })();
   const treatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
   const transportAmount = visits > 0 && treatmentUnitPrice > 0 ? TRANSPORT_PRICE * visits : 0;
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;

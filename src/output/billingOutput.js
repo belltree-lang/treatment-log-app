@@ -65,8 +65,30 @@ function convertSpreadsheetToExcelBlob_(file, exportName) {
 
 function normalizeBillingAmount_(item) {
   if (!item) return 0;
-  if (item.grandTotal != null && item.grandTotal !== '') return Number(item.grandTotal) || 0;
-  if (item.treatmentAmount != null && item.treatmentAmount !== '') return Number(item.treatmentAmount) || 0;
+
+  if (item.grandTotal != null && item.grandTotal !== '') {
+    return normalizeInvoiceMoney_(item.grandTotal);
+  }
+
+  const carryOverTotal = normalizeInvoiceMoney_(item.carryOverAmount)
+    + normalizeInvoiceMoney_(item.carryOverFromHistory);
+
+  if (item.total != null && item.total !== '') {
+    return normalizeInvoiceMoney_(item.total) + carryOverTotal;
+  }
+
+  const billingAmount = normalizeInvoiceMoney_(item.billingAmount);
+  const treatmentAmount = normalizeInvoiceMoney_(item.treatmentAmount);
+  const transportAmount = normalizeInvoiceMoney_(item.transportAmount);
+
+  if (item.billingAmount != null && item.billingAmount !== '') {
+    return billingAmount + transportAmount + carryOverTotal;
+  }
+
+  if (item.treatmentAmount != null || item.transportAmount != null || carryOverTotal) {
+    return treatmentAmount + transportAmount + carryOverTotal;
+  }
+
   return 0;
 }
 

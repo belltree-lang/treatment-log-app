@@ -7,6 +7,12 @@ const TRANSPORT_PRICE = (typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
   : 33;
 const INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
+function roundToNearestTen_(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num / 10) * 10;
+}
+
 function escapeHtml_(value) {
   return String(value || '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;',
@@ -216,7 +222,10 @@ function calculateInvoiceChargeBreakdown_(params) {
     if (insuranceType === '生保' || insuranceType === 'マッサージ') return 0;
     return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
   })();
-  const treatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
+  const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
+  const treatmentAmount = (insuranceType === '自費' || insuranceType === '生保' || insuranceType === 'マッサージ')
+    ? rawTreatmentAmount
+    : roundToNearestTen_(rawTreatmentAmount);
   const transportAmount = visits > 0 && treatmentUnitPrice > 0 ? TRANSPORT_PRICE * visits : 0;
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
 

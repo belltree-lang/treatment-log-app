@@ -194,6 +194,7 @@ function buildBillingInvoiceHtml_(item, billingMonth) {
   const visits = breakdown.visits || 0;
   const treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
   const transportUnitPrice = TRANSPORT_PRICE;
+  const carryOverAmount = normalizeInvoiceMoney_(item && item.carryOverAmount);
   const totalLabel = formatBillingCurrency_(breakdown.grandTotal) + '円';
 
   const name = (item && item.nameKanji) || '';
@@ -206,8 +207,9 @@ function buildBillingInvoiceHtml_(item, billingMonth) {
     name ? `<p class="patient-name">${name} 様</p>` : '',
     address ? `<p class="patient-address">${address}</p>` : '',
     '<div class="charge-breakdown">',
-    `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）</p>`,
-    `<p>交通費（${formatBillingCurrency_(transportUnitPrice)}円 × ${visits}回）</p>`,
+    `<p>前月繰越: ${formatBillingCurrency_(carryOverAmount)}円</p>`,
+    `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.treatmentAmount)}円</p>`,
+    `<p>交通費（${formatBillingCurrency_(transportUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.transportAmount)}円</p>`,
     `<p class="grand-total">合計: ${totalLabel}</p>`,
     '</div>',
     '</div>'

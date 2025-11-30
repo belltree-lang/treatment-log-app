@@ -52,8 +52,11 @@ function testInvoiceHtmlIncludesBreakdown() {
   }, '202512');
 
   assert(html.includes('2025年12月 ご請求書'), '請求月の見出しが含まれる');
+  assert(html.includes('前月繰越: 1,000円'), '繰越内訳が含まれる');
   assert(html.includes('施術料（417円 × 8回）'), '施術料の内訳が含まれる');
+  assert(html.includes('施術料（417円 × 8回）: 3,336円'), '施術料の金額が含まれる');
   assert(html.includes('交通費（33円 × 8回）'), '交通費の内訳が含まれる');
+  assert(html.includes('交通費（33円 × 8回）: 264円'), '交通費の金額が含まれる');
   assert(html.includes('4,600円'), '合計金額がカンマ区切りで表示される');
   assert(html.includes('べるつりー訪問鍼灸マッサージ'), 'タイトルが含まれる');
 }

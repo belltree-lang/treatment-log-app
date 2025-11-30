@@ -7,6 +7,16 @@ const TRANSPORT_PRICE = (typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
   : 33;
 const INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
+function escapeHtml_(value) {
+  return String(value || '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[c]);
+}
+
 const normalizeInvoiceBurdenRateInt_ = typeof normalizeBurdenRateInt_ === 'function'
   ? normalizeBurdenRateInt_
   : function fallbackNormalizeInvoiceBurdenRateInt_(burdenRate) {
@@ -202,27 +212,27 @@ function calculateInvoiceChargeBreakdown_(params) {
   return { treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal, visits };
 }
 
-function buildBillingInvoiceHtml_(item, billingMonth) {
-  const targetMonth = billingMonth || (item && item.billingMonth) || '';
-  const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth: targetMonth }));
-  const monthLabel = normalizeBillingMonthLabel_(targetMonth);
-  const visits = breakdown.visits || 0;
+  function buildBillingInvoiceHtml_(item, billingMonth) {
+    const targetMonth = billingMonth || (item && item.billingMonth) || '';
+    const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth: targetMonth }));
+    const monthLabel = normalizeBillingMonthLabel_(targetMonth);
+    const visits = breakdown.visits || 0;
   const treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
   const transportUnitPrice = TRANSPORT_PRICE;
   const carryOverAmount = normalizeInvoiceMoney_(item && item.carryOverAmount);
   const totalLabel = formatBillingCurrency_(breakdown.grandTotal) + '円';
 
-  const name = (item && item.nameKanji) || '';
-  const address = (item && item.address) || (item && item.raw && item.raw['住所']) || '';
+    const name = escapeHtml_((item && item.nameKanji) || '');
+    const address = escapeHtml_((item && item.address) || (item && item.raw && item.raw['住所']) || '');
 
-  return [
-    '<div class="billing-invoice">',
-    '<h1>べるつりー訪問鍼灸マッサージ</h1>',
-    `<h2>${monthLabel} ご請求書</h2>`,
-    name ? `<p class="patient-name">${name} 様</p>` : '',
-    address ? `<p class="patient-address">${address}</p>` : '',
-    '<div class="charge-breakdown">',
-    `<p>前月繰越: ${formatBillingCurrency_(carryOverAmount)}円</p>`,
+    return [
+      '<div class="billing-invoice">',
+      '<h1>べるつりー訪問鍼灸マッサージ</h1>',
+      `<h2>${escapeHtml_(monthLabel)} ご請求書</h2>`,
+      name ? `<p class="patient-name">${name} 様</p>` : '',
+      address ? `<p class="patient-address">${address}</p>` : '',
+      '<div class="charge-breakdown">',
+      `<p>前月繰越: ${formatBillingCurrency_(carryOverAmount)}円</p>`,
     `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.treatmentAmount)}円</p>`,
     `<p>交通費（${formatBillingCurrency_(transportUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.transportAmount)}円</p>`,
     `<p class="grand-total">合計: ${totalLabel}</p>`,

@@ -61,9 +61,25 @@ function testInvoiceHtmlIncludesBreakdown() {
   assert(html.includes('べるつりー訪問鍼灸マッサージ'), 'タイトルが含まれる');
 }
 
+function testInvoiceHtmlEscapesUserInput() {
+  const html = buildBillingInvoiceHtml_({
+    billingMonth: '202501',
+    visitCount: 1,
+    burdenRate: 1,
+    insuranceType: '鍼灸',
+    nameKanji: '<script>alert(1)</script>',
+    address: '東京都 <b>江東区</b>'
+  }, '202501');
+
+  assert(!html.includes('<script>'), '埋め込みスクリプトはサニタイズされる');
+  assert(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), '氏名はエスケープされる');
+  assert(html.includes('東京都 &lt;b&gt;江東区&lt;/b&gt;'), '住所もHTMLエスケープされる');
+}
+
 function run() {
   testInvoiceChargeBreakdown();
   testInvoiceHtmlIncludesBreakdown();
+  testInvoiceHtmlEscapesUserInput();
   console.log('billingInvoiceLayout tests passed');
 }
 

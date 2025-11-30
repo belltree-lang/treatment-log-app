@@ -5,20 +5,21 @@ const assert = require('assert');
 
 const billingOutputCode = fs.readFileSync(path.join(__dirname, '../src/output/billingOutput.js'), 'utf8');
 
-function createContext() {
-  return {
+function createContext(overrides = {}) {
+  const ctx = Object.assign({
     console,
     MimeType: {
       GOOGLE_SHEETS: 'application/vnd.google-apps.spreadsheet',
       MICROSOFT_EXCEL: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       PDF: 'application/pdf'
     }
-  };
+  }, overrides);
+  vm.createContext(ctx);
+  vm.runInContext(billingOutputCode, ctx);
+  return ctx;
 }
 
 const context = createContext();
-vm.createContext(context);
-vm.runInContext(billingOutputCode, context);
 
 const { calculateInvoiceChargeBreakdown_, buildBillingInvoiceHtml_ } = context;
 
@@ -38,6 +39,21 @@ function testInvoiceChargeBreakdown() {
   assert.strictEqual(breakdown.treatmentAmount, 3336, '施術料が回数に応じて計算される');
   assert.strictEqual(breakdown.transportAmount, 264, '交通費は33円×回数で算定される');
   assert.strictEqual(breakdown.grandTotal, 4600, '合計は繰越+施術料+交通費の和となる');
+}
+
+function testInvoiceChargeBreakdownUsesCustomTransportPrice() {
+  const customContext = createContext({ BILLING_TRANSPORT_UNIT_PRICE: 50 });
+  const { calculateInvoiceChargeBreakdown_ } = customContext;
+
+  const breakdown = calculateInvoiceChargeBreakdown_({
+    visitCount: 4,
+    burdenRate: 2,
+    insuranceType: '鍼灸',
+    carryOverAmount: 0
+  });
+
+  assert.strictEqual(breakdown.transportAmount, 200, '交通費が上書き単価で算出される');
+  assert.strictEqual(breakdown.grandTotal, 3536, '合計にも上書き単価の交通費が反映される');
 }
 
 function testInvoiceHtmlIncludesBreakdown() {
@@ -78,6 +94,7 @@ function testInvoiceHtmlEscapesUserInput() {
 
 function run() {
   testInvoiceChargeBreakdown();
+  testInvoiceChargeBreakdownUsesCustomTransportPrice();
   testInvoiceHtmlIncludesBreakdown();
   testInvoiceHtmlEscapesUserInput();
   console.log('billingInvoiceLayout tests passed');

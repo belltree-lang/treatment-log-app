@@ -28,13 +28,23 @@ const normalizeInvoiceBurdenRateInt_ = typeof normalizeBurdenRateInt_ === 'funct
   };
 
 function convertSpreadsheetToExcelBlob_(file, exportName) {
-  if (!file || typeof file.getMimeType !== 'function' || file.getMimeType() !== MimeType.GOOGLE_SHEETS) {
+  if (!file || typeof file.getMimeType !== 'function') {
+    throw new Error('スプレッドシート以外のファイルをExcelに変換することはできません');
+  }
+
+  const mimeType = file.getMimeType();
+  const isSpreadsheet = mimeType === MimeType.GOOGLE_SHEETS;
+  const isExcel = mimeType === MimeType.MICROSOFT_EXCEL;
+  if (!isSpreadsheet && !isExcel) {
     throw new Error('スプレッドシート以外のファイルをExcelに変換することはできません');
   }
 
   const blob = file.getBlob();
   const name = (exportName && String(exportName).trim()) || 'export';
-  return blob.getAs(MimeType.MICROSOFT_EXCEL).setName(name + '.xlsx');
+  const excelBlob = isSpreadsheet && typeof blob.getAs === 'function'
+    ? blob.getAs(MimeType.MICROSOFT_EXCEL)
+    : blob;
+  return excelBlob.setName(name + '.xlsx');
 }
 
 function normalizeBillingAmount_(item) {

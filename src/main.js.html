@@ -523,8 +523,9 @@ function initBillingPage() {
   }
 })();
 
-if (typeof window !== 'undefined') {
-  window.loadBillingPage = loadBillingPage;
-  window.handleBillingAggregation = handleBillingAggregation;
-  window.handleBillingPdfGeneration = handleBillingPdfGeneration;
+const billingGlobal = typeof window !== 'undefined' ? window : null;
+if (billingGlobal) {
+  billingGlobal.loadBillingPage = loadBillingPage;
+  billingGlobal.handleBillingAggregation = handleBillingAggregation;
+  billingGlobal.handleBillingPdfGeneration = handleBillingPdfGeneration;
 }

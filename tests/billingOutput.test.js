@@ -28,7 +28,10 @@ function createFakeFile(mimeType, tracker) {
         }
       };
     },
-    setName: () => blob
+    setName: name => {
+      blobTracker.setNameCalledWith = name;
+      return { name };
+    }
   };
 
   return {
@@ -67,6 +70,20 @@ function testSpreadsheetBlobIsConverted() {
   assert.strictEqual(tracker.setNameCalledWith, 'export_name.xlsx', 'setName が適切なファイル名で呼ばれる');
 }
 
+function testExcelBlobIsReturnedWithoutConversion() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const tracker = { getAsCalled: false, setNameCalledWith: null };
+  const file = createFakeFile(context.MimeType.MICROSOFT_EXCEL, tracker);
+
+  const result = context.convertSpreadsheetToExcelBlob_(file, 'already_excel');
+  assert.deepStrictEqual(result, { name: 'already_excel.xlsx' }, 'Excel Blob はそのまま返却される');
+  assert.strictEqual(tracker.getAsCalled, false, 'Excel Blob では getAs が呼び出されない');
+  assert.strictEqual(tracker.setNameCalledWith, 'already_excel.xlsx', '既存の Excel にも名称設定が行われる');
+}
+
 function testCustomUnitPriceForSelfPaidInvoice() {
   const context = createContext();
   vm.createContext(context);
@@ -92,6 +109,7 @@ function testCustomUnitPriceForSelfPaidInvoice() {
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
+  testExcelBlobIsReturnedWithoutConversion();
   testCustomUnitPriceForSelfPaidInvoice();
   console.log('billingOutput blob guard tests passed');
 }

@@ -20,6 +20,10 @@ const billingResolveStaffDisplayName_ = typeof resolveStaffDisplayName_ === 'fun
     return parts[0] || normalized;
   };
 
+const billingLogger_ = typeof Logger === 'object' && Logger && typeof Logger.log === 'function'
+  ? Logger
+  : { log: () => {} };
+
 function roundToNearestTen_(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return 0;
@@ -228,7 +232,7 @@ function generateBillingJsonFromSource(sourceData) {
     };
   });
 
-  Logger.log('[billing] generateBillingJsonFromSource raw billingJson: ' + JSON.stringify(billingJson));
+  billingLogger_.log('[billing] generateBillingJsonFromSource raw billingJson: ' + JSON.stringify(billingJson));
   return billingJson;
 }
 

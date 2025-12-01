@@ -53,6 +53,28 @@ function getBillingCache_() {
   }
 }
 
+function clearBillingCache_(key) {
+  if (!key) return;
+  const cache = getBillingCache_();
+  if (!cache || typeof cache.remove !== 'function') return;
+  try {
+    cache.remove(key);
+  } catch (err) {
+    console.warn('[billing] Failed to clear prepared cache', err);
+  }
+}
+
+function validatePreparedBillingPayload_(payload, expectedMonthKey) {
+  if (!payload || typeof payload !== 'object') return { ok: false, reason: 'payload missing' };
+  const billingMonth = payload.billingMonth || payload.month || '';
+  if (!billingMonth) return { ok: false, reason: 'billingMonth missing' };
+  if (expectedMonthKey && String(billingMonth) !== String(expectedMonthKey)) {
+    return { ok: false, reason: 'billingMonth mismatch' };
+  }
+  if (!Array.isArray(payload.billingJson)) return { ok: false, reason: 'billingJson missing' };
+  return { ok: true, billingMonth };
+}
+
 function loadPreparedBilling_(billingMonthKey) {
   const key = buildBillingCacheKey_(billingMonthKey);
   if (!key) return null;
@@ -62,9 +84,17 @@ function loadPreparedBilling_(billingMonthKey) {
   if (!cached) return null;
   Logger.log('[billing] loadPreparedBilling_ raw cache for ' + key + ': ' + cached);
   try {
-    return JSON.parse(cached);
+    const parsed = JSON.parse(cached);
+    const validation = validatePreparedBillingPayload_(parsed, billingMonthKey);
+    if (!validation.ok) {
+      console.warn('[billing] Prepared cache invalid for ' + key + ': ' + validation.reason);
+      clearBillingCache_(key);
+      return null;
+    }
+    return Object.assign({}, parsed, { billingMonth: validation.billingMonth });
   } catch (err) {
     console.warn('[billing] Failed to parse prepared cache', err);
+    clearBillingCache_(key);
     return null;
   }
 }

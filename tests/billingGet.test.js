@@ -49,6 +49,7 @@ vm.runInContext(billingGetCode, context);
 const { normalizeBurdenRateInt_ } = context;
 const { extractUnpaidBillingHistory } = context;
 const { loadTreatmentLogs_ } = context;
+const { billingParseTreatmentTimestamp_ } = context;
 
 if (typeof normalizeBurdenRateInt_ !== 'function') {
   throw new Error('normalizeBurdenRateInt_ failed to load in the test context');
@@ -58,6 +59,9 @@ if (typeof extractUnpaidBillingHistory !== 'function') {
 }
 if (typeof loadTreatmentLogs_ !== 'function') {
   throw new Error('loadTreatmentLogs_ failed to load in the test context');
+}
+if (typeof billingParseTreatmentTimestamp_ !== 'function') {
+  throw new Error('billingParseTreatmentTimestamp_ failed to load in the test context');
 }
 
 function testFullWidthDigitsAreParsed() {
@@ -138,12 +142,30 @@ function testLoadTreatmentLogsDoesNotRequireLogger() {
   assert.strictEqual(logs[0].patientId, '001', '患者IDが保持される');
 }
 
+function testBillingParseTreatmentTimestampParsesSerialStrings() {
+  const serial = '45600.5';
+  const parsed = billingParseTreatmentTimestamp_(serial, null);
+  const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+  const expected = new Date(excelEpoch.getTime() + Math.round(Number(serial) * 24 * 60 * 60 * 1000));
+  assert.strictEqual(Object.prototype.toString.call(parsed), '[object Date]', 'シリアル値がDateに変換される');
+  assert.strictEqual(parsed.toISOString(), expected.toISOString(), 'シリアル文字列と数値で同じ日付になる');
+}
+
+function testBillingParseTreatmentTimestampParsesJapaneseDateText() {
+  const parsed = billingParseTreatmentTimestamp_(undefined, '2024年12月01日');
+  assert.strictEqual(Object.prototype.toString.call(parsed), '[object Date]', '和暦表記でもDateに変換される');
+  assert.strictEqual(parsed.getFullYear(), 2024, '年が正しく解釈される');
+  assert.strictEqual(parsed.getMonth(), 11, '月が正しく解釈される（0始まり）');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
   testPercentageInputsAreRounded();
   testExtractUnpaidBillingHistory();
   testLoadTreatmentLogsDoesNotRequireLogger();
+  testBillingParseTreatmentTimestampParsesSerialStrings();
+  testBillingParseTreatmentTimestampParsesJapaneseDateText();
   console.log('billingGet burden rate tests passed');
 }
 

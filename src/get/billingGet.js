@@ -28,22 +28,55 @@ const billingParseDateFlexible_ = typeof parseDateFlexible_ === 'function'
     return isNaN(parsed.getTime()) ? null : parsed;
   };
 
+const billingLogger_ = typeof Logger === 'object' && Logger && typeof Logger.log === 'function'
+  ? Logger
+  : { log: () => {} };
+
 function billingParseTreatmentTimestamp_(rawValue, displayValue) {
+  const excelSerialToDate = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return null;
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const millis = excelEpoch.getTime() + Math.round(num * 24 * 60 * 60 * 1000);
+    const date = new Date(millis);
+    return isNaN(date.getTime()) ? null : date;
+  };
+
+  const normalizeDateText = text => {
+    if (!text) return '';
+    return String(text)
+      .replace(/[年\.]/g, '/')
+      .replace(/月/g, '/')
+      .replace(/日/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   const tryParse = value => {
     if (value instanceof Date && !isNaN(value.getTime())) return value;
     if (typeof value === 'number' && Number.isFinite(value)) {
-      // Convert Excel/Sheets serial date numbers to JS Date (epoch 1899-12-30).
-      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-      const millis = excelEpoch.getTime() + Math.round(value * 24 * 60 * 60 * 1000);
-      const numericDate = new Date(millis);
-      if (!isNaN(numericDate.getTime())) return numericDate;
+      const numericDate = excelSerialToDate(value);
+      if (numericDate) return numericDate;
     }
     if (value === null || value === undefined) return null;
-    const parsed = billingParseDateFlexible_(value);
+
+    const text = String(value).trim();
+    if (!text) return null;
+    if (/^\d+(\.\d+)?$/.test(text)) {
+      const serialDate = excelSerialToDate(text);
+      if (serialDate) return serialDate;
+    }
+
+    const normalizedText = normalizeDateText(text);
+    const parsed = billingParseDateFlexible_(normalizedText);
     return parsed instanceof Date && !isNaN(parsed.getTime()) ? parsed : null;
   };
 
-  return tryParse(rawValue) || tryParse(displayValue) || null;
+  const parsed = tryParse(rawValue) || tryParse(displayValue) || null;
+  if (!parsed) {
+    billingLogger_.log('[billing] billingParseTreatmentTimestamp_: failed to parse', rawValue, displayValue);
+  }
+  return parsed;
 }
 
 const billingBuildHeaderMap_ = typeof buildHeaderMap_ === 'function'
@@ -184,6 +217,8 @@ function normalizeBillingMonthInput(billingMonth) {
   const start = new Date(year, month - 1, 1);
   const end = new Date(year, month, 1);
   const key = Utilities.formatDate(start, tz, 'yyyyMM');
+
+  billingLogger_.log('[billing] normalizeBillingMonthInput resolved', { input: billingMonth, key, start: start.toISOString(), end: end.toISOString() });
 
   return { year, month, key, start, end, timezone: tz };
 }
@@ -458,7 +493,7 @@ function loadTreatmentLogs_() {
     isDate: log.timestamp instanceof Date,
     isValidDate: log.timestamp instanceof Date && !isNaN(log.timestamp.getTime())
   }));
-  Logger.log('[billing] loadTreatmentLogs_: timestamps=' + JSON.stringify(timestampDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: timestamps=' + JSON.stringify(timestampDebug));
   return logs;
 }
 
@@ -468,11 +503,37 @@ function buildVisitCountMap_(billingMonth) {
   const counts = {};
   const staffHistoryByPatient = {};
   let filteredCount = 0;
+  const debug = {
+    totalLogs: logs.length,
+    missingPatientId: 0,
+    invalidTimestamp: 0,
+    outOfRange: 0,
+    counted: 0,
+    invalidSamples: [],
+    outOfRangeSamples: []
+  };
   logs.forEach(log => {
     const pid = log && log.patientId ? billingNormalizePatientId_(log.patientId) : '';
     const ts = log && log.timestamp;
-    if (!pid || !(ts instanceof Date) || isNaN(ts.getTime())) return;
-    if (ts < month.start || ts >= month.end) return;
+    if (!pid) {
+      debug.missingPatientId += 1;
+      return;
+    }
+    if (!(ts instanceof Date) || isNaN(ts.getTime())) {
+      debug.invalidTimestamp += 1;
+      if (debug.invalidSamples.length < 5) {
+        debug.invalidSamples.push({ pid, timestamp: ts });
+      }
+      return;
+    }
+    if (ts < month.start || ts >= month.end) {
+      debug.outOfRange += 1;
+      if (debug.outOfRangeSamples.length < 5) {
+        debug.outOfRangeSamples.push({ pid, timestamp: ts.toISOString() });
+      }
+      return;
+    }
+    debug.counted += 1;
     filteredCount += 1;
     const current = counts[pid] || { visitCount: 0 };
     current.visitCount += 1;
@@ -504,8 +565,9 @@ function buildVisitCountMap_(billingMonth) {
     map[pid] = sorted;
     return map;
   }, {});
-  Logger.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
-  Logger.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
+  billingLogger_.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
+  billingLogger_.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
+  billingLogger_.log('[billing] buildVisitCountMap_: debug=' + JSON.stringify(debug));
   return { billingMonth: month.key, counts, staffByPatient, staffHistoryByPatient };
 }
 

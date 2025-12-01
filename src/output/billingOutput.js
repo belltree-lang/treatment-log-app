@@ -122,6 +122,16 @@ function normalizeInvoiceVisitCount_(value) {
   return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
+function normalizeInvoiceMedicalAssistanceFlag_(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  const num = Number(value);
+  if (Number.isFinite(num)) return !!num;
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return false;
+  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0;
+}
+
 function normalizeBillingCarryOver_(item) {
   if (!item) return 0;
   const directCarryOver = (item.carryOverAmount != null && item.carryOverAmount !== '')
@@ -239,11 +249,16 @@ function calculateInvoiceChargeBreakdown_(params) {
   const insuranceType = params && params.insuranceType ? String(params.insuranceType).trim() : '';
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
   const carryOverAmount = normalizeBillingCarryOver_(params);
-  const isZeroChargeInsurance = insuranceType === '生保' || insuranceType === '自費';
+  const manualUnitPrice = Number(params && params.unitPrice);
+  const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
+  const isMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
+  const shouldZero = (insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
+  const isZeroChargeInsurance = shouldZero || insuranceType === '自費';
 
   const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
     if (isZeroChargeInsurance) return 0;
-    if (insuranceType === 'マッサージ') return 0;
+    if (insuranceType === 'マッサージ' && !hasManualUnitPrice) return 0;
+    if (hasManualUnitPrice) return manualUnitPrice;
     return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
   })();
   const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;

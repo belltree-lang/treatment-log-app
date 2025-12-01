@@ -497,6 +497,7 @@ function getBillingPatientRecords() {
   const colAccount = resolveBillingColumn_(headers, ['口座番号', '口座No', '口座NO', 'accountNumber', '口座'], '口座番号', { fallbackLetter: 'Q' });
   const colIsNew = resolveBillingColumn_(headers, ['新規', '新患', 'isNew', '新規フラグ', '新規区分'], '新規区分', { fallbackLetter: 'U' });
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
+  const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
 
   return values.map(row => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
@@ -511,6 +512,7 @@ function getBillingPatientRecords() {
       unitPrice: colUnitPrice ? normalizeMoneyValue_(row[colUnitPrice - 1]) : 0,
       address: colAddress ? String(row[colAddress - 1] || '').trim() : '',
       payerType: colPayer ? String(row[colPayer - 1] || '').trim() : '',
+      medicalAssistance: colMedical ? normalizeZeroOneFlag_(row[colMedical - 1]) : 0,
       bankCode: colBank ? String(row[colBank - 1] || '').trim() : '',
       branchCode: colBranch ? String(row[colBranch - 1] || '').trim() : '',
       accountNumber: colAccount ? String(row[colAccount - 1] || '').trim() : '',

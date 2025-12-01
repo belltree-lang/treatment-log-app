@@ -89,10 +89,7 @@ function normalizeBurdenRateDisplay(value) {
 
 function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice) {
   const type = String(insuranceType || '').trim();
-  if (type === '自費') {
-    const custom = normalizeEditNumber(customUnitPrice);
-    return custom > 0 ? custom : 0;
-  }
+  if (type === '自費') return 0;
   if (type === '生保' || type === 'マッサージ') return 0;
   const normalizedBurden = burdenRate === '自費' ? 0 : Number(burdenRate);
   return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedBurden] || BILLING_UNIT_PRICE;
@@ -101,8 +98,9 @@ function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice) {
 function recalculateBillingRow(row) {
   const visits = normalizeEditNumber(row.visitCount);
   const unitPrice = resolveFrontEndUnitPrice(row.insuranceType, row.burdenRate, row.unitPrice);
-  const treatmentAmount = visits > 0 ? unitPrice * visits : 0;
-  const transportAmount = visits > 0 ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const isZeroCharge = row.insuranceType === '生保' || row.insuranceType === '自費';
+  const treatmentAmount = visits > 0 && !isZeroCharge ? unitPrice * visits : 0;
+  const transportAmount = visits > 0 && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
   const carryOverAmount = normalizeEditNumber(row.carryOverAmount);
   const grandTotal = treatmentAmount + transportAmount + carryOverAmount;
   return Object.assign({}, row, {

@@ -239,20 +239,18 @@ function calculateInvoiceChargeBreakdown_(params) {
   const insuranceType = params && params.insuranceType ? String(params.insuranceType).trim() : '';
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
   const carryOverAmount = normalizeBillingCarryOver_(params);
+  const isZeroChargeInsurance = insuranceType === '生保' || insuranceType === '自費';
 
   const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
-    if (insuranceType === '自費') {
-      const custom = normalizeInvoiceMoney_(params && params.unitPrice);
-      return custom > 0 ? custom : 0;
-    }
-    if (insuranceType === '生保' || insuranceType === 'マッサージ') return 0;
+    if (isZeroChargeInsurance) return 0;
+    if (insuranceType === 'マッサージ') return 0;
     return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
   })();
   const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
-  const treatmentAmount = (insuranceType === '自費' || insuranceType === '生保' || insuranceType === 'マッサージ')
+  const treatmentAmount = (isZeroChargeInsurance || insuranceType === 'マッサージ')
     ? rawTreatmentAmount
     : roundToNearestTen_(rawTreatmentAmount);
-  const transportAmount = visits > 0 && insuranceType !== 'マッサージ'
+  const transportAmount = visits > 0 && insuranceType !== 'マッサージ' && !isZeroChargeInsurance
     ? TRANSPORT_PRICE * visits
     : 0;
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;

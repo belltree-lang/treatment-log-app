@@ -107,10 +107,7 @@ function normalizeBurdenRateInt_(burdenRate) {
 
 function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice) {
   const type = String(insuranceType || '').trim();
-  if (type === '自費') {
-    const custom = normalizeMoneyNumber_(customUnitPrice);
-    return custom > 0 ? custom : 0;
-  }
+  if (type === '自費') return 0;
   if (type === '生保' || type === 'マッサージ') return 0;
   return BILLING_UNIT_PRICE;
 }
@@ -120,8 +117,9 @@ function calculateBillingAmounts_(params) {
   const insuranceType = String(params.insuranceType || '').trim();
   const unitPrice = resolveInvoiceUnitPrice_(insuranceType, params.burdenRate, params.unitPrice);
   const isMassage = insuranceType === 'マッサージ';
-  const treatmentAmount = visits > 0 && !isMassage ? unitPrice * visits : 0;
-  const transportAmount = visits > 0 && !isMassage ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const isZeroCharge = insuranceType === '生保' || insuranceType === '自費';
+  const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
+  const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
   const burdenMultiplier = normalizeBurdenMultiplier_(params.burdenRate, insuranceType);
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
   const billingAmount = roundToNearestTen_(treatmentAmount * burdenMultiplier);

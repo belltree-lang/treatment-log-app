@@ -458,7 +458,7 @@ function loadTreatmentLogs_() {
     isDate: log.timestamp instanceof Date,
     isValidDate: log.timestamp instanceof Date && !isNaN(log.timestamp.getTime())
   }));
-  Logger.log('[billing] loadTreatmentLogs_ timestamps: ' + JSON.stringify(timestampDebug));
+  Logger.log('[billing] loadTreatmentLogs_: timestamps=' + JSON.stringify(timestampDebug));
   return logs;
 }
 
@@ -467,11 +467,13 @@ function buildVisitCountMap_(billingMonth) {
   const logs = loadTreatmentLogs_();
   const counts = {};
   const staffHistoryByPatient = {};
+  let filteredCount = 0;
   logs.forEach(log => {
     const pid = log && log.patientId ? billingNormalizePatientId_(log.patientId) : '';
     const ts = log && log.timestamp;
     if (!pid || !(ts instanceof Date) || isNaN(ts.getTime())) return;
     if (ts < month.start || ts >= month.end) return;
+    filteredCount += 1;
     const current = counts[pid] || { visitCount: 0 };
     current.visitCount += 1;
     counts[pid] = current;
@@ -502,6 +504,8 @@ function buildVisitCountMap_(billingMonth) {
     map[pid] = sorted;
     return map;
   }, {});
+  Logger.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
+  Logger.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
   return { billingMonth: month.key, counts, staffByPatient, staffHistoryByPatient };
 }
 

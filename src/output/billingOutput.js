@@ -342,6 +342,151 @@ function generateInvoicePdfs(billingJson, options) {
   return { billingMonth, files };
 }
 
+/***** Bank transfer export helpers *****/
+
+const BANK_TRANSFER_HEADERS = ['請求月', '番号', '氏名（漢字）', '銀行コード', '支店コード', '規定コード', '口座番号', '氏名（カナ）', '新規フラグ'];
+
+function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, billingMonth) {
+  const rows = [];
+  let skipped = 0;
+  const billingMonthKey = billingMonth || (billingJson && billingJson.length ? billingJson[0].billingMonth : '');
+
+  (billingJson || []).forEach(item => {
+    const pid = item && item.patientId ? String(item.patientId).trim() : '';
+    if (!pid) return;
+    const patient = patientMap && patientMap[pid] ? patientMap[pid] : {};
+    const nameKanji = item && item.nameKanji ? String(item.nameKanji).trim() : '';
+    const nameKey = normalizeBillingNameKey_(nameKanji);
+    const bankLookup = bankInfoByName && nameKey ? bankInfoByName[nameKey] : null;
+
+    const bankCode = (bankLookup && bankLookup.bankCode) || patient.bankCode || '';
+    const branchCode = (bankLookup && bankLookup.branchCode) || patient.branchCode || '';
+    const regulationCode = (bankLookup && bankLookup.regulationCode) || patient.regulationCode || 1;
+    const accountNumber = (bankLookup && bankLookup.accountNumber) || patient.accountNumber || '';
+    const nameKana = (bankLookup && bankLookup.nameKana) || patient.nameKana || (item && item.nameKana) || '';
+    const isNew = normalizeZeroOneFlag_((bankLookup && bankLookup.isNew) != null ? bankLookup.isNew : patient.isNew);
+
+    if (!bankCode || !branchCode || !accountNumber) {
+      skipped += 1;
+      return;
+    }
+
+    rows.push({
+      billingMonth: billingMonthKey,
+      patientId: pid,
+      nameKanji,
+      bankCode,
+      branchCode,
+      regulationCode,
+      accountNumber,
+      nameKana,
+      isNew
+    });
+  });
+
+  return { billingMonth: billingMonthKey, rows, skipped };
+}
+
+function ensureBankTransferSheet_() {
+  const workbook = billingSs();
+  let sheet = workbook.getSheetByName(BILLING_BANK_SHEET_NAME);
+  if (!sheet) {
+    sheet = workbook.insertSheet(BILLING_BANK_SHEET_NAME);
+    sheet.getRange(1, 1, 1, BANK_TRANSFER_HEADERS.length).setValues([BANK_TRANSFER_HEADERS]);
+    return { sheet, headers: BANK_TRANSFER_HEADERS.slice() };
+  }
+
+  const lastCol = Math.max(sheet.getLastColumn(), BANK_TRANSFER_HEADERS.length);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  return { sheet, headers };
+}
+
+function resolveBankTransferColumns_(sheet, headers) {
+  const workingHeaders = headers ? headers.slice() : [];
+  const resolved = {};
+
+  function ensureColumn(label, candidates) {
+    const idx = resolveBillingColumn_(workingHeaders, candidates, label, {});
+    if (idx) {
+      resolved[label] = idx;
+      return idx;
+    }
+    const newIndex = workingHeaders.length + 1;
+    sheet.getRange(1, newIndex).setValue(label);
+    workingHeaders.push(label);
+    resolved[label] = newIndex;
+    return newIndex;
+  }
+
+  ensureColumn('請求月', ['請求月', 'billingMonth', '請求年月']);
+  ensureColumn('番号', BILLING_LABELS.recNo.concat(['番号', '患者番号', '患者ID']));
+  ensureColumn('氏名（漢字）', BILLING_LABELS.name.concat(['氏名', '氏名（漢字）']));
+  ensureColumn('銀行コード', ['銀行コード', '銀行CD', '銀行番号', 'bankCode']);
+  ensureColumn('支店コード', ['支店コード', '支店番号', '支店CD', 'branchCode']);
+  ensureColumn('規定コード', ['規定コード', '規定', '規定CD', '規定コード(1固定)', '1固定']);
+  ensureColumn('口座番号', ['口座番号', '口座No', '口座NO', 'accountNumber', '口座']);
+  ensureColumn('氏名（カナ）', BILLING_LABELS.furigana.concat(['氏名（カナ）']));
+  ensureColumn('新規フラグ', ['新規', '新患', 'isNew', '新規フラグ', '新規区分']);
+
+  return { columns: resolved, headers: workingHeaders };
+}
+
+function exportBankTransferRows_(billingMonth, rowObjects) {
+  const ensured = ensureBankTransferSheet_();
+  const sheet = ensured.sheet;
+  const { columns, headers } = resolveBankTransferColumns_(sheet, ensured.headers);
+  const colCount = Math.max(sheet.getLastColumn(), headers.length, Math.max.apply(null, Object.values(columns)));
+
+  const lastRow = sheet.getLastRow();
+  const existingValues = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, colCount).getValues() : [];
+  const filtered = columns['請求月']
+    ? existingValues.filter(row => String(row[columns['請求月'] - 1] || '').trim() !== String(billingMonth))
+    : existingValues;
+
+  const mapped = (rowObjects || []).map(obj => {
+    const row = new Array(colCount).fill('');
+    row[columns['請求月'] - 1] = billingMonth;
+    row[columns['番号'] - 1] = obj.patientId || '';
+    row[columns['氏名（漢字）'] - 1] = obj.nameKanji || '';
+    row[columns['銀行コード'] - 1] = obj.bankCode || '';
+    row[columns['支店コード'] - 1] = obj.branchCode || '';
+    row[columns['規定コード'] - 1] = obj.regulationCode || '';
+    row[columns['口座番号'] - 1] = obj.accountNumber || '';
+    row[columns['氏名（カナ）'] - 1] = obj.nameKana || '';
+    row[columns['新規フラグ'] - 1] = obj.isNew || '';
+    return row;
+  });
+
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, colCount).clearContent();
+  }
+  const newRows = filtered.concat(mapped);
+  if (newRows.length) {
+    sheet.getRange(2, 1, newRows.length, colCount).setValues(newRows);
+  }
+
+  return { billingMonth, inserted: mapped.length };
+}
+
+function exportBankTransferDataForPrepared_(prepared) {
+  if (!prepared || !prepared.billingJson) {
+    throw new Error('請求データが見つかりません。先に集計を実行してください。');
+  }
+  let bankInfoByName = prepared.bankInfoByName || {};
+  let patientMap = prepared.patients || prepared.patientMap || {};
+  if (!Object.keys(bankInfoByName).length || !Object.keys(patientMap).length) {
+    const source = getBillingSourceData(prepared.billingMonth);
+    bankInfoByName = source.bankInfoByName || bankInfoByName;
+    patientMap = source.patients || source.patientMap || patientMap;
+    if (!prepared.billingJson || !prepared.billingJson.length) {
+      prepared.billingJson = generateBillingJsonFromSource(source);
+    }
+  }
+  const buildResult = buildBankTransferRowsForBilling_(prepared.billingJson, bankInfoByName, patientMap, prepared.billingMonth);
+  const outputResult = exportBankTransferRows_(buildResult.billingMonth, buildResult.rows);
+  return Object.assign({}, buildResult, outputResult);
+}
+
 /***** Billing history and payment result utilities (retained for compatibility) *****/
 
 function ensureBillingHistorySheet_() {

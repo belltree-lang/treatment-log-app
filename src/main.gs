@@ -95,10 +95,24 @@ function buildPreparedBillingPayload_(billingMonth) {
   };
 }
 
+function toClientBillingPayload_(prepared) {
+  if (!prepared) return null;
+  return {
+    billingMonth: prepared.billingMonth || '',
+    billingJson: Array.isArray(prepared.billingJson) ? prepared.billingJson : [],
+    preparedAt: prepared.preparedAt || null,
+    patients: prepared.patients || {},
+    bankInfoByName: prepared.bankInfoByName || {},
+    staffByPatient: prepared.staffByPatient || {},
+    staffDirectory: prepared.staffDirectory || {},
+    staffDisplayByPatient: prepared.staffDisplayByPatient || {}
+  };
+}
+
 function prepareBillingData(billingMonth) {
   const prepared = buildPreparedBillingPayload_(billingMonth);
   savePreparedBilling_(prepared);
-  return prepared;
+  return toClientBillingPayload_(prepared);
 }
 
 /**

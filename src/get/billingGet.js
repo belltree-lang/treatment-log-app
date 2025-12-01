@@ -28,9 +28,21 @@ const billingParseDateFlexible_ = typeof parseDateFlexible_ === 'function'
     return isNaN(parsed.getTime()) ? null : parsed;
   };
 
-const billingLogger_ = typeof Logger === 'object' && Logger && typeof Logger.log === 'function'
-  ? Logger
-  : { log: () => {} };
+const billingLogger_ = (() => {
+  try {
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      return { log: (...args) => Logger.log(...args) };
+    }
+  } catch (err) {
+    // ignore logging setup errors and fall back to console
+  }
+
+  const fallback = typeof console !== 'undefined' && console && typeof console.log === 'function'
+    ? (...args) => console.log(...args)
+    : () => {};
+
+  return { log: fallback };
+})();
 
 function billingParseTreatmentTimestamp_(rawValue, displayValue) {
   const excelSerialToDate = (value) => {

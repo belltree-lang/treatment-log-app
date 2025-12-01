@@ -198,19 +198,21 @@ function formatInvoiceFileName_(item) {
 }
 
 function buildInvoiceTemplateData_(item) {
-  const visits = normalizeInvoiceVisitCount_(item && item.visitCount);
-  const unitPrice = normalizeInvoiceMoney_(item && item.unitPrice);
-  const monthLabel = normalizeBillingMonthLabel_(item && item.billingMonth);
+  const billingMonth = item && item.billingMonth;
+  const monthLabel = normalizeBillingMonthLabel_(billingMonth);
+  const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
+  const visits = breakdown.visits || 0;
+  const unitPrice = breakdown.treatmentUnitPrice || 0;
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
-    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: normalizeInvoiceMoney_(item && item.treatmentAmount) },
-    { label: '交通費', detail: formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回', amount: normalizeInvoiceMoney_(item && item.transportAmount) }
+    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
+    { label: '交通費', detail: formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回', amount: breakdown.transportAmount }
   ];
 
   return Object.assign({}, item, {
     monthLabel,
     rows,
-    grandTotal: normalizeInvoiceMoney_(item && item.grandTotal)
+    grandTotal: breakdown.grandTotal
   });
 }
 

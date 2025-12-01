@@ -21,7 +21,7 @@ function createContext(overrides = {}) {
 
 const context = createContext();
 
-const { calculateInvoiceChargeBreakdown_, buildBillingInvoiceHtml_ } = context;
+const { calculateInvoiceChargeBreakdown_, buildBillingInvoiceHtml_, buildInvoiceTemplateData_ } = context;
 
 if (typeof calculateInvoiceChargeBreakdown_ !== 'function' || typeof buildBillingInvoiceHtml_ !== 'function') {
   throw new Error('Invoice helpers failed to load in the test context');
@@ -92,11 +92,28 @@ function testInvoiceHtmlEscapesUserInput() {
   assert(!html.includes('江東区'), '住所は出力に含まれない');
 }
 
+function testInvoiceTemplateRecalculatesSelfPaidBreakdown() {
+  const data = buildInvoiceTemplateData_({
+    billingMonth: '202501',
+    insuranceType: '自費',
+    unitPrice: 3333,
+    visitCount: 1,
+    treatmentAmount: 1000,
+    transportAmount: 0,
+    grandTotal: 1000
+  });
+
+  assert.strictEqual(data.rows[1].amount, 3333, '請求書テンプレートでも手動単価をそのまま乗算する');
+  assert.strictEqual(data.rows[2].amount, 33, '自費でも交通費を自動計算する');
+  assert.strictEqual(data.grandTotal, 3366, '合計は再計算された施術料と交通費に基づく');
+}
+
 function run() {
   testInvoiceChargeBreakdown();
   testInvoiceChargeBreakdownUsesCustomTransportPrice();
   testInvoiceHtmlIncludesBreakdown();
   testInvoiceHtmlEscapesUserInput();
+  testInvoiceTemplateRecalculatesSelfPaidBreakdown();
   console.log('billingInvoiceLayout tests passed');
 }
 

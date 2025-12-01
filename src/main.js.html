@@ -83,11 +83,36 @@ function normalizeYm(raw) {
 }
 
 function logBillingState(stage, extra) {
+  let snapshot = billingState;
   try {
-    const snapshot = JSON.parse(JSON.stringify(billingState));
+    snapshot = JSON.parse(JSON.stringify(billingState));
     console.log('[billingState][' + stage + ']', snapshot, extra || '');
   } catch (err) {
     console.log('[billingState][' + stage + '] (serialization failed)', err, billingState, extra || '');
+  }
+
+  try {
+    const debugEl = qs('billingDebug');
+    if (debugEl) {
+      const resultLength = snapshot && snapshot.result && Array.isArray(snapshot.result.billingJson)
+        ? snapshot.result.billingJson.length
+        : 0;
+      const preparedLength = snapshot && snapshot.prepared && Array.isArray(snapshot.prepared.billingJson)
+        ? snapshot.prepared.billingJson.length
+        : 0;
+      const extraText = extra ? JSON.stringify(extra) : '';
+      const lines = [
+        `[${new Date().toISOString()}] stage: ${stage}`,
+        `  result rows: ${resultLength}`,
+        `  prepared rows: ${preparedLength}`,
+        `  loading: ${!!snapshot.loading}`,
+        `  status: ${snapshot.statusMessage || ''}`,
+        `  extra: ${extraText}`
+      ];
+      debugEl.textContent += (debugEl.textContent ? '\n' : '') + lines.join('\n') + '\n';
+    }
+  } catch (err) {
+    console.log('[billingState][' + stage + '] (ui log failed)', err);
   }
 }
 
@@ -381,10 +406,17 @@ function handleBillingAggregation() {
     alert('請求月を入力してください (YYYY-MM)');
     return;
   }
+  logBillingState('handleBillingAggregation:start', { ym });
   setBillingLoading(true, '集計中…');
   google.script.run
-    .withSuccessHandler(onBillingPrepared)
-    .withFailureHandler(onBillingFailed)
+    .withSuccessHandler(function(result) {
+      logBillingState('prepareBillingData:success', { ym });
+      onBillingPrepared(result);
+    })
+    .withFailureHandler(function(err) {
+      logBillingState('prepareBillingData:error', { ym, error: err && err.message ? err.message : err });
+      onBillingFailed(err);
+    })
     .prepareBillingData(ym);
 }
 

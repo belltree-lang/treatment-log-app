@@ -140,6 +140,19 @@ function testSelfPaidDefaultsToZeroWithoutManualUnitPrice() {
   assert.strictEqual(result.grandTotal, 500, '繰越額のみが合計に反映される');
 }
 
+function testSelfPaidManualPriceIsNotRounded() {
+  const result = calculateBillingAmounts_({
+    visitCount: 1,
+    insuranceType: '自費',
+    unitPrice: 3333,
+    carryOverAmount: 0
+  });
+
+  assert.strictEqual(result.treatmentAmount, 3333, '自費の手動単価はそのまま乗算される');
+  assert.strictEqual(result.billingAmount, 3333, '自費では10円単位に丸めず請求する');
+  assert.strictEqual(result.grandTotal, 3366, '施術料と交通費を合算した金額が保持される');
+}
+
 function run() {
   testBurdenRateDigitConversion();
   testMassageBillingExclusion();
@@ -149,6 +162,7 @@ function run() {
   testCustomTransportUnitPriceIsUsed();
   testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice();
   testSelfPaidDefaultsToZeroWithoutManualUnitPrice();
+  testSelfPaidManualPriceIsNotRounded();
   console.log('billingLogic tests passed');
 }
 

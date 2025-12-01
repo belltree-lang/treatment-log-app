@@ -253,6 +253,7 @@ function calculateInvoiceChargeBreakdown_(params) {
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
   const isMassage = insuranceType === 'マッサージ';
+  const isSelfPaid = insuranceType === '自費';
   const shouldZero = (insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
   const isZeroChargeInsurance = shouldZero || (insuranceType === '自費' && !hasManualUnitPrice);
 
@@ -266,7 +267,7 @@ function calculateInvoiceChargeBreakdown_(params) {
   const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
   const treatmentAmount = (isZeroChargeInsurance || isMassage)
     ? rawTreatmentAmount
-    : roundToNearestTen_(rawTreatmentAmount);
+    : (isSelfPaid ? rawTreatmentAmount : roundToNearestTen_(rawTreatmentAmount));
   const transportAmount = visits > 0 && !isMassage && !isZeroChargeInsurance
     ? TRANSPORT_PRICE * visits
     : 0;

@@ -344,6 +344,20 @@ function normalizeZeroOneFlag_(value) {
   return isNaN(num) ? 0 : (num ? 1 : 0);
 }
 
+function extractEmailFallback_(raw, displayValue) {
+  const candidates = [];
+  const inputs = [raw, displayValue];
+  for (let i = 0; i < inputs.length; i++) {
+    const value = inputs[i];
+    if (value == null) continue;
+    const text = String(value).trim();
+    if (!text) continue;
+    const matched = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+    candidates.push(matched ? matched[0] : text);
+  }
+  return candidates.find(Boolean) || '';
+}
+
 function normalizeBankStatus_(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -399,15 +413,20 @@ function loadTreatmentLogs_() {
   );
 
   const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const displayValues = colCreatedBy ? sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues() : [];
   return values.map((row, idx) => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
     const dateCell = row[colDate - 1];
     const timestamp = dateCell instanceof Date ? dateCell : billingParseDateFlexible_(dateCell);
+    const createdByDisplay = colCreatedBy && displayValues[idx] ? displayValues[idx][colCreatedBy - 1] : '';
+    const createdByEmail = colCreatedBy
+      ? extractEmailFallback_(row[colCreatedBy - 1], createdByDisplay)
+      : '';
     return {
       rowNumber: idx + 2,
       patientId: pid,
       timestamp,
-      createdByEmail: colCreatedBy ? String(row[colCreatedBy - 1] || '').trim() : '',
+      createdByEmail,
       raw: row
     };
   });

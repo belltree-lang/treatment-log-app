@@ -87,6 +87,8 @@ function buildPreparedBillingPayload_(billingMonth) {
     billingMonth: source.billingMonth,
     billingJson,
     preparedAt: new Date().toISOString(),
+    patients: source.patients || source.patientMap || {},
+    bankInfoByName: source.bankInfoByName || {},
     staffByPatient: source.staffByPatient || {},
     staffDirectory: source.staffDirectory || {},
     staffDisplayByPatient: source.staffDisplayByPatient || {}
@@ -135,10 +137,13 @@ function generatePreparedInvoices_(prepared, options) {
   }
   const outputOptions = Object.assign({}, options, { billingMonth: prepared.billingMonth });
   const pdfs = generateInvoicePdfs(prepared.billingJson, outputOptions);
+  const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
+  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(prepared) : null;
   return {
     billingMonth: prepared.billingMonth,
     billingJson: prepared.billingJson,
     files: pdfs.files,
+    bankOutput,
     preparedAt: prepared.preparedAt || null
   };
 }
@@ -254,6 +259,21 @@ function applyBillingEdits(billingMonth, options) {
 function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   const prepared = applyBillingEdits(billingMonth, options);
   return generatePreparedInvoices_(prepared, options || {});
+}
+
+function generateBankTransferData(billingMonth, options) {
+  const prepared = buildPreparedBillingPayload_(billingMonth);
+  savePreparedBilling_(prepared);
+  return exportBankTransferDataForPrepared_(prepared, options || {});
+}
+
+function generateBankTransferDataFromCache(billingMonth, options) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const prepared = loadPreparedBilling_(month.key);
+  if (!prepared || !prepared.billingJson) {
+    throw new Error('事前集計が見つかりません。先に「請求データを集計」を実行してください。');
+  }
+  return exportBankTransferDataForPrepared_(prepared, options || {});
 }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

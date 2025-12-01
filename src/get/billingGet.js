@@ -144,9 +144,6 @@ const BILLING_PATIENT_SHEET_NAME = '患者情報';
 const BILLING_BANK_SHEET_NAME = '銀行情報';
 const BILLING_BANK_STATUS_ALLOWLIST = ['OK', 'NO_DOCUMENT', 'INSUFFICIENT', 'NOT_FOUND'];
 const BILLING_PAID_STATUS_ALLOWLIST = ['回収', '未回収', '手続き中', '手続中', 'エラー'];
-const billingLogger_ = typeof Logger === 'object' && Logger && typeof Logger.log === 'function'
-  ? Logger
-  : { log: () => {} };
 
 /**
  * YYYYMM 形式の請求月を正規化
@@ -461,7 +458,7 @@ function loadTreatmentLogs_() {
     isDate: log.timestamp instanceof Date,
     isValidDate: log.timestamp instanceof Date && !isNaN(log.timestamp.getTime())
   }));
-  billingLogger_.log('[billing] loadTreatmentLogs_ timestamps: ' + JSON.stringify(timestampDebug));
+  Logger.log('[billing] loadTreatmentLogs_ timestamps: ' + JSON.stringify(timestampDebug));
   return logs;
 }
 

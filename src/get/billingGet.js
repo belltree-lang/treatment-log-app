@@ -433,7 +433,7 @@ function loadTreatmentLogs_() {
   const range = sheet.getRange(2, 1, lastRow - 1, width);
   const values = range.getValues();
   const displayValues = range.getDisplayValues();
-  return values.map((row, idx) => {
+  const logs = values.map((row, idx) => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
     const dateCell = row[colDate - 1];
     const displayRow = displayValues[idx] || [];
@@ -450,6 +450,16 @@ function loadTreatmentLogs_() {
       raw: row
     };
   });
+
+  const timestampDebug = logs.map(log => ({
+    rowNumber: log.rowNumber,
+    patientId: log.patientId,
+    timestamp: log.timestamp instanceof Date ? log.timestamp.toISOString() : String(log.timestamp),
+    isDate: log.timestamp instanceof Date,
+    isValidDate: log.timestamp instanceof Date && !isNaN(log.timestamp.getTime())
+  }));
+  Logger.log('[billing] loadTreatmentLogs_ timestamps: ' + JSON.stringify(timestampDebug));
+  return logs;
 }
 
 function buildVisitCountMap_(billingMonth) {

@@ -10,6 +10,7 @@ const billingState = {
 };
 
 const BILLING_INSURANCE_OPTIONS = ['後期高齢', '国保', '社保', '生保', '自費'];
+const BILLING_DEPRECATED_INSURANCE_TYPES = ['マッサージ'];
 const BILLING_BURDEN_OPTIONS = [
   { value: 1, label: '1割' },
   { value: 2, label: '2割' },
@@ -104,6 +105,11 @@ function normalizeMedicalAssistanceFlag(value) {
   return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].includes(text);
 }
 
+function isDeprecatedInsuranceType(value) {
+  if (!value) return false;
+  return BILLING_DEPRECATED_INSURANCE_TYPES.includes(String(value).trim());
+}
+
 function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, medicalAssistance) {
   const type = String(insuranceType || '').trim();
   const manualUnitPrice = Number(customUnitPrice);
@@ -111,7 +117,7 @@ function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, me
   const isMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
   if ((type === '生保' || isMedicalAssistance) && !hasManualUnitPrice) return 0;
   if (type === '自費') return 0;
-  if (type === 'マッサージ' && !hasManualUnitPrice) return 0;
+  if (isDeprecatedInsuranceType(type) && !hasManualUnitPrice) return 0;
   if (hasManualUnitPrice) return manualUnitPrice;
   const normalizedBurden = burdenRate === '自費' ? 0 : Number(burdenRate);
   return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedBurden] || BILLING_UNIT_PRICE;
@@ -125,7 +131,7 @@ function recalculateBillingRow(row) {
   const isMedicalAssistance = normalizeMedicalAssistanceFlag(row.medicalAssistance);
   const shouldZeroByAssistance = (row.insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
   const isZeroCharge = shouldZeroByAssistance || row.insuranceType === '自費';
-  const isMassage = row.insuranceType === 'マッサージ';
+  const isMassage = isDeprecatedInsuranceType(row.insuranceType);
   const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
   const carryOverAmount = normalizeEditNumber(row.carryOverAmount);
@@ -190,8 +196,6 @@ function resolveBillingSortValue(row, field) {
       return Number(row.grandTotal) || 0;
     case 'responsible':
       return getResponsibleDisplay(row);
-    case 'address':
-      return row.address || '';
     case 'patientId':
       return row.patientId || '';
     default:
@@ -459,7 +463,6 @@ function renderBillingResult() {
     { key: 'patientId', label: '患者ID', sortable: true },
     { key: 'nameKanji', label: '氏名', sortable: true },
     { key: 'responsible', label: '担当者', sortable: true },
-    { key: 'address', label: '住所', sortable: true },
     { key: 'insuranceType', label: '保険種別', sortable: true },
     { key: 'medicalAssistance', label: '医療助成', sortable: false },
     { key: 'payerType', label: '保険者', sortable: false },
@@ -489,10 +492,13 @@ function renderBillingResult() {
     const viewClass = alignRight ? 'cell-edit right' : 'cell-edit';
     if (editing) {
       if (field === 'insuranceType') {
-        const options = BILLING_INSURANCE_OPTIONS.indexOf(item.insuranceType) >= 0
-          ? BILLING_INSURANCE_OPTIONS
-          : BILLING_INSURANCE_OPTIONS.concat(item.insuranceType || []);
-        return `<select class="${editClass}" ${baseAttrs}>${options.map(opt => `<option value="${opt}" ${opt === item.insuranceType ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
+        const needsUpdate = isDeprecatedInsuranceType(item.insuranceType);
+        const options = BILLING_INSURANCE_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.insuranceType ? 'selected' : ''}>${opt}</option>`).join('');
+        const select = `<select class="${editClass}" ${baseAttrs}>${needsUpdate ? '<option value="" disabled selected>保険種別を選択</option>' : ''}${options}</select>`;
+        if (needsUpdate) {
+          return `<div class="insurance-editor">${select}<div class="field-note warn">以前の「マッサージ」種別が設定されています。現在の保険種別を選び直してください。</div></div>`;
+        }
+        return select;
       }
       if (field === 'burdenRate') {
         return `<select class="${editClass}" ${baseAttrs}>${BILLING_BURDEN_OPTIONS.map(opt => `<option value="${opt.value}" ${String(opt.value) === String(item.burdenRate) ? 'selected' : ''}>${opt.label}</option>`).join('')}</select>`;
@@ -513,6 +519,7 @@ function renderBillingResult() {
     const display = (() => {
       switch (field) {
         case 'insuranceType':
+          if (isDeprecatedInsuranceType(item.insuranceType)) return '要修正: マッサージ';
           return item.insuranceType || '編集';
         case 'medicalAssistance':
           return normalizeMedicalAssistanceFlag(item.medicalAssistance) ? '有' : 'なし';
@@ -531,7 +538,16 @@ function renderBillingResult() {
     return `<button type="button" class="${viewClass}" ${baseAttrs} aria-label="${field} を編集">${display}</button>`;
   }
 
+  const legacyRows = rows.filter(row => isDeprecatedInsuranceType(row.insuranceType));
+  const notices = [];
+  if (legacyRows.length) {
+    const sample = legacyRows.slice(0, 3).map(r => (r.nameKanji || r.patientId || '不明')).join('／');
+    const overflow = legacyRows.length > 3 ? `、ほか ${legacyRows.length - 3} 名` : '';
+    notices.push(`<div class="alert warn">「マッサージ」保険種別は廃止されました。${sample}${overflow} に古い種別が残っています。保険種別を選び直してください。</div>`);
+  }
+
   const tableHtml = [
+    ...notices,
     '<table><thead><tr>',
     header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',
@@ -540,7 +556,6 @@ function renderBillingResult() {
         <td>${item.patientId || ''}</td>
         <td>${item.nameKanji || ''}</td>
         <td>${getResponsibleDisplay(item) || '—'}</td>
-        <td>${item.address || ''}</td>
         <td>${renderEditableCell(item, 'insuranceType')}</td>
         <td>${renderEditableCell(item, 'medicalAssistance')}</td>
         <td>${renderEditableCell(item, 'payerType')}</td>
@@ -552,12 +567,34 @@ function renderBillingResult() {
         <td class="right">${renderEditableCell(item, 'carryOverAmount', true)}</td>
         <td class="right">${formatCurrency(item.grandTotal)}</td>
       </tr>`),
-    '</tbody></table>'
+    '</tbody></table>',
+    renderBillingActionFooter(rows && rows.length > 0)
   ].join('');
 
   box.innerHTML = tableHtml;
   attachBillingEditHandlers();
   attachBillingSortHandlers();
+}
+
+function renderBillingActionFooter(hasRows) {
+  if (!hasRows) return '';
+  const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
+  const loading = billingState.loading;
+  const saveDisabled = loading || !prepared;
+  const pdfDisabled = loading || !prepared;
+  const helper = prepared
+    ? '編集を保存したら、そのままPDF生成へ進めます。'
+    : '先に「請求データを集計」を実行すると保存・PDF生成が有効になります。';
+  return `
+    <div class="action-footer">
+      <div>
+        <div class="muted">${helper}</div>
+      </div>
+      <div class="action-buttons">
+        <button class="btn secondary" type="button" onclick="handleBillingSaveEdits()" ${saveDisabled ? 'disabled' : ''}>変更を保存</button>
+        <button class="btn" type="button" onclick="handleBillingPdfGeneration()" ${pdfDisabled ? 'disabled' : ''}>PDF生成＆担当者フォルダ保存</button>
+      </div>
+    </div>`;
 }
 
 function attachBillingEditHandlers() {

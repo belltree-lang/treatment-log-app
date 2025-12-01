@@ -91,7 +91,6 @@
           <td>${esc(r.leadId)}</td>
           <td>${esc(r.name)}</td>
           <td>${esc(String(r.phone))}</td>
-          <td>${esc(r.address)}</td>
           <td>${esc(r.complaint)}</td>
           <td><span class="muted">${esc(when)}</span></td>
           <td>${esc(r.status)}</td>
@@ -121,7 +120,6 @@
             <th>LeadID</th>
             <th>お名前</th>
             <th>電話</th>
-            <th>住所</th>
             <th>主訴・既往歴 等</th>
             <th>更新</th>
             <th>ステータス</th>
@@ -141,7 +139,7 @@ function toggleCandidates(leadId){
     console.log("候補受信:", list);
     const tr = document.createElement("tr");
     tr.id = "candRow_"+leadId;
-    tr.innerHTML = `<td colspan="9">
+    tr.innerHTML = `<td colspan="8">
       ${list.length ? renderCandidateTable(list) : '<div class="muted">候補なし</div>'}
     </td>`;
     const targetRow = document.getElementById("row_"+leadId);

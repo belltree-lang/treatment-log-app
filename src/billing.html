@@ -57,6 +57,13 @@
   .summary-value{ margin:4px 0 0; font-size:1.2rem; font-weight:700; }
   .spinner{ width:16px; height:16px; border-radius:50%; border:3px solid rgba(37,99,235,0.3); border-top-color:var(--brand); animation:spin .8s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
+  .alert{ border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin:6px 0 12px; background:#f8fafc; }
+  .alert.warn{ border-color:#fecdd3; background:#fff1f2; color:#991b1b; }
+  .field-note{ font-size:0.85rem; margin-top:6px; color:var(--muted); }
+  .field-note.warn{ color:#991b1b; }
+  .insurance-editor select{ width:100%; }
+  .action-footer{ margin-top:12px; padding:12px 14px; border:1px dashed var(--border); border-radius:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; background:#f8fafc; }
+  .action-buttons{ display:flex; gap:8px; flex-wrap:wrap; }
   @media (max-width: 900px){
     .layout{ grid-template-columns:1fr; }
     .sidebar{ flex-direction:row; flex-wrap:wrap; align-items:center; }

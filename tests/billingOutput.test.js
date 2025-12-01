@@ -122,10 +122,10 @@ function testCustomUnitPriceForSelfPaidInvoice() {
     carryOverAmount: 1000
   });
 
-  assert.strictEqual(result.treatmentUnitPrice, 0, '自費は常に施術料0円となる');
-  assert.strictEqual(result.treatmentAmount, 0, '自費では訪問回数があっても施術料0円');
-  assert.strictEqual(result.transportAmount, 0, '自費では交通費も請求しない');
-  assert.strictEqual(result.grandTotal, 1000, '繰越のみが合計に反映される');
+  assert.strictEqual(result.treatmentUnitPrice, 5000, '自費でも手動入力の単価が優先される');
+  assert.strictEqual(result.treatmentAmount, 10000, '自費で単価が指定された場合は施術料を計上する');
+  assert.strictEqual(result.transportAmount, 66, '自費で単価を入力した場合でも交通費を計上する');
+  assert.strictEqual(result.grandTotal, 11066, '手動単価と交通費・繰越を合算して出力する');
 }
 
 function testFullWidthInputsAreNormalized() {
@@ -142,9 +142,26 @@ function testFullWidthInputsAreNormalized() {
   });
 
   assert.strictEqual(breakdown.visits, 2, '全角の回数も計上される');
-  assert.strictEqual(breakdown.treatmentUnitPrice, 0, '自費は単価入力があっても0円となる');
-  assert.strictEqual(breakdown.transportAmount, 0, '自費では交通費が計上されない');
-  assert.strictEqual(breakdown.grandTotal, 1000, '全角入力でも繰越のみが合計となる');
+  assert.strictEqual(breakdown.treatmentUnitPrice, 5000, '全角入力の単価も自費で優先される');
+  assert.strictEqual(breakdown.transportAmount, 66, '全角入力でも交通費が計上される');
+  assert.strictEqual(breakdown.grandTotal, 11066, '全角入力でも合計に反映される');
+}
+
+function testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: '自費',
+    burdenRate: '',
+    visitCount: 3,
+    carryOverAmount: 500
+  });
+
+  assert.strictEqual(breakdown.treatmentUnitPrice, 0, '単価未設定の自費は施術料0円となる');
+  assert.strictEqual(breakdown.transportAmount, 0, '単価未設定なら交通費は計上されない');
+  assert.strictEqual(breakdown.grandTotal, 500, '繰越のみが合計に残る');
 }
 
 function testInsuranceBillingIsRoundedToNearestTen() {
@@ -220,6 +237,7 @@ function run() {
   testBillingAmountFallsBackToTotals();
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
+  testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
   testInsuranceBillingIsRoundedToNearestTen();
   testWelfareBillingStillAddsTransport();
   testMassageBillingDoesNotChargeTransport();

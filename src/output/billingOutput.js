@@ -249,23 +249,25 @@ function calculateInvoiceChargeBreakdown_(params) {
   const insuranceType = params && params.insuranceType ? String(params.insuranceType).trim() : '';
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
   const carryOverAmount = normalizeBillingCarryOver_(params);
-  const manualUnitPrice = Number(params && params.unitPrice);
+  const manualUnitPrice = normalizeInvoiceMoney_(params && params.unitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
+  const isMassage = insuranceType === 'マッサージ';
   const shouldZero = (insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
-  const isZeroChargeInsurance = shouldZero || insuranceType === '自費';
+  const isZeroChargeInsurance = shouldZero || (insuranceType === '自費' && !hasManualUnitPrice);
 
   const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
-    if (isZeroChargeInsurance) return 0;
-    if (insuranceType === 'マッサージ' && !hasManualUnitPrice) return 0;
+    if (shouldZero) return 0;
+    if (isMassage) return 0;
     if (hasManualUnitPrice) return manualUnitPrice;
+    if (insuranceType === '自費') return 0;
     return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
   })();
   const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
-  const treatmentAmount = (isZeroChargeInsurance || insuranceType === 'マッサージ')
+  const treatmentAmount = (isZeroChargeInsurance || isMassage)
     ? rawTreatmentAmount
     : roundToNearestTen_(rawTreatmentAmount);
-  const transportAmount = visits > 0 && insuranceType !== 'マッサージ' && !isZeroChargeInsurance
+  const transportAmount = visits > 0 && !isMassage && !isZeroChargeInsurance
     ? TRANSPORT_PRICE * visits
     : 0;
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
@@ -284,14 +286,12 @@ function calculateInvoiceChargeBreakdown_(params) {
   const totalLabel = formatBillingCurrency_(breakdown.grandTotal) + '円';
 
     const name = escapeHtml_((item && item.nameKanji) || '');
-    const address = escapeHtml_((item && item.address) || (item && item.raw && item.raw['住所']) || '');
 
     return [
       '<div class="billing-invoice">',
       '<h1>べるつりー訪問鍼灸マッサージ</h1>',
       `<h2>${escapeHtml_(monthLabel)} ご請求書</h2>`,
       name ? `<p class="patient-name">${name} 様</p>` : '',
-      address ? `<p class="patient-address">${address}</p>` : '',
       '<div class="charge-breakdown">',
       `<p>前月繰越: ${formatBillingCurrency_(carryOverAmount)}円</p>`,
     `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.treatmentAmount)}円</p>`,

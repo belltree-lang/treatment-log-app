@@ -123,9 +123,9 @@ function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, me
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
   if ((type === '生保' || isMedicalAssistance) && !hasManualUnitPrice) return 0;
-  if (type === '自費') return 0;
-  if (isDeprecatedInsuranceType(type) && !hasManualUnitPrice) return 0;
+  if (isDeprecatedInsuranceType(type)) return 0;
   if (hasManualUnitPrice) return manualUnitPrice;
+  if (type === '自費') return 0;
   const normalizedBurden = burdenRate === '自費' ? 0 : Number(burdenRate);
   return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedBurden] || BILLING_UNIT_PRICE;
 }
@@ -137,7 +137,7 @@ function recalculateBillingRow(row) {
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isMedicalAssistance = normalizeMedicalAssistanceFlag(row.medicalAssistance);
   const shouldZeroByAssistance = (row.insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
-  const isZeroCharge = shouldZeroByAssistance || row.insuranceType === '自費';
+  const isZeroCharge = shouldZeroByAssistance || (row.insuranceType === '自費' && !hasManualUnitPrice);
   const isMassage = isDeprecatedInsuranceType(row.insuranceType);
   const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;

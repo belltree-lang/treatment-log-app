@@ -89,7 +89,7 @@ function testInvoiceHtmlEscapesUserInput() {
 
   assert(!html.includes('<script>'), '埋め込みスクリプトはサニタイズされる');
   assert(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), '氏名はエスケープされる');
-  assert(html.includes('東京都 &lt;b&gt;江東区&lt;/b&gt;'), '住所もHTMLエスケープされる');
+  assert(!html.includes('江東区'), '住所は出力に含まれない');
 }
 
 function run() {

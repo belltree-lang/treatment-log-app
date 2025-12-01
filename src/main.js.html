@@ -180,6 +180,12 @@ function resolveBillingSortValue(row, field) {
       return Number(row.unitPrice) || 0;
     case 'visitCount':
       return Number(row.visitCount) || 0;
+    case 'treatmentAmount':
+      return Number(row.treatmentAmount) || 0;
+    case 'transportAmount':
+      return Number(row.transportAmount) || 0;
+    case 'carryOverAmount':
+      return Number(row.carryOverAmount) || 0;
     case 'grandTotal':
       return Number(row.grandTotal) || 0;
     case 'responsible':
@@ -213,6 +219,14 @@ function sortBillingRows(rows) {
 function getDisplayBillingRows() {
   const merged = getMergedBillingRows();
   return sortBillingRows(merged);
+}
+
+function calculateBillingSummary(rows) {
+  return (rows || []).reduce((acc, row) => {
+    acc.totalVisits += Number(row.visitCount) || 0;
+    acc.totalGrandTotal += Number(row.grandTotal) || 0;
+    return acc;
+  }, { totalVisits: 0, totalGrandTotal: 0 });
 }
 
 function toggleBillingSort(field) {
@@ -397,6 +411,28 @@ function renderMonthBadge(result) {
   }
 }
 
+function renderBillingSummary(rows) {
+  const box = qs('billingSummary');
+  if (!box) return;
+  if (!rows || !rows.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  const summary = calculateBillingSummary(rows);
+  box.style.display = '';
+  box.innerHTML = `
+    <div class="summary-card">
+      <p class="summary-label">総施術回数</p>
+      <p class="summary-value">${summary.totalVisits.toLocaleString()} 回</p>
+    </div>
+    <div class="summary-card">
+      <p class="summary-label">請求合計金額</p>
+      <p class="summary-value">${formatCurrency(summary.totalGrandTotal)}</p>
+    </div>
+  `;
+}
+
 function renderBillingResult() {
   updateBillingControls();
   const box = qs('billingResult');
@@ -405,17 +441,20 @@ function renderBillingResult() {
   renderBillingStatus(result);
   renderDownloads(result);
   renderMonthBadge(result);
+  renderBillingSummary(null);
 
   if (billingState.loading) {
     box.innerHTML = '<div class="loading"><span class="spinner"></span>請求データを生成中です…</div>';
     return;
   }
   if (!result || !result.billingJson || !result.billingJson.length) {
+    renderBillingSummary(null);
     box.innerHTML = '<div class="muted">まだ請求を生成していません。</div>';
     return;
   }
 
   const rows = getDisplayBillingRows();
+  renderBillingSummary(rows);
   const header = [
     { key: 'patientId', label: '患者ID', sortable: true },
     { key: 'nameKanji', label: '氏名', sortable: true },
@@ -427,9 +466,9 @@ function renderBillingResult() {
     { key: 'burdenRate', label: '負担', sortable: true },
     { key: 'visitCount', label: '回数', sortable: true },
     { key: 'unitPrice', label: '単価', sortable: true },
-    { key: 'treatmentAmount', label: '施術料', sortable: false },
-    { key: 'transportAmount', label: '交通費', sortable: false },
-    { key: 'carryOverAmount', label: '繰越', sortable: false },
+    { key: 'treatmentAmount', label: '施術料', sortable: true },
+    { key: 'transportAmount', label: '交通費', sortable: true },
+    { key: 'carryOverAmount', label: '繰越', sortable: true },
     { key: 'grandTotal', label: '合計', sortable: true }
   ];
 
@@ -500,7 +539,7 @@ function renderBillingResult() {
       <tr>
         <td>${item.patientId || ''}</td>
         <td>${item.nameKanji || ''}</td>
-        <td>${getResponsibleDisplay(item)}</td>
+        <td>${getResponsibleDisplay(item) || '—'}</td>
         <td>${item.address || ''}</td>
         <td>${renderEditableCell(item, 'insuranceType')}</td>
         <td>${renderEditableCell(item, 'medicalAssistance')}</td>

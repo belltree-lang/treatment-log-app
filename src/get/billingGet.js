@@ -1,5 +1,9 @@
 /***** Get layer: billing data retrieval *****/
 
+const Logger = typeof globalThis !== 'undefined' && globalThis.Logger
+  ? globalThis.Logger
+  : { log: () => {} };
+
 /**
  * Provide local fallbacks for shared helpers so the billing pipeline can run
  * without depending on Code.js ordering.

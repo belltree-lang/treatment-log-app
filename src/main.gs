@@ -5,6 +5,10 @@
  * callers can preview JSON or generate patient invoice PDFs for a given billing month.
  */
 
+const Logger = typeof globalThis !== 'undefined' && globalThis.Logger
+  ? globalThis.Logger
+  : { log: () => {} };
+
 function doGet(e) {
   const template = HtmlService.createTemplateFromFile('billing');
   template.baseUrl = ScriptApp.getService().getUrl() || '';

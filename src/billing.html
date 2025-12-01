@@ -51,6 +51,10 @@
   .download-link svg{ width:16px; height:16px; }
   .status-line{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   .loading{ display:flex; gap:8px; align-items:center; color:var(--muted); }
+  .summary-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin:12px 0 4px; }
+  .summary-card{ border:1px solid var(--border); border-radius:12px; padding:10px 12px; background:#f8fafc; }
+  .summary-label{ font-size:0.85rem; color:var(--muted); margin:0; }
+  .summary-value{ margin:4px 0 0; font-size:1.2rem; font-weight:700; }
   .spinner{ width:16px; height:16px; border-radius:50%; border:3px solid rgba(37,99,235,0.3); border-top-color:var(--brand); animation:spin .8s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
   @media (max-width: 900px){
@@ -91,6 +95,7 @@
         <div id="billingMonthLabel" class="pill ok" style="display:none"></div>
       </div>
       <div id="downloads" class="downloads"></div>
+      <div id="billingSummary" class="summary-grid" style="display:none"></div>
       <div id="billingResult" class="muted">まだ請求を生成していません。</div>
     </section>
   </main>

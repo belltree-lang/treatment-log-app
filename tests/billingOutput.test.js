@@ -164,6 +164,22 @@ function testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice() {
   assert.strictEqual(breakdown.grandTotal, 500, '繰越のみが合計に残る');
 }
 
+function testSelfPaidInvoiceDoesNotRoundManualUnitPrice() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: '自費',
+    unitPrice: 3333,
+    visitCount: 1,
+    carryOverAmount: 0
+  });
+
+  assert.strictEqual(breakdown.treatmentAmount, 3333, '自費の手動単価は四捨五入せずに計上する');
+  assert.strictEqual(breakdown.grandTotal, 3366, '施術料と交通費の合計をそのまま出力する');
+}
+
 function testInsuranceBillingIsRoundedToNearestTen() {
   const context = createContext();
   vm.createContext(context);
@@ -238,6 +254,7 @@ function run() {
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
+  testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testInsuranceBillingIsRoundedToNearestTen();
   testWelfareBillingStillAddsTransport();
   testMassageBillingDoesNotChargeTransport();

@@ -134,18 +134,21 @@ function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice, me
 function calculateBillingAmounts_(params) {
   const visits = normalizeVisitCount_(params.visitCount);
   const insuranceType = String(params.insuranceType || '').trim();
+  const isSelfPaid = insuranceType === '自費';
   const medicalAssistance = normalizeMedicalAssistanceFlag_(params.medicalAssistance);
   const manualUnitPrice = normalizeMoneyNumber_(params.unitPrice);
   const unitPrice = resolveInvoiceUnitPrice_(insuranceType, params.burdenRate, manualUnitPrice, medicalAssistance);
   const isMassage = insuranceType === 'マッサージ';
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const shouldZero = (insuranceType === '生保' || medicalAssistance) && !hasManualUnitPrice;
-  const isZeroCharge = shouldZero || (insuranceType === '自費' && !hasManualUnitPrice);
+  const isZeroCharge = shouldZero || (isSelfPaid && !hasManualUnitPrice);
   const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
   const burdenMultiplier = normalizeBurdenMultiplier_(params.burdenRate, insuranceType);
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
-  const billingAmount = roundToNearestTen_(treatmentAmount * burdenMultiplier);
+  const billingAmount = isSelfPaid
+    ? treatmentAmount
+    : roundToNearestTen_(treatmentAmount * burdenMultiplier);
   const total = treatmentAmount + transportAmount;
   const grandTotal = billingAmount + transportAmount + carryOverAmount;
 

@@ -361,7 +361,8 @@ function normalizeBillingResultPayload(raw) {
     return [];
   })();
 
-  return Object.assign({ billingJson }, result);
+  // Ensure sanitized billingJson always wins over raw payload values.
+  return Object.assign({}, result, { billingJson });
 }
 
 function handleBillingAggregation() {

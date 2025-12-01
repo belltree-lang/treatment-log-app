@@ -28,6 +28,24 @@ const billingParseDateFlexible_ = typeof parseDateFlexible_ === 'function'
     return isNaN(parsed.getTime()) ? null : parsed;
   };
 
+function billingParseTreatmentTimestamp_(rawValue, displayValue) {
+  const tryParse = value => {
+    if (value instanceof Date && !isNaN(value.getTime())) return value;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      // Convert Excel/Sheets serial date numbers to JS Date (epoch 1899-12-30).
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const millis = excelEpoch.getTime() + Math.round(value * 24 * 60 * 60 * 1000);
+      const numericDate = new Date(millis);
+      if (!isNaN(numericDate.getTime())) return numericDate;
+    }
+    if (value === null || value === undefined) return null;
+    const parsed = billingParseDateFlexible_(value);
+    return parsed instanceof Date && !isNaN(parsed.getTime()) ? parsed : null;
+  };
+
+  return tryParse(rawValue) || tryParse(displayValue) || null;
+}
+
 const billingBuildHeaderMap_ = typeof buildHeaderMap_ === 'function'
   ? buildHeaderMap_
   : function buildHeaderMap_(headersRow) {
@@ -412,13 +430,15 @@ function loadTreatmentLogs_() {
     { fallbackLetter: 'E' }
   );
 
-  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
-  const displayValues = colCreatedBy ? sheet.getRange(2, 1, lastRow - 1, width).getDisplayValues() : [];
+  const range = sheet.getRange(2, 1, lastRow - 1, width);
+  const values = range.getValues();
+  const displayValues = range.getDisplayValues();
   return values.map((row, idx) => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
     const dateCell = row[colDate - 1];
-    const timestamp = dateCell instanceof Date ? dateCell : billingParseDateFlexible_(dateCell);
-    const createdByDisplay = colCreatedBy && displayValues[idx] ? displayValues[idx][colCreatedBy - 1] : '';
+    const displayRow = displayValues[idx] || [];
+    const timestamp = billingParseTreatmentTimestamp_(dateCell, displayRow[colDate - 1]);
+    const createdByDisplay = colCreatedBy && displayRow ? displayRow[colCreatedBy - 1] : '';
     const createdByEmail = colCreatedBy
       ? extractEmailFallback_(row[colCreatedBy - 1], createdByDisplay)
       : '';

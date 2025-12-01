@@ -108,7 +108,7 @@ function testCustomTransportUnitPriceIsUsed() {
   assert.strictEqual(result.grandTotal, 2600, '合計も上書き単価を反映する');
 }
 
-function testFullWidthNumbersAreParsed() {
+function testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice() {
   const result = calculateBillingAmounts_({
     visitCount: '４',
     insuranceType: '自費',
@@ -118,9 +118,26 @@ function testFullWidthNumbersAreParsed() {
   });
 
   assert.strictEqual(result.visits, 4, '全角の回数も集計対象になる');
-  assert.strictEqual(result.unitPrice, 0, '自費は単価入力があっても0円となる');
+  assert.strictEqual(result.unitPrice, 4170, '自費でも手動入力の単価が優先される');
+  assert.strictEqual(result.treatmentAmount, 16680, '自費で単価が指定された場合は施術料を計上する');
+  assert.strictEqual(result.transportAmount, 132, '自費で単価を入力した場合でも交通費を計上する');
   assert.strictEqual(result.carryOverAmount, 1500, '全角の繰越額も数値化される');
-  assert.strictEqual(result.grandTotal, 1500, '自費では繰越のみが合計になる');
+  assert.strictEqual(result.grandTotal, 18312, '手動単価と繰越・交通費を合算した金額になる');
+}
+
+function testSelfPaidDefaultsToZeroWithoutManualUnitPrice() {
+  const result = calculateBillingAmounts_({
+    visitCount: 3,
+    insuranceType: '自費',
+    burdenRate: 2,
+    unitPrice: '',
+    carryOverAmount: 500
+  });
+
+  assert.strictEqual(result.unitPrice, 0, '単価未設定の自費は0円のまま');
+  assert.strictEqual(result.treatmentAmount, 0, '単価未設定なら施術料は計上しない');
+  assert.strictEqual(result.transportAmount, 0, '単価未設定なら交通費も計上しない');
+  assert.strictEqual(result.grandTotal, 500, '繰越額のみが合計に反映される');
 }
 
 function run() {
@@ -130,7 +147,8 @@ function run() {
   testPaidStatusIsIncludedInBillingJson();
   testCarryOverIncludesUnpaidHistory();
   testCustomTransportUnitPriceIsUsed();
-  testFullWidthNumbersAreParsed();
+  testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice();
+  testSelfPaidDefaultsToZeroWithoutManualUnitPrice();
   console.log('billingLogic tests passed');
 }
 

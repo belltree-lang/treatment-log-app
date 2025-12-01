@@ -60,6 +60,7 @@ function loadPreparedBilling_(billingMonthKey) {
   if (!cache) return null;
   const cached = cache.get(key);
   if (!cached) return null;
+  Logger.log('[billing] loadPreparedBilling_ raw cache for ' + key + ': ' + cached);
   try {
     return JSON.parse(cached);
   } catch (err) {

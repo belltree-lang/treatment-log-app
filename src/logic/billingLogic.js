@@ -175,7 +175,7 @@ function generateBillingJsonFromSource(sourceData) {
   } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
 
-  return patientIds.map(pid => {
+  const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
     const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
     const staffEmails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : (staffByPatient[pid] ? [staffByPatient[pid]] : []);
@@ -224,6 +224,9 @@ function generateBillingJsonFromSource(sourceData) {
       paidStatus: bankStatusEntry && bankStatusEntry.paidStatus ? bankStatusEntry.paidStatus : ''
     };
   });
+
+  Logger.log('[billing] generateBillingJsonFromSource raw billingJson: ' + JSON.stringify(billingJson));
+  return billingJson;
 }
 
 function simulateBillingGeneration(sourceData) {

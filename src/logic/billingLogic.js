@@ -62,6 +62,7 @@ function normalizeBillingSource_(source) {
   const staffDisplayByPatient = source.staffDisplayByPatient || {};
   const bankStatuses = source.bankStatuses || {};
   const carryOverByPatient = source.carryOverByPatient || {};
+  billingLogger_.log('[billing] patients keys=' + JSON.stringify(Object.keys(patientMap)));
   return {
     billingMonth,
     patients: patientMap,
@@ -232,7 +233,8 @@ function generateBillingJsonFromSource(sourceData) {
     };
   });
 
-  billingLogger_.log('[billing] generateBillingJsonFromSource raw billingJson: ' + JSON.stringify(billingJson));
+  billingLogger_.log('[billing] raw billingJson=' + JSON.stringify(billingJson));
+  billingLogger_.log('[billing] billingJson length=' + billingJson.length);
   return billingJson;
 }
 

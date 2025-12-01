@@ -95,17 +95,36 @@ function buildPreparedBillingPayload_(billingMonth) {
   };
 }
 
+function coerceBillingJsonArray_(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      console.warn('[billing] Failed to parse billingJson string', err);
+    }
+  }
+  return [];
+}
+
+function normalizePreparedBilling_(payload) {
+  if (!payload) return null;
+  return Object.assign({}, payload, { billingJson: coerceBillingJsonArray_(payload.billingJson) });
+}
+
 function toClientBillingPayload_(prepared) {
-  if (!prepared) return null;
+  const normalized = normalizePreparedBilling_(prepared);
+  if (!normalized) return null;
   return {
-    billingMonth: prepared.billingMonth || '',
-    billingJson: Array.isArray(prepared.billingJson) ? prepared.billingJson : [],
-    preparedAt: prepared.preparedAt || null,
-    patients: prepared.patients || {},
-    bankInfoByName: prepared.bankInfoByName || {},
-    staffByPatient: prepared.staffByPatient || {},
-    staffDirectory: prepared.staffDirectory || {},
-    staffDisplayByPatient: prepared.staffDisplayByPatient || {}
+    billingMonth: normalized.billingMonth || '',
+    billingJson: normalized.billingJson,
+    preparedAt: normalized.preparedAt || null,
+    patients: normalized.patients || {},
+    bankInfoByName: normalized.bankInfoByName || {},
+    staffByPatient: normalized.staffByPatient || {},
+    staffDirectory: normalized.staffDirectory || {},
+    staffDisplayByPatient: normalized.staffDisplayByPatient || {}
   };
 }
 
@@ -146,25 +165,26 @@ function generateInvoices(billingMonth, options) {
 }
 
 function generatePreparedInvoices_(prepared, options) {
-  if (!prepared || !prepared.billingJson) {
+  const normalized = normalizePreparedBilling_(prepared);
+  if (!normalized || !normalized.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
-  const outputOptions = Object.assign({}, options, { billingMonth: prepared.billingMonth });
-  const pdfs = generateInvoicePdfs(prepared.billingJson, outputOptions);
+  const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth });
+  const pdfs = generateInvoicePdfs(normalized.billingJson, outputOptions);
   const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
-  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(prepared) : null;
+  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(normalized) : null;
   return {
-    billingMonth: prepared.billingMonth,
-    billingJson: prepared.billingJson,
+    billingMonth: normalized.billingMonth,
+    billingJson: normalized.billingJson,
     files: pdfs.files,
     bankOutput,
-    preparedAt: prepared.preparedAt || null
+    preparedAt: normalized.preparedAt || null
   };
 }
 
 function generateInvoicesFromCache(billingMonth, options) {
   const month = normalizeBillingMonthInput(billingMonth);
-  const prepared = loadPreparedBilling_(month.key);
+  const prepared = normalizePreparedBilling_(loadPreparedBilling_(month.key));
   if (!prepared || !prepared.billingJson) {
     throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
   }

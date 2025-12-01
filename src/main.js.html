@@ -25,7 +25,6 @@ const BILLING_TRANSPORT_UNIT_PRICE_FALLBACK = 33;
 const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeof globalThis.BILLING_TRANSPORT_UNIT_PRICE === 'number')
   ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
-const BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
 function qs(id) {
   return document.getElementById(id);
@@ -90,14 +89,56 @@ function setBillingLoading(flag, message) {
 }
 
 function normalizeEditNumber(value) {
-  if (value === '' || value === null || value === undefined) return 0;
-  const num = Number(value);
+  return normalizeMoneyNumber(value);
+}
+
+function normalizeMoneyNumber(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+  const text = String(value || '')
+    .normalize('NFKC')
+    .replace(/[，,]/g, '')
+    .trim();
+  if (!text) return 0;
+  const num = Number(text);
   return Number.isFinite(num) ? num : 0;
+}
+
+function normalizeVisitCount(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+  const normalized = String(value || '')
+    .normalize('NFKC')
+    .replace(/[，,]/g, '')
+    .trim();
+  const num = Number(normalized);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+}
+
+function normalizeBurdenRateInt(value) {
+  if (value == null || value === '') return 0;
+  const num = Number(value);
+  if (Number.isFinite(num)) {
+    if (num > 0 && num < 1) return Math.round(num * 10);
+    if (num >= 1 && num < 10) return Math.round(num);
+    if (num >= 10 && num <= 100) return Math.round(num / 10);
+  }
+
+  const normalized = String(value).normalize('NFKC').replace(/\s+/g, '').replace('％', '%');
+  const withoutUnits = normalized.replace(/割|分/g, '').replace('%', '');
+  const parsed = Number(withoutUnits);
+  if (!Number.isFinite(parsed)) return 0;
+  if (normalized.indexOf('%') >= 0) return Math.round(parsed / 10);
+  if (parsed > 0 && parsed < 10) return Math.round(parsed);
+  if (parsed >= 10 && parsed <= 100) return Math.round(parsed / 10);
+  return 0;
 }
 
 function normalizeBurdenRateDisplay(value) {
   if (value === '自費') return '自費';
-  const num = Number(value);
+  const num = normalizeBurdenRateInt(value);
   if (!Number.isFinite(num) || num <= 0) return '';
   return num + '割';
 }
@@ -119,21 +160,22 @@ function isDeprecatedInsuranceType(value) {
 
 function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, medicalAssistance) {
   const type = String(insuranceType || '').trim();
-  const manualUnitPrice = Number(customUnitPrice);
+  const manualUnitPrice = normalizeMoneyNumber(customUnitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
   if ((type === '生保' || isMedicalAssistance) && !hasManualUnitPrice) return 0;
   if (isDeprecatedInsuranceType(type)) return 0;
   if (hasManualUnitPrice) return manualUnitPrice;
   if (type === '自費') return 0;
-  const normalizedBurden = burdenRate === '自費' ? 0 : Number(burdenRate);
-  return BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN[normalizedBurden] || BILLING_UNIT_PRICE;
+  return BILLING_UNIT_PRICE;
 }
 
 function recalculateBillingRow(row) {
-  const visits = normalizeEditNumber(row.visitCount);
-  const unitPrice = resolveFrontEndUnitPrice(row.insuranceType, row.burdenRate, row.unitPrice, row.medicalAssistance);
-  const manualUnitPrice = Number(row.unitPrice);
+  const visits = normalizeVisitCount(row.visitCount);
+  const normalizedBurden = row.burdenRate === '自費' ? '自費' : normalizeBurdenRateInt(row.burdenRate);
+  const normalizedUnitPrice = normalizeMoneyNumber(row.unitPrice);
+  const unitPrice = resolveFrontEndUnitPrice(row.insuranceType, normalizedBurden, normalizedUnitPrice, row.medicalAssistance);
+  const manualUnitPrice = normalizeMoneyNumber(row.unitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isMedicalAssistance = normalizeMedicalAssistanceFlag(row.medicalAssistance);
   const shouldZeroByAssistance = (row.insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
@@ -141,9 +183,10 @@ function recalculateBillingRow(row) {
   const isMassage = isDeprecatedInsuranceType(row.insuranceType);
   const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
-  const carryOverAmount = normalizeEditNumber(row.carryOverAmount);
+  const carryOverAmount = normalizeMoneyNumber(row.carryOverAmount);
   const grandTotal = treatmentAmount + transportAmount + carryOverAmount;
   return Object.assign({}, row, {
+    burdenRate: normalizedBurden,
     unitPrice,
     treatmentAmount,
     transportAmount,
@@ -157,12 +200,20 @@ function getBillingBaseUrl() {
 }
 
 function getMergedBillingRows() {
-  const baseRows = (billingState.result && billingState.result.billingJson) || [];
+  const baseRows = Array.isArray(billingState.result && billingState.result.billingJson)
+    ? billingState.result.billingJson
+    : [];
   return baseRows.map(row => {
-    const edits = billingState.edits[row.patientId] || {};
-    const merged = Object.assign({}, row, edits);
-    return recalculateBillingRow(merged);
-  });
+    try {
+      const baseRow = row && typeof row === 'object' ? row : {};
+      const edits = billingState.edits[baseRow.patientId] || {};
+      const merged = Object.assign({}, baseRow, edits);
+      return recalculateBillingRow(merged);
+    } catch (err) {
+      console.error('Failed to merge billing row', err, row);
+      return null;
+    }
+  }).filter(Boolean);
 }
 
 function getResponsibleDisplay(item) {
@@ -212,7 +263,7 @@ function resolveBillingSortValue(row, field) {
 
 function sortBillingRows(rows) {
   const sort = billingState.sort || {};
-  if (!sort.field) return rows;
+  if (!sort.field || !Array.isArray(rows)) return rows || [];
   const dir = sort.direction === 'desc' ? -1 : 1;
   return rows.slice().sort((a, b) => {
     const va = resolveBillingSortValue(a, sort.field);
@@ -234,6 +285,7 @@ function getDisplayBillingRows() {
 
 function calculateBillingSummary(rows) {
   return (rows || []).reduce((acc, row) => {
+    if (!row || typeof row !== 'object') return acc;
     acc.totalVisits += Number(row.visitCount) || 0;
     acc.totalGrandTotal += Number(row.grandTotal) || 0;
     return acc;
@@ -265,28 +317,51 @@ function startBillingEdit(patientId, field) {
 }
 
 function ensureBillingRoute() {
-  const baseUrl = getBillingBaseUrl();
-  if (!baseUrl || typeof window === 'undefined') return;
-  const targetUrl = baseUrl + '?view=billing';
-  if (typeof google !== 'undefined' && google.script && google.script.history && typeof google.script.history.replace === 'function') {
-    // Use Apps Script history API inside IFRAME sandbox to avoid invalid URL errors.
-    google.script.history.replace(null, { view: 'billing' });
-    return;
-  }
-
-  try {
-    const currentUrl = new URL(window.location.href);
-    const target = new URL(targetUrl, currentUrl);
-    if (target.origin === currentUrl.origin && window.location.href !== target.toString()) {
-      window.history.replaceState({}, '', target.toString());
-    }
-  } catch (err) {
-    console.warn('Failed to update billing route', err);
+  // Routing is managed in-memory to avoid sandboxed URL mutations that raise SecurityError.
+  if (typeof window !== 'undefined') {
+    window.APP_CONFIG = Object.assign({}, window.APP_CONFIG, { view: 'billing' });
   }
 }
 
 function loadBillingPage() {
   initBillingPage();
+}
+
+function normalizeBillingResultPayload(raw) {
+  if (!raw) return null;
+  let result = raw;
+  if (typeof raw === 'string') {
+    try {
+      result = JSON.parse(raw);
+    } catch (err) {
+      console.warn('Failed to parse billing payload text', err);
+      return null;
+    }
+  }
+
+  if (Array.isArray(result)) {
+    return { billingJson: result, billingMonth: '', preparedAt: null };
+  }
+
+  if (result && typeof result === 'object' && result.result && typeof result.result === 'object') {
+    result = result.result;
+  }
+
+  const billingJson = (() => {
+    if (Array.isArray(result.billingJson)) return result.billingJson;
+    if (typeof result.billingJson === 'string') {
+      try {
+        const parsed = JSON.parse(result.billingJson);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (err) {
+        console.warn('Failed to parse billingJson string', err);
+        return [];
+      }
+    }
+    return [];
+  })();
+
+  return Object.assign({ billingJson }, result);
 }
 
 function handleBillingAggregation() {
@@ -303,8 +378,9 @@ function handleBillingAggregation() {
 }
 
 function onBillingPrepared(result) {
-  billingState.result = result || null;
-  billingState.prepared = result || null;
+  const normalized = normalizeBillingResultPayload(result);
+  billingState.result = normalized;
+  billingState.prepared = normalized;
   billingState.loading = false;
   billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
   billingState.edits = {};
@@ -327,8 +403,9 @@ function handleBillingPdfGeneration() {
 }
 
 function onBillingPdfCompleted(result) {
-  billingState.result = result || null;
-  billingState.prepared = result || billingState.prepared;
+  const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
+  billingState.result = normalized;
+  billingState.prepared = normalized;
   billingState.loading = false;
   billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
   billingState.edits = {};
@@ -583,27 +660,39 @@ function renderBillingResult() {
     notices.push(`<div class="alert warn">「マッサージ」保険種別は廃止されました。${sample}${overflow} に古い種別が残っています。保険種別を選び直してください。</div>`);
   }
 
+  const bodyRows = [];
+  rows.forEach(item => {
+    try {
+      const safeItem = item && typeof item === 'object' ? item : {};
+      bodyRows.push(`
+      <tr>
+        <td>${safeItem.patientId || ''}</td>
+        <td>${safeItem.nameKanji || ''}</td>
+        <td>${getResponsibleDisplay(safeItem) || '—'}</td>
+        <td>${renderEditableCell(safeItem, 'insuranceType')}</td>
+        <td>${renderEditableCell(safeItem, 'medicalAssistance')}</td>
+        <td>${renderEditableCell(safeItem, 'payerType')}</td>
+        <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
+        <td>${safeItem.visitCount || 0}</td>
+        <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
+        <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
+        <td class="right">${formatCurrency(safeItem.transportAmount)}</td>
+        <td class="right">${renderEditableCell(safeItem, 'carryOverAmount', true)}</td>
+        <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
+      </tr>`);
+    } catch (err) {
+      console.error('Failed to render billing row', err, item);
+      const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';
+      bodyRows.push(`<tr class="error-row"><td colspan="13">${pid}</td></tr>`);
+    }
+  });
+
   const tableHtml = [
     ...notices,
     '<table><thead><tr>',
     header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',
-    ...rows.map(item => `
-      <tr>
-        <td>${item.patientId || ''}</td>
-        <td>${item.nameKanji || ''}</td>
-        <td>${getResponsibleDisplay(item) || '—'}</td>
-        <td>${renderEditableCell(item, 'insuranceType')}</td>
-        <td>${renderEditableCell(item, 'medicalAssistance')}</td>
-        <td>${renderEditableCell(item, 'payerType')}</td>
-        <td>${renderEditableCell(item, 'burdenRate')}</td>
-        <td>${item.visitCount || 0}</td>
-        <td class="right">${renderEditableCell(item, 'unitPrice', true)}</td>
-        <td class="right">${formatCurrency(item.treatmentAmount)}</td>
-        <td class="right">${formatCurrency(item.transportAmount)}</td>
-        <td class="right">${renderEditableCell(item, 'carryOverAmount', true)}</td>
-        <td class="right">${formatCurrency(item.grandTotal)}</td>
-      </tr>`),
+    ...bodyRows,
     '</tbody></table>',
     renderBillingActionFooter(rows && rows.length > 0)
   ].join('');
@@ -650,13 +739,16 @@ function attachBillingEditHandlers() {
       const field = this.getAttribute('data-edit-field');
       let value = this.value;
       if (this.type === 'checkbox') {
-        value = this.checked;
+        value = normalizeMedicalAssistanceFlag(this.checked);
       }
-      if (field === 'burdenRate' && value !== '自費') {
-        value = Number(value);
+      if (field === 'burdenRate') {
+        value = value === '自費' ? '自費' : normalizeBurdenRateInt(value);
       }
       if (field === 'unitPrice' || field === 'carryOverAmount') {
-        value = Number(value);
+        value = normalizeMoneyNumber(value);
+      }
+      if (field === 'visitCount') {
+        value = normalizeVisitCount(value);
       }
       commitBillingEdit(pid, field, value);
     };

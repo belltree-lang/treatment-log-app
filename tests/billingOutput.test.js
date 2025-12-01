@@ -122,10 +122,10 @@ function testCustomUnitPriceForSelfPaidInvoice() {
     carryOverAmount: 1000
   });
 
-  assert.strictEqual(result.treatmentUnitPrice, 5000, '自費の場合はカスタム単価を使用する');
-  assert.strictEqual(result.treatmentAmount, 10000, '単価と訪問回数から施術料が算出される');
-  assert.strictEqual(result.transportAmount, 66, '自費でも交通費が計上される');
-  assert.strictEqual(result.grandTotal, 11066, '繰越分も含めて合計が算出される');
+  assert.strictEqual(result.treatmentUnitPrice, 0, '自費は常に施術料0円となる');
+  assert.strictEqual(result.treatmentAmount, 0, '自費では訪問回数があっても施術料0円');
+  assert.strictEqual(result.transportAmount, 0, '自費では交通費も請求しない');
+  assert.strictEqual(result.grandTotal, 1000, '繰越のみが合計に反映される');
 }
 
 function testFullWidthInputsAreNormalized() {
@@ -142,9 +142,9 @@ function testFullWidthInputsAreNormalized() {
   });
 
   assert.strictEqual(breakdown.visits, 2, '全角の回数も計上される');
-  assert.strictEqual(breakdown.treatmentUnitPrice, 5000, '全角の単価が正しく解釈される');
-  assert.strictEqual(breakdown.transportAmount, 66, '全角入力でも交通費が算出される');
-  assert.strictEqual(breakdown.grandTotal, 11066, '全角入力でも合計が正しく算出される');
+  assert.strictEqual(breakdown.treatmentUnitPrice, 0, '自費は単価入力があっても0円となる');
+  assert.strictEqual(breakdown.transportAmount, 0, '自費では交通費が計上されない');
+  assert.strictEqual(breakdown.grandTotal, 1000, '全角入力でも繰越のみが合計となる');
 }
 
 function testInsuranceBillingIsRoundedToNearestTen() {
@@ -176,8 +176,8 @@ function testWelfareBillingStillAddsTransport() {
   });
 
   assert.strictEqual(breakdown.treatmentAmount, 0, '生保は施術料が0円のまま');
-  assert.strictEqual(breakdown.transportAmount, 165, '生保でも交通費が回数分計上される');
-  assert.strictEqual(breakdown.grandTotal, 165, '交通費のみの請求でも合計に反映される');
+  assert.strictEqual(breakdown.transportAmount, 0, '生保では交通費を請求しない');
+  assert.strictEqual(breakdown.grandTotal, 0, '交通費なしの場合は合計も0円となる');
 }
 
 function testMassageBillingDoesNotChargeTransport() {

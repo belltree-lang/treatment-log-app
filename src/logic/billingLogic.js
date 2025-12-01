@@ -20,9 +20,19 @@ const billingResolveStaffDisplayName_ = typeof resolveStaffDisplayName_ === 'fun
     return parts[0] || normalized;
   };
 
-const billingLogger_ = typeof Logger === 'object' && Logger && typeof Logger.log === 'function'
-  ? Logger
-  : { log: () => {} };
+const billingLogger_ = (() => {
+  try {
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      return { log: (...args) => Logger.log(...args) };
+    }
+  } catch (err) {
+    // ignore logging setup errors and fall back to console
+  }
+  const fallback = typeof console !== 'undefined' && console && typeof console.log === 'function'
+    ? (...args) => console.log(...args)
+    : () => {};
+  return { log: fallback };
+})();
 
 function roundToNearestTen_(value) {
   const num = Number(value);

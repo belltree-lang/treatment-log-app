@@ -268,8 +268,20 @@ function ensureBillingRoute() {
   const baseUrl = getBillingBaseUrl();
   if (!baseUrl || typeof window === 'undefined') return;
   const targetUrl = baseUrl + '?view=billing';
-  if (window.location.href !== targetUrl) {
-    window.history.replaceState({}, '', targetUrl);
+  if (typeof google !== 'undefined' && google.script && google.script.history && typeof google.script.history.replace === 'function') {
+    // Use Apps Script history API inside IFRAME sandbox to avoid invalid URL errors.
+    google.script.history.replace(null, { view: 'billing' });
+    return;
+  }
+
+  try {
+    const currentUrl = new URL(window.location.href);
+    const target = new URL(targetUrl, currentUrl);
+    if (target.origin === currentUrl.origin && window.location.href !== target.toString()) {
+      window.history.replaceState({}, '', target.toString());
+    }
+  } catch (err) {
+    console.warn('Failed to update billing route', err);
   }
 }
 

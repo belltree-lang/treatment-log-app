@@ -9,10 +9,6 @@ const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeo
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
 const BILLING_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 
-const Logger = typeof globalThis !== 'undefined' && globalThis.Logger
-  ? globalThis.Logger
-  : { log: () => {} };
-
 const billingResolveStaffDisplayName_ = typeof resolveStaffDisplayName_ === 'function'
   ? resolveStaffDisplayName_
   : function fallbackResolveStaffDisplayName_(email, directory) {

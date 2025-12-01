@@ -48,12 +48,16 @@ vm.runInContext(billingGetCode, context);
 
 const { normalizeBurdenRateInt_ } = context;
 const { extractUnpaidBillingHistory } = context;
+const { loadTreatmentLogs_ } = context;
 
 if (typeof normalizeBurdenRateInt_ !== 'function') {
   throw new Error('normalizeBurdenRateInt_ failed to load in the test context');
 }
 if (typeof extractUnpaidBillingHistory !== 'function') {
   throw new Error('extractUnpaidBillingHistory failed to load in the test context');
+}
+if (typeof loadTreatmentLogs_ !== 'function') {
+  throw new Error('loadTreatmentLogs_ failed to load in the test context');
 }
 
 function testFullWidthDigitsAreParsed() {
@@ -94,11 +98,52 @@ function testExtractUnpaidBillingHistory() {
   assert.strictEqual(entries[0].unpaidAmount, 500, '未回収額が保持される');
 }
 
+function testLoadTreatmentLogsDoesNotRequireLogger() {
+  const headers = ['日付', '患者ID', '作成者'];
+  const dataRows = [
+    [new Date('2024-12-01T00:00:00Z'), '001', 'staff@example.com'],
+    [new Date('2024-12-02T00:00:00Z'), '002', 'other@example.com']
+  ];
+
+  const sheetValues = [headers, ...dataRows];
+  const sheetDisplayValues = [
+    headers,
+    ['2024/12/01 00:00', '001', 'staff@example.com'],
+    ['2024/12/02 00:00', '002', 'other@example.com']
+  ];
+
+  const sheet = {
+    getLastRow: () => sheetValues.length,
+    getLastColumn: () => headers.length,
+    getMaxColumns: () => headers.length,
+    getRange: (row, col, numRows, numCols) => {
+      const sliceValues = rows => rows.map(r => r.slice(col - 1, col - 1 + numCols));
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [sheetDisplayValues[0]] };
+      }
+      return {
+        getValues: () => sliceValues(sheetValues.slice(row - 1, row - 1 + numRows)),
+        getDisplayValues: () => sliceValues(sheetDisplayValues.slice(row - 1, row - 1 + numRows))
+      };
+    }
+  };
+
+  workbook = {
+    getSheetByName: name => (name === '施術録' ? sheet : null)
+  };
+
+  const logs = loadTreatmentLogs_();
+  assert.strictEqual(logs.length, 2, '施術録が問題なく取得できる');
+  assert.strictEqual(Object.prototype.toString.call(logs[0].timestamp), '[object Date]', '日付はDateとして解釈される');
+  assert.strictEqual(logs[0].patientId, '001', '患者IDが保持される');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
   testPercentageInputsAreRounded();
   testExtractUnpaidBillingHistory();
+  testLoadTreatmentLogsDoesNotRequireLogger();
   console.log('billingGet burden rate tests passed');
 }
 

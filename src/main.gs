@@ -165,6 +165,18 @@ function normalizeBillingEditBurden_(value) {
   return null;
 }
 
+function normalizeBillingEditMedicalAssistance_(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return 0;
+  if (value === true) return 1;
+  if (value === false) return 0;
+  const num = Number(value);
+  if (Number.isFinite(num)) return num ? 1 : 0;
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return 0;
+  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0 ? 1 : 0;
+}
+
 function normalizeBillingEdits_(maybeEdits) {
   if (!Array.isArray(maybeEdits)) return [];
   return maybeEdits.map(edit => {
@@ -174,6 +186,7 @@ function normalizeBillingEdits_(maybeEdits) {
     return {
       patientId: pid,
       insuranceType: edit.insuranceType != null ? String(edit.insuranceType).trim() : undefined,
+      medicalAssistance: normalizeBillingEditMedicalAssistance_(edit.medicalAssistance),
       burdenRate: burden !== null ? burden : undefined,
       unitPrice: edit.unitPrice != null ? Number(edit.unitPrice) || 0 : undefined,
       carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
@@ -198,6 +211,7 @@ function applyBillingPatientEdits_(edits) {
   const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）'], '単価', {});
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
   const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
+  const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const editMap = edits.reduce((map, edit) => {
@@ -212,6 +226,7 @@ function applyBillingPatientEdits_(edits) {
     if (!edit) return;
     const newRow = row.slice();
     if (colInsurance && edit.insuranceType !== undefined) newRow[colInsurance - 1] = edit.insuranceType;
+    if (colMedical && edit.medicalAssistance !== undefined) newRow[colMedical - 1] = edit.medicalAssistance ? 1 : 0;
     if (colBurden && edit.burdenRate !== undefined) newRow[colBurden - 1] = edit.burdenRate;
     if (colUnitPrice && edit.unitPrice !== undefined) newRow[colUnitPrice - 1] = edit.unitPrice;
     if (colCarryOver && edit.carryOverAmount !== undefined) newRow[colCarryOver - 1] = edit.carryOverAmount;
@@ -225,7 +240,7 @@ function applyBillingPatientEdits_(edits) {
   return { updated: updates.length };
 }
 
-function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
+function applyBillingEdits(billingMonth, options) {
   const opts = options || {};
   const edits = normalizeBillingEdits_(opts.edits);
   if (edits.length) {
@@ -233,7 +248,12 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   }
   const prepared = buildPreparedBillingPayload_(billingMonth);
   savePreparedBilling_(prepared);
-  return generatePreparedInvoices_(prepared, opts);
+  return prepared;
+}
+
+function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
+  const prepared = applyBillingEdits(billingMonth, options);
+  return generatePreparedInvoices_(prepared, options || {});
 }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

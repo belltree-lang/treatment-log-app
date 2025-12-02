@@ -81,18 +81,44 @@ function loadPreparedBilling_(billingMonthKey) {
   const cache = getBillingCache_();
   if (!cache) return null;
   const cached = cache.get(key);
-  if (!cached) return null;
-  Logger.log('[billing] loadPreparedBilling_ raw cache for ' + key + ': ' + cached);
+  if (!cached) {
+    try {
+      Logger.log('[billing] loadPreparedBilling_: cache miss for ' + key);
+    } catch (err) {
+      // ignore logging errors in non-GAS environments
+    }
+    return null;
+  }
+  try {
+    Logger.log('[billing] loadPreparedBilling_ raw cache for ' + key + ': ' + cached);
+  } catch (err) {
+    // ignore logging errors in non-GAS environments
+  }
   try {
     const parsed = JSON.parse(cached);
     const validation = validatePreparedBillingPayload_(parsed, billingMonthKey);
     if (!validation.ok) {
+      try {
+        Logger.log('[billing] loadPreparedBilling_: invalid cache for ' + key + ' reason=' + validation.reason);
+      } catch (err) {
+        // ignore logging errors in non-GAS environments
+      }
       console.warn('[billing] Prepared cache invalid for ' + key + ': ' + validation.reason);
       clearBillingCache_(key);
       return null;
     }
+    try {
+      Logger.log('[billing] loadPreparedBilling_: parsed cache billingJson length=' + (parsed.billingJson || []).length);
+    } catch (err) {
+      // ignore logging errors in non-GAS environments
+    }
     return Object.assign({}, parsed, { billingMonth: validation.billingMonth });
   } catch (err) {
+    try {
+      Logger.log('[billing] loadPreparedBilling_: failed to parse cache for ' + key + ' error=' + err);
+    } catch (logErr) {
+      // ignore logging errors in non-GAS environments
+    }
     console.warn('[billing] Failed to parse prepared cache', err);
     clearBillingCache_(key);
     return null;

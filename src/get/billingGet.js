@@ -464,8 +464,12 @@ function loadTreatmentLogs_() {
   const range = sheet.getRange(2, 1, lastRow - 1, width);
   const values = range.getValues();
   const displayValues = range.getDisplayValues();
+  const normalizationDebug = [];
+  const invalidDateDebug = [];
+  const emptyPidRows = [];
   const logs = values.map((row, idx) => {
-    const pid = billingNormalizePatientId_(row[colPid - 1]);
+    const rawPid = row[colPid - 1];
+    const pid = billingNormalizePatientId_(rawPid);
     const dateCell = row[colDate - 1];
     const displayRow = displayValues[idx] || [];
     const timestamp = billingParseTreatmentTimestamp_(dateCell, displayRow[colDate - 1]);
@@ -473,8 +477,30 @@ function loadTreatmentLogs_() {
     const createdByEmail = colCreatedBy
       ? extractEmailFallback_(row[colCreatedBy - 1], createdByDisplay)
       : '';
+
+    if (String(rawPid || '').trim() && pid && pid !== String(rawPid).trim()) {
+      if (normalizationDebug.length < 20) {
+        normalizationDebug.push({ rowNumber: idx + 2, rawPid, normalizedPid: pid });
+      }
+    }
+    if (!pid) {
+      if (emptyPidRows.length < 20) {
+        emptyPidRows.push({ rowNumber: idx + 2, rawPid });
+      }
+    }
+    if (!(timestamp instanceof Date) || isNaN(timestamp.getTime())) {
+      if (invalidDateDebug.length < 20) {
+        invalidDateDebug.push({
+          rowNumber: idx + 2,
+          patientId: pid,
+          rawTimestamp: dateCell,
+          displayTimestamp: displayRow[colDate - 1]
+        });
+      }
+    }
     return {
       rowNumber: idx + 2,
+      rawPatientId: rawPid,
       patientId: pid,
       timestamp,
       createdByEmail,
@@ -490,6 +516,9 @@ function loadTreatmentLogs_() {
     isValidDate: log.timestamp instanceof Date && !isNaN(log.timestamp.getTime())
   }));
   billingLogger_.log('[billing] loadTreatmentLogs_: timestamps=' + JSON.stringify(timestampDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: pid normalization samples=' + JSON.stringify(normalizationDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: invalid date samples=' + JSON.stringify(invalidDateDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: empty pid rows=' + JSON.stringify(emptyPidRows));
   return logs;
 }
 
@@ -508,11 +537,15 @@ function buildVisitCountMap_(billingMonth) {
     invalidSamples: [],
     outOfRangeSamples: []
   };
+  const skipSamples = { missingPatientId: [], invalidTimestamp: [], outOfRange: [] };
   logs.forEach(log => {
     const pid = log && log.patientId ? billingNormalizePatientId_(log.patientId) : '';
     const ts = log && log.timestamp;
     if (!pid) {
       debug.missingPatientId += 1;
+      if (skipSamples.missingPatientId.length < 20) {
+        skipSamples.missingPatientId.push({ rowNumber: log.rowNumber, rawPatientId: log.rawPatientId });
+      }
       return;
     }
     if (!(ts instanceof Date) || isNaN(ts.getTime())) {
@@ -520,12 +553,18 @@ function buildVisitCountMap_(billingMonth) {
       if (debug.invalidSamples.length < 5) {
         debug.invalidSamples.push({ pid, timestamp: ts });
       }
+      if (skipSamples.invalidTimestamp.length < 20) {
+        skipSamples.invalidTimestamp.push({ rowNumber: log.rowNumber, patientId: pid, timestamp: ts });
+      }
       return;
     }
     if (ts < month.start || ts >= month.end) {
       debug.outOfRange += 1;
       if (debug.outOfRangeSamples.length < 5) {
         debug.outOfRangeSamples.push({ pid, timestamp: ts.toISOString() });
+      }
+      if (skipSamples.outOfRange.length < 20) {
+        skipSamples.outOfRange.push({ rowNumber: log.rowNumber, patientId: pid, timestamp: ts.toISOString() });
       }
       return;
     }
@@ -561,6 +600,8 @@ function buildVisitCountMap_(billingMonth) {
     map[pid] = sorted;
     return map;
   }, {});
+  billingLogger_.log('[billing] buildVisitCountMap_: month range=' + month.start.toISOString() + ' - ' + month.end.toISOString());
+  billingLogger_.log('[billing] buildVisitCountMap_: skipped samples=' + JSON.stringify(skipSamples));
   billingLogger_.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
   billingLogger_.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
   billingLogger_.log('[billing] buildVisitCountMap_: debug=' + JSON.stringify(debug));
@@ -744,6 +785,22 @@ function getBillingSourceData(billingMonth) {
     map[pid] = (map[pid] || 0) + (Number(entry.unpaidAmount) || 0);
     return map;
   }, {});
+  const zeroVisitSamples = Object.keys(treatmentVisitCounts || {})
+    .filter(pid => {
+      const entry = treatmentVisitCounts[pid];
+      const visitCount = entry && entry.visitCount != null ? entry.visitCount : entry;
+      return !visitCount || Number(visitCount) === 0;
+    })
+    .slice(0, 20);
+  billingLogger_.log('[billing] getBillingSourceData summary=' + JSON.stringify({
+    billingMonth: month.key,
+    patientCount: patientRecords.length,
+    bankRecordCount: bankRecords.length,
+    treatmentVisitCountEntries: Object.keys(treatmentVisitCounts || {}).length,
+    zeroVisitSamples,
+    unpaidHistoryCount: (unpaidHistory || []).length,
+    carryOverPatients: Object.keys(carryOverByPatient || {}).length
+  }));
   return {
     billingMonth: month.key,
     month,

@@ -815,7 +815,12 @@ function getBillingPatientRecords() {
   const colKana = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.furigana });
   const colInsurance = resolveBillingColumn_(headers, ['保険区分', '保険種別', '保険タイプ', '保険'], '保険区分', {});
   const colBurden = resolveBillingColumn_(headers, BILLING_LABELS.share, '負担割合', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.share });
-  const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）'], '単価', {});
+  const colUnitPrice = resolveBillingColumn_(
+    headers,
+    ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）', '単価（手動上書き）', '単価(手動上書き)'],
+    '単価',
+    {}
+  );
   const colAddress = resolveBillingColumn_(headers, ['住所', '住所1', '住所２', '住所2', 'address', 'Address'], '住所', {});
   const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
   const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { fallbackLetter: 'N' });
@@ -832,6 +837,11 @@ function getBillingPatientRecords() {
     const normalizedBurden = insuranceType === '自費'
       ? '自費'
       : (colBurden ? normalizeBurdenRateInt_(row[colBurden - 1]) : 0);
+    const unitPriceRaw = colUnitPrice ? row[colUnitPrice - 1] : '';
+    const manualUnitPrice = unitPriceRaw === '' || unitPriceRaw === null
+      ? ''
+      : normalizeMoneyValue_(unitPriceRaw);
+
     return {
       patientId: pid,
       raw: buildPatientRawObject_(headers, row),
@@ -839,7 +849,8 @@ function getBillingPatientRecords() {
       nameKana: colKana ? String(row[colKana - 1] || '').trim() : '',
       insuranceType,
       burdenRate: normalizedBurden,
-      unitPrice: colUnitPrice ? normalizeMoneyValue_(row[colUnitPrice - 1]) : 0,
+      unitPrice: colUnitPrice ? normalizeMoneyValue_(unitPriceRaw) : 0,
+      manualUnitPrice,
       address: colAddress ? String(row[colAddress - 1] || '').trim() : '',
       payerType: colPayer ? String(row[colPayer - 1] || '').trim() : '',
       medicalAssistance: colMedical ? normalizeZeroOneFlag_(row[colMedical - 1]) : 0,

@@ -127,7 +127,13 @@ const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
 const billingNormalizeEmailKey_ = typeof normalizeEmailKey_ === 'function'
   ? normalizeEmailKey_
   : function normalizeEmailKey_(email) {
-    return String(email || '').trim().toLowerCase();
+    const raw = String(email || '').trim();
+    if (!raw) return '';
+    const normalized = raw.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    if (normalized.includes('@')) {
+      return normalized;
+    }
+    return normalized.replace(/[-_]/g, '');
   };
 
 const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? PATIENT_COLS_FIXED : {

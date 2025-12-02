@@ -195,6 +195,39 @@ function testStaffDirectoryUsesStaffIdWhenEmailMissing() {
   assert.strictEqual(directory['staff002'], '佐藤花子', '複数行の担当者IDを辞書化する');
 }
 
+function testStaffDirectoryNormalizesNonEmailIds() {
+  const headers = ['氏名', 'スタッフID'];
+  const values = [
+    ['山田太郎', 'STAFF-001'],
+    ['佐藤花子', ' staff_002 ']
+  ];
+
+  const sheet = {
+    getLastRow: () => values.length + 1,
+    getLastColumn: () => headers.length,
+    getMaxColumns: () => headers.length,
+    getRange: (row, col, numRows, numCols) => {
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [headers.slice(col - 1, col - 1 + numCols)] };
+      }
+      const startIdx = Math.max(0, row - 2);
+      return {
+        getValues: () => values
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols))
+      };
+    }
+  };
+
+  workbook = {
+    getSheetByName: name => (name === 'スタッフ一覧' ? sheet : null)
+  };
+
+  const directory = loadBillingStaffDirectory_();
+  assert.strictEqual(directory['staff001'], '山田太郎', 'ハイフンは正規化して一致させる');
+  assert.strictEqual(directory['staff002'], '佐藤花子', 'アンダースコアや空白を除去して一致させる');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
@@ -204,6 +237,7 @@ function run() {
   testBillingParseTreatmentTimestampParsesSerialStrings();
   testBillingParseTreatmentTimestampParsesJapaneseDateText();
   testStaffDirectoryUsesStaffIdWhenEmailMissing();
+  testStaffDirectoryNormalizesNonEmailIds();
   console.log('billingGet burden rate tests passed');
 }
 

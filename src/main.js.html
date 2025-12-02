@@ -140,12 +140,6 @@ function normalizeMoneyNumber(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
-function roundToNearestTen(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return 0;
-  return Math.round(num / 10) * 10;
-}
-
 function normalizeVisitCount(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) && value > 0 ? value : 0;
@@ -195,58 +189,6 @@ function isDeprecatedInsuranceType(value) {
   return BILLING_DEPRECATED_INSURANCE_TYPES.includes(String(value).trim());
 }
 
-function resolveFrontEndUnitPrice(insuranceType, burdenRate, manualUnitPrice, medicalAssistance, patientUnitPrice) {
-  const type = String(insuranceType || '').trim();
-  if (isDeprecatedInsuranceType(type)) return 0;
-  const normalizedManualPrice = normalizeMoneyNumber(manualUnitPrice);
-  const hasManualUnitPrice = Number.isFinite(normalizedManualPrice) && normalizedManualPrice !== 0;
-  if (hasManualUnitPrice) return normalizedManualPrice;
-  const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
-  if (normalizedMedicalAssistance === 1) return 0;
-  if (['生保', '生活保護', '生活扶助'].includes(type)) return 0;
-  const normalizedBurdenRate = normalizeBurdenRateInt(burdenRate);
-  if (type === '自費' || normalizedBurdenRate === '自費') return 0;
-  const resolvedPatientUnitPrice = normalizeMoneyNumber(patientUnitPrice);
-  if (Number.isFinite(resolvedPatientUnitPrice) && resolvedPatientUnitPrice !== 0) return resolvedPatientUnitPrice;
-  return BILLING_UNIT_PRICE;
-}
-
-function recalculateBillingRow(row) {
-  const visits = normalizeVisitCount(row.visitCount);
-  const normalizedBurden = row.burdenRate === '自費' ? '自費' : normalizeBurdenRateInt(row.burdenRate);
-  const normalizedManualUnitPrice = normalizeMoneyNumber(
-    row.manualUnitPrice !== undefined ? row.manualUnitPrice : row.unitPrice
-  );
-  const patientUnitPrice = normalizeMoneyNumber(row.unitPrice);
-  const unitPrice = resolveFrontEndUnitPrice(
-    row.insuranceType,
-    normalizedBurden,
-    normalizedManualUnitPrice,
-    row.medicalAssistance,
-    patientUnitPrice
-  );
-  const isSelfPaid = String(row.insuranceType || '').trim() === '自費' || normalizedBurden === '自費';
-  const hasChargeableUnitPrice = Number.isFinite(unitPrice) && unitPrice !== 0;
-  const treatmentAmount = visits > 0 && hasChargeableUnitPrice ? unitPrice * visits : 0;
-  const burdenMultiplier = isSelfPaid ? 1 : (normalizedBurden > 0 ? normalizedBurden / 10 : 0);
-  const transportAmount = visits > 0 && hasChargeableUnitPrice ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
-  const carryOverAmount = normalizeMoneyNumber(row.carryOverAmount);
-  const billingAmount = isSelfPaid
-    ? treatmentAmount
-    : roundToNearestTen(treatmentAmount * burdenMultiplier);
-  const grandTotal = billingAmount + transportAmount + carryOverAmount;
-  return Object.assign({}, row, {
-    burdenRate: normalizedBurden,
-    unitPrice,
-    manualUnitPrice: normalizedManualUnitPrice,
-    treatmentAmount,
-    billingAmount,
-    transportAmount,
-    carryOverAmount,
-    grandTotal
-  });
-}
-
 function getBillingBaseUrl() {
   return (window.APP_CONFIG && window.APP_CONFIG.baseUrl) || '';
 }
@@ -259,8 +201,7 @@ function getMergedBillingRows() {
     try {
       const baseRow = row && typeof row === 'object' ? row : {};
       const edits = billingState.edits[baseRow.patientId] || {};
-      const merged = Object.assign({}, baseRow, edits);
-      return recalculateBillingRow(merged);
+      return Object.assign({}, baseRow, edits);
     } catch (err) {
       console.error('Failed to merge billing row', err, row);
       return null;

@@ -140,6 +140,12 @@ function normalizeMoneyNumber(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function roundToNearestTen(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num / 10) * 10;
+}
+
 function normalizeVisitCount(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) && value > 0 ? value : 0;

@@ -249,6 +249,9 @@ function generateBillingJsonFromSource(sourceData) {
 
   billingLogger_.log('[billing] raw billingJson=' + JSON.stringify(billingJson));
   billingLogger_.log('[billing] generateBillingJsonFromSource: zero visit samples=' + JSON.stringify(zeroVisitDebug));
+  if (!billingJson.length) {
+    billingLogger_.log('[billing] generateBillingJsonFromSource: empty billingJson with visitCountKeys=' + JSON.stringify(patientIds));
+  }
   billingLogger_.log('[billing] billingJson length=' + billingJson.length);
   return billingJson;
 }

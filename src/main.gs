@@ -147,6 +147,25 @@ function savePreparedBilling_(payload) {
 function buildPreparedBillingPayload_(billingMonth) {
   const source = getBillingSourceData(billingMonth);
   const billingJson = generateBillingJsonFromSource(source);
+  const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
+  const visitCountKeys = Object.keys(visitCounts || {});
+  const zeroVisitSamples = visitCountKeys
+    .filter(pid => {
+      const entry = visitCounts[pid];
+      const visitCount = entry && entry.visitCount != null ? entry.visitCount : entry;
+      return !visitCount || Number(visitCount) === 0;
+    })
+    .slice(0, 5);
+
+  billingLogger_.log('[billing] buildPreparedBillingPayload_ summary=' + JSON.stringify({
+    billingMonth: source.billingMonth,
+    treatmentVisitCountEntries: visitCountKeys.length,
+    zeroVisitSamples,
+    billingJsonLength: Array.isArray(billingJson) ? billingJson.length : null
+  }));
+  if (Array.isArray(billingJson) && billingJson.length) {
+    billingLogger_.log('[billing] buildPreparedBillingPayload_ firstBillingEntry=' + JSON.stringify(billingJson[0]));
+  }
   return {
     billingMonth: source.billingMonth,
     billingJson,
@@ -178,9 +197,14 @@ function normalizePreparedBilling_(payload) {
 }
 
 function toClientBillingPayload_(prepared) {
+  const rawLength = prepared && prepared.billingJson
+    ? (Array.isArray(prepared.billingJson) ? prepared.billingJson.length : 'non-array')
+    : 0;
   const normalized = normalizePreparedBilling_(prepared);
   if (!normalized) return null;
   const billingJson = Array.isArray(normalized.billingJson) ? normalized.billingJson : [];
+  billingLogger_.log('[billing] toClientBillingPayload_: billingJson length before normalize=' + rawLength +
+    ' after normalize=' + billingJson.length);
   return {
     billingMonth: normalized.billingMonth || '',
     billingJson,
@@ -195,9 +219,17 @@ function toClientBillingPayload_(prepared) {
 
 function serializeBillingPayload_(payload) {
   if (!payload) return null;
+  const beforeLength = payload && payload.billingJson
+    ? (Array.isArray(payload.billingJson) ? payload.billingJson.length : 'non-array')
+    : 0;
   try {
     const json = JSON.stringify(payload);
-    return JSON.parse(json);
+    const parsed = JSON.parse(json);
+    const afterLength = parsed && parsed.billingJson
+      ? (Array.isArray(parsed.billingJson) ? parsed.billingJson.length : 'non-array')
+      : 0;
+    billingLogger_.log('[billing] serializeBillingPayload_: billingJson length before=' + beforeLength + ' after=' + afterLength);
+    return parsed;
   } catch (err) {
     console.warn('[billing] Failed to serialize billing payload', err);
     return null;

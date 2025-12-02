@@ -578,6 +578,11 @@ function loadTreatmentLogs_() {
     '作成者',
     { fallbackLetter: 'E' }
   );
+  const colCreatedByEmail = resolveBillingColumn_(headers,
+    ['メール', 'email', 'mail'],
+    'メール',
+    {}
+  );
   const colStaffId = resolveBillingColumn_(headers,
     ['担当者ID', 'スタッフID', 'staffId', 'staffid', 'staff'],
     '担当者ID',
@@ -598,6 +603,9 @@ function loadTreatmentLogs_() {
     const displayRow = displayValues[idx] || [];
     const timestamp = billingParseTreatmentTimestamp_(dateCell, displayRow[colDate - 1]);
     const createdByDisplay = colCreatedBy && displayRow ? displayRow[colCreatedBy - 1] : '';
+    const createdByEmailDisplay = colCreatedByEmail && displayRow && displayRow.length >= colCreatedByEmail
+      ? displayRow[colCreatedByEmail - 1]
+      : '';
     const staffIdRaw = colStaffId ? row[colStaffId - 1] : '';
     const staffIdDisplay = colStaffId && displayRow && displayRow.length >= colStaffId ? displayRow[colStaffId - 1] : '';
     const staffIdInfo = colStaffId ? extractNormalizedStaffKey_(staffIdRaw, staffIdDisplay) : { raw: '', normalized: '' };
@@ -605,10 +613,15 @@ function loadTreatmentLogs_() {
     const createdByInfo = colCreatedBy
       ? extractNormalizedStaffKey_(row[colCreatedBy - 1], createdByDisplay)
       : { raw: '', normalized: '' };
+    const createdByEmailInfo = colCreatedByEmail
+      ? extractNormalizedStaffKey_(row[colCreatedByEmail - 1], createdByEmailDisplay)
+      : { raw: '', normalized: '' };
 
-    const shouldUseStaffId = !!staffIdInfo.normalized && !createdByInfo.normalized;
-    const createdByEmail = shouldUseStaffId ? staffIdInfo.raw : createdByInfo.raw;
-    const usedNormalized = shouldUseStaffId ? staffIdInfo.normalized : createdByInfo.normalized;
+    const selectedInfo = createdByInfo.normalized
+      ? createdByInfo
+      : (createdByEmailInfo.normalized ? createdByEmailInfo : staffIdInfo);
+    const createdByEmail = selectedInfo.raw || createdByInfo.raw || createdByEmailInfo.raw || staffIdInfo.raw;
+    const usedNormalized = selectedInfo.normalized || createdByInfo.normalized || createdByEmailInfo.normalized || staffIdInfo.normalized;
 
     if (String(rawPid || '').trim() && pid && pid !== String(rawPid).trim()) {
       if (normalizationDebug.length < 20) {
@@ -620,19 +633,21 @@ function loadTreatmentLogs_() {
         emptyPidRows.push({ rowNumber: idx + 2, rawPid });
       }
     }
-    if (staffKeyDebug.length < 20 && (createdByInfo.normalized || staffIdInfo.normalized)) {
+    if (staffKeyDebug.length < 20 && (createdByInfo.normalized || createdByEmailInfo.normalized || staffIdInfo.normalized)) {
       staffKeyDebug.push({
         rowNumber: idx + 2,
         createdByNormalized: createdByInfo.normalized,
+        createdByEmailNormalized: createdByEmailInfo.normalized,
         staffIdNormalized: staffIdInfo.normalized,
         usedNormalized,
         usedRaw: createdByEmail
       });
     }
-    if (staffExtractionDebug.length < 20 && (createdByInfo.raw || staffIdInfo.raw)) {
+    if (staffExtractionDebug.length < 20 && (createdByInfo.raw || createdByEmailInfo.raw || staffIdInfo.raw)) {
       staffExtractionDebug.push({
         rowNumber: idx + 2,
         createdBy: { raw: createdByInfo.raw, normalized: createdByInfo.normalized },
+        createdByEmail: { raw: createdByEmailInfo.raw, normalized: createdByEmailInfo.normalized },
         staffId: { raw: staffIdInfo.raw, normalized: staffIdInfo.normalized },
         used: { raw: createdByEmail, normalized: usedNormalized }
       });

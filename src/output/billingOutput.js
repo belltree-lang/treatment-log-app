@@ -285,10 +285,15 @@ function calculateInvoiceChargeBreakdown_(params) {
 
   const hasChargeableUnitPrice = Number.isFinite(treatmentUnitPrice) && treatmentUnitPrice !== 0;
   const treatmentAmountFull = visits > 0 && hasChargeableUnitPrice ? treatmentUnitPrice * visits : 0;
-  const burdenMultiplier = typeof normalizeBurdenMultiplier_ === 'function'
-    ? normalizeBurdenMultiplier_(burdenRateInt, insuranceType)
-    : (insuranceType === '自費' ? 1 : (burdenRateInt > 0 ? burdenRateInt / 10 : 0));
   const isSelfPaid = insuranceType === '自費' || burdenRateInt === '自費';
+  const defaultBurdenUnitPrice = INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt];
+  const usesBurdenAdjustedUnitPrice = Number.isFinite(defaultBurdenUnitPrice)
+    && treatmentUnitPrice === defaultBurdenUnitPrice;
+  const burdenMultiplier = isSelfPaid || usesBurdenAdjustedUnitPrice
+    ? 1
+    : (typeof normalizeBurdenMultiplier_ === 'function'
+      ? normalizeBurdenMultiplier_(burdenRateInt, insuranceType)
+      : (insuranceType === '自費' ? 1 : (burdenRateInt > 0 ? burdenRateInt / 10 : 0)));
   const treatmentAmount = isSelfPaid
     ? treatmentAmountFull
     : roundToNearestTen_(treatmentAmountFull * burdenMultiplier);

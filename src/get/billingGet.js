@@ -139,8 +139,34 @@ const billingNormalizeEmailKey_ = typeof normalizeEmailKey_ === 'function'
 const billingNormalizeStaffKey_ = typeof normalizeStaffKey_ === 'function'
   ? normalizeStaffKey_
   : function normalizeStaffKeyFallback_(value) {
-    return billingNormalizeEmailKey_(value);
+    const raw = value == null ? '' : String(value).trim();
+    if (!raw) return '';
+
+    const normalized = billingNormalizeEmailKey_(raw);
+    if (normalized && normalized.includes('@')) {
+      return normalized;
+    }
+
+    const lowered = raw.normalize('NFKC').toLowerCase();
+    const collapsed = lowered
+      .replace(/[\s\u3000・･]/g, '')
+      .replace(/[ー－ｰ−]/g, '')
+      .replace(/[._]/g, '')
+      .replace(/[^0-9a-z\u3040-\u30ff\u3400-\u9FFF]/g, '')
+      .replace(/-/g, '');
+    return collapsed || normalized;
   };
+
+function normalizeStaffKeyCandidates_(candidates) {
+  const normalizedKeys = [];
+  (candidates || []).forEach(candidate => {
+    const normalized = billingNormalizeStaffKey_(candidate);
+    if (normalized && normalizedKeys.indexOf(normalized) === -1) {
+      normalizedKeys.push(normalized);
+    }
+  });
+  return normalizedKeys;
+}
 
 const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? PATIENT_COLS_FIXED : {
   recNo: 3,
@@ -315,8 +341,13 @@ function loadBillingStaffDirectory_() {
   const colName = resolveBillingColumn_(headers, ['名前', '氏名', 'スタッフ名'], '氏名', { fallbackLetter: 'A' });
   const colEmail = resolveBillingColumn_(headers, ['メール', 'メールアドレス', 'email', 'Email'], 'メールアドレス', { fallbackLetter: 'K' });
   const colStaffId = resolveBillingColumn_(headers, ['スタッフID', '担当者ID', 'staffId', 'staffid'], 'スタッフID', {});
+  const colNameRoman = resolveBillingColumn_(headers,
+    ['ローマ字', 'ﾛｰﾏ字', 'ローマ字氏名', '英字', '英語表記', 'roman', 'romaji', 'romanized'],
+    'ローマ字',
+    {}
+  );
   const colDisabled = resolveBillingColumn_(headers, ['利用停止', '停止', '無効', 'ステータス', 'status'], '利用停止', {});
-  if (!colName || (!colEmail && !colStaffId)) return {};
+  if (!colName) return {};
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
@@ -337,6 +368,17 @@ function loadBillingStaffDirectory_() {
       const staffKey = extractNormalizedStaffKey_(row[colStaffId - 1], displayRow[colStaffId - 1]);
       if (staffKey.normalized) keys.push(staffKey.normalized);
     }
+
+    const romanName = colNameRoman ? String(row[colNameRoman - 1] || '').trim() : '';
+    const romanDisplay = colNameRoman ? String(displayRow[colNameRoman - 1] || '').trim() : '';
+    const nameKeyCandidates = normalizeStaffKeyCandidates_([
+      romanName,
+      romanDisplay,
+      name,
+      normalizeBillingNameKey_(name)
+    ]);
+
+    nameKeyCandidates.forEach(key => keys.push(key));
 
     keys.forEach(key => {
       if (key && !map[key]) {
@@ -456,9 +498,10 @@ function extractEmailFallback_(raw, displayValue) {
 
 function extractNormalizedStaffKey_(raw, displayValue) {
   const candidate = extractEmailFallback_(raw, displayValue);
+  const normalizedList = normalizeStaffKeyCandidates_([candidate]);
   return {
     raw: candidate,
-    normalized: billingNormalizeStaffKey_(candidate)
+    normalized: normalizedList[0] || ''
   };
 }
 

@@ -303,24 +303,28 @@ function loadBillingStaffDirectory_() {
   const colName = resolveBillingColumn_(headers, ['名前', '氏名', 'スタッフ名'], '氏名', { fallbackLetter: 'A' });
   const colEmail = resolveBillingColumn_(headers, ['メール', 'メールアドレス', 'email', 'Email'], 'メールアドレス', { fallbackLetter: 'K' });
   const colStaffId = resolveBillingColumn_(headers, ['スタッフID', '担当者ID', 'staffId', 'staffid'], 'スタッフID', {});
-  if (!colName || !colEmail) return {};
+  if (!colName || (!colEmail && !colStaffId)) return {};
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const directory = values.reduce((map, row) => {
-    const emailRaw = row[colEmail - 1];
     const name = colName ? String(row[colName - 1] || '').trim() : '';
-    const emailKey = billingNormalizeEmailKey_(emailRaw);
-    if (!name || !emailKey) return map;
-    if (!map[emailKey]) {
-      map[emailKey] = name;
+    if (!name) return map;
+
+    const keys = [];
+    if (colEmail) {
+      const emailKey = billingNormalizeEmailKey_(row[colEmail - 1]);
+      if (emailKey) keys.push(emailKey);
     }
     if (colStaffId) {
-      const staffId = row[colStaffId - 1];
-      const staffKey = billingNormalizeEmailKey_(staffId);
-      if (staffKey && !map[staffKey]) {
-        map[staffKey] = name;
-      }
+      const staffKey = billingNormalizeEmailKey_(row[colStaffId - 1]);
+      if (staffKey) keys.push(staffKey);
     }
+
+    keys.forEach(key => {
+      if (key && !map[key]) {
+        map[key] = name;
+      }
+    });
     return map;
   }, {});
 

@@ -136,6 +136,12 @@ const billingNormalizeEmailKey_ = typeof normalizeEmailKey_ === 'function'
     return normalized.replace(/[-_]/g, '');
   };
 
+const billingNormalizeStaffKey_ = typeof normalizeStaffKey_ === 'function'
+  ? normalizeStaffKey_
+  : function normalizeStaffKeyFallback_(value) {
+    return billingNormalizeEmailKey_(value);
+  };
+
 const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? PATIENT_COLS_FIXED : {
   recNo: 3,
   name: 4,
@@ -358,7 +364,7 @@ function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
     const seen = new Set();
     const names = [];
     emails.forEach(email => {
-      const key = billingNormalizeEmailKey_(email);
+      const key = billingNormalizeStaffKey_(email);
       if (!key || seen.has(key)) return;
       seen.add(key);
       const resolved = directory[key] || '';
@@ -452,7 +458,7 @@ function extractNormalizedStaffKey_(raw, displayValue) {
   const candidate = extractEmailFallback_(raw, displayValue);
   return {
     raw: candidate,
-    normalized: billingNormalizeEmailKey_(candidate)
+    normalized: billingNormalizeStaffKey_(candidate)
   };
 }
 
@@ -658,7 +664,7 @@ function buildVisitCountMap_(billingMonth) {
     counts[pid] = current;
 
     if (log && log.createdByEmail) {
-      const normalizedEmail = log.createdByKey || billingNormalizeEmailKey_(log.createdByEmail);
+      const normalizedEmail = log.createdByKey || billingNormalizeStaffKey_(log.createdByEmail);
       if (!normalizedEmail) return;
       if (!staffHistoryByPatient[pid]) {
         staffHistoryByPatient[pid] = {};

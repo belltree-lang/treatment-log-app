@@ -35,8 +35,8 @@ function getBillingSource(billingMonth) {
   return getBillingSourceData(billingMonth);
 }
 
-const BILLING_CACHE_PREFIX = 'billing:prepared:';
-const BILLING_CACHE_TTL_SECONDS = 21600; // 6 hours
+const BILLING_CACHE_PREFIX = 'billing_prepared_';
+const BILLING_CACHE_TTL_SECONDS = 3600; // 1 hour
 
 function buildBillingCacheKey_(billingMonthKey) {
   const monthKey = String(billingMonthKey || '').trim();
@@ -133,6 +133,13 @@ function savePreparedBilling_(payload) {
   try {
     cache.put(key, JSON.stringify(payload), BILLING_CACHE_TTL_SECONDS);
   } catch (err) {
+    try {
+      if (Logger && typeof Logger.warning === 'function') {
+        Logger.warning('[billing] Failed to cache prepared billing: ' + err);
+      }
+    } catch (logErr) {
+      // ignore logging errors in non-GAS environments
+    }
     console.warn('[billing] Failed to cache prepared billing', err);
   }
 }

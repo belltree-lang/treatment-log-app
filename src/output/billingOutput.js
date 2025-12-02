@@ -444,9 +444,18 @@ function exportBankTransferRows_(billingMonth, rowObjects) {
 
   const lastRow = sheet.getLastRow();
   const existingValues = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, colCount).getValues() : [];
-  const filtered = columns['請求月']
-    ? existingValues.filter(row => String(row[columns['請求月'] - 1] || '').trim() !== String(billingMonth))
-    : existingValues;
+  const keyForRow = (row) => {
+    const month = columns['請求月'] ? String(row[columns['請求月'] - 1] || '').trim() : '';
+    const pid = columns['番号'] ? String(row[columns['番号'] - 1] || '').trim() : '';
+    return month && pid ? `${month}::${pid}` : '';
+  };
+
+  const workingRows = existingValues.slice();
+  const existingIndexByKey = workingRows.reduce((map, row, idx) => {
+    const key = keyForRow(row);
+    if (key) map[key] = idx;
+    return map;
+  }, {});
 
   const mapped = (rowObjects || []).map(obj => {
     const row = new Array(colCount).fill('');
@@ -462,32 +471,41 @@ function exportBankTransferRows_(billingMonth, rowObjects) {
     return row;
   });
 
+  mapped.forEach(row => {
+    const key = keyForRow(row);
+    if (key && Object.prototype.hasOwnProperty.call(existingIndexByKey, key)) {
+      workingRows[existingIndexByKey[key]] = row;
+    } else {
+      workingRows.push(row);
+    }
+  });
+
   if (lastRow > 1) {
     sheet.getRange(2, 1, lastRow - 1, colCount).clearContent();
   }
-  const newRows = filtered.concat(mapped);
-  if (newRows.length) {
-    sheet.getRange(2, 1, newRows.length, colCount).setValues(newRows);
+  if (workingRows.length) {
+    sheet.getRange(2, 1, workingRows.length, colCount).setValues(workingRows);
   }
 
   return { billingMonth, inserted: mapped.length };
 }
 
 function exportBankTransferDataForPrepared_(prepared) {
-  if (!prepared || !prepared.billingJson) {
+  const normalized = normalizePreparedBilling_(prepared);
+  if (!normalized || !normalized.billingJson) {
     throw new Error('請求データが見つかりません。先に集計を実行してください。');
   }
-  let bankInfoByName = prepared.bankInfoByName || {};
-  let patientMap = prepared.patients || prepared.patientMap || {};
+  let bankInfoByName = normalized.bankInfoByName || {};
+  let patientMap = normalized.patients || normalized.patientMap || {};
   if (!Object.keys(bankInfoByName).length || !Object.keys(patientMap).length) {
-    const source = getBillingSourceData(prepared.billingMonth);
+    const source = getBillingSourceData(normalized.billingMonth);
     bankInfoByName = source.bankInfoByName || bankInfoByName;
     patientMap = source.patients || source.patientMap || patientMap;
-    if (!prepared.billingJson || !prepared.billingJson.length) {
-      prepared.billingJson = generateBillingJsonFromSource(source);
+    if (!normalized.billingJson || !normalized.billingJson.length) {
+      normalized.billingJson = generateBillingJsonFromSource(source);
     }
   }
-  const buildResult = buildBankTransferRowsForBilling_(prepared.billingJson, bankInfoByName, patientMap, prepared.billingMonth);
+  const buildResult = buildBankTransferRowsForBilling_(normalized.billingJson, bankInfoByName, patientMap, normalized.billingMonth);
   const outputResult = exportBankTransferRows_(buildResult.billingMonth, buildResult.rows);
   return Object.assign({}, buildResult, outputResult);
 }

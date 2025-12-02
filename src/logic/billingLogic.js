@@ -106,6 +106,7 @@ function normalizeMoneyNumber_(value) {
 
 function normalizeBurdenRateInt_(burdenRate) {
   if (burdenRate == null || burdenRate === '') return 0;
+  if (String(burdenRate).trim() === '自費') return '自費';
   const num = Number(burdenRate);
   if (Number.isFinite(num)) {
     if (num > 0 && num < 1) return Math.round(num * 10);

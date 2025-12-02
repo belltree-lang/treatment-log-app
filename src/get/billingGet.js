@@ -452,6 +452,7 @@ function normalizeDisabledFlag_(value) {
 
 function normalizeBurdenRateInt_(value) {
   if (value == null || value === '') return 0;
+  if (String(value).trim() === '自費') return '自費';
   if (typeof value === 'number') {
     if (!isFinite(value)) return 0;
     if (value === 0) return 0;
@@ -827,13 +828,17 @@ function getBillingPatientRecords() {
   return values.map(row => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
     if (!pid) return null;
+    const insuranceType = colInsurance ? String(row[colInsurance - 1] || '').trim() : '';
+    const normalizedBurden = insuranceType === '自費'
+      ? '自費'
+      : (colBurden ? normalizeBurdenRateInt_(row[colBurden - 1]) : 0);
     return {
       patientId: pid,
       raw: buildPatientRawObject_(headers, row),
       nameKanji: colName ? String(row[colName - 1] || '').trim() : '',
       nameKana: colKana ? String(row[colKana - 1] || '').trim() : '',
-      insuranceType: colInsurance ? String(row[colInsurance - 1] || '').trim() : '',
-      burdenRate: colBurden ? normalizeBurdenRateInt_(row[colBurden - 1]) : 0,
+      insuranceType,
+      burdenRate: normalizedBurden,
       unitPrice: colUnitPrice ? normalizeMoneyValue_(row[colUnitPrice - 1]) : 0,
       address: colAddress ? String(row[colAddress - 1] || '').trim() : '',
       payerType: colPayer ? String(row[colPayer - 1] || '').trim() : '',

@@ -253,7 +253,8 @@ function calculateInvoiceChargeBreakdown_(params) {
   const insuranceType = params && params.insuranceType ? String(params.insuranceType).trim() : '';
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
   const carryOverAmount = normalizeBillingCarryOver_(params);
-  const manualUnitPrice = normalizeInvoiceMoney_(params && params.unitPrice);
+  const manualUnitPrice = normalizeInvoiceMoney_(params && params.manualUnitPrice);
+  const resolvedUnitPrice = normalizeInvoiceMoney_(params && params.unitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
   const isMassage = insuranceType === 'マッサージ';
@@ -266,6 +267,7 @@ function calculateInvoiceChargeBreakdown_(params) {
     if (isMassage) return 0;
     if (hasManualUnitPrice) return manualUnitPrice;
     if (insuranceType === '自費') return 0;
+    if (resolvedUnitPrice) return resolvedUnitPrice;
     return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
   })();
   const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;

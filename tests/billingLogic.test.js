@@ -17,7 +17,7 @@ function createLogicContext(overrides = {}) {
 const context = createLogicContext();
 
 const { calculateBillingAmounts_, normalizeBurdenMultiplier_, resolveInvoiceUnitPrice_ } = context;
-const { generateBillingJsonFromSource } = context;
+const { generateBillingJsonFromSource, normalizeMedicalAssistanceFlag_ } = context;
 
 if (typeof calculateBillingAmounts_ !== 'function' || typeof normalizeBurdenMultiplier_ !== 'function') {
   throw new Error('Billing logic functions failed to load in the test context');
@@ -108,6 +108,41 @@ function testCustomTransportUnitPriceIsUsed() {
   assert.strictEqual(result.grandTotal, 2600, '合計も上書き単価を反映する');
 }
 
+function testMedicalAssistanceNormalizationIsStrict() {
+  assert.strictEqual(normalizeMedicalAssistanceFlag_(1), 1, '数値1は有効な医療助成フラグ');
+  assert.strictEqual(normalizeMedicalAssistanceFlag_('1'), 1, '文字列1も有効な医療助成フラグ');
+  assert.strictEqual(normalizeMedicalAssistanceFlag_(true), 1, 'trueは医療助成ありとみなす');
+  assert.strictEqual(normalizeMedicalAssistanceFlag_(0), 0, '数値0は助成なし');
+  assert.strictEqual(normalizeMedicalAssistanceFlag_(null), 0, 'nullは助成なし');
+  assert.strictEqual(normalizeMedicalAssistanceFlag_('yes'), 0, '指定以外の文字列は助成なし');
+}
+
+function testBillingJsonIncludesInsuranceMeta() {
+  const source = {
+    billingMonth: '202504',
+    patients: {
+      '021': {
+        nameKanji: '保険検証',
+        burdenRate: 3,
+        insuranceType: '鍼灸',
+        unitPrice: 5500,
+        medicalAssistance: '1'
+      }
+    },
+    treatmentVisitCounts: { '021': 2 },
+    bankStatuses: {}
+  };
+
+  const billingJson = generateBillingJsonFromSource(source);
+  const entry = billingJson[0];
+
+  assert.strictEqual(entry.insuranceType, '鍼灸', '保険種別が必ず含まれる');
+  assert.strictEqual(entry.burdenRate, 3, '負担割合は数値で正規化される');
+  assert.strictEqual(entry.medicalAssistance, 1, '医療助成は数値フラグで保持される');
+  assert.strictEqual(entry.manualUnitPrice, 5500, '手動入力の単価が保持される');
+  assert.strictEqual(entry.unitPrice, 5500, 'resolveInvoiceUnitPrice_へ渡した値が反映される');
+}
+
 function testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice() {
   const result = calculateBillingAmounts_({
     visitCount: '４',
@@ -194,10 +229,12 @@ function run() {
   testPaidStatusIsIncludedInBillingJson();
   testCarryOverIncludesUnpaidHistory();
   testCustomTransportUnitPriceIsUsed();
+  testMedicalAssistanceNormalizationIsStrict();
   testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice();
   testSelfPaidDefaultsToZeroWithoutManualUnitPrice();
   testSelfPaidManualPriceIsNotRounded();
   testInvoiceUnitPriceResolutionPriority();
+  testBillingJsonIncludesInsuranceMeta();
   console.log('billingLogic tests passed');
 }
 

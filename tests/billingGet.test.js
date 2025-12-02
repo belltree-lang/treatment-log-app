@@ -51,6 +51,7 @@ const { extractUnpaidBillingHistory } = context;
 const { loadTreatmentLogs_ } = context;
 const { billingParseTreatmentTimestamp_ } = context;
 const { loadBillingStaffDirectory_ } = context;
+const { buildStaffDisplayByPatient_ } = context;
 
 if (typeof normalizeBurdenRateInt_ !== 'function') {
   throw new Error('normalizeBurdenRateInt_ failed to load in the test context');
@@ -414,6 +415,76 @@ function testStaffDirectoryFallsBackToNameAndRomanizedKeys() {
   assert.strictEqual(logs[1].createdByKey, '山田太郎', 'メール形式でなくても normalizedKey が生成される');
 }
 
+function testStaffDirectoryCollapsesPlusAliases() {
+  const staffHeaders = ['氏名', 'メールアドレス'];
+  const staffValues = [
+    ['山田太郎', 'staff@example.com']
+  ];
+
+  const staffSheet = {
+    getLastRow: () => staffValues.length + 1,
+    getLastColumn: () => staffHeaders.length,
+    getMaxColumns: () => staffHeaders.length,
+    getRange: (row, col, numRows, numCols) => {
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [staffHeaders.slice(col - 1, col - 1 + numCols)] };
+      }
+      const startIdx = Math.max(0, row - 2);
+      return {
+        getValues: () => staffValues
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols)),
+        getDisplayValues: () => staffValues
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols))
+      };
+    }
+  };
+
+  const logHeaders = ['日付', '患者ID', '作成者'];
+  const logRows = [
+    [new Date('2024-12-05T00:00:00Z'), '005', 'staff+alias@example.com']
+  ];
+  const logValues = [logHeaders, ...logRows];
+  const logDisplayValues = [
+    logHeaders,
+    ['2024/12/05 00:00', '005', 'staff+alias@example.com']
+  ];
+
+  const logSheet = {
+    getLastRow: () => logValues.length,
+    getLastColumn: () => logHeaders.length,
+    getMaxColumns: () => logHeaders.length,
+    getRange: (row, col, numRows, numCols) => {
+      const sliceValues = rows => rows.map(r => r.slice(col - 1, col - 1 + numCols));
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [logDisplayValues[0]] };
+      }
+      return {
+        getValues: () => sliceValues(logValues.slice(row - 1, row - 1 + numRows)),
+        getDisplayValues: () => sliceValues(logDisplayValues.slice(row - 1, row - 1 + numRows))
+      };
+    }
+  };
+
+  workbook = {
+    getSheetByName: name => {
+      if (name === 'スタッフ一覧') return staffSheet;
+      if (name === '施術録') return logSheet;
+      return null;
+    }
+  };
+
+  const directory = loadBillingStaffDirectory_();
+  const logs = loadTreatmentLogs_();
+  const staffByPatient = { '005': [logs[0].createdByEmail] };
+  const normalized = buildStaffDisplayByPatient_(staffByPatient, directory);
+
+  assert.strictEqual(logs[0].createdByKey, 'staff@example.com', 'Gmail のエイリアスを取り除いて正規化する');
+  assert.strictEqual(directory[logs[0].createdByKey], '山田太郎', 'エイリアスを除去して辞書に一致させる');
+  assert.strictEqual(normalized['005'][0], '山田太郎', '患者ごとの担当者名にも反映される');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
@@ -427,6 +498,7 @@ function run() {
   testStaffDirectorySkipsDisabledRows();
   testStaffKeyNormalizationIsSharedAcrossSources();
   testStaffDirectoryFallsBackToNameAndRomanizedKeys();
+  testStaffDirectoryCollapsesPlusAliases();
   console.log('billingGet burden rate tests passed');
 }
 

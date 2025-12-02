@@ -16,7 +16,7 @@ function createLogicContext(overrides = {}) {
 
 const context = createLogicContext();
 
-const { calculateBillingAmounts_, normalizeBurdenMultiplier_ } = context;
+const { calculateBillingAmounts_, normalizeBurdenMultiplier_, resolveInvoiceUnitPrice_ } = context;
 const { generateBillingJsonFromSource } = context;
 
 if (typeof calculateBillingAmounts_ !== 'function' || typeof normalizeBurdenMultiplier_ !== 'function') {
@@ -153,6 +153,40 @@ function testSelfPaidManualPriceIsNotRounded() {
   assert.strictEqual(result.grandTotal, 3366, '施術料と交通費を合算した金額が保持される');
 }
 
+function testInvoiceUnitPriceResolutionPriority() {
+  const manualOverridesZero = resolveInvoiceUnitPrice_('生保', 3, 5000, 1);
+  assert.strictEqual(manualOverridesZero, 5000, '手動単価は生保や医療助成より優先される');
+
+  const medicalAssistanceZero = calculateBillingAmounts_({
+    visitCount: 3,
+    insuranceType: '鍼灸',
+    burdenRate: 3,
+    unitPrice: '',
+    medicalAssistance: 1
+  });
+  assert.strictEqual(medicalAssistanceZero.unitPrice, 0, '医療助成では単価が0円になる');
+  assert.strictEqual(medicalAssistanceZero.treatmentAmount, 0, '医療助成では施術料を計上しない');
+
+  const lifeProtectionZero = calculateBillingAmounts_({
+    visitCount: 2,
+    insuranceType: '生活扶助',
+    burdenRate: 2,
+    unitPrice: null
+  });
+  assert.strictEqual(lifeProtectionZero.unitPrice, 0, '生活扶助も生保扱いで単価0円になる');
+  assert.strictEqual(lifeProtectionZero.treatmentAmount, 0, '生保扱いでは施術料を計上しない');
+
+  const selfPaidByBurdenRate = calculateBillingAmounts_({
+    visitCount: 1,
+    insuranceType: '鍼灸',
+    burdenRate: '自費',
+    unitPrice: 4000
+  });
+  assert.strictEqual(selfPaidByBurdenRate.unitPrice, 4000, '自費負担割合でも手動単価を利用する');
+  assert.strictEqual(selfPaidByBurdenRate.billingAmount, 4000, '自費負担割合では丸めずに請求する');
+  assert.strictEqual(selfPaidByBurdenRate.transportAmount, 33, '自費でも交通費を計上する');
+}
+
 function run() {
   testBurdenRateDigitConversion();
   testMassageBillingExclusion();
@@ -163,6 +197,7 @@ function run() {
   testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice();
   testSelfPaidDefaultsToZeroWithoutManualUnitPrice();
   testSelfPaidManualPriceIsNotRounded();
+  testInvoiceUnitPriceResolutionPriority();
   console.log('billingLogic tests passed');
 }
 

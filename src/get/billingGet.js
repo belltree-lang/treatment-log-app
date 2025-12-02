@@ -832,6 +832,7 @@ function getBillingPatientRecords() {
     const normalizedBurden = insuranceType === '自費'
       ? '自費'
       : (colBurden ? normalizeBurdenRateInt_(row[colBurden - 1]) : 0);
+    const manualUnitPrice = colUnitPrice ? normalizeMoneyValue_(row[colUnitPrice - 1]) : 0;
     return {
       patientId: pid,
       raw: buildPatientRawObject_(headers, row),
@@ -839,7 +840,8 @@ function getBillingPatientRecords() {
       nameKana: colKana ? String(row[colKana - 1] || '').trim() : '',
       insuranceType,
       burdenRate: normalizedBurden,
-      unitPrice: colUnitPrice ? normalizeMoneyValue_(row[colUnitPrice - 1]) : 0,
+      unitPrice: manualUnitPrice,
+      manualUnitPrice,
       address: colAddress ? String(row[colAddress - 1] || '').trim() : '',
       payerType: colPayer ? String(row[colPayer - 1] || '').trim() : '',
       medicalAssistance: colMedical ? normalizeZeroOneFlag_(row[colMedical - 1]) : 0,

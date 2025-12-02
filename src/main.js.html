@@ -179,13 +179,13 @@ function normalizeBurdenRateDisplay(value) {
 }
 
 function normalizeMedicalAssistanceFlag(value) {
-  if (value === true) return true;
-  if (value === false) return false;
+  if (value === true) return 1;
+  if (value === false) return 0;
   const num = Number(value);
-  if (Number.isFinite(num)) return !!num;
+  if (Number.isFinite(num)) return num ? 1 : 0;
   const text = String(value || '').trim().toLowerCase();
-  if (!text) return false;
-  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].includes(text);
+  if (!text) return 0;
+  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].includes(text) ? 1 : 0;
 }
 
 function isDeprecatedInsuranceType(value) {
@@ -197,11 +197,12 @@ function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, me
   const type = String(insuranceType || '').trim();
   const manualUnitPrice = normalizeMoneyNumber(customUnitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
-  if ((type === '生保' || isMedicalAssistance) && !hasManualUnitPrice) return 0;
-  if (isDeprecatedInsuranceType(type)) return 0;
+  const isMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance) === 1;
   if (hasManualUnitPrice) return manualUnitPrice;
-  if (type === '自費') return 0;
+  if (isMedicalAssistance) return 0;
+  if (type === '生活保護' || type === '生保') return 0;
+  if (isDeprecatedInsuranceType(type)) return 0;
+  if (burdenRate === '自費' || type === '自費') return BILLING_UNIT_PRICE;
   return BILLING_UNIT_PRICE;
 }
 
@@ -212,9 +213,9 @@ function recalculateBillingRow(row) {
   const unitPrice = resolveFrontEndUnitPrice(row.insuranceType, normalizedBurden, normalizedUnitPrice, row.medicalAssistance);
   const manualUnitPrice = normalizeMoneyNumber(row.unitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isMedicalAssistance = normalizeMedicalAssistanceFlag(row.medicalAssistance);
-  const shouldZeroByAssistance = (row.insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
-  const isZeroCharge = shouldZeroByAssistance || (row.insuranceType === '自費' && !hasManualUnitPrice);
+  const isMedicalAssistance = normalizeMedicalAssistanceFlag(row.medicalAssistance) === 1;
+  const shouldZeroByAssistance = (row.insuranceType === '生保' || row.insuranceType === '生活保護' || isMedicalAssistance) && !hasManualUnitPrice;
+  const isZeroCharge = shouldZeroByAssistance;
   const isMassage = isDeprecatedInsuranceType(row.insuranceType);
   const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
@@ -367,6 +368,28 @@ function normalizeBillingResultPayload(raw) {
 
   function applyBillingFieldDefaults(payload) {
     if (!payload || typeof payload !== 'object') return payload;
+    const patients = payload.patients || payload.patientMap || {};
+    const billingJson = Array.isArray(payload.billingJson) ? payload.billingJson : [];
+    const normalizedBillingJson = billingJson.map(row => {
+      const patient = row && row.patientId ? (patients[row.patientId] || {}) : {};
+      const resolvedInsurance = row && row.insuranceType != null ? row.insuranceType : (patient.insuranceType || '');
+      const resolvedBurden = row && row.burdenRate != null ? row.burdenRate : (patient.burdenRate != null ? patient.burdenRate : '');
+      const resolvedMedical = row && row.medicalAssistance != null
+        ? normalizeMedicalAssistanceFlag(row.medicalAssistance)
+        : normalizeMedicalAssistanceFlag(patient.medicalAssistance);
+      const manualUnitPrice = row && row.manualUnitPrice != null
+        ? normalizeMoneyNumber(row.manualUnitPrice)
+        : normalizeMoneyNumber((patient && (patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice)) || 0);
+      const resolvedUnitPrice = row && row.unitPrice != null ? row.unitPrice : manualUnitPrice;
+      return Object.assign({}, row, {
+        insuranceType: resolvedInsurance,
+        burdenRate: resolvedBurden,
+        medicalAssistance: resolvedMedical,
+        manualUnitPrice,
+        unitPrice: resolvedUnitPrice
+      });
+    });
+
     return Object.assign(
       {
         staffByPatient: {},
@@ -382,10 +405,11 @@ function normalizeBillingResultPayload(raw) {
         staffByPatient: payload.staffByPatient || {},
         staffDirectory: payload.staffDirectory || {},
         staffDisplayByPatient: payload.staffDisplayByPatient || {},
-        patients: payload.patients || payload.patientMap || {},
+        patients,
         bankInfoByName: payload.bankInfoByName || {},
         bankStatuses: payload.bankStatuses || {},
-        carryOverByPatient: payload.carryOverByPatient || {}
+        carryOverByPatient: payload.carryOverByPatient || {},
+        billingJson: normalizedBillingJson
       }
     );
   }

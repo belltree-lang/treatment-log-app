@@ -437,16 +437,25 @@ function normalizeBillingEdits_(maybeEdits) {
     const pid = edit && edit.patientId ? String(edit.patientId).trim() : '';
     if (!pid) return null;
     const burden = normalizeBillingEditBurden_(edit.burdenRate);
+    const manualUnitPrice = edit.manualUnitPrice != null ? Number(edit.manualUnitPrice) || 0 : undefined;
+    const normalizedUnitPrice = manualUnitPrice != null
+      ? manualUnitPrice
+      : (edit.unitPrice != null ? Number(edit.unitPrice) || 0 : undefined);
     return {
       patientId: pid,
       insuranceType: edit.insuranceType != null ? String(edit.insuranceType).trim() : undefined,
       medicalAssistance: normalizeBillingEditMedicalAssistance_(edit.medicalAssistance),
       burdenRate: burden !== null ? burden : undefined,
-      unitPrice: edit.unitPrice != null ? Number(edit.unitPrice) || 0 : undefined,
+      unitPrice: normalizedUnitPrice,
       carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
       payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined
     };
   }).filter(Boolean);
+}
+
+function savePatientUpdate(patientId, updatedFields) {
+  const edits = normalizeBillingEdits_([{ patientId, ...(updatedFields || {}) }]);
+  return applyBillingPatientEdits_(edits);
 }
 
 function applyBillingPatientEdits_(edits) {

@@ -130,6 +130,10 @@ const billingNormalizeEmailKey_ = typeof normalizeEmailKey_ === 'function'
     const raw = String(email || '').trim();
     if (!raw) return '';
     const normalized = raw.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    const plusCollapsed = normalized.replace(/\+[^@]+(?=@)/, '');
+    if (plusCollapsed !== normalized) {
+      return plusCollapsed;
+    }
     if (normalized.includes('@')) {
       return normalized;
     }

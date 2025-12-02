@@ -125,13 +125,13 @@ function normalizeInvoiceVisitCount_(value) {
 }
 
 function normalizeInvoiceMedicalAssistanceFlag_(value) {
-  if (value === true) return true;
-  if (value === false) return false;
+  if (value === true) return 1;
+  if (value === false) return 0;
   const num = Number(value);
-  if (Number.isFinite(num)) return !!num;
+  if (Number.isFinite(num)) return num ? 1 : 0;
   const text = String(value || '').trim().toLowerCase();
-  if (!text) return false;
-  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0;
+  if (!text) return 0;
+  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0 ? 1 : 0;
 }
 
 function normalizeBillingCarryOver_(item) {
@@ -255,17 +255,17 @@ function calculateInvoiceChargeBreakdown_(params) {
   const carryOverAmount = normalizeBillingCarryOver_(params);
   const manualUnitPrice = normalizeInvoiceMoney_(params && params.unitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
+  const isMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance) === 1;
   const isMassage = insuranceType === 'マッサージ';
-  const isSelfPaid = insuranceType === '自費';
-  const shouldZero = (insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
-  const isZeroChargeInsurance = shouldZero || (insuranceType === '自費' && !hasManualUnitPrice);
+  const isSelfPaid = insuranceType === '自費' || burdenRateInt === '自費';
+  const shouldZero = (insuranceType === '生保' || insuranceType === '生活保護' || isMedicalAssistance) && !hasManualUnitPrice;
+  const isZeroChargeInsurance = shouldZero;
 
   const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
     if (shouldZero) return 0;
     if (isMassage) return 0;
     if (hasManualUnitPrice) return manualUnitPrice;
-    if (insuranceType === '自費') return 0;
+    if (insuranceType === '自費' || burdenRateInt === '自費') return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[3] || 0;
     return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
   })();
   const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
@@ -481,7 +481,12 @@ function exportBankTransferRows_(billingMonth, rowObjects) {
   });
 
   if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, colCount).clearContent();
+    const existingDataRows = lastRow - 1;
+    if (workingRows.length === 0) {
+      sheet.deleteRows(2, existingDataRows);
+    } else if (workingRows.length < existingDataRows) {
+      sheet.deleteRows(2 + workingRows.length, existingDataRows - workingRows.length);
+    }
   }
   if (workingRows.length) {
     sheet.getRange(2, 1, workingRows.length, colCount).setValues(workingRows);

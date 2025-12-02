@@ -365,7 +365,6 @@ function loadBillingPage() {
 function normalizeBillingResultPayload(raw) {
   if (!raw) return null;
 
-  // Helper to parse stringified payloads safely.
   function parseMaybeJson(value) {
     if (typeof value !== 'string') return value;
     try {
@@ -375,30 +374,10 @@ function normalizeBillingResultPayload(raw) {
       return null;
     }
   }
-  // Coerce billingJson only when it is actually present.
+
   function coerceBillingJson(value) {
     if (Array.isArray(value)) return value;
     if (typeof value === 'string') {
-      
-  if (result && typeof result === 'object' && result.payload && typeof result.payload === 'object') {
-    const payload = result.payload;
-    if (payload.billingJson) {
-      result = payload;
-    }
-  }
-
-  if (Array.isArray(result)) {
-    return { billingJson: result, billingMonth: '', preparedAt: null };
-  }
-
-  if (result && typeof result === 'object' && result.result && typeof result.result === 'object') {
-    result = result.result;
-  }
-
-  const billingJson = (() => {
-    if (Array.isArray(result.billingJson)) return result.billingJson;
-    if (typeof result.billingJson === 'string') {
-    
       try {
         const parsed = JSON.parse(value);
         return Array.isArray(parsed) ? parsed : null;
@@ -410,7 +389,6 @@ function normalizeBillingResultPayload(raw) {
     return null;
   }
 
-  // Recursively search for an object that already contains billingJson.
   function findBillingPayload(obj, ancestors) {
     if (!obj || typeof obj !== 'object') return null;
     const billingJson = coerceBillingJson(obj.billingJson);
@@ -438,6 +416,10 @@ function normalizeBillingResultPayload(raw) {
 
   if (Array.isArray(result)) {
     return { billingJson: result, billingMonth: '', preparedAt: null };
+  }
+
+  if (result && typeof result === 'object' && result.result && typeof result.result === 'object') {
+    result = result.result;
   }
 
   const found = findBillingPayload(result);

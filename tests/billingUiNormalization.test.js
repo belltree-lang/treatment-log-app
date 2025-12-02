@@ -106,6 +106,24 @@ function testInheritsObjectMetadataFromAncestors() {
   assert.strictEqual(result.carryOverByPatient['111'], 4000, 'carryOverByPatient を祖先から引き継ぐ');
 }
 
+function testInheritsFilesFromAncestorMeta() {
+  const raw = {
+    response: {
+      files: [
+        { name: 'invoice-001.pdf', url: 'https://example.com/invoice-001.pdf' }
+      ],
+      payload: {
+        billingJson: [{ patientId: '222' }]
+      }
+    }
+  };
+
+  const result = normalizeBillingResultPayload(raw);
+  assert.strictEqual(result.billingJson[0].patientId, '222', 'billingJson を抽出する');
+  assert.strictEqual(result.files[0].name, 'invoice-001.pdf', '祖先オブジェクトの files 配列を引き継ぐ');
+  assert.strictEqual(result.files[0].url, 'https://example.com/invoice-001.pdf', 'files の中身を保持する');
+}
+
 function testReturnsNullOnUnparsableString() {
   const result = normalizeBillingResultPayload('{invalid json');
   assert.strictEqual(result, null, '不正なJSON文字列は null を返す');
@@ -117,6 +135,7 @@ function run() {
   testFindsBillingJsonInsideStringifiedPayload();
   testMergesMetadataFromAncestorObjects();
   testInheritsObjectMetadataFromAncestors();
+  testInheritsFilesFromAncestorMeta();
   testReturnsNullOnUnparsableString();
   console.log('billingUiNormalization tests passed');
 }

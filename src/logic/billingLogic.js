@@ -41,14 +41,8 @@ function normalizeBurdenMultiplier_(burdenRate, insuranceType) {
 }
 
 function normalizeMedicalAssistanceFlag_(value) {
-  if (value === null || value === undefined) return 0;
-  const num = Number(value);
-  if (Number.isFinite(num)) return num ? 1 : 0;
-  if (value === true) return 1;
-  if (value === false) return 0;
-  const text = String(value || '').trim().toLowerCase();
-  if (!text) return 0;
-  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0 ? 1 : 0;
+  if (value === 1 || value === '1' || value === true) return 1;
+  return 0;
 }
 
 function normalizeBillingSource_(source) {
@@ -153,13 +147,13 @@ function calculateBillingAmounts_(params) {
   const normalizedBurdenRate = normalizeBurdenRateInt_(params.burdenRate);
   const isSelfPaid = insuranceType === '自費' || normalizedBurdenRate === '自費';
   const medicalAssistance = normalizeMedicalAssistanceFlag_(params.medicalAssistance);
-  const manualUnitPrice = normalizeMoneyNumber_(params.unitPrice);
+  const manualUnitPrice = normalizeMoneyNumber_(params.manualUnitPrice != null ? params.manualUnitPrice : params.unitPrice);
   const isMassage = insuranceType === 'マッサージ';
-  let unitPrice = resolveInvoiceUnitPrice_(insuranceType, params.burdenRate, manualUnitPrice, medicalAssistance);
+  let unitPrice = resolveInvoiceUnitPrice_(insuranceType, normalizedBurdenRate, manualUnitPrice, medicalAssistance);
   if (isMassage) unitPrice = 0;
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   const isLifeProtection = ['生保', '生活保護', '生活扶助'].indexOf(insuranceType) >= 0;
-  const shouldZero = (isLifeProtection || medicalAssistance) && !hasManualUnitPrice;
+  const shouldZero = (isLifeProtection || medicalAssistance === 1) && !hasManualUnitPrice;
   const isZeroCharge = shouldZero || (isSelfPaid && !hasManualUnitPrice);
   const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
@@ -171,7 +165,17 @@ function calculateBillingAmounts_(params) {
   const total = treatmentAmount + transportAmount;
   const grandTotal = billingAmount + transportAmount + carryOverAmount;
 
-  return { visits, unitPrice, treatmentAmount, transportAmount, carryOverAmount, billingAmount, total, grandTotal };
+  return {
+    visits,
+    unitPrice,
+    manualUnitPrice,
+    treatmentAmount,
+    transportAmount,
+    carryOverAmount,
+    billingAmount,
+    total,
+    grandTotal
+  };
 }
 
 function resolveBillingAddress_(patient) {
@@ -224,12 +228,15 @@ function generateBillingJsonFromSource(sourceData) {
     const responsibleName = responsibleNames.join('・');
     const carryOverFromPatient = normalizeMoneyNumber_(patient.carryOverAmount);
     const carryOverFromHistory = normalizeMoneyNumber_(carryOverByPatient[pid]);
+    const manualUnitPrice = normalizeMoneyNumber_(patient.unitPrice);
+    const normalizedBurdenRate = normalizeBurdenRateInt_(patient.burdenRate);
+    const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag_(patient.medicalAssistance);
     const amountCalc = calculateBillingAmounts_({
       visitCount,
       insuranceType: patient.insuranceType,
-      burdenRate: patient.burdenRate,
-      unitPrice: patient.unitPrice,
-      medicalAssistance: patient.medicalAssistance,
+      burdenRate: normalizedBurdenRate,
+      manualUnitPrice,
+      medicalAssistance: normalizedMedicalAssistance,
       carryOverAmount: carryOverFromPatient + carryOverFromHistory
     });
 
@@ -242,9 +249,10 @@ function generateBillingJsonFromSource(sourceData) {
       nameKana: patient.nameKana || '',
       address: resolveBillingAddress_(patient),
       insuranceType: patient.insuranceType || '',
-      burdenRate: normalizeBurdenRateInt_(patient.burdenRate),
-      medicalAssistance: normalizeMedicalAssistanceFlag_(patient.medicalAssistance),
+      burdenRate: normalizedBurdenRate,
+      medicalAssistance: normalizedMedicalAssistance,
       visitCount: amountCalc.visits,
+      manualUnitPrice,
       unitPrice: amountCalc.unitPrice,
       treatmentAmount: amountCalc.treatmentAmount,
       transportAmount: amountCalc.transportAmount,

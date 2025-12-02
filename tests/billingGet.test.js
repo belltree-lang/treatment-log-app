@@ -342,6 +342,78 @@ function testStaffKeyNormalizationIsSharedAcrossSources() {
   assert.strictEqual(directory[logs[0].createdByKey], '山田太郎', 'スタッフ一覧と同じ正規化結果で名前を取得できる');
 }
 
+function testStaffDirectoryFallsBackToNameAndRomanizedKeys() {
+  const staffHeaders = ['氏名', 'ローマ字'];
+  const staffValues = [
+    ['山田太郎', 'Taro Yamada'],
+    ['佐藤花子', 'Hanako Sato']
+  ];
+
+  const staffSheet = {
+    getLastRow: () => staffValues.length + 1,
+    getLastColumn: () => staffHeaders.length,
+    getMaxColumns: () => staffHeaders.length,
+    getRange: (row, col, numRows, numCols) => {
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [staffHeaders.slice(col - 1, col - 1 + numCols)] };
+      }
+      const startIdx = Math.max(0, row - 2);
+      return {
+        getValues: () => staffValues
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols)),
+        getDisplayValues: () => staffValues
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols))
+      };
+    }
+  };
+
+  const logHeaders = ['日付', '患者ID', '作成者'];
+  const logRows = [
+    [new Date('2024-12-03T00:00:00Z'), '003', 'Taro Yamada'],
+    [new Date('2024-12-04T00:00:00Z'), '004', ' 山田 太郎 ']
+  ];
+  const logValues = [logHeaders, ...logRows];
+  const logDisplayValues = [
+    logHeaders,
+    ['2024/12/03 00:00', '003', 'Taro Yamada'],
+    ['2024/12/04 00:00', '004', ' 山田 太郎 ']
+  ];
+
+  const logSheet = {
+    getLastRow: () => logValues.length,
+    getLastColumn: () => logHeaders.length,
+    getMaxColumns: () => logHeaders.length,
+    getRange: (row, col, numRows, numCols) => {
+      const sliceValues = rows => rows.map(r => r.slice(col - 1, col - 1 + numCols));
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [logDisplayValues[0]] };
+      }
+      return {
+        getValues: () => sliceValues(logValues.slice(row - 1, row - 1 + numRows)),
+        getDisplayValues: () => sliceValues(logDisplayValues.slice(row - 1, row - 1 + numRows))
+      };
+    }
+  };
+
+  workbook = {
+    getSheetByName: name => {
+      if (name === 'スタッフ一覧') return staffSheet;
+      if (name === '施術録') return logSheet;
+      return null;
+    }
+  };
+
+  const directory = loadBillingStaffDirectory_();
+  const logs = loadTreatmentLogs_();
+
+  assert.strictEqual(directory['taroyamada'], '山田太郎', 'ローマ字列から正規化キーを生成する');
+  assert.strictEqual(directory['山田太郎'], '山田太郎', '氏名だけでもキーを作成する');
+  assert.strictEqual(logs[0].createdByKey, 'taroyamada', 'ローマ字の作成者も正規化される');
+  assert.strictEqual(logs[1].createdByKey, '山田太郎', 'メール形式でなくても normalizedKey が生成される');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
@@ -354,6 +426,7 @@ function run() {
   testStaffDirectoryNormalizesNonEmailIds();
   testStaffDirectorySkipsDisabledRows();
   testStaffKeyNormalizationIsSharedAcrossSources();
+  testStaffDirectoryFallsBackToNameAndRomanizedKeys();
   console.log('billingGet burden rate tests passed');
 }
 

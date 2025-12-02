@@ -6,6 +6,7 @@ const TRANSPORT_PRICE = (typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
   ? BILLING_TRANSPORT_UNIT_PRICE
   : 33;
 const INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
+const INVOICE_UNIT_PRICE_FALLBACK = (typeof BILLING_UNIT_PRICE !== 'undefined') ? BILLING_UNIT_PRICE : 4170;
 
 function roundToNearestTen_(value) {
   const num = Number(value);
@@ -44,6 +45,26 @@ const normalizeInvoiceBurdenRateInt_ = typeof normalizeBurdenRateInt_ === 'funct
   if (parsed > 0 && parsed < 10) return Math.round(parsed);
   if (parsed >= 10 && parsed <= 100) return Math.round(parsed / 10);
   return 0;
+  };
+
+const resolveInvoiceUnitPriceForOutput_ = typeof resolveInvoiceUnitPrice_ === 'function'
+  ? resolveInvoiceUnitPrice_
+  : function fallbackResolveInvoiceUnitPriceForOutput_(insuranceType, burdenRate, manualUnitPrice, medicalAssistance, patientUnitPrice) {
+    const type = String(insuranceType || '').trim();
+    if (type === 'マッサージ') return 0;
+    const normalizedManual = normalizeInvoiceMoney_(manualUnitPrice);
+    const hasManual = Number.isFinite(normalizedManual) && normalizedManual !== 0;
+    if (hasManual) return normalizedManual;
+    const assistance = normalizeInvoiceMedicalAssistanceFlag_(medicalAssistance);
+    if (assistance === 1) return 0;
+    const isLifeProtection = ['生保', '生活保護', '生活扶助'].indexOf(type) >= 0;
+    if (isLifeProtection) return 0;
+    const normalizedBurdenRate = normalizeInvoiceBurdenRateInt_(burdenRate);
+    const isSelfPaid = type === '自費' || normalizedBurdenRate === '自費';
+    if (isSelfPaid) return 0;
+    const normalizedPatientPrice = normalizeInvoiceMoney_(patientUnitPrice);
+    if (Number.isFinite(normalizedPatientPrice) && normalizedPatientPrice !== 0) return normalizedPatientPrice;
+    return INVOICE_UNIT_PRICE_FALLBACK;
   };
 
 function convertSpreadsheetToExcelBlob_(file, exportName) {
@@ -250,28 +271,24 @@ function calculateInvoiceChargeBreakdown_(params) {
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
   const normalizedMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
   const carryOverAmount = normalizeBillingCarryOver_(params);
-  const manualUnitPrice = normalizeInvoiceMoney_(params && params.manualUnitPrice);
-  const patientUnitPrice = normalizeInvoiceMoney_(params && params.unitPrice);
-  const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isLifeProtection = ['生保', '生活保護', '生活扶助'].indexOf(insuranceType) >= 0;
-  const isSelfPaid = insuranceType === '自費' || burdenRateInt === '自費';
-  const defaultUnitPrice = patientUnitPrice || INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
-
-  const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
-    if (insuranceType === 'マッサージ') return 0;
-    if (hasManualUnitPrice) return manualUnitPrice;
-    if (normalizedMedicalAssistance === 1) return 0;
-    if (isLifeProtection) return 0;
-    if (isSelfPaid) return 0;
-    if (patientUnitPrice) return patientUnitPrice;
-    return defaultUnitPrice;
-  })();
+  const manualUnitPrice = params && params.hasOwnProperty('manualUnitPrice')
+    ? params.manualUnitPrice
+    : params && params.unitPrice;
+  const patientUnitPrice = params && params.unitPrice;
+  const treatmentUnitPrice = resolveInvoiceUnitPriceForOutput_(
+    insuranceType,
+    burdenRateInt,
+    manualUnitPrice,
+    normalizedMedicalAssistance,
+    patientUnitPrice || INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt]
+  );
 
   const hasChargeableUnitPrice = Number.isFinite(treatmentUnitPrice) && treatmentUnitPrice !== 0;
   const treatmentAmountFull = visits > 0 && hasChargeableUnitPrice ? treatmentUnitPrice * visits : 0;
-  const burdenMultiplier = insuranceType === '自費'
-    ? 1
-    : (burdenRateInt === '自費' ? 1 : (burdenRateInt > 0 ? burdenRateInt / 10 : 0));
+  const burdenMultiplier = typeof normalizeBurdenMultiplier_ === 'function'
+    ? normalizeBurdenMultiplier_(burdenRateInt, insuranceType)
+    : (insuranceType === '自費' ? 1 : (burdenRateInt > 0 ? burdenRateInt / 10 : 0));
+  const isSelfPaid = insuranceType === '自費' || burdenRateInt === '自費';
   const treatmentAmount = isSelfPaid
     ? treatmentAmountFull
     : roundToNearestTen_(treatmentAmountFull * burdenMultiplier);

@@ -189,12 +189,12 @@ function isDeprecatedInsuranceType(value) {
   return BILLING_DEPRECATED_INSURANCE_TYPES.includes(String(value).trim());
 }
 
-function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, medicalAssistance, patientUnitPrice) {
+function resolveFrontEndUnitPrice(insuranceType, burdenRate, manualUnitPrice, medicalAssistance, patientUnitPrice) {
   const type = String(insuranceType || '').trim();
   if (isDeprecatedInsuranceType(type)) return 0;
-  const manualUnitPrice = normalizeMoneyNumber(customUnitPrice);
-  const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  if (hasManualUnitPrice) return manualUnitPrice;
+  const normalizedManualPrice = normalizeMoneyNumber(manualUnitPrice);
+  const hasManualUnitPrice = Number.isFinite(normalizedManualPrice) && normalizedManualPrice !== 0;
+  if (hasManualUnitPrice) return normalizedManualPrice;
   const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
   if (normalizedMedicalAssistance === 1) return 0;
   if (['生保', '生活保護', '生活扶助'].includes(type)) return 0;
@@ -208,13 +208,16 @@ function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, me
 function recalculateBillingRow(row) {
   const visits = normalizeVisitCount(row.visitCount);
   const normalizedBurden = row.burdenRate === '自費' ? '自費' : normalizeBurdenRateInt(row.burdenRate);
-  const normalizedUnitPrice = normalizeMoneyNumber(row.unitPrice);
+  const normalizedManualUnitPrice = normalizeMoneyNumber(
+    row.manualUnitPrice !== undefined ? row.manualUnitPrice : row.unitPrice
+  );
+  const patientUnitPrice = normalizeMoneyNumber(row.unitPrice);
   const unitPrice = resolveFrontEndUnitPrice(
     row.insuranceType,
     normalizedBurden,
-    normalizedUnitPrice,
+    normalizedManualUnitPrice,
     row.medicalAssistance,
-    row.unitPrice
+    patientUnitPrice
   );
   const isSelfPaid = String(row.insuranceType || '').trim() === '自費' || normalizedBurden === '自費';
   const hasChargeableUnitPrice = Number.isFinite(unitPrice) && unitPrice !== 0;
@@ -229,7 +232,7 @@ function recalculateBillingRow(row) {
   return Object.assign({}, row, {
     burdenRate: normalizedBurden,
     unitPrice,
-    manualUnitPrice: normalizedUnitPrice,
+    manualUnitPrice: normalizedManualUnitPrice,
     treatmentAmount,
     billingAmount,
     transportAmount,
@@ -373,6 +376,33 @@ function loadBillingPage() {
 function normalizeBillingResultPayload(raw) {
   if (!raw) return null;
 
+  const BILLING_ROW_DEFAULTS = {
+    billingMonth: '',
+    patientId: '',
+    nameKanji: '',
+    nameKana: '',
+    address: '',
+    insuranceType: '',
+    burdenRate: 0,
+    medicalAssistance: 0,
+    manualUnitPrice: '',
+    unitPrice: 0,
+    visitCount: 0,
+    treatmentAmount: 0,
+    transportAmount: 0,
+    carryOverAmount: 0,
+    carryOverFromHistory: 0,
+    billingAmount: 0,
+    total: 0,
+    grandTotal: 0,
+    responsibleEmail: '',
+    responsibleNames: [],
+    responsibleName: '',
+    payerType: '',
+    bankStatus: '',
+    paidStatus: ''
+  };
+
   function applyBillingFieldDefaults(payload) {
     if (!payload || typeof payload !== 'object') return payload;
     return Object.assign(
@@ -398,10 +428,6 @@ function normalizeBillingResultPayload(raw) {
     );
   }
 
-  function normalizeMedicalAssistanceNumber(value) {
-    return normalizeMedicalAssistanceFlag(value);
-  }
-
   function normalizeManualUnitPriceValue(value) {
     if (value === null || value === undefined || value === '') return '';
     return normalizeMoneyNumber(value);
@@ -410,34 +436,56 @@ function normalizeBillingResultPayload(raw) {
   function mergePatientMetaIntoRows(rows, patients) {
     if (!Array.isArray(rows)) return [];
     return rows.map(row => {
-      const merged = Object.assign({}, row);
-      const pid = merged && merged.patientId ? String(merged.patientId).trim() : '';
+      const pid = row && row.patientId ? String(row.patientId).trim() : '';
       const patient = pid && patients ? patients[pid] || {} : {};
 
-      if (!merged.insuranceType && patient.insuranceType) {
-        merged.insuranceType = patient.insuranceType;
-      }
+      const patientSeed = {
+        patientId: pid || patient.patientId || '',
+        nameKanji: patient.nameKanji,
+        nameKana: patient.nameKana,
+        address: patient.address,
+        insuranceType: patient.insuranceType,
+        burdenRate: patient.burdenRate,
+        medicalAssistance: patient.medicalAssistance,
+        manualUnitPrice: patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice,
+        unitPrice: patient.unitPrice,
+        visitCount: patient.visitCount,
+        carryOverAmount: patient.carryOverAmount,
+        carryOverFromHistory: patient.carryOverFromHistory,
+        payerType: patient.payerType,
+        responsibleEmail: patient.responsibleEmail,
+        responsibleNames: patient.responsibleNames,
+        responsibleName: patient.responsibleName,
+        bankStatus: patient.bankStatus,
+        paidStatus: patient.paidStatus
+      };
 
-      const patientBurden = patient.burdenRate;
-      if ((merged.burdenRate == null || merged.burdenRate === '') && patientBurden !== undefined) {
-        merged.burdenRate = patientBurden === '自費' ? '自費' : normalizeBurdenRateInt(patientBurden);
-      } else if (merged.burdenRate !== undefined) {
-        merged.burdenRate = merged.burdenRate === '自費' ? '自費' : normalizeBurdenRateInt(merged.burdenRate);
-      }
+      const merged = Object.assign({}, BILLING_ROW_DEFAULTS, patientSeed, row || {});
 
-      const assistanceSource = merged.medicalAssistance !== undefined ? merged.medicalAssistance : patient.medicalAssistance;
-      merged.medicalAssistance = normalizeMedicalAssistanceNumber(assistanceSource);
+      const burdenSource = row && row.hasOwnProperty('burdenRate') ? row.burdenRate : patient.burdenRate;
+      merged.burdenRate = burdenSource === '自費' ? '自費' : normalizeBurdenRateInt(burdenSource);
 
-      const manualPriceSource = merged.manualUnitPrice !== undefined ? merged.manualUnitPrice : patient.manualUnitPrice;
+      const assistanceSource = row && row.hasOwnProperty('medicalAssistance')
+        ? row.medicalAssistance
+        : patient.medicalAssistance;
+      merged.medicalAssistance = normalizeMedicalAssistanceFlag(assistanceSource);
+
+      const manualPriceSource = row && row.hasOwnProperty('manualUnitPrice')
+        ? row.manualUnitPrice
+        : patientSeed.manualUnitPrice;
       merged.manualUnitPrice = normalizeManualUnitPriceValue(manualPriceSource);
+
+      merged.insuranceType = (row && row.insuranceType) || patient.insuranceType || '';
+      merged.responsibleNames = Array.isArray(merged.responsibleNames) ? merged.responsibleNames : [];
 
       return merged;
     });
   }
 
-  function finalizeBillingPayload(payload) {
+  function normalizeBillingPayload(payload) {
     const withDefaults = applyBillingFieldDefaults(payload);
-    const enrichedRows = mergePatientMetaIntoRows(withDefaults.billingJson || [], withDefaults.patients || {});
+    const billingJson = coerceBillingJson(withDefaults.billingJson) || [];
+    const enrichedRows = mergePatientMetaIntoRows(billingJson, withDefaults.patients || {});
     return Object.assign({}, withDefaults, { billingJson: enrichedRows });
   }
 
@@ -512,7 +560,7 @@ function normalizeBillingResultPayload(raw) {
     function mergeWithMeta(obj, meta) {
       const billingJson = coerceBillingJson(obj.billingJson);
       if (!billingJson) return null;
-      return Object.assign({}, meta, obj, { billingJson });
+      return normalizeBillingPayload(Object.assign({}, meta, obj, { billingJson }));
     }
 
     function enqueue(candidate, inheritedMeta) {
@@ -548,19 +596,19 @@ function normalizeBillingResultPayload(raw) {
   if (result == null) return null;
 
   if (Array.isArray(result)) {
-    return finalizeBillingPayload({ billingJson: result, billingMonth: '', preparedAt: null });
+    return normalizeBillingPayload({ billingJson: result, billingMonth: '', preparedAt: null });
   }
 
   const found = findBillingPayload(result, result);
   if (found && found.billingJson) {
-    return finalizeBillingPayload(found);
+    return normalizeBillingPayload(found);
   }
 
   const billingJson = coerceBillingJson(result.billingJson) || [];
   if (!billingJson.length) {
     console.warn('[billing] billingJson not found in payload; returning empty array');
   }
-  return finalizeBillingPayload(Object.assign({}, result, { billingJson }));
+  return normalizeBillingPayload(Object.assign({}, result, { billingJson }));
 }
 
 function handleBillingAggregation() {

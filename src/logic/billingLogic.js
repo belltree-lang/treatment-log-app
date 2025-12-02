@@ -41,13 +41,14 @@ function normalizeBurdenMultiplier_(burdenRate, insuranceType) {
 }
 
 function normalizeMedicalAssistanceFlag_(value) {
-  if (value === true) return true;
-  if (value === false) return false;
+  if (value === null || value === undefined) return 0;
   const num = Number(value);
-  if (Number.isFinite(num)) return !!num;
+  if (Number.isFinite(num)) return num ? 1 : 0;
+  if (value === true) return 1;
+  if (value === false) return 0;
   const text = String(value || '').trim().toLowerCase();
-  if (!text) return false;
-  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0;
+  if (!text) return 0;
+  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0 ? 1 : 0;
 }
 
 function normalizeBillingSource_(source) {

@@ -179,13 +179,14 @@ function normalizeBurdenRateDisplay(value) {
 }
 
 function normalizeMedicalAssistanceFlag(value) {
-  if (value === true) return true;
-  if (value === false) return false;
+  if (value === null || value === undefined) return 0;
   const num = Number(value);
-  if (Number.isFinite(num)) return !!num;
+  if (Number.isFinite(num)) return num ? 1 : 0;
+  if (value === true) return 1;
+  if (value === false) return 0;
   const text = String(value || '').trim().toLowerCase();
-  if (!text) return false;
-  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].includes(text);
+  if (!text) return 0;
+  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].includes(text) ? 1 : 0;
 }
 
 function isDeprecatedInsuranceType(value) {
@@ -390,6 +391,49 @@ function normalizeBillingResultPayload(raw) {
     );
   }
 
+  function normalizeMedicalAssistanceNumber(value) {
+    return normalizeMedicalAssistanceFlag(value);
+  }
+
+  function normalizeManualUnitPriceValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    return normalizeMoneyNumber(value);
+  }
+
+  function mergePatientMetaIntoRows(rows, patients) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map(row => {
+      const merged = Object.assign({}, row);
+      const pid = merged && merged.patientId ? String(merged.patientId).trim() : '';
+      const patient = pid && patients ? patients[pid] || {} : {};
+
+      if (!merged.insuranceType && patient.insuranceType) {
+        merged.insuranceType = patient.insuranceType;
+      }
+
+      const patientBurden = patient.burdenRate;
+      if ((merged.burdenRate == null || merged.burdenRate === '') && patientBurden !== undefined) {
+        merged.burdenRate = patientBurden === '自費' ? '自費' : normalizeBurdenRateInt(patientBurden);
+      } else if (merged.burdenRate !== undefined) {
+        merged.burdenRate = merged.burdenRate === '自費' ? '自費' : normalizeBurdenRateInt(merged.burdenRate);
+      }
+
+      const assistanceSource = merged.medicalAssistance !== undefined ? merged.medicalAssistance : patient.medicalAssistance;
+      merged.medicalAssistance = normalizeMedicalAssistanceNumber(assistanceSource);
+
+      const manualPriceSource = merged.manualUnitPrice !== undefined ? merged.manualUnitPrice : patient.manualUnitPrice;
+      merged.manualUnitPrice = normalizeManualUnitPriceValue(manualPriceSource);
+
+      return merged;
+    });
+  }
+
+  function finalizeBillingPayload(payload) {
+    const withDefaults = applyBillingFieldDefaults(payload);
+    const enrichedRows = mergePatientMetaIntoRows(withDefaults.billingJson || [], withDefaults.patients || {});
+    return Object.assign({}, withDefaults, { billingJson: enrichedRows });
+  }
+
   function parseMaybeJson(value) {
     if (typeof value !== 'string') return value;
     try {
@@ -497,19 +541,19 @@ function normalizeBillingResultPayload(raw) {
   if (result == null) return null;
 
   if (Array.isArray(result)) {
-    return applyBillingFieldDefaults({ billingJson: result, billingMonth: '', preparedAt: null });
+    return finalizeBillingPayload({ billingJson: result, billingMonth: '', preparedAt: null });
   }
 
   const found = findBillingPayload(result, result);
   if (found && found.billingJson) {
-    return applyBillingFieldDefaults(found);
+    return finalizeBillingPayload(found);
   }
 
   const billingJson = coerceBillingJson(result.billingJson) || [];
   if (!billingJson.length) {
     console.warn('[billing] billingJson not found in payload; returning empty array');
   }
-  return applyBillingFieldDefaults(Object.assign({}, result, { billingJson }));
+  return finalizeBillingPayload(Object.assign({}, result, { billingJson }));
 }
 
 function handleBillingAggregation() {

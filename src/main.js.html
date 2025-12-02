@@ -364,16 +364,22 @@ function loadBillingPage() {
 
 function normalizeBillingResultPayload(raw) {
   if (!raw) return null;
-  let result = raw;
-  if (typeof raw === 'string') {
+
+  // Helper to parse stringified payloads safely.
+  function parseMaybeJson(value) {
+    if (typeof value !== 'string') return value;
     try {
-      result = JSON.parse(raw);
+      return JSON.parse(value);
     } catch (err) {
       console.warn('Failed to parse billing payload text', err);
       return null;
     }
   }
-
+  // Coerce billingJson only when it is actually present.
+  function coerceBillingJson(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      
   if (result && typeof result === 'object' && result.payload && typeof result.payload === 'object') {
     const payload = result.payload;
     if (payload.billingJson) {
@@ -392,18 +398,57 @@ function normalizeBillingResultPayload(raw) {
   const billingJson = (() => {
     if (Array.isArray(result.billingJson)) return result.billingJson;
     if (typeof result.billingJson === 'string') {
+    
       try {
-        const parsed = JSON.parse(result.billingJson);
-        return Array.isArray(parsed) ? parsed : [];
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : null;
       } catch (err) {
         console.warn('Failed to parse billingJson string', err);
-        return [];
+        return null;
       }
     }
-    return [];
-  })();
+    return null;
+  }
 
-  // Ensure sanitized billingJson always wins over raw payload values.
+  // Recursively search for an object that already contains billingJson.
+  function findBillingPayload(obj, ancestors) {
+    if (!obj || typeof obj !== 'object') return null;
+    const billingJson = coerceBillingJson(obj.billingJson);
+    if (billingJson) {
+      return { payload: obj, billingJson };
+    }
+
+    const nestedKeys = ['payload', 'result', 'data', 'response'];
+    for (let i = 0; i < nestedKeys.length; i++) {
+      const key = nestedKeys[i];
+      if (obj[key]) {
+        const found = findBillingPayload(obj[key], (ancestors || []).concat(key));
+        if (found) {
+          const merged = Object.assign({}, obj, found.payload, { billingJson: found.billingJson });
+          return { payload: merged, billingJson: found.billingJson };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  let result = parseMaybeJson(raw);
+  if (result == null) return null;
+
+  if (Array.isArray(result)) {
+    return { billingJson: result, billingMonth: '', preparedAt: null };
+  }
+
+  const found = findBillingPayload(result);
+  if (found && found.billingJson) {
+    return Object.assign({}, found.payload, { billingJson: found.billingJson });
+  }
+
+  const billingJson = coerceBillingJson(result.billingJson) || [];
+  if (!billingJson.length) {
+    console.warn('[billing] billingJson not found in payload; returning empty array');
+  }
   return Object.assign({}, result, { billingJson });
 }
 

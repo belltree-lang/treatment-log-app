@@ -370,7 +370,8 @@ function normalizeBillingResultPayload(raw) {
     try {
       return JSON.parse(value);
     } catch (err) {
-      console.warn('Failed to parse billing payload text', err);
+      const msg = err && err.message ? err.message : err;
+      console.warn('Failed to parse billing payload text:', msg);
       return null;
     }
   }
@@ -382,7 +383,8 @@ function normalizeBillingResultPayload(raw) {
         const parsed = JSON.parse(value);
         return Array.isArray(parsed) ? parsed : null;
       } catch (err) {
-        console.warn('Failed to parse billingJson string', err);
+        const msg = err && err.message ? err.message : err;
+        console.warn('Failed to parse billingJson string:', msg);
         return null;
       }
     }

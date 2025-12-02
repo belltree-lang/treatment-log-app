@@ -30,17 +30,19 @@ const normalizeInvoiceBurdenRateInt_ = typeof normalizeBurdenRateInt_ === 'funct
     const num = Number(burdenRate);
     if (Number.isFinite(num)) {
       if (num > 0 && num < 1) return Math.round(num * 10);
-      if (num >= 1 && num < 10) return Math.round(num);
-      if (num >= 10 && num <= 100) return Math.round(num / 10);
-    }
-    const normalized = String(burdenRate).normalize('NFKC').replace(/\s+/g, '').replace('％', '%');
-    const withoutUnits = normalized.replace(/割|分/g, '').replace('%', '');
-    const parsed = Number(withoutUnits);
-    if (!Number.isFinite(parsed)) return 0;
-    if (normalized.indexOf('%') >= 0) return Math.round(parsed / 10);
-    if (parsed > 0 && parsed < 10) return Math.round(parsed);
-    if (parsed >= 10 && parsed <= 100) return Math.round(parsed / 10);
-    return 0;
+    if (num >= 1 && num < 10) return Math.round(num);
+    if (num >= 10 && num <= 100) return Math.round(num / 10);
+  }
+  const normalized = String(burdenRate).normalize('NFKC').replace(/\s+/g, '').replace('％', '%');
+  const hasPercent = normalized.indexOf('%') >= 0;
+  const numericText = normalized.replace(/[^0-9.]/g, '');
+  const parsed = Number(numericText);
+  if (!Number.isFinite(parsed)) return 0;
+  if (parsed === 0) return 0;
+  if (hasPercent) return Math.round(parsed / 10);
+  if (parsed > 0 && parsed < 10) return Math.round(parsed);
+  if (parsed >= 10 && parsed <= 100) return Math.round(parsed / 10);
+  return 0;
   };
 
 function convertSpreadsheetToExcelBlob_(file, exportName) {

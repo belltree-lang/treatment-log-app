@@ -324,14 +324,12 @@ function loadBillingStaffDirectory_() {
     if (disabledFlag === 2) return map;
 
     if (colEmail) {
-      const emailCandidate = extractEmailFallback_(row[colEmail - 1], displayRow[colEmail - 1]);
-      const emailKey = billingNormalizeEmailKey_(emailCandidate);
-      if (emailKey) keys.push(emailKey);
+      const emailKey = extractNormalizedStaffKey_(row[colEmail - 1], displayRow[colEmail - 1]);
+      if (emailKey.normalized) keys.push(emailKey.normalized);
     }
     if (colStaffId) {
-      const staffIdCandidate = extractEmailFallback_(row[colStaffId - 1], displayRow[colStaffId - 1]);
-      const staffKey = billingNormalizeEmailKey_(staffIdCandidate);
-      if (staffKey) keys.push(staffKey);
+      const staffKey = extractNormalizedStaffKey_(row[colStaffId - 1], displayRow[colStaffId - 1]);
+      if (staffKey.normalized) keys.push(staffKey.normalized);
     }
 
     keys.forEach(key => {
@@ -344,9 +342,11 @@ function loadBillingStaffDirectory_() {
 
   const directoryKeys = Object.keys(directory);
   const staffKeySamples = directoryKeys.slice(0, 20).map(key => ({ key, name: directory[key] }));
+  const staffKeyListLog = directoryKeys.slice(0, 200);
 
   billingLogger_.log('[billing] loadBillingStaffDirectory_: entries=' + directoryKeys.length);
   billingLogger_.log('[billing] loadBillingStaffDirectory_: key samples=' + JSON.stringify(staffKeySamples));
+  billingLogger_.log('[billing] loadBillingStaffDirectory_: key list (truncated)=' + JSON.stringify(staffKeyListLog));
   return directory;
 }
 
@@ -448,6 +448,14 @@ function extractEmailFallback_(raw, displayValue) {
   return candidates.find(Boolean) || '';
 }
 
+function extractNormalizedStaffKey_(raw, displayValue) {
+  const candidate = extractEmailFallback_(raw, displayValue);
+  return {
+    raw: candidate,
+    normalized: billingNormalizeEmailKey_(candidate)
+  };
+}
+
 function normalizeBankStatus_(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -513,6 +521,7 @@ function loadTreatmentLogs_() {
   const invalidDateDebug = [];
   const emptyPidRows = [];
   const staffKeyDebug = [];
+  const staffExtractionDebug = [];
   const logs = values.map((row, idx) => {
     const rawPid = row[colPid - 1];
     const pid = billingNormalizePatientId_(rawPid);
@@ -522,17 +531,15 @@ function loadTreatmentLogs_() {
     const createdByDisplay = colCreatedBy && displayRow ? displayRow[colCreatedBy - 1] : '';
     const staffIdRaw = colStaffId ? row[colStaffId - 1] : '';
     const staffIdDisplay = colStaffId && displayRow && displayRow.length >= colStaffId ? displayRow[colStaffId - 1] : '';
-    const staffIdCandidate = colStaffId ? extractEmailFallback_(staffIdRaw, staffIdDisplay) : '';
+    const staffIdInfo = colStaffId ? extractNormalizedStaffKey_(staffIdRaw, staffIdDisplay) : { raw: '', normalized: '' };
 
-    const createdByCandidate = colCreatedBy
-      ? extractEmailFallback_(row[colCreatedBy - 1], createdByDisplay)
-      : '';
-    const createdByNormalized = billingNormalizeEmailKey_(createdByCandidate);
-    const staffIdNormalized = billingNormalizeEmailKey_(staffIdCandidate);
+    const createdByInfo = colCreatedBy
+      ? extractNormalizedStaffKey_(row[colCreatedBy - 1], createdByDisplay)
+      : { raw: '', normalized: '' };
 
-    const shouldUseStaffId = !!staffIdNormalized && !createdByNormalized;
-    const createdByEmail = shouldUseStaffId ? staffIdCandidate : createdByCandidate;
-    const usedNormalized = shouldUseStaffId ? staffIdNormalized : createdByNormalized;
+    const shouldUseStaffId = !!staffIdInfo.normalized && !createdByInfo.normalized;
+    const createdByEmail = shouldUseStaffId ? staffIdInfo.raw : createdByInfo.raw;
+    const usedNormalized = shouldUseStaffId ? staffIdInfo.normalized : createdByInfo.normalized;
 
     if (String(rawPid || '').trim() && pid && pid !== String(rawPid).trim()) {
       if (normalizationDebug.length < 20) {
@@ -544,13 +551,21 @@ function loadTreatmentLogs_() {
         emptyPidRows.push({ rowNumber: idx + 2, rawPid });
       }
     }
-    if (staffKeyDebug.length < 20 && (createdByNormalized || staffIdNormalized)) {
+    if (staffKeyDebug.length < 20 && (createdByInfo.normalized || staffIdInfo.normalized)) {
       staffKeyDebug.push({
         rowNumber: idx + 2,
-        createdByNormalized,
-        staffIdNormalized,
+        createdByNormalized: createdByInfo.normalized,
+        staffIdNormalized: staffIdInfo.normalized,
         usedNormalized,
         usedRaw: createdByEmail
+      });
+    }
+    if (staffExtractionDebug.length < 20 && (createdByInfo.raw || staffIdInfo.raw)) {
+      staffExtractionDebug.push({
+        rowNumber: idx + 2,
+        createdBy: { raw: createdByInfo.raw, normalized: createdByInfo.normalized },
+        staffId: { raw: staffIdInfo.raw, normalized: staffIdInfo.normalized },
+        used: { raw: createdByEmail, normalized: usedNormalized }
       });
     }
     if (!(timestamp instanceof Date) || isNaN(timestamp.getTime())) {
@@ -569,6 +584,7 @@ function loadTreatmentLogs_() {
       patientId: pid,
       timestamp,
       createdByEmail,
+      createdByKey: usedNormalized,
       raw: row
     };
   });
@@ -585,6 +601,7 @@ function loadTreatmentLogs_() {
   billingLogger_.log('[billing] loadTreatmentLogs_: invalid date samples=' + JSON.stringify(invalidDateDebug));
   billingLogger_.log('[billing] loadTreatmentLogs_: empty pid rows=' + JSON.stringify(emptyPidRows));
   billingLogger_.log('[billing] loadTreatmentLogs_: staff key samples=' + JSON.stringify(staffKeyDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: staff extraction samples=' + JSON.stringify(staffExtractionDebug));
   return logs;
 }
 
@@ -641,7 +658,7 @@ function buildVisitCountMap_(billingMonth) {
     counts[pid] = current;
 
     if (log && log.createdByEmail) {
-      const normalizedEmail = billingNormalizeEmailKey_(log.createdByEmail);
+      const normalizedEmail = log.createdByKey || billingNormalizeEmailKey_(log.createdByEmail);
       if (!normalizedEmail) return;
       if (!staffHistoryByPatient[pid]) {
         staffHistoryByPatient[pid] = {};
@@ -671,6 +688,11 @@ function buildVisitCountMap_(billingMonth) {
   billingLogger_.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
   billingLogger_.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
   billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient size=' + Object.keys(staffByPatient).length);
+  billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient samples=' + JSON.stringify(
+    Object.keys(staffByPatient)
+      .slice(0, 20)
+      .map(pid => ({ patientId: pid, staff: staffByPatient[pid] }))
+  ));
   billingLogger_.log('[billing] buildVisitCountMap_: debug=' + JSON.stringify(debug));
   return { billingMonth: month.key, counts, staffByPatient, staffHistoryByPatient };
 }

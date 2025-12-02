@@ -154,6 +154,7 @@ function normalizeVisitCount(value) {
 
 function normalizeBurdenRateInt(value) {
   if (value == null || value === '') return 0;
+  if (String(value).trim() === '自費') return '自費';
   const num = Number(value);
   if (Number.isFinite(num)) {
     if (num > 0 && num < 1) return Math.round(num * 10);
@@ -179,14 +180,8 @@ function normalizeBurdenRateDisplay(value) {
 }
 
 function normalizeMedicalAssistanceFlag(value) {
-  if (value === null || value === undefined) return 0;
-  const num = Number(value);
-  if (Number.isFinite(num)) return num ? 1 : 0;
-  if (value === true) return 1;
-  if (value === false) return 0;
-  const text = String(value || '').trim().toLowerCase();
-  if (!text) return 0;
-  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].includes(text) ? 1 : 0;
+  if (value === 1 || value === '1' || value === true) return 1;
+  return 0;
 }
 
 function isDeprecatedInsuranceType(value) {
@@ -194,15 +189,19 @@ function isDeprecatedInsuranceType(value) {
   return BILLING_DEPRECATED_INSURANCE_TYPES.includes(String(value).trim());
 }
 
-function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, medicalAssistance) {
+function resolveFrontEndUnitPrice(insuranceType, burdenRate, customUnitPrice, medicalAssistance, patientUnitPrice) {
   const type = String(insuranceType || '').trim();
+  if (isDeprecatedInsuranceType(type)) return 0;
   const manualUnitPrice = normalizeMoneyNumber(customUnitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
-  if ((type === '生保' || isMedicalAssistance) && !hasManualUnitPrice) return 0;
-  if (isDeprecatedInsuranceType(type)) return 0;
   if (hasManualUnitPrice) return manualUnitPrice;
-  if (type === '自費') return 0;
+  const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag(medicalAssistance);
+  if (normalizedMedicalAssistance === 1) return 0;
+  if (['生保', '生活保護', '生活扶助'].includes(type)) return 0;
+  const normalizedBurdenRate = normalizeBurdenRateInt(burdenRate);
+  if (type === '自費' || normalizedBurdenRate === '自費') return 0;
+  const resolvedPatientUnitPrice = normalizeMoneyNumber(patientUnitPrice);
+  if (Number.isFinite(resolvedPatientUnitPrice) && resolvedPatientUnitPrice !== 0) return resolvedPatientUnitPrice;
   return BILLING_UNIT_PRICE;
 }
 
@@ -210,21 +209,29 @@ function recalculateBillingRow(row) {
   const visits = normalizeVisitCount(row.visitCount);
   const normalizedBurden = row.burdenRate === '自費' ? '自費' : normalizeBurdenRateInt(row.burdenRate);
   const normalizedUnitPrice = normalizeMoneyNumber(row.unitPrice);
-  const unitPrice = resolveFrontEndUnitPrice(row.insuranceType, normalizedBurden, normalizedUnitPrice, row.medicalAssistance);
-  const manualUnitPrice = normalizeMoneyNumber(row.unitPrice);
-  const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isMedicalAssistance = normalizeMedicalAssistanceFlag(row.medicalAssistance);
-  const shouldZeroByAssistance = (row.insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
-  const isZeroCharge = shouldZeroByAssistance || (row.insuranceType === '自費' && !hasManualUnitPrice);
-  const isMassage = isDeprecatedInsuranceType(row.insuranceType);
-  const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
-  const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const unitPrice = resolveFrontEndUnitPrice(
+    row.insuranceType,
+    normalizedBurden,
+    normalizedUnitPrice,
+    row.medicalAssistance,
+    row.unitPrice
+  );
+  const isSelfPaid = String(row.insuranceType || '').trim() === '自費' || normalizedBurden === '自費';
+  const hasChargeableUnitPrice = Number.isFinite(unitPrice) && unitPrice !== 0;
+  const treatmentAmount = visits > 0 && hasChargeableUnitPrice ? unitPrice * visits : 0;
+  const burdenMultiplier = isSelfPaid ? 1 : (normalizedBurden > 0 ? normalizedBurden / 10 : 0);
+  const transportAmount = visits > 0 && hasChargeableUnitPrice ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
   const carryOverAmount = normalizeMoneyNumber(row.carryOverAmount);
-  const grandTotal = treatmentAmount + transportAmount + carryOverAmount;
+  const billingAmount = isSelfPaid
+    ? treatmentAmount
+    : roundToNearestTen(treatmentAmount * burdenMultiplier);
+  const grandTotal = billingAmount + transportAmount + carryOverAmount;
   return Object.assign({}, row, {
     burdenRate: normalizedBurden,
     unitPrice,
+    manualUnitPrice: normalizedUnitPrice,
     treatmentAmount,
+    billingAmount,
     transportAmount,
     carryOverAmount,
     grandTotal

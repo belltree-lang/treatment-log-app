@@ -27,6 +27,7 @@ const normalizeInvoiceBurdenRateInt_ = typeof normalizeBurdenRateInt_ === 'funct
   ? normalizeBurdenRateInt_
   : function fallbackNormalizeInvoiceBurdenRateInt_(burdenRate) {
     if (burdenRate == null || burdenRate === '') return 0;
+    if (String(burdenRate).trim() === '自費') return '自費';
     const num = Number(burdenRate);
     if (Number.isFinite(num)) {
       if (num > 0 && num < 1) return Math.round(num * 10);
@@ -125,13 +126,8 @@ function normalizeInvoiceVisitCount_(value) {
 }
 
 function normalizeInvoiceMedicalAssistanceFlag_(value) {
-  if (value === true) return true;
-  if (value === false) return false;
-  const num = Number(value);
-  if (Number.isFinite(num)) return !!num;
-  const text = String(value || '').trim().toLowerCase();
-  if (!text) return false;
-  return ['1', 'true', 'yes', 'y', 'on', '有', 'あり', '〇', '○', '◯'].indexOf(text) >= 0;
+  if (value === 1 || value === '1' || value === true) return 1;
+  return 0;
 }
 
 function normalizeBillingCarryOver_(item) {
@@ -252,31 +248,34 @@ function calculateInvoiceChargeBreakdown_(params) {
   const visits = normalizeInvoiceVisitCount_(params && params.visitCount);
   const insuranceType = params && params.insuranceType ? String(params.insuranceType).trim() : '';
   const burdenRateInt = normalizeInvoiceBurdenRateInt_(params && params.burdenRate);
+  const normalizedMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
   const carryOverAmount = normalizeBillingCarryOver_(params);
   const manualUnitPrice = normalizeInvoiceMoney_(params && params.manualUnitPrice);
-  const resolvedUnitPrice = normalizeInvoiceMoney_(params && params.unitPrice);
+  const patientUnitPrice = normalizeInvoiceMoney_(params && params.unitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isMedicalAssistance = normalizeInvoiceMedicalAssistanceFlag_(params && params.medicalAssistance);
-  const isMassage = insuranceType === 'マッサージ';
-  const isSelfPaid = insuranceType === '自費';
-  const shouldZero = (insuranceType === '生保' || isMedicalAssistance) && !hasManualUnitPrice;
-  const isZeroChargeInsurance = shouldZero || (insuranceType === '自費' && !hasManualUnitPrice);
+  const isLifeProtection = ['生保', '生活保護', '生活扶助'].indexOf(insuranceType) >= 0;
+  const isSelfPaid = insuranceType === '自費' || burdenRateInt === '自費';
+  const defaultUnitPrice = patientUnitPrice || INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
 
   const treatmentUnitPrice = (function resolveTreatmentUnitPrice() {
-    if (shouldZero) return 0;
-    if (isMassage) return 0;
+    if (insuranceType === 'マッサージ') return 0;
     if (hasManualUnitPrice) return manualUnitPrice;
-    if (insuranceType === '自費') return 0;
-    if (resolvedUnitPrice) return resolvedUnitPrice;
-    return INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN[burdenRateInt] || 0;
+    if (normalizedMedicalAssistance === 1) return 0;
+    if (isLifeProtection) return 0;
+    if (isSelfPaid) return 0;
+    if (patientUnitPrice) return patientUnitPrice;
+    return defaultUnitPrice;
   })();
-  const rawTreatmentAmount = visits > 0 ? treatmentUnitPrice * visits : 0;
-  const treatmentAmount = (isZeroChargeInsurance || isMassage)
-    ? rawTreatmentAmount
-    : (isSelfPaid ? rawTreatmentAmount : roundToNearestTen_(rawTreatmentAmount));
-  const transportAmount = visits > 0 && !isMassage && !isZeroChargeInsurance
-    ? TRANSPORT_PRICE * visits
-    : 0;
+
+  const hasChargeableUnitPrice = Number.isFinite(treatmentUnitPrice) && treatmentUnitPrice !== 0;
+  const treatmentAmountFull = visits > 0 && hasChargeableUnitPrice ? treatmentUnitPrice * visits : 0;
+  const burdenMultiplier = insuranceType === '自費'
+    ? 1
+    : (burdenRateInt === '自費' ? 1 : (burdenRateInt > 0 ? burdenRateInt / 10 : 0));
+  const treatmentAmount = isSelfPaid
+    ? treatmentAmountFull
+    : roundToNearestTen_(treatmentAmountFull * burdenMultiplier);
+  const transportAmount = visits > 0 && hasChargeableUnitPrice ? TRANSPORT_PRICE * visits : 0;
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
 
   return { treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal, visits };

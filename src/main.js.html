@@ -430,6 +430,7 @@ function normalizeBillingResultPayload(raw) {
       'bankStatuses',
       'carryOverByPatient'
     ];
+    const ARRAY_META_FIELDS = ['files'];
 
     function extractMetaFields(source) {
       if (!source || typeof source !== 'object') return {};
@@ -440,6 +441,8 @@ function normalizeBillingResultPayload(raw) {
         const isDate = Object.prototype.toString.call(value) === '[object Date]';
         const isPlainObject = value && !Array.isArray(value) && !isDate && type === 'object';
         if (OBJECT_META_FIELDS.includes(key) && isPlainObject) {
+          meta[key] = value;
+        } else if (ARRAY_META_FIELDS.includes(key) && Array.isArray(value)) {
           meta[key] = value;
         } else if (value === null || type === 'string' || type === 'number' || type === 'boolean' || isDate) {
           meta[key] = value;

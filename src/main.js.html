@@ -218,6 +218,33 @@ function getResponsibleDisplay(item) {
   return item.responsibleEmail || '';
 }
 
+function formatPaidStatus(item) {
+  if (!item) return '';
+  return item.paidStatus || item.bankStatus || '';
+}
+
+function maskAccountNumber(value) {
+  const digits = (value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  const suffix = digits.slice(-4);
+  return suffix ? `***${suffix}` : '';
+}
+
+function formatBankInfo(item) {
+  if (!item) return '';
+  const bankCode = item.bankCode || '';
+  const branchCode = item.branchCode || '';
+  const accountNumber = item.accountNumber || '';
+  const codes = [bankCode, branchCode].filter(Boolean).join('-');
+  const account = maskAccountNumber(accountNumber);
+  return [codes, account ? `口:${account}` : ''].filter(Boolean).join(' / ');
+}
+
+function formatNewFlag(item) {
+  if (!item || !item.isNew) return '';
+  return '<span class="badge">新規</span>';
+}
+
 function resolveBurdenSortValue(value) {
   if (value === '自費') return 99;
   const num = Number(value);
@@ -347,7 +374,11 @@ function normalizeBillingResultPayload(raw) {
     responsibleName: '',
     payerType: '',
     bankStatus: '',
-    paidStatus: ''
+    paidStatus: '',
+    bankCode: '',
+    branchCode: '',
+    accountNumber: '',
+    isNew: 0
   };
 
   function applyBillingFieldDefaults(payload) {
@@ -404,7 +435,11 @@ function normalizeBillingResultPayload(raw) {
         responsibleNames: patient.responsibleNames,
         responsibleName: patient.responsibleName,
         bankStatus: patient.bankStatus,
-        paidStatus: patient.paidStatus
+        paidStatus: patient.paidStatus,
+        bankCode: patient.bankCode,
+        branchCode: patient.branchCode,
+        accountNumber: patient.accountNumber,
+        isNew: patient.isNew
       };
 
       const merged = Object.assign({}, BILLING_ROW_DEFAULTS, patientSeed, row || {});
@@ -424,6 +459,10 @@ function normalizeBillingResultPayload(raw) {
 
       merged.insuranceType = (row && row.insuranceType) || patient.insuranceType || '';
       merged.responsibleNames = Array.isArray(merged.responsibleNames) ? merged.responsibleNames : [];
+      merged.bankCode = merged.bankCode || '';
+      merged.branchCode = merged.branchCode || '';
+      merged.accountNumber = merged.accountNumber || '';
+      merged.isNew = merged.isNew === 1 || merged.isNew === '1' || merged.isNew === true ? 1 : 0;
 
       return merged;
     });
@@ -797,8 +836,13 @@ function renderBillingResult() {
     { key: 'treatmentAmount', label: '施術料', sortable: true },
     { key: 'transportAmount', label: '交通費', sortable: true },
     { key: 'carryOverAmount', label: '繰越', sortable: true },
-    { key: 'grandTotal', label: '合計', sortable: true }
+    { key: 'grandTotal', label: '合計', sortable: true },
+    { key: 'paidStatus', label: '領収状態', sortable: false },
+    { key: 'bankInfo', label: '口座情報', sortable: false },
+    { key: 'isNew', label: '新規', sortable: false }
   ];
+
+  const columnCount = header.length;
 
   function renderSortHeaderCell(h) {
     if (!h.sortable) {
@@ -890,11 +934,14 @@ function renderBillingResult() {
         <td class="right">${formatCurrency(safeItem.transportAmount)}</td>
         <td class="right">${renderEditableCell(safeItem, 'carryOverAmount', true)}</td>
         <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
+        <td>${formatPaidStatus(safeItem) || '—'}</td>
+        <td>${formatBankInfo(safeItem) || '—'}</td>
+        <td>${formatNewFlag(safeItem) || ''}</td>
       </tr>`);
     } catch (err) {
       console.error('Failed to render billing row', err, item);
       const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';
-      bodyRows.push(`<tr class="error-row"><td colspan="13">${pid}</td></tr>`);
+      bodyRows.push(`<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
     }
   });
 

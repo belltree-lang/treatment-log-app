@@ -53,6 +53,96 @@ function getBillingCache_() {
   }
 }
 
+function buildStaffByPatient_() {
+  const logs = loadTreatmentLogs_();
+  const staffHistoryByPatient = {};
+  const debug = { totalLogs: logs.length, missingPatientId: 0, missingStaff: 0 };
+
+  logs.forEach(log => {
+    const pid = log && log.patientId ? billingNormalizePatientId_(log.patientId) : '';
+    const ts = log && log.timestamp;
+    if (!pid) {
+      debug.missingPatientId += 1;
+      return;
+    }
+    if (!(ts instanceof Date) || isNaN(ts.getTime())) {
+      return;
+    }
+    const staffKey = log && (log.createdByKey || billingNormalizeStaffKey_(log.createdByEmail)) || '';
+    if (!staffKey) {
+      debug.missingStaff += 1;
+      return;
+    }
+
+    if (!staffHistoryByPatient[pid]) {
+      staffHistoryByPatient[pid] = {};
+    }
+    const existing = staffHistoryByPatient[pid][staffKey];
+    if (!existing || !existing.timestamp || ts > existing.timestamp) {
+      staffHistoryByPatient[pid][staffKey] = { key: staffKey, email: log.createdByEmail, timestamp: ts };
+    }
+  });
+
+  const staffByPatient = Object.keys(staffHistoryByPatient).reduce((map, pid) => {
+    const staffEntries = staffHistoryByPatient[pid];
+    const sorted = Object.keys(staffEntries)
+      .map(key => staffEntries[key])
+      .sort((a, b) => {
+        const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+        const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+        return bTime - aTime;
+      })
+      .map(entry => entry.email || entry.key)
+      .filter(email => !!email);
+    map[pid] = sorted;
+    return map;
+  }, {});
+
+  const staffDirectory = loadBillingStaffDirectory_();
+  const staffDisplayByPatient = buildStaffDisplayByPatient_(staffByPatient, staffDirectory);
+  billingLogger_.log('[billing] buildStaffByPatient_ summary=' + JSON.stringify({
+    totalLogs: debug.totalLogs,
+    missingPatientId: debug.missingPatientId,
+    missingStaff: debug.missingStaff,
+    staffByPatientSize: Object.keys(staffByPatient || {}).length,
+    staffDirectorySize: Object.keys(staffDirectory || {}).length
+  }));
+  return { staffByPatient, staffDirectory, staffDisplayByPatient, staffHistoryByPatient };
+}
+
+function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
+  const result = {};
+  const directory = staffDirectory || {};
+  const displayLog = [];
+  Object.keys(staffByPatient || {}).forEach(pid => {
+    const emails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : [staffByPatient[pid]];
+    const seen = new Set();
+    const names = [];
+    emails.forEach(email => {
+      const key = billingNormalizeStaffKey_(email);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      const resolved = directory[key] || '';
+      names.push(resolved || email || '');
+
+      if (displayLog.length < 200) {
+        displayLog.push({
+          patientId: pid,
+          email,
+          normalizedKey: key,
+          matched: !!directory[key],
+          resolvedName: resolved || ''
+        });
+      }
+    });
+    result[pid] = names.filter(Boolean);
+  });
+  if (displayLog.length) {
+    billingLogger_.log('[billing] buildStaffDisplayByPatient_: resolved staff detail=' + JSON.stringify(displayLog));
+  }
+  return result;
+}
+
 function clearBillingCache_(key) {
   if (!key) return;
   const cache = getBillingCache_();

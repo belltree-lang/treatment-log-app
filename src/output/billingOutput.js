@@ -452,12 +452,11 @@ function exportBankTransferRows_(billingMonth, rowObjects) {
     return month && pid ? `${month}::${pid}` : '';
   };
 
-  const workingRows = existingValues.slice();
-  const existingIndexByKey = workingRows.reduce((map, row, idx) => {
+  const workingRowsByKey = existingValues.reduce((map, row) => {
     const key = keyForRow(row);
-    if (key) map[key] = idx;
+    if (key && !map.has(key)) map.set(key, row);
     return map;
-  }, {});
+  }, new Map());
 
   const mapped = (rowObjects || []).map(obj => {
     const row = new Array(colCount).fill('');
@@ -475,17 +474,19 @@ function exportBankTransferRows_(billingMonth, rowObjects) {
 
   mapped.forEach(row => {
     const key = keyForRow(row);
-    if (key && Object.prototype.hasOwnProperty.call(existingIndexByKey, key)) {
-      workingRows[existingIndexByKey[key]] = row;
-    } else {
-      workingRows.push(row);
+    if (key) {
+      workingRowsByKey.set(key, row);
     }
   });
 
-  if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, colCount).clearContent();
+  const workingRows = Array.from(workingRowsByKey.values());
+  const dataRowCount = Math.max(0, lastRow - 1);
+
+  if (dataRowCount > 0) {
+    sheet.deleteRows(2, dataRowCount);
   }
   if (workingRows.length) {
+    sheet.insertRows(2, workingRows.length);
     sheet.getRange(2, 1, workingRows.length, colCount).setValues(workingRows);
   }
 

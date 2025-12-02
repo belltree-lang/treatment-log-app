@@ -312,17 +312,21 @@ function loadBillingStaffDirectory_() {
   if (!colName || (!colEmail && !colStaffId)) return {};
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const directory = values.reduce((map, row) => {
+  const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const directory = values.reduce((map, row, idx) => {
+    const displayRow = displayValues[idx] || [];
     const name = colName ? String(row[colName - 1] || '').trim() : '';
     if (!name) return map;
 
     const keys = [];
     if (colEmail) {
-      const emailKey = billingNormalizeEmailKey_(row[colEmail - 1]);
+      const emailCandidate = extractEmailFallback_(row[colEmail - 1], displayRow[colEmail - 1]);
+      const emailKey = billingNormalizeEmailKey_(emailCandidate);
       if (emailKey) keys.push(emailKey);
     }
     if (colStaffId) {
-      const staffKey = billingNormalizeEmailKey_(row[colStaffId - 1]);
+      const staffIdCandidate = extractEmailFallback_(row[colStaffId - 1], displayRow[colStaffId - 1]);
+      const staffKey = billingNormalizeEmailKey_(staffIdCandidate);
       if (staffKey) keys.push(staffKey);
     }
 

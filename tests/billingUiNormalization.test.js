@@ -69,6 +69,23 @@ function testFindsBillingJsonInsideStringifiedPayload() {
   assert.strictEqual(result.billingMonth, '202512', 'billingMonth を保持する');
 }
 
+function testMergesMetadataFromAncestorObjects() {
+  const raw = {
+    data: {
+      preparedAt: '2025-03-01T00:00:00Z',
+      billingMonth: '202503',
+      payload: {
+        billingJson: JSON.stringify([{ patientId: '555' }])
+      }
+    }
+  };
+
+  const result = normalizeBillingResultPayload(raw);
+  assert.strictEqual(result.billingJson[0].patientId, '555', 'ネストした billingJson を抽出する');
+  assert.strictEqual(result.billingMonth, '202503', '祖先オブジェクトの billingMonth を引き継ぐ');
+  assert.strictEqual(result.preparedAt, '2025-03-01T00:00:00Z', '祖先オブジェクトの preparedAt を引き継ぐ');
+}
+
 function testReturnsNullOnUnparsableString() {
   const result = normalizeBillingResultPayload('{invalid json');
   assert.strictEqual(result, null, '不正なJSON文字列は null を返す');
@@ -78,6 +95,7 @@ function run() {
   testParsesStringifiedPayload();
   testFindsNestedBillingJson();
   testFindsBillingJsonInsideStringifiedPayload();
+  testMergesMetadataFromAncestorObjects();
   testReturnsNullOnUnparsableString();
   console.log('billingUiNormalization tests passed');
 }

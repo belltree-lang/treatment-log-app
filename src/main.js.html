@@ -395,34 +395,54 @@ function normalizeBillingResultPayload(raw) {
     const queue = [];
     const visited = new WeakSet();
 
-    function mergeWithMeta(obj) {
+    function extractMetaFields(source) {
+      if (!source || typeof source !== 'object') return {};
+      const meta = {};
+      Object.keys(source).forEach(key => {
+        const value = source[key];
+        const type = typeof value;
+        if (
+          value === null ||
+          type === 'string' ||
+          type === 'number' ||
+          type === 'boolean' ||
+          Object.prototype.toString.call(value) === '[object Date]'
+        ) {
+          meta[key] = value;
+        }
+      });
+      return meta;
+    }
+
+    function mergeWithMeta(obj, meta) {
       const billingJson = coerceBillingJson(obj.billingJson);
       if (!billingJson) return null;
-      const meta = metaSource && typeof metaSource === 'object' ? metaSource : {};
       return Object.assign({}, meta, obj, { billingJson });
     }
 
-    function enqueue(candidate) {
+    function enqueue(candidate, inheritedMeta) {
       const parsed = parseMaybeJson(candidate);
       const value = parsed === null ? candidate : parsed;
       if (value && typeof value === 'object' && !visited.has(value)) {
         visited.add(value);
-        queue.push(value);
+        const meta = Object.assign({}, inheritedMeta, extractMetaFields(value));
+        queue.push({ obj: value, meta });
       }
     }
 
-    enqueue(root);
+    const initialMeta = extractMetaFields(metaSource);
+    enqueue(root, initialMeta);
 
     while (queue.length) {
-      const obj = queue.shift();
-      const merged = mergeWithMeta(obj);
+      const { obj, meta } = queue.shift();
+      const merged = mergeWithMeta(obj, meta);
       if (merged) {
         return merged;
       }
 
       Object.keys(obj).forEach(key => {
         const value = obj[key];
-        enqueue(value);
+        enqueue(value, meta);
       });
     }
 

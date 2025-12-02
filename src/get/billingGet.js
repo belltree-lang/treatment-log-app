@@ -302,10 +302,11 @@ function loadBillingStaffDirectory_() {
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const colName = resolveBillingColumn_(headers, ['名前', '氏名', 'スタッフ名'], '氏名', { fallbackLetter: 'A' });
   const colEmail = resolveBillingColumn_(headers, ['メール', 'メールアドレス', 'email', 'Email'], 'メールアドレス', { fallbackLetter: 'K' });
+  const colStaffId = resolveBillingColumn_(headers, ['スタッフID', '担当者ID', 'staffId', 'staffid'], 'スタッフID', {});
   if (!colName || !colEmail) return {};
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  return values.reduce((map, row) => {
+  const directory = values.reduce((map, row) => {
     const emailRaw = row[colEmail - 1];
     const name = colName ? String(row[colName - 1] || '').trim() : '';
     const emailKey = billingNormalizeEmailKey_(emailRaw);
@@ -313,8 +314,18 @@ function loadBillingStaffDirectory_() {
     if (!map[emailKey]) {
       map[emailKey] = name;
     }
+    if (colStaffId) {
+      const staffId = row[colStaffId - 1];
+      const staffKey = billingNormalizeEmailKey_(staffId);
+      if (staffKey && !map[staffKey]) {
+        map[staffKey] = name;
+      }
+    }
     return map;
   }, {});
+
+  billingLogger_.log('[billing] loadBillingStaffDirectory_: entries=' + Object.keys(directory).length);
+  return directory;
 }
 
 function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
@@ -467,6 +478,10 @@ function loadTreatmentLogs_() {
     '作成者',
     { fallbackLetter: 'E' }
   );
+  const colStaffId = resolveBillingColumn_(headers,
+    ['担当者ID', 'スタッフID', 'staffId', 'staffid', 'staff'],
+    '担当者ID',
+    {});
 
   const range = sheet.getRange(2, 1, lastRow - 1, width);
   const values = range.getValues();
@@ -481,9 +496,14 @@ function loadTreatmentLogs_() {
     const displayRow = displayValues[idx] || [];
     const timestamp = billingParseTreatmentTimestamp_(dateCell, displayRow[colDate - 1]);
     const createdByDisplay = colCreatedBy && displayRow ? displayRow[colCreatedBy - 1] : '';
-    const createdByEmail = colCreatedBy
+    let createdByEmail = colCreatedBy
       ? extractEmailFallback_(row[colCreatedBy - 1], createdByDisplay)
       : '';
+    if (!createdByEmail && colStaffId) {
+      const staffIdRaw = row[colStaffId - 1];
+      const staffIdDisplay = displayRow && displayRow.length >= colStaffId ? displayRow[colStaffId - 1] : '';
+      createdByEmail = extractEmailFallback_(staffIdRaw, staffIdDisplay);
+    }
 
     if (String(rawPid || '').trim() && pid && pid !== String(rawPid).trim()) {
       if (normalizationDebug.length < 20) {
@@ -611,6 +631,7 @@ function buildVisitCountMap_(billingMonth) {
   billingLogger_.log('[billing] buildVisitCountMap_: skipped samples=' + JSON.stringify(skipSamples));
   billingLogger_.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
   billingLogger_.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
+  billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient size=' + Object.keys(staffByPatient).length);
   billingLogger_.log('[billing] buildVisitCountMap_: debug=' + JSON.stringify(debug));
   return { billingMonth: month.key, counts, staffByPatient, staffHistoryByPatient };
 }
@@ -806,7 +827,9 @@ function getBillingSourceData(billingMonth) {
     treatmentVisitCountEntries: Object.keys(treatmentVisitCounts || {}).length,
     zeroVisitSamples,
     unpaidHistoryCount: (unpaidHistory || []).length,
-    carryOverPatients: Object.keys(carryOverByPatient || {}).length
+    carryOverPatients: Object.keys(carryOverByPatient || {}).length,
+    staffByPatientCount: Object.keys(visitCountsResult.staffByPatient || {}).length,
+    staffDirectorySize: Object.keys(staffDirectory || {}).length
   }));
   return {
     billingMonth: month.key,

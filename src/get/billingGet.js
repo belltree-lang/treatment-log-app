@@ -391,16 +391,19 @@ function loadBillingStaffDirectory_() {
   const directoryKeys = Object.keys(directory);
   const staffKeySamples = directoryKeys.slice(0, 20).map(key => ({ key, name: directory[key] }));
   const staffKeyListLog = directoryKeys.slice(0, 200);
+  const staffKeyDetailListLog = directoryKeys.slice(0, 200).map(key => ({ key, name: directory[key] }));
 
   billingLogger_.log('[billing] loadBillingStaffDirectory_: entries=' + directoryKeys.length);
   billingLogger_.log('[billing] loadBillingStaffDirectory_: key samples=' + JSON.stringify(staffKeySamples));
   billingLogger_.log('[billing] loadBillingStaffDirectory_: key list (truncated)=' + JSON.stringify(staffKeyListLog));
+  billingLogger_.log('[billing] loadBillingStaffDirectory_: key detail list (truncated)=' + JSON.stringify(staffKeyDetailListLog));
   return directory;
 }
 
 function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
   const result = {};
   const directory = staffDirectory || {};
+  const displayLog = [];
   Object.keys(staffByPatient || {}).forEach(pid => {
     const emails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : [staffByPatient[pid]];
     const seen = new Set();
@@ -411,9 +414,22 @@ function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
       seen.add(key);
       const resolved = directory[key] || '';
       names.push(resolved || email || '');
+
+      if (displayLog.length < 200) {
+        displayLog.push({
+          patientId: pid,
+          email,
+          normalizedKey: key,
+          matched: !!directory[key],
+          resolvedName: resolved || ''
+        });
+      }
     });
     result[pid] = names.filter(Boolean);
   });
+  if (displayLog.length) {
+    billingLogger_.log('[billing] buildStaffDisplayByPatient_: resolved staff detail=' + JSON.stringify(displayLog));
+  }
   return result;
 }
 
@@ -737,9 +753,9 @@ function buildVisitCountMap_(billingMonth) {
   billingLogger_.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
   billingLogger_.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
   billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient size=' + Object.keys(staffByPatient).length);
-  billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient samples=' + JSON.stringify(
+  billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient mapping (truncated)=' + JSON.stringify(
     Object.keys(staffByPatient)
-      .slice(0, 20)
+      .slice(0, 200)
       .map(pid => ({ patientId: pid, staff: staffByPatient[pid] }))
   ));
   billingLogger_.log('[billing] buildVisitCountMap_: debug=' + JSON.stringify(debug));

@@ -4,6 +4,13 @@
  * Provide local fallbacks for shared helpers so the billing pipeline can run
  * without depending on Code.js ordering.
  */
+if (typeof billingLogger_ === 'undefined') {
+  const billingFallbackLog_ = typeof console !== 'undefined' && console && typeof console.log === 'function'
+    ? (...args) => console.log(...args)
+    : () => {};
+  billingLogger_ = { log: billingFallbackLog_ }; // eslint-disable-line no-global-assign
+}
+
 const billingNormalizeHeaderKey_ = typeof normalizeHeaderKey_ === 'function'
   ? normalizeHeaderKey_
   : function normalizeHeaderKey_(s) {

@@ -59,6 +59,7 @@
   @keyframes spin{ to{ transform:rotate(360deg); } }
   .alert{ border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin:6px 0 12px; background:#f8fafc; }
   .alert.warn{ border-color:#fecdd3; background:#fff1f2; color:#991b1b; }
+  .alert.danger{ border-color:#fecdd3; background:#fef2f2; color:#991b1b; }
   .field-note{ font-size:0.85rem; margin-top:6px; color:var(--muted); }
   .field-note.warn{ color:#991b1b; }
   .insurance-editor select{ width:100%; }
@@ -94,6 +95,7 @@
           <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
           <button class="btn secondary" id="billingBankBtn" type="button" onclick="handleBankExport()">銀行データ出力</button>
         <div id="billingStatus" class="status-line"></div>
+        <div id="billingError" class="alert danger" style="display:none"></div>
       </div>
     </section>
 

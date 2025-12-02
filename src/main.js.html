@@ -4,6 +4,7 @@ const billingState = {
   result: null,
   prepared: null,
   statusMessage: '',
+  errorMessage: '',
   edits: {},
   editing: null,
   sort: { field: null, direction: 'asc' }
@@ -28,6 +29,15 @@ const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeo
 
 function qs(id) {
   return document.getElementById(id);
+}
+
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function getDefaultMonth() {
@@ -119,7 +129,18 @@ function logBillingState(stage, extra) {
 function setBillingLoading(flag, message) {
   billingState.loading = !!flag;
   billingState.statusMessage = flag ? (message || '生成中…') : '';
+  if (flag) {
+    billingState.errorMessage = '';
+  }
   logBillingState('setBillingLoading', { message: billingState.statusMessage });
+  renderBillingResult();
+}
+
+function setBillingError(message, err) {
+  const detail = err && err.message ? err.message : (err != null ? String(err) : '');
+  const combined = detail && message ? `${message}: ${detail}` : (message || detail || '不明なエラー');
+  billingState.errorMessage = combined;
+  logBillingState('billingError', { message: combined });
   renderBillingResult();
 }
 
@@ -619,15 +640,22 @@ function handleBillingAggregation() {
 
 function onBillingPrepared(result) {
   console.warn('[billing-debug] raw result = ', JSON.stringify(result, null, 2).slice(0, 5000));
-  const normalized = normalizeBillingResultPayload(result);
-  billingState.result = normalized;
-  billingState.prepared = normalized;
-  billingState.loading = false;
-  billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
-  billingState.edits = {};
-  billingState.editing = null;
-  logBillingState('onBillingPrepared', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
-  renderBillingResult();
+  try {
+    const normalized = normalizeBillingResultPayload(result);
+    billingState.result = normalized;
+    billingState.prepared = normalized;
+    billingState.loading = false;
+    billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
+    billingState.errorMessage = '';
+    billingState.edits = {};
+    billingState.editing = null;
+    logBillingState('onBillingPrepared', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
+    renderBillingResult();
+  } catch (err) {
+    billingState.loading = false;
+    billingState.statusMessage = '集計データの処理に失敗しました';
+    setBillingError('集計結果の整形中にエラーが発生しました', err);
+  }
 }
 
 function handleBillingPdfGeneration() {
@@ -645,15 +673,22 @@ function handleBillingPdfGeneration() {
 }
 
 function onBillingPdfCompleted(result) {
-  const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
-  billingState.result = normalized;
-  billingState.prepared = normalized;
-  billingState.loading = false;
-  billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
-  billingState.edits = {};
-  billingState.editing = null;
-  logBillingState('onBillingPdfCompleted', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
-  renderBillingResult();
+  try {
+    const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
+    billingState.result = normalized;
+    billingState.prepared = normalized;
+    billingState.loading = false;
+    billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
+    billingState.errorMessage = '';
+    billingState.edits = {};
+    billingState.editing = null;
+    logBillingState('onBillingPdfCompleted', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
+    renderBillingResult();
+  } catch (err) {
+    billingState.loading = false;
+    billingState.statusMessage = 'PDF生成結果の処理に失敗しました';
+    setBillingError('PDF生成後の結果処理でエラーが発生しました', err);
+  }
 }
 
 function handleBankExport() {
@@ -671,6 +706,7 @@ function handleBankExport() {
 function onBankExportCompleted(result) {
   billingState.loading = false;
   billingState.statusMessage = '銀行データを出力しました' + (result && result.inserted ? `（${result.inserted}件）` : '');
+  billingState.errorMessage = '';
   logBillingState('onBankExportCompleted');
   renderBillingResult();
 }
@@ -694,6 +730,7 @@ function onBillingSaveCompleted(result) {
   billingState.prepared = result || billingState.prepared;
   billingState.loading = false;
   billingState.statusMessage = '保存が完了しました';
+  billingState.errorMessage = '';
   billingState.edits = {};
   billingState.editing = null;
   logBillingState('onBillingSaveCompleted', { rows: billingState.prepared && billingState.prepared.billingJson ? billingState.prepared.billingJson.length : 0 });
@@ -705,8 +742,7 @@ function onBillingFailed(err) {
   const msg = err && err.message ? err.message : String(err);
   billingState.loading = false;
   billingState.statusMessage = '請求処理に失敗しました';
-  logBillingState('onBillingFailed', { error: msg });
-  renderBillingResult();
+  setBillingError('請求処理でエラーが発生しました', msg);
   alert('請求生成に失敗しました: ' + msg);
 }
 
@@ -719,6 +755,10 @@ function formatCurrency(value) {
 function renderBillingStatus(result) {
   const el = qs('billingStatus');
   if (!el) return;
+  if (billingState.errorMessage) {
+    el.textContent = '';
+    return;
+  }
   if (billingState.loading) {
     el.innerHTML = `<span class="loading"><span class="spinner"></span>${billingState.statusMessage || '生成中…'}</span>`;
     return;
@@ -734,6 +774,19 @@ function renderBillingStatus(result) {
     return;
   }
   el.textContent = '';
+}
+
+function renderBillingError() {
+  const box = qs('billingError');
+  if (!box) return;
+  const msg = billingState.errorMessage;
+  if (msg) {
+    box.style.display = '';
+    box.innerHTML = `<strong>請求処理中にエラーが発生しました。</strong><div>${escapeHtml(msg)}</div>`;
+    return;
+  }
+  box.style.display = 'none';
+  box.textContent = '';
 }
 
 function renderDownloads(result) {
@@ -806,6 +859,7 @@ function renderBillingResult() {
   const box = qs('billingResult');
   if (!box) return;
   const result = billingState.result;
+  renderBillingError();
   renderBillingStatus(result);
   renderDownloads(result);
   renderMonthBadge(result);
@@ -813,6 +867,10 @@ function renderBillingResult() {
 
   if (billingState.loading) {
     box.innerHTML = '<div class="loading"><span class="spinner"></span>請求データを生成中です…</div>';
+    return;
+  }
+  if (billingState.errorMessage) {
+    box.innerHTML = '<div class="alert danger">請求処理中にエラーが発生しました。詳細は上部のエラーメッセージをご確認ください。</div>';
     return;
   }
   if (!result || !result.billingJson || !result.billingJson.length) {

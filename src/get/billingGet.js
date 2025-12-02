@@ -334,7 +334,11 @@ function loadBillingStaffDirectory_() {
     return map;
   }, {});
 
-  billingLogger_.log('[billing] loadBillingStaffDirectory_: entries=' + Object.keys(directory).length);
+  const directoryKeys = Object.keys(directory);
+  const staffKeySamples = directoryKeys.slice(0, 20).map(key => ({ key, name: directory[key] }));
+
+  billingLogger_.log('[billing] loadBillingStaffDirectory_: entries=' + directoryKeys.length);
+  billingLogger_.log('[billing] loadBillingStaffDirectory_: key samples=' + JSON.stringify(staffKeySamples));
   return directory;
 }
 
@@ -500,6 +504,7 @@ function loadTreatmentLogs_() {
   const normalizationDebug = [];
   const invalidDateDebug = [];
   const emptyPidRows = [];
+  const staffKeyDebug = [];
   const logs = values.map((row, idx) => {
     const rawPid = row[colPid - 1];
     const pid = billingNormalizePatientId_(rawPid);
@@ -507,14 +512,19 @@ function loadTreatmentLogs_() {
     const displayRow = displayValues[idx] || [];
     const timestamp = billingParseTreatmentTimestamp_(dateCell, displayRow[colDate - 1]);
     const createdByDisplay = colCreatedBy && displayRow ? displayRow[colCreatedBy - 1] : '';
-    let createdByEmail = colCreatedBy
+    const staffIdRaw = colStaffId ? row[colStaffId - 1] : '';
+    const staffIdDisplay = colStaffId && displayRow && displayRow.length >= colStaffId ? displayRow[colStaffId - 1] : '';
+    const staffIdCandidate = colStaffId ? extractEmailFallback_(staffIdRaw, staffIdDisplay) : '';
+
+    const createdByCandidate = colCreatedBy
       ? extractEmailFallback_(row[colCreatedBy - 1], createdByDisplay)
       : '';
-    if (!createdByEmail && colStaffId) {
-      const staffIdRaw = row[colStaffId - 1];
-      const staffIdDisplay = displayRow && displayRow.length >= colStaffId ? displayRow[colStaffId - 1] : '';
-      createdByEmail = extractEmailFallback_(staffIdRaw, staffIdDisplay);
-    }
+    const createdByNormalized = billingNormalizeEmailKey_(createdByCandidate);
+    const staffIdNormalized = billingNormalizeEmailKey_(staffIdCandidate);
+
+    const shouldUseStaffId = !!staffIdNormalized && !createdByNormalized;
+    const createdByEmail = shouldUseStaffId ? staffIdCandidate : createdByCandidate;
+    const usedNormalized = shouldUseStaffId ? staffIdNormalized : createdByNormalized;
 
     if (String(rawPid || '').trim() && pid && pid !== String(rawPid).trim()) {
       if (normalizationDebug.length < 20) {
@@ -525,6 +535,15 @@ function loadTreatmentLogs_() {
       if (emptyPidRows.length < 20) {
         emptyPidRows.push({ rowNumber: idx + 2, rawPid });
       }
+    }
+    if (staffKeyDebug.length < 20 && (createdByNormalized || staffIdNormalized)) {
+      staffKeyDebug.push({
+        rowNumber: idx + 2,
+        createdByNormalized,
+        staffIdNormalized,
+        usedNormalized,
+        usedRaw: createdByEmail
+      });
     }
     if (!(timestamp instanceof Date) || isNaN(timestamp.getTime())) {
       if (invalidDateDebug.length < 20) {
@@ -557,6 +576,7 @@ function loadTreatmentLogs_() {
   billingLogger_.log('[billing] loadTreatmentLogs_: pid normalization samples=' + JSON.stringify(normalizationDebug));
   billingLogger_.log('[billing] loadTreatmentLogs_: invalid date samples=' + JSON.stringify(invalidDateDebug));
   billingLogger_.log('[billing] loadTreatmentLogs_: empty pid rows=' + JSON.stringify(emptyPidRows));
+  billingLogger_.log('[billing] loadTreatmentLogs_: staff key samples=' + JSON.stringify(staffKeyDebug));
   return logs;
 }
 

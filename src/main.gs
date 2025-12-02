@@ -180,9 +180,10 @@ function normalizePreparedBilling_(payload) {
 function toClientBillingPayload_(prepared) {
   const normalized = normalizePreparedBilling_(prepared);
   if (!normalized) return null;
+  const billingJson = Array.isArray(normalized.billingJson) ? normalized.billingJson : [];
   return {
     billingMonth: normalized.billingMonth || '',
-    billingJson: normalized.billingJson,
+    billingJson,
     preparedAt: normalized.preparedAt || null,
     patients: normalized.patients || {},
     bankInfoByName: normalized.bankInfoByName || {},
@@ -192,10 +193,38 @@ function toClientBillingPayload_(prepared) {
   };
 }
 
+function serializeBillingPayload_(payload) {
+  if (!payload) return null;
+  try {
+    const json = JSON.stringify(payload);
+    return JSON.parse(json);
+  } catch (err) {
+    console.warn('[billing] Failed to serialize billing payload', err);
+    return null;
+  }
+}
+
 function prepareBillingData(billingMonth) {
   const prepared = buildPreparedBillingPayload_(billingMonth);
-  savePreparedBilling_(prepared);
-  return toClientBillingPayload_(prepared);
+  const clientPayload = toClientBillingPayload_(prepared);
+  const serialized = serializeBillingPayload_(clientPayload) || clientPayload;
+  const payloadJson = serialized ? JSON.stringify(serialized) : '';
+  const payloadPreview = payloadJson.length > 50000 ? payloadJson.slice(0, 50000) + '…<truncated>' : payloadJson;
+
+  billingLogger_.log(
+    '[billing] prepareBillingData payloadSummary=' +
+      JSON.stringify({
+        billingMonth: serialized && serialized.billingMonth,
+        preparedAt: serialized && serialized.preparedAt,
+        billingJsonLength: serialized && serialized.billingJson ? serialized.billingJson.length : null,
+        patientCount: serialized && serialized.patients ? Object.keys(serialized.patients).length : null,
+        payloadByteLength: payloadJson.length
+      }) +
+      '\n[billing] prepareBillingData payloadRaw=' + payloadPreview
+  );
+
+  savePreparedBilling_(serialized);
+  return serialized;
 }
 
 /**

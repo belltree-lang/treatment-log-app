@@ -234,7 +234,8 @@ function generateBillingJsonFromSource(sourceData) {
     const responsibleName = responsibleNames.join('・');
     const carryOverFromPatient = normalizeMoneyNumber_(patient.carryOverAmount);
     const carryOverFromHistory = normalizeMoneyNumber_(carryOverByPatient[pid]);
-    const manualUnitPrice = normalizeMoneyNumber_(patient.unitPrice);
+    const manualUnitPrice = normalizeMoneyNumber_(patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice);
+    const patientUnitPrice = normalizeMoneyNumber_(patient.unitPrice);
     const normalizedBurdenRate = normalizeBurdenRateInt_(patient.burdenRate);
     const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag_(patient.medicalAssistance);
     const amountCalc = calculateBillingAmounts_({
@@ -242,6 +243,7 @@ function generateBillingJsonFromSource(sourceData) {
       insuranceType: patient.insuranceType,
       burdenRate: normalizedBurdenRate,
       manualUnitPrice,
+      unitPrice: patientUnitPrice,
       medicalAssistance: normalizedMedicalAssistance,
       carryOverAmount: carryOverFromPatient + carryOverFromHistory
     });

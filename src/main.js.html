@@ -374,6 +374,13 @@ function normalizeBillingResultPayload(raw) {
     }
   }
 
+  if (result && typeof result === 'object' && result.payload && typeof result.payload === 'object') {
+    const payload = result.payload;
+    if (payload.billingJson) {
+      result = payload;
+    }
+  }
+
   if (Array.isArray(result)) {
     return { billingJson: result, billingMonth: '', preparedAt: null };
   }

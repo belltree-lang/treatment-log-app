@@ -1,5 +1,12 @@
 /***** Logic layer: billing JSON generation (pure functions) *****/
 
+if (typeof billingLogger_ === 'undefined') {
+  const billingFallbackLog_ = typeof console !== 'undefined' && console && typeof console.log === 'function'
+    ? (...args) => console.log(...args)
+    : () => {};
+  billingLogger_ = { log: billingFallbackLog_ }; // eslint-disable-line no-global-assign
+}
+
 const BILLING_TREATMENT_PRICE = 4070;
 const BILLING_ELECTRO_PRICE = 100;
 const BILLING_UNIT_PRICE = BILLING_TREATMENT_PRICE + BILLING_ELECTRO_PRICE;

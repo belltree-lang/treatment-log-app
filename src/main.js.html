@@ -420,20 +420,36 @@ function normalizeBillingResultPayload(raw) {
     const queue = [];
     const visited = new WeakSet();
 
+    const OBJECT_META_FIELDS = [
+      'staffByPatient',
+      'staffDirectory',
+      'staffDisplayByPatient',
+      'patients',
+      'patientMap',
+      'bankInfoByName',
+      'bankStatuses',
+      'carryOverByPatient'
+    ];
+
     function extractMetaFields(source) {
       if (!source || typeof source !== 'object') return {};
       const meta = {};
       Object.keys(source).forEach(key => {
         const value = source[key];
         const type = typeof value;
-        if (
-          value === null ||
-          type === 'string' ||
-          type === 'number' ||
-          type === 'boolean' ||
-          Object.prototype.toString.call(value) === '[object Date]'
-        ) {
+        const isDate = Object.prototype.toString.call(value) === '[object Date]';
+        const isPlainObject = value && !Array.isArray(value) && !isDate && type === 'object';
+        if (OBJECT_META_FIELDS.includes(key) && isPlainObject) {
           meta[key] = value;
+        } else if (value === null || type === 'string' || type === 'number' || type === 'boolean' || isDate) {
+          meta[key] = value;
+        }
+      });
+
+      ['meta', 'metadata'].forEach(nestedKey => {
+        const nested = source[nestedKey];
+        if (nested && typeof nested === 'object') {
+          Object.assign(meta, extractMetaFields(nested));
         }
       });
       return meta;

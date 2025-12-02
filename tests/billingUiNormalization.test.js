@@ -86,6 +86,26 @@ function testMergesMetadataFromAncestorObjects() {
   assert.strictEqual(result.preparedAt, '2025-03-01T00:00:00Z', '祖先オブジェクトの preparedAt を引き継ぐ');
 }
 
+function testInheritsObjectMetadataFromAncestors() {
+  const raw = {
+    meta: {
+      staffByPatient: { '111': ['taro@example.com'] },
+      staffDirectory: { 'taro@example.com': '太郎' },
+      carryOverByPatient: { '111': 4000 }
+    },
+    nested: {
+      payload: {
+        billingJson: JSON.stringify([{ patientId: '111' }])
+      }
+    }
+  };
+
+  const result = normalizeBillingResultPayload(raw);
+  assert.deepStrictEqual(result.staffByPatient['111'], ['taro@example.com'], 'staffByPatient を祖先から引き継ぐ');
+  assert.strictEqual(result.staffDirectory['taro@example.com'], '太郎', 'staffDirectory を祖先から引き継ぐ');
+  assert.strictEqual(result.carryOverByPatient['111'], 4000, 'carryOverByPatient を祖先から引き継ぐ');
+}
+
 function testReturnsNullOnUnparsableString() {
   const result = normalizeBillingResultPayload('{invalid json');
   assert.strictEqual(result, null, '不正なJSON文字列は null を返す');
@@ -96,6 +116,7 @@ function run() {
   testFindsNestedBillingJson();
   testFindsBillingJsonInsideStringifiedPayload();
   testMergesMetadataFromAncestorObjects();
+  testInheritsObjectMetadataFromAncestors();
   testReturnsNullOnUnparsableString();
   console.log('billingUiNormalization tests passed');
 }

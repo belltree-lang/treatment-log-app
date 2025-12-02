@@ -178,10 +178,21 @@ function generateBillingJsonFromSource(sourceData) {
     carryOverByPatient
   } = normalizeBillingSource_(sourceData);
   const patientIds = Object.keys(treatmentVisitCounts || {});
+  const zeroVisitDebug = [];
 
   const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
-    const visitCount = normalizeVisitCount_(treatmentVisitCounts[pid]);
+    const rawVisitCount = treatmentVisitCounts[pid];
+    const visitCount = normalizeVisitCount_(rawVisitCount);
+    if (!visitCount && zeroVisitDebug.length < 20) {
+      zeroVisitDebug.push({
+        patientId: pid,
+        rawVisitCount,
+        normalizedVisitCount: visitCount,
+        payerType: patient.payerType,
+        carryOverAmount: patient.carryOverAmount
+      });
+    }
     const staffEmails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : (staffByPatient[pid] ? [staffByPatient[pid]] : []);
     const resolvedStaffNames = Array.isArray(staffDisplayByPatient[pid]) ? staffDisplayByPatient[pid] : [];
     const responsibleNames = resolvedStaffNames.length
@@ -230,6 +241,7 @@ function generateBillingJsonFromSource(sourceData) {
   });
 
   billingLogger_.log('[billing] raw billingJson=' + JSON.stringify(billingJson));
+  billingLogger_.log('[billing] generateBillingJsonFromSource: zero visit samples=' + JSON.stringify(zeroVisitDebug));
   billingLogger_.log('[billing] billingJson length=' + billingJson.length);
   return billingJson;
 }

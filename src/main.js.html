@@ -365,6 +365,31 @@ function loadBillingPage() {
 function normalizeBillingResultPayload(raw) {
   if (!raw) return null;
 
+  function applyBillingFieldDefaults(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    return Object.assign(
+      {
+        staffByPatient: {},
+        staffDirectory: {},
+        staffDisplayByPatient: {},
+        patients: {},
+        bankInfoByName: {},
+        bankStatuses: {},
+        carryOverByPatient: {}
+      },
+      payload,
+      {
+        staffByPatient: payload.staffByPatient || {},
+        staffDirectory: payload.staffDirectory || {},
+        staffDisplayByPatient: payload.staffDisplayByPatient || {},
+        patients: payload.patients || payload.patientMap || {},
+        bankInfoByName: payload.bankInfoByName || {},
+        bankStatuses: payload.bankStatuses || {},
+        carryOverByPatient: payload.carryOverByPatient || {}
+      }
+    );
+  }
+
   function parseMaybeJson(value) {
     if (typeof value !== 'string') return value;
     try {
@@ -453,19 +478,19 @@ function normalizeBillingResultPayload(raw) {
   if (result == null) return null;
 
   if (Array.isArray(result)) {
-    return { billingJson: result, billingMonth: '', preparedAt: null };
+    return applyBillingFieldDefaults({ billingJson: result, billingMonth: '', preparedAt: null });
   }
 
   const found = findBillingPayload(result, result);
   if (found && found.billingJson) {
-    return found;
+    return applyBillingFieldDefaults(found);
   }
 
   const billingJson = coerceBillingJson(result.billingJson) || [];
   if (!billingJson.length) {
     console.warn('[billing] billingJson not found in payload; returning empty array');
   }
-  return Object.assign({}, result, { billingJson });
+  return applyBillingFieldDefaults(Object.assign({}, result, { billingJson }));
 }
 
 function handleBillingAggregation() {

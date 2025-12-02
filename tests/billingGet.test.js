@@ -50,6 +50,7 @@ const { normalizeBurdenRateInt_ } = context;
 const { extractUnpaidBillingHistory } = context;
 const { loadTreatmentLogs_ } = context;
 const { billingParseTreatmentTimestamp_ } = context;
+const { loadBillingStaffDirectory_ } = context;
 
 if (typeof normalizeBurdenRateInt_ !== 'function') {
   throw new Error('normalizeBurdenRateInt_ failed to load in the test context');
@@ -62,6 +63,9 @@ if (typeof loadTreatmentLogs_ !== 'function') {
 }
 if (typeof billingParseTreatmentTimestamp_ !== 'function') {
   throw new Error('billingParseTreatmentTimestamp_ failed to load in the test context');
+}
+if (typeof loadBillingStaffDirectory_ !== 'function') {
+  throw new Error('loadBillingStaffDirectory_ failed to load in the test context');
 }
 
 function testFullWidthDigitsAreParsed() {
@@ -158,6 +162,39 @@ function testBillingParseTreatmentTimestampParsesJapaneseDateText() {
   assert.strictEqual(parsed.getMonth(), 11, '月が正しく解釈される（0始まり）');
 }
 
+function testStaffDirectoryUsesStaffIdWhenEmailMissing() {
+  const headers = ['氏名', 'スタッフID'];
+  const values = [
+    ['山田太郎', 'STAFF001'],
+    ['佐藤花子', 'staff002']
+  ];
+
+  const sheet = {
+    getLastRow: () => values.length + 1,
+    getLastColumn: () => headers.length,
+    getMaxColumns: () => headers.length,
+    getRange: (row, col, numRows, numCols) => {
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [headers.slice(col - 1, col - 1 + numCols)] };
+      }
+      const startIdx = Math.max(0, row - 2);
+      return {
+        getValues: () => values
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols))
+      };
+    }
+  };
+
+  workbook = {
+    getSheetByName: name => (name === 'スタッフ一覧' ? sheet : null)
+  };
+
+  const directory = loadBillingStaffDirectory_();
+  assert.strictEqual(directory['staff001'], '山田太郎', 'メールなしでも担当者IDで紐づく');
+  assert.strictEqual(directory['staff002'], '佐藤花子', '複数行の担当者IDを辞書化する');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
@@ -166,6 +203,7 @@ function run() {
   testLoadTreatmentLogsDoesNotRequireLogger();
   testBillingParseTreatmentTimestampParsesSerialStrings();
   testBillingParseTreatmentTimestampParsesJapaneseDateText();
+  testStaffDirectoryUsesStaffIdWhenEmailMissing();
   console.log('billingGet burden rate tests passed');
 }
 

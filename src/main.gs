@@ -437,70 +437,103 @@ function normalizeBillingEdits_(maybeEdits) {
     const pid = edit && edit.patientId ? String(edit.patientId).trim() : '';
     if (!pid) return null;
     const burden = normalizeBillingEditBurden_(edit.burdenRate);
+    const hasManualUnitPriceInput = edit && Object.prototype.hasOwnProperty.call(edit, 'unitPrice');
+    const hasManualUnitPrice = hasManualUnitPriceInput && edit.unitPrice !== null && edit.unitPrice !== '';
     return {
       patientId: pid,
       insuranceType: edit.insuranceType != null ? String(edit.insuranceType).trim() : undefined,
       medicalAssistance: normalizeBillingEditMedicalAssistance_(edit.medicalAssistance),
       burdenRate: burden !== null ? burden : undefined,
-      unitPrice: edit.unitPrice != null ? Number(edit.unitPrice) || 0 : undefined,
+      // normalized unitPrice retains legacy behavior for immediate billing recalculation,
+      // while manualUnitPrice preserves blank input for persistence.
+      unitPrice: hasManualUnitPrice ? Number(edit.unitPrice) || 0 : undefined,
+      manualUnitPrice: hasManualUnitPriceInput ? edit.unitPrice : undefined,
       carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
       payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined
     };
   }).filter(Boolean);
 }
 
-function applyBillingPatientEdits_(edits) {
-  if (!Array.isArray(edits) || !edits.length) return { updated: 0 };
+function savePatientUpdate(patientId, updatedFields) {
+  const pid = billingNormalizePatientId_(patientId);
+  if (!pid) return { updated: false };
+  const fields = updatedFields || {};
+
   const sheet = billingSs().getSheetByName(BILLING_PATIENT_SHEET_NAME);
   if (!sheet) {
     throw new Error('患者情報シートが見つかりません: ' + BILLING_PATIENT_SHEET_NAME);
   }
+
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { updated: 0 };
+  if (lastRow < 2) return { updated: false };
+
   const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo, '患者ID', { required: true, fallbackIndex: BILLING_PATIENT_COLS_FIXED.recNo });
   const colInsurance = resolveBillingColumn_(headers, ['保険区分', '保険種別', '保険タイプ', '保険'], '保険区分', {});
   const colBurden = resolveBillingColumn_(headers, BILLING_LABELS.share, '負担割合', { fallbackIndex: BILLING_PATIENT_COLS_FIXED.share });
-  const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）'], '単価', {});
+  const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）', '単価（手動上書き）', '単価(手動上書き)'], '単価', {});
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
   const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
   const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const editMap = edits.reduce((map, edit) => {
-    map[billingNormalizePatientId_(edit.patientId)] = edit;
-    return map;
-  }, {});
-  const updates = [];
+  for (let idx = 0; idx < values.length; idx++) {
+    const row = values[idx];
+    const rowPid = billingNormalizePatientId_(row[colPid - 1]);
+    if (rowPid !== pid) continue;
 
-  values.forEach((row, idx) => {
-    const pid = billingNormalizePatientId_(row[colPid - 1]);
-    const edit = editMap[pid];
-    if (!edit) return;
     const newRow = row.slice();
-    if (colInsurance && edit.insuranceType !== undefined) newRow[colInsurance - 1] = edit.insuranceType;
-    if (colMedical && edit.medicalAssistance !== undefined) newRow[colMedical - 1] = edit.medicalAssistance ? 1 : 0;
-    if (colBurden && edit.burdenRate !== undefined) newRow[colBurden - 1] = edit.burdenRate;
-    if (colUnitPrice && edit.unitPrice !== undefined) newRow[colUnitPrice - 1] = edit.unitPrice;
-    if (colCarryOver && edit.carryOverAmount !== undefined) newRow[colCarryOver - 1] = edit.carryOverAmount;
-    if (colPayer && edit.payerType !== undefined) newRow[colPayer - 1] = edit.payerType;
-    updates.push({ rowNumber: idx + 2, values: newRow });
+    if (colInsurance && fields.insuranceType !== undefined) newRow[colInsurance - 1] = fields.insuranceType;
+    if (colMedical && fields.medicalAssistance !== undefined) newRow[colMedical - 1] = normalizeBillingEditMedicalAssistance_(fields.medicalAssistance) ? 1 : 0;
+    if (colBurden && fields.burdenRate !== undefined) newRow[colBurden - 1] = fields.burdenRate;
+    if (colUnitPrice && fields.manualUnitPrice !== undefined) {
+      const isBlank = fields.manualUnitPrice === '' || fields.manualUnitPrice === null;
+      newRow[colUnitPrice - 1] = isBlank ? '' : Number(fields.manualUnitPrice) || 0;
+    }
+    if (colCarryOver && fields.carryOverAmount !== undefined) newRow[colCarryOver - 1] = fields.carryOverAmount;
+    if (colPayer && fields.payerType !== undefined) newRow[colPayer - 1] = fields.payerType;
+
+    sheet.getRange(idx + 2, 1, 1, newRow.length).setValues([newRow]);
+    return { updated: true, rowNumber: idx + 2 };
+  }
+
+  return { updated: false };
+}
+
+function applyBillingPatientEdits_(edits) {
+  if (!Array.isArray(edits) || !edits.length) return { updated: 0 };
+
+  let updatedCount = 0;
+  edits.forEach(edit => {
+    const result = savePatientUpdate(edit.patientId, {
+      insuranceType: edit.insuranceType,
+      burdenRate: edit.burdenRate,
+      medicalAssistance: edit.medicalAssistance,
+      manualUnitPrice: edit.manualUnitPrice,
+      carryOverAmount: edit.carryOverAmount,
+      payerType: edit.payerType
+    });
+    if (result && result.updated) {
+      updatedCount += 1;
+    }
   });
 
-  updates.forEach(update => {
-    sheet.getRange(update.rowNumber, 1, 1, update.values.length).setValues([update.values]);
-  });
-  return { updated: updates.length };
+  return { updated: updatedCount };
 }
 
 function applyBillingEdits(billingMonth, options) {
   const opts = options || {};
   const edits = normalizeBillingEdits_(opts.edits);
+  let refreshedPatients = null;
   if (edits.length) {
     applyBillingPatientEdits_(edits);
+    refreshedPatients = getBillingPatientRecords();
   }
   const prepared = buildPreparedBillingPayload_(billingMonth);
+  if (refreshedPatients) {
+    prepared.patients = indexByPatientId_(refreshedPatients);
+  }
   savePreparedBilling_(prepared);
   return prepared;
 }

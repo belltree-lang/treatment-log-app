@@ -123,12 +123,13 @@ function normalizeBurdenRateInt_(burdenRate) {
 
 function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice, medicalAssistance) {
   const type = String(insuranceType || '').trim();
+  if (type === 'マッサージ') return 0;
   const manualUnitPrice = normalizeMoneyNumber_(customUnitPrice);
   const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
   if (hasManualUnitPrice) return manualUnitPrice;
 
-  const isMedicalAssistance = normalizeMedicalAssistanceFlag_(medicalAssistance) === 1;
-  if (isMedicalAssistance) return 0;
+  const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag_(medicalAssistance);
+  if (normalizedMedicalAssistance === 1) return 0;
 
   const isLifeProtection = ['生保', '生活保護', '生活扶助'].indexOf(type) >= 0;
   if (isLifeProtection) return 0;
@@ -137,7 +138,10 @@ function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice, me
   const isSelfPaid = type === '自費' || normalizedBurdenRate === '自費';
   if (isSelfPaid) return 0;
 
-  if (type === 'マッサージ') return 0;
+  const patientUnitPrice = arguments.length >= 5 ? normalizeMoneyNumber_(arguments[4]) : 0;
+  const hasPatientUnitPrice = Number.isFinite(patientUnitPrice) && patientUnitPrice !== 0;
+  if (hasPatientUnitPrice) return patientUnitPrice;
+
   return BILLING_UNIT_PRICE;
 }
 
@@ -145,18 +149,20 @@ function calculateBillingAmounts_(params) {
   const visits = normalizeVisitCount_(params.visitCount);
   const insuranceType = String(params.insuranceType || '').trim();
   const normalizedBurdenRate = normalizeBurdenRateInt_(params.burdenRate);
-  const isSelfPaid = insuranceType === '自費' || normalizedBurdenRate === '自費';
   const medicalAssistance = normalizeMedicalAssistanceFlag_(params.medicalAssistance);
   const manualUnitPrice = normalizeMoneyNumber_(params.manualUnitPrice != null ? params.manualUnitPrice : params.unitPrice);
-  const isMassage = insuranceType === 'マッサージ';
-  let unitPrice = resolveInvoiceUnitPrice_(insuranceType, normalizedBurdenRate, manualUnitPrice, medicalAssistance);
-  if (isMassage) unitPrice = 0;
-  const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  const isLifeProtection = ['生保', '生活保護', '生活扶助'].indexOf(insuranceType) >= 0;
-  const shouldZero = (isLifeProtection || medicalAssistance === 1) && !hasManualUnitPrice;
-  const isZeroCharge = shouldZero || (isSelfPaid && !hasManualUnitPrice);
-  const treatmentAmount = visits > 0 && !isMassage && !isZeroCharge ? unitPrice * visits : 0;
-  const transportAmount = visits > 0 && !isMassage && !isZeroCharge ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const patientUnitPrice = normalizeMoneyNumber_(params.unitPrice);
+  const unitPrice = resolveInvoiceUnitPrice_(
+    insuranceType,
+    normalizedBurdenRate,
+    manualUnitPrice,
+    medicalAssistance,
+    patientUnitPrice
+  );
+  const isSelfPaid = insuranceType === '自費' || normalizedBurdenRate === '自費';
+  const hasChargeableUnitPrice = Number.isFinite(unitPrice) && unitPrice !== 0;
+  const treatmentAmount = visits > 0 && hasChargeableUnitPrice ? unitPrice * visits : 0;
+  const transportAmount = visits > 0 && hasChargeableUnitPrice ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
   const burdenMultiplier = normalizeBurdenMultiplier_(normalizedBurdenRate, insuranceType);
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
   const billingAmount = isSelfPaid

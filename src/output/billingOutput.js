@@ -369,7 +369,7 @@ function generateInvoicePdfs(billingJson, options) {
 
 const BANK_TRANSFER_HEADERS = ['請求月', '番号', '氏名（漢字）', '銀行コード', '支店コード', '規定コード', '口座番号', '氏名（カナ）', '新規フラグ'];
 
-function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, billingMonth) {
+function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, billingMonth, bankStatuses) {
   const rows = [];
   let skipped = 0;
   const billingMonthKey = billingMonth || (billingJson && billingJson.length ? billingJson[0].billingMonth : '');
@@ -382,12 +382,28 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     const nameKey = normalizeBillingNameKey_(nameKanji);
     const bankLookup = bankInfoByName && nameKey ? bankInfoByName[nameKey] : null;
 
-    const bankCode = (bankLookup && bankLookup.bankCode) || patient.bankCode || '';
-    const branchCode = (bankLookup && bankLookup.branchCode) || patient.branchCode || '';
-    const regulationCode = (bankLookup && bankLookup.regulationCode) || patient.regulationCode || 1;
-    const accountNumber = (bankLookup && bankLookup.accountNumber) || patient.accountNumber || '';
-    const nameKana = (bankLookup && bankLookup.nameKana) || patient.nameKana || (item && item.nameKana) || '';
-    const isNew = normalizeZeroOneFlag_((bankLookup && bankLookup.isNew) != null ? bankLookup.isNew : patient.isNew);
+    const pickWithPriority = (resolver, fallbackValue) => {
+      const sources = [bankLookup, patient, item];
+      for (let i = 0; i < sources.length; i += 1) {
+        const source = sources[i];
+        if (!source) continue;
+        const value = typeof resolver === 'function' ? resolver(source) : source[resolver];
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+          return value;
+        }
+      }
+      return fallbackValue;
+    };
+
+    const bankCode = pickWithPriority('bankCode', '');
+    const branchCode = pickWithPriority('branchCode', '');
+    const regulationCode = pickWithPriority('regulationCode', 1);
+    const accountNumber = pickWithPriority('accountNumber', '');
+    const nameKana = pickWithPriority('nameKana', '');
+    const mergedNameKanji = pickWithPriority('nameKanji', nameKanji);
+    const isNew = normalizeZeroOneFlag_(pickWithPriority('isNew', ''));
+    const statusEntry = bankStatuses && pid ? bankStatuses[pid] : null;
+    const paidStatus = item && item.paidStatus ? item.paidStatus : (statusEntry && statusEntry.paidStatus ? statusEntry.paidStatus : '');
 
     if (!bankCode || !branchCode || !accountNumber) {
       skipped += 1;
@@ -397,13 +413,14 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     rows.push({
       billingMonth: billingMonthKey,
       patientId: pid,
-      nameKanji,
+      nameKanji: mergedNameKanji,
       bankCode,
       branchCode,
       regulationCode,
       accountNumber,
       nameKana,
-      isNew
+      isNew,
+      paidStatus
     });
   });
 
@@ -450,11 +467,12 @@ function resolveBankTransferColumns_(sheet, headers) {
   ensureColumn('口座番号', ['口座番号', '口座No', '口座NO', 'accountNumber', '口座']);
   ensureColumn('氏名（カナ）', BILLING_LABELS.furigana.concat(['氏名（カナ）']));
   ensureColumn('新規フラグ', ['新規', '新患', 'isNew', '新規フラグ', '新規区分']);
+  ensureColumn('領収状態', ['領収状態', '領収', 'paidStatus']);
 
   return { columns: resolved, headers: workingHeaders };
 }
 
-function exportBankTransferRows_(billingMonth, rowObjects) {
+function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
   const ensured = ensureBankTransferSheet_();
   const sheet = ensured.sheet;
   const { columns, headers } = resolveBankTransferColumns_(sheet, ensured.headers);
@@ -485,24 +503,49 @@ function exportBankTransferRows_(billingMonth, rowObjects) {
     row[columns['口座番号'] - 1] = obj.accountNumber || '';
     row[columns['氏名（カナ）'] - 1] = obj.nameKana || '';
     row[columns['新規フラグ'] - 1] = obj.isNew || '';
+    if (columns['領収状態']) {
+      const statusEntry = bankStatuses && obj.patientId ? bankStatuses[obj.patientId] : null;
+      const existingPaid = row[columns['領収状態'] - 1] || '';
+      const paidStatus = (obj.paidStatus != null && obj.paidStatus !== '')
+        ? obj.paidStatus
+        : (statusEntry && statusEntry.paidStatus ? statusEntry.paidStatus : existingPaid);
+      row[columns['領収状態'] - 1] = paidStatus || '';
+    }
     return row;
   });
 
   mapped.forEach(row => {
     const key = keyForRow(row);
     if (key) {
-      workingRowsByKey.set(key, row);
+      const existingRow = workingRowsByKey.get(key);
+      const mergedRow = existingRow ? existingRow.slice() : new Array(colCount).fill('');
+      ['請求月', '番号', '氏名（漢字）', '銀行コード', '支店コード', '規定コード', '口座番号', '氏名（カナ）', '新規フラグ']
+        .forEach(label => {
+          if (columns[label]) {
+            mergedRow[columns[label] - 1] = row[columns[label] - 1];
+          }
+        });
+      const existingPaidStatus = columns['領収状態'] ? mergedRow[columns['領収状態'] - 1] : '';
+      if (columns['領収状態']) {
+        const statusEntry = bankStatuses && row[columns['番号'] - 1] ? bankStatuses[row[columns['番号'] - 1]] : null;
+        const resolvedPaidStatus = (row[columns['領収状態'] - 1] != null && row[columns['領収状態'] - 1] !== '')
+          ? row[columns['領収状態'] - 1]
+          : (statusEntry && statusEntry.paidStatus ? statusEntry.paidStatus : existingPaidStatus || '');
+        mergedRow[columns['領収状態'] - 1] = resolvedPaidStatus;
+      }
+      workingRowsByKey.set(key, mergedRow);
     }
   });
 
-  const workingRows = Array.from(workingRowsByKey.values());
+  const sortedKeys = Array.from(workingRowsByKey.keys()).sort();
+  const workingRows = sortedKeys.map(key => workingRowsByKey.get(key));
   const dataRowCount = Math.max(0, lastRow - 1);
+  const maxRowCount = Math.max(dataRowCount, workingRows.length);
 
-  if (dataRowCount > 0) {
-    sheet.deleteRows(2, dataRowCount);
+  if (maxRowCount > 0) {
+    sheet.getRange(2, 1, maxRowCount, colCount).clearContent();
   }
   if (workingRows.length) {
-    sheet.insertRows(2, workingRows.length);
     sheet.getRange(2, 1, workingRows.length, colCount).setValues(workingRows);
   }
 
@@ -516,16 +559,18 @@ function exportBankTransferDataForPrepared_(prepared) {
   }
   let bankInfoByName = normalized.bankInfoByName || {};
   let patientMap = normalized.patients || normalized.patientMap || {};
+  let bankStatuses = normalized.bankStatuses || {};
   if (!Object.keys(bankInfoByName).length || !Object.keys(patientMap).length) {
     const source = getBillingSourceData(normalized.billingMonth);
     bankInfoByName = source.bankInfoByName || bankInfoByName;
     patientMap = source.patients || source.patientMap || patientMap;
+    bankStatuses = source.bankStatuses || bankStatuses;
     if (!normalized.billingJson || !normalized.billingJson.length) {
       normalized.billingJson = generateBillingJsonFromSource(source);
     }
   }
-  const buildResult = buildBankTransferRowsForBilling_(normalized.billingJson, bankInfoByName, patientMap, normalized.billingMonth);
-  const outputResult = exportBankTransferRows_(buildResult.billingMonth, buildResult.rows);
+  const buildResult = buildBankTransferRowsForBilling_(normalized.billingJson, bankInfoByName, patientMap, normalized.billingMonth, bankStatuses);
+  const outputResult = exportBankTransferRows_(buildResult.billingMonth, buildResult.rows, bankStatuses);
   return Object.assign({}, buildResult, outputResult);
 }
 

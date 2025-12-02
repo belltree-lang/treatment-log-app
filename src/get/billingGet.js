@@ -309,6 +309,7 @@ function loadBillingStaffDirectory_() {
   const colName = resolveBillingColumn_(headers, ['名前', '氏名', 'スタッフ名'], '氏名', { fallbackLetter: 'A' });
   const colEmail = resolveBillingColumn_(headers, ['メール', 'メールアドレス', 'email', 'Email'], 'メールアドレス', { fallbackLetter: 'K' });
   const colStaffId = resolveBillingColumn_(headers, ['スタッフID', '担当者ID', 'staffId', 'staffid'], 'スタッフID', {});
+  const colDisabled = resolveBillingColumn_(headers, ['利用停止', '停止', '無効', 'ステータス', 'status'], '利用停止', {});
   if (!colName || (!colEmail && !colStaffId)) return {};
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
@@ -319,6 +320,9 @@ function loadBillingStaffDirectory_() {
     if (!name) return map;
 
     const keys = [];
+    const disabledFlag = colDisabled ? normalizeDisabledFlag_(row[colDisabled - 1]) : 0;
+    if (disabledFlag === 2) return map;
+
     if (colEmail) {
       const emailCandidate = extractEmailFallback_(row[colEmail - 1], displayRow[colEmail - 1]);
       const emailKey = billingNormalizeEmailKey_(emailCandidate);

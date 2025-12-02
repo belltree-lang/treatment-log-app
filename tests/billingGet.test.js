@@ -181,6 +181,9 @@ function testStaffDirectoryUsesStaffIdWhenEmailMissing() {
       return {
         getValues: () => values
           .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols)),
+        getDisplayValues: () => values
+          .slice(startIdx, startIdx + numRows)
           .map(r => r.slice(col - 1, col - 1 + numCols))
       };
     }
@@ -214,6 +217,9 @@ function testStaffDirectoryNormalizesNonEmailIds() {
       return {
         getValues: () => values
           .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols)),
+        getDisplayValues: () => values
+          .slice(startIdx, startIdx + numRows)
           .map(r => r.slice(col - 1, col - 1 + numCols))
       };
     }
@@ -228,6 +234,44 @@ function testStaffDirectoryNormalizesNonEmailIds() {
   assert.strictEqual(directory['staff002'], '佐藤花子', 'アンダースコアや空白を除去して一致させる');
 }
 
+function testStaffDirectorySkipsDisabledRows() {
+  const headers = ['氏名', 'スタッフID', '利用停止'];
+  const values = [
+    ['山田太郎', 'STAFF001', ''],
+    ['停止ユーザー', 'STAFF999', 2],
+    ['有効ユーザー', 'STAFF002', '0']
+  ];
+
+  const sheet = {
+    getLastRow: () => values.length + 1,
+    getLastColumn: () => headers.length,
+    getMaxColumns: () => headers.length,
+    getRange: (row, col, numRows, numCols) => {
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [headers.slice(col - 1, col - 1 + numCols)] };
+      }
+      const startIdx = Math.max(0, row - 2);
+      return {
+        getValues: () => values
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols)),
+        getDisplayValues: () => values
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols))
+      };
+    }
+  };
+
+  workbook = {
+    getSheetByName: name => (name === 'スタッフ一覧' ? sheet : null)
+  };
+
+  const directory = loadBillingStaffDirectory_();
+  assert.ok(!directory['staff999'], '利用停止のスタッフを除外する');
+  assert.strictEqual(directory['staff001'], '山田太郎', '有効な行は保持する');
+  assert.strictEqual(directory['staff002'], '有効ユーザー', '他の有効行は辞書に含める');
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
@@ -238,6 +282,7 @@ function run() {
   testBillingParseTreatmentTimestampParsesJapaneseDateText();
   testStaffDirectoryUsesStaffIdWhenEmailMissing();
   testStaffDirectoryNormalizesNonEmailIds();
+  testStaffDirectorySkipsDisabledRows();
   console.log('billingGet burden rate tests passed');
 }
 

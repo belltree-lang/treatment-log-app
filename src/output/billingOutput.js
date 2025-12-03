@@ -225,7 +225,7 @@ function buildInvoiceTemplateData_(item) {
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
-    { label: '交通費', detail: formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回', amount: breakdown.transportAmount }
+    { label: '交通費', detail: breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回'), amount: breakdown.transportAmount }
   ];
 
   return Object.assign({}, item, {
@@ -274,6 +274,12 @@ function calculateInvoiceChargeBreakdown_(params) {
   const manualUnitPrice = params && params.hasOwnProperty('manualUnitPrice')
     ? params.manualUnitPrice
     : params && params.unitPrice;
+  const manualTransportInput = params && Object.prototype.hasOwnProperty.call(params, 'manualTransportAmount')
+    ? params.manualTransportAmount
+    : params && params.transportAmount;
+  const manualTransportAmount = manualTransportInput === '' || manualTransportInput === null || manualTransportInput === undefined
+    ? null
+    : normalizeInvoiceMoney_(manualTransportInput);
   const patientUnitPrice = params && params.unitPrice;
   const treatmentUnitPrice = resolveInvoiceUnitPriceForOutput_(
     insuranceType,
@@ -297,10 +303,16 @@ function calculateInvoiceChargeBreakdown_(params) {
   const treatmentAmount = isSelfPaid
     ? treatmentAmountFull
     : roundToNearestTen_(treatmentAmountFull * burdenMultiplier);
-  const transportAmount = visits > 0 && hasChargeableUnitPrice ? TRANSPORT_PRICE * visits : 0;
+  const transportAmount = (manualTransportInput !== '' && manualTransportInput !== null && manualTransportInput !== undefined
+    && Number.isFinite(manualTransportAmount))
+    ? manualTransportAmount
+    : visits > 0 && hasChargeableUnitPrice ? TRANSPORT_PRICE * visits : 0;
+  const transportDetail = (manualTransportInput !== '' && manualTransportInput !== null && manualTransportInput !== undefined)
+    ? '手動入力'
+    : formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回';
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
 
-  return { treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal, visits };
+  return { treatmentUnitPrice, treatmentAmount, transportAmount, transportDetail, grandTotal, visits };
 }
 
   function buildBillingInvoiceHtml_(item, billingMonth) {
@@ -311,6 +323,7 @@ function calculateInvoiceChargeBreakdown_(params) {
   const treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
   const transportUnitPrice = TRANSPORT_PRICE;
   const carryOverAmount = normalizeBillingCarryOver_(item);
+  const transportDetail = breakdown.transportDetail || (formatBillingCurrency_(transportUnitPrice) + '円 × ' + visits + '回');
   const totalLabel = formatBillingCurrency_(breakdown.grandTotal) + '円';
 
     const name = escapeHtml_((item && item.nameKanji) || '');
@@ -321,9 +334,9 @@ function calculateInvoiceChargeBreakdown_(params) {
       `<h2>${escapeHtml_(monthLabel)} ご請求書</h2>`,
       name ? `<p class="patient-name">${name} 様</p>` : '',
       '<div class="charge-breakdown">',
-      `<p>前月繰越: ${formatBillingCurrency_(carryOverAmount)}円</p>`,
+    `<p>前月繰越: ${formatBillingCurrency_(carryOverAmount)}円</p>`,
     `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.treatmentAmount)}円</p>`,
-    `<p>交通費（${formatBillingCurrency_(transportUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.transportAmount)}円</p>`,
+    `<p>交通費（${transportDetail}）: ${formatBillingCurrency_(breakdown.transportAmount)}円</p>`,
     `<p class="grand-total">合計: ${totalLabel}</p>`,
     '</div>',
     '</div>'

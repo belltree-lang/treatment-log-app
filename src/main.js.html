@@ -161,6 +161,12 @@ function normalizeMoneyNumber(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function roundToNearestTen(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num / 10) * 10;
+}
+
 function normalizeVisitCount(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) && value > 0 ? value : 0;
@@ -344,11 +350,82 @@ function toggleBillingSort(field) {
   renderBillingResult();
 }
 
+function calculateBillingRowTotals(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const insuranceType = source.insuranceType ? String(source.insuranceType).trim() : '';
+  const burdenRate = normalizeBurdenRateInt(source.burdenRate);
+  const visitCount = normalizeVisitCount(source.visitCount);
+  const medicalAssistance = normalizeMedicalAssistanceFlag(source.medicalAssistance);
+  const carryOverAmount = normalizeMoneyNumber(source.carryOverAmount)
+    + normalizeMoneyNumber(source.carryOverFromHistory);
+
+  const manualUnitPriceInput = Object.prototype.hasOwnProperty.call(source, 'manualUnitPrice')
+    ? source.manualUnitPrice
+    : source.unitPrice;
+  const normalizedManualUnitPrice = (manualUnitPriceInput === '' || manualUnitPriceInput === null)
+    ? null
+    : normalizeMoneyNumber(manualUnitPriceInput);
+  const hasManualUnitPrice = manualUnitPriceInput !== ''
+    && manualUnitPriceInput !== null
+    && Number.isFinite(normalizedManualUnitPrice)
+    && normalizedManualUnitPrice !== 0;
+
+  const patientUnitPrice = normalizeMoneyNumber(source.unitPrice);
+  const isSelfPaid = insuranceType === '自費' || burdenRate === '自費';
+
+  let treatmentUnitPrice = 0;
+  if (insuranceType === 'マッサージ') {
+    treatmentUnitPrice = 0;
+  } else if (hasManualUnitPrice) {
+    treatmentUnitPrice = normalizedManualUnitPrice;
+  } else if (medicalAssistance) {
+    treatmentUnitPrice = 0;
+  } else if (isSelfPaid) {
+    treatmentUnitPrice = 0;
+  } else if (Number.isFinite(patientUnitPrice) && patientUnitPrice !== 0) {
+    treatmentUnitPrice = patientUnitPrice;
+  } else {
+    treatmentUnitPrice = BILLING_UNIT_PRICE;
+  }
+
+  const hasChargeablePrice = Number.isFinite(treatmentUnitPrice) && treatmentUnitPrice !== 0;
+  const treatmentAmountFull = hasChargeablePrice && visitCount > 0 ? treatmentUnitPrice * visitCount : 0;
+  const burdenMultiplier = isSelfPaid ? 1 : (Number.isFinite(burdenRate) && burdenRate > 0 ? burdenRate / 10 : 0);
+  const treatmentAmount = isSelfPaid
+    ? treatmentAmountFull
+    : roundToNearestTen(treatmentAmountFull * burdenMultiplier);
+  const transportAmount = hasChargeablePrice && visitCount > 0
+    ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
+    : 0;
+  const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
+
+  return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal };
+}
+
+function recalculateBillingRow(patientId) {
+  const pid = String(patientId || '').trim();
+  if (!pid) return;
+  const baseRows = Array.isArray(billingState.result && billingState.result.billingJson)
+    ? billingState.result.billingJson
+    : [];
+  const baseRow = baseRows.find(row => String(row && row.patientId ? row.patientId : '') === pid) || {};
+  const edits = billingState.edits[pid] || {};
+  const merged = Object.assign({}, baseRow, edits);
+  const calculated = calculateBillingRowTotals(merged);
+  billingState.edits[pid] = Object.assign({}, edits, calculated);
+}
+
 function commitBillingEdit(patientId, field, value) {
   const pid = String(patientId || '').trim();
   if (!pid) return;
-  billingState.edits[pid] = Object.assign({}, billingState.edits[pid] || {}, { [field]: value });
+  const currentEdits = billingState.edits[pid] || {};
+  const baseUpdate = Object.assign({}, currentEdits, { [field]: value });
+  if (field === 'unitPrice') {
+    baseUpdate.manualUnitPrice = value;
+  }
+  billingState.edits[pid] = baseUpdate;
   billingState.editing = null;
+  recalculateBillingRow(pid);
   renderBillingResult();
 }
 
@@ -726,14 +803,21 @@ function handleBillingSaveEdits() {
 }
 
 function onBillingSaveCompleted(result) {
-  billingState.result = result || billingState.result;
-  billingState.prepared = result || billingState.prepared;
+  const normalized = normalizeBillingResultPayload(result);
+  const nextResult = normalized || result || billingState.result || null;
+  if (nextResult) {
+    billingState.result = nextResult;
+    billingState.prepared = nextResult;
+  }
   billingState.loading = false;
   billingState.statusMessage = '保存が完了しました';
   billingState.errorMessage = '';
   billingState.edits = {};
   billingState.editing = null;
-  logBillingState('onBillingSaveCompleted', { rows: billingState.prepared && billingState.prepared.billingJson ? billingState.prepared.billingJson.length : 0 });
+  const rowCount = billingState.prepared && billingState.prepared.billingJson
+    ? billingState.prepared.billingJson.length
+    : 0;
+  logBillingState('onBillingSaveCompleted', { rows: rowCount });
   renderBillingResult();
 }
 

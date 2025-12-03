@@ -6,6 +6,7 @@ const billingState = {
   statusMessage: '',
   errorMessage: '',
   edits: {},
+  previewTotals: {},
   editing: null,
   sort: { field: null, direction: 'asc' }
 };
@@ -228,7 +229,8 @@ function getMergedBillingRows() {
     try {
       const baseRow = row && typeof row === 'object' ? row : {};
       const edits = billingState.edits[baseRow.patientId] || {};
-      return Object.assign({}, baseRow, edits);
+      const calculated = (billingState.previewTotals && billingState.previewTotals[baseRow.patientId]) || {};
+      return Object.assign({}, baseRow, edits, calculated);
     } catch (err) {
       console.error('Failed to merge billing row', err, row);
       return null;
@@ -425,7 +427,7 @@ function recalculateBillingRow(patientId) {
   const edits = billingState.edits[pid] || {};
   const merged = Object.assign({}, baseRow, edits);
   const calculated = calculateBillingRowTotals(merged);
-  billingState.edits[pid] = Object.assign({}, edits, calculated);
+  billingState.previewTotals[pid] = calculated;
 }
 
 function commitBillingEdit(patientId, field, value) {
@@ -753,6 +755,7 @@ function onBillingPrepared(result) {
     billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
     billingState.errorMessage = '';
     billingState.edits = {};
+    billingState.previewTotals = {};
     billingState.editing = null;
     logBillingState('onBillingPrepared', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
     renderBillingResult();
@@ -786,6 +789,7 @@ function onBillingPdfCompleted(result) {
     billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
     billingState.errorMessage = '';
     billingState.edits = {};
+    billingState.previewTotals = {};
     billingState.editing = null;
     logBillingState('onBillingPdfCompleted', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
     renderBillingResult();
@@ -831,8 +835,7 @@ function handleBillingSaveEdits() {
 }
 
 function onBillingSaveCompleted(result) {
-  const normalized = normalizeBillingResultPayload(result);
-  const nextResult = normalized || result || billingState.result || null;
+  const nextResult = result || billingState.result || null;
   if (nextResult) {
     billingState.result = nextResult;
     billingState.prepared = nextResult;
@@ -841,6 +844,7 @@ function onBillingSaveCompleted(result) {
   billingState.statusMessage = '保存が完了しました';
   billingState.errorMessage = '';
   billingState.edits = {};
+  billingState.previewTotals = {};
   billingState.editing = null;
   const rowCount = billingState.prepared && billingState.prepared.billingJson
     ? billingState.prepared.billingJson.length

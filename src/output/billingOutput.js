@@ -274,10 +274,12 @@ function calculateInvoiceChargeBreakdown_(params) {
   const manualUnitPrice = params && params.hasOwnProperty('manualUnitPrice')
     ? params.manualUnitPrice
     : params && params.unitPrice;
-  const manualTransportInput = params && Object.prototype.hasOwnProperty.call(params, 'manualTransportAmount')
-    ? params.manualTransportAmount
-    : params && params.transportAmount;
-  const manualTransportAmount = manualTransportInput === '' || manualTransportInput === null || manualTransportInput === undefined
+  const hasManualTransportInput = params && Object.prototype.hasOwnProperty.call(params, 'manualTransportAmount');
+  const manualTransportInput = hasManualTransportInput ? params.manualTransportAmount : null;
+  const manualTransportAmount = (manualTransportInput === ''
+    || manualTransportInput === null
+    || manualTransportInput === undefined
+    || !hasManualTransportInput)
     ? null
     : normalizeInvoiceMoney_(manualTransportInput);
   const patientUnitPrice = params && params.unitPrice;
@@ -307,7 +309,8 @@ function calculateInvoiceChargeBreakdown_(params) {
     && Number.isFinite(manualTransportAmount))
     ? manualTransportAmount
     : visits > 0 && hasChargeableUnitPrice ? TRANSPORT_PRICE * visits : 0;
-  const transportDetail = (manualTransportInput !== '' && manualTransportInput !== null && manualTransportInput !== undefined)
+  const transportDetail = (manualTransportInput !== '' && manualTransportInput !== null && manualTransportInput !== undefined
+    && hasManualTransportInput)
     ? '手動入力'
     : formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回';
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;

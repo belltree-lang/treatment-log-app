@@ -152,6 +152,12 @@ function calculateBillingAmounts_(params) {
   const medicalAssistance = normalizeMedicalAssistanceFlag_(params.medicalAssistance);
   const manualUnitPrice = normalizeMoneyNumber_(params.manualUnitPrice != null ? params.manualUnitPrice : params.unitPrice);
   const patientUnitPrice = normalizeMoneyNumber_(params.unitPrice);
+  const manualTransportInput = Object.prototype.hasOwnProperty.call(params, 'manualTransportAmount')
+    ? params.manualTransportAmount
+    : params.transportAmount;
+  const manualTransportAmount = manualTransportInput === '' || manualTransportInput === null || manualTransportInput === undefined
+    ? null
+    : normalizeMoneyNumber_(manualTransportInput);
   const unitPrice = resolveInvoiceUnitPrice_(
     insuranceType,
     normalizedBurdenRate,
@@ -163,20 +169,27 @@ function calculateBillingAmounts_(params) {
   const hasChargeableUnitPrice = Number.isFinite(unitPrice) && unitPrice !== 0;
   const treatmentAmount = visits > 0 && hasChargeableUnitPrice ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && hasChargeableUnitPrice ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
+  const resolvedTransportAmount = (manualTransportInput !== '' && manualTransportInput !== null && manualTransportInput !== undefined
+    && Number.isFinite(manualTransportAmount))
+    ? manualTransportAmount
+    : transportAmount;
   const burdenMultiplier = normalizeBurdenMultiplier_(normalizedBurdenRate, insuranceType);
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
   const billingAmount = isSelfPaid
     ? treatmentAmount
     : roundToNearestTen_(treatmentAmount * burdenMultiplier);
-  const total = treatmentAmount + transportAmount;
-  const grandTotal = billingAmount + transportAmount + carryOverAmount;
+  const total = treatmentAmount + resolvedTransportAmount;
+  const grandTotal = billingAmount + resolvedTransportAmount + carryOverAmount;
 
   return {
     visits,
     unitPrice,
     manualUnitPrice,
     treatmentAmount,
-    transportAmount,
+    transportAmount: resolvedTransportAmount,
+    manualTransportAmount: manualTransportInput === '' || manualTransportInput === null || manualTransportInput === undefined
+      ? ''
+      : manualTransportAmount,
     carryOverAmount,
     billingAmount,
     total,
@@ -243,6 +256,7 @@ function generateBillingJsonFromSource(sourceData) {
       insuranceType: patient.insuranceType,
       burdenRate: normalizedBurdenRate,
       manualUnitPrice,
+      manualTransportAmount: patient.manualTransportAmount,
       unitPrice: patientUnitPrice,
       medicalAssistance: normalizedMedicalAssistance,
       carryOverAmount: carryOverFromPatient + carryOverFromHistory
@@ -263,6 +277,7 @@ function generateBillingJsonFromSource(sourceData) {
       manualUnitPrice,
       unitPrice: amountCalc.unitPrice,
       treatmentAmount: amountCalc.treatmentAmount,
+      manualTransportAmount: amountCalc.manualTransportAmount,
       transportAmount: amountCalc.transportAmount,
       carryOverAmount: amountCalc.carryOverAmount,
       carryOverFromHistory,

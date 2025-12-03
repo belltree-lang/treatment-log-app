@@ -829,6 +829,12 @@ function getBillingPatientRecords() {
   const colIsNew = resolveBillingColumn_(headers, ['新規', '新患', 'isNew', '新規フラグ', '新規区分'], '新規区分', { fallbackLetter: 'U' });
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
   const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
+  const colTransport = resolveBillingColumn_(
+    headers,
+    ['交通費', '交通費(手動)', '交通費（手動）', 'transportAmount', 'manualTransportAmount'],
+    '交通費',
+    {}
+  );
 
   return values.map(row => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
@@ -841,6 +847,10 @@ function getBillingPatientRecords() {
     const manualUnitPrice = unitPriceRaw === '' || unitPriceRaw === null
       ? ''
       : normalizeMoneyValue_(unitPriceRaw);
+    const transportRaw = colTransport ? row[colTransport - 1] : '';
+    const manualTransportAmount = transportRaw === '' || transportRaw === null
+      ? ''
+      : normalizeMoneyValue_(transportRaw);
 
     return {
       patientId: pid,
@@ -851,6 +861,7 @@ function getBillingPatientRecords() {
       burdenRate: normalizedBurden,
       unitPrice: colUnitPrice ? normalizeMoneyValue_(unitPriceRaw) : 0,
       manualUnitPrice,
+      manualTransportAmount,
       address: colAddress ? String(row[colAddress - 1] || '').trim() : '',
       payerType: colPayer ? String(row[colPayer - 1] || '').trim() : '',
       medicalAssistance: colMedical ? normalizeZeroOneFlag_(row[colMedical - 1]) : 0,

@@ -439,6 +439,14 @@ function normalizeBillingEdits_(maybeEdits) {
     const burden = normalizeBillingEditBurden_(edit.burdenRate);
     const hasManualUnitPriceInput = edit && Object.prototype.hasOwnProperty.call(edit, 'unitPrice');
     const hasManualUnitPrice = hasManualUnitPriceInput && edit.unitPrice !== null && edit.unitPrice !== '';
+    const hasManualTransportInput = edit && (Object.prototype.hasOwnProperty.call(edit, 'manualTransportAmount')
+      || Object.prototype.hasOwnProperty.call(edit, 'transportAmount'));
+    const manualTransportSource = edit && Object.prototype.hasOwnProperty.call(edit, 'manualTransportAmount')
+      ? edit.manualTransportAmount
+      : edit.transportAmount;
+    const normalizedManualTransport = manualTransportSource === '' || manualTransportSource === null
+      ? ''
+      : Number(manualTransportSource) || 0;
     return {
       patientId: pid,
       insuranceType: edit.insuranceType != null ? String(edit.insuranceType).trim() : undefined,
@@ -449,7 +457,8 @@ function normalizeBillingEdits_(maybeEdits) {
       unitPrice: hasManualUnitPrice ? Number(edit.unitPrice) || 0 : undefined,
       manualUnitPrice: hasManualUnitPriceInput ? edit.unitPrice : undefined,
       carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
-      payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined
+      payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined,
+      manualTransportAmount: hasManualTransportInput ? normalizedManualTransport : undefined
     };
   }).filter(Boolean);
 }
@@ -476,6 +485,7 @@ function savePatientUpdate(patientId, updatedFields) {
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
   const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
   const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
+  const colTransport = resolveBillingColumn_(headers, ['交通費', '交通費(手動)', '交通費（手動）', 'transportAmount', 'manualTransportAmount'], '交通費', {});
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   for (let idx = 0; idx < values.length; idx++) {
@@ -490,6 +500,10 @@ function savePatientUpdate(patientId, updatedFields) {
     if (colUnitPrice && fields.manualUnitPrice !== undefined) {
       const isBlank = fields.manualUnitPrice === '' || fields.manualUnitPrice === null;
       newRow[colUnitPrice - 1] = isBlank ? '' : Number(fields.manualUnitPrice) || 0;
+    }
+    if (colTransport && fields.manualTransportAmount !== undefined) {
+      const isBlankTransport = fields.manualTransportAmount === '' || fields.manualTransportAmount === null;
+      newRow[colTransport - 1] = isBlankTransport ? '' : Number(fields.manualTransportAmount) || 0;
     }
     if (colCarryOver && fields.carryOverAmount !== undefined) newRow[colCarryOver - 1] = fields.carryOverAmount;
     if (colPayer && fields.payerType !== undefined) newRow[colPayer - 1] = fields.payerType;
@@ -511,6 +525,7 @@ function applyBillingPatientEdits_(edits) {
       burdenRate: edit.burdenRate,
       medicalAssistance: edit.medicalAssistance,
       manualUnitPrice: edit.manualUnitPrice,
+      manualTransportAmount: edit.manualTransportAmount,
       carryOverAmount: edit.carryOverAmount,
       payerType: edit.payerType
     });

@@ -359,6 +359,17 @@ function calculateBillingRowTotals(row) {
   const carryOverAmount = normalizeMoneyNumber(source.carryOverAmount)
     + normalizeMoneyNumber(source.carryOverFromHistory);
 
+  const manualTransportInput = Object.prototype.hasOwnProperty.call(source, 'manualTransportAmount')
+    ? source.manualTransportAmount
+    : source.transportAmount;
+  const normalizedManualTransport = (manualTransportInput === '' || manualTransportInput === null || manualTransportInput === undefined)
+    ? null
+    : normalizeMoneyNumber(manualTransportInput);
+  const hasManualTransport = manualTransportInput !== ''
+    && manualTransportInput !== null
+    && manualTransportInput !== undefined
+    && Number.isFinite(normalizedManualTransport);
+
   const manualUnitPriceInput = Object.prototype.hasOwnProperty.call(source, 'manualUnitPrice')
     ? source.manualUnitPrice
     : source.unitPrice;
@@ -394,9 +405,11 @@ function calculateBillingRowTotals(row) {
   const treatmentAmount = isSelfPaid
     ? treatmentAmountFull
     : roundToNearestTen(treatmentAmountFull * burdenMultiplier);
-  const transportAmount = hasChargeablePrice && visitCount > 0
-    ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
-    : 0;
+  const transportAmount = hasManualTransport
+    ? normalizedManualTransport
+    : hasChargeablePrice && visitCount > 0
+      ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
+      : 0;
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
 
   return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal };
@@ -422,6 +435,9 @@ function commitBillingEdit(patientId, field, value) {
   const baseUpdate = Object.assign({}, currentEdits, { [field]: value });
   if (field === 'unitPrice') {
     baseUpdate.manualUnitPrice = value;
+  }
+  if (field === 'transportAmount') {
+    baseUpdate.manualTransportAmount = value === '' ? '' : value;
   }
   billingState.edits[pid] = baseUpdate;
   billingState.editing = null;
@@ -458,6 +474,7 @@ function normalizeBillingResultPayload(raw) {
     burdenRate: 0,
     medicalAssistance: 0,
     manualUnitPrice: '',
+    manualTransportAmount: '',
     unitPrice: 0,
     visitCount: 0,
     treatmentAmount: 0,
@@ -509,6 +526,11 @@ function normalizeBillingResultPayload(raw) {
     return normalizeMoneyNumber(value);
   }
 
+  function normalizeManualTransportAmountValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    return normalizeMoneyNumber(value);
+  }
+
   function mergePatientMetaIntoRows(rows, patients) {
     if (!Array.isArray(rows)) return [];
     return rows.map(row => {
@@ -524,6 +546,7 @@ function normalizeBillingResultPayload(raw) {
         burdenRate: patient.burdenRate,
         medicalAssistance: patient.medicalAssistance,
         manualUnitPrice: patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice,
+        manualTransportAmount: patient.manualTransportAmount,
         unitPrice: patient.unitPrice,
         visitCount: patient.visitCount,
         carryOverAmount: patient.carryOverAmount,
@@ -554,6 +577,11 @@ function normalizeBillingResultPayload(raw) {
         ? row.manualUnitPrice
         : patientSeed.manualUnitPrice;
       merged.manualUnitPrice = normalizeManualUnitPriceValue(manualPriceSource);
+
+      const manualTransportSource = row && row.hasOwnProperty('manualTransportAmount')
+        ? row.manualTransportAmount
+        : patientSeed.manualTransportAmount;
+      merged.manualTransportAmount = normalizeManualTransportAmountValue(manualTransportSource);
 
       merged.insuranceType = (row && row.insuranceType) || patient.insuranceType || '';
       merged.responsibleNames = Array.isArray(merged.responsibleNames) ? merged.responsibleNames : [];
@@ -1025,6 +1053,13 @@ function renderBillingResult() {
         const val = normalizeEditNumber(item[field]);
         return `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" />`;
       }
+      if (field === 'transportAmount') {
+        const val = item.manualTransportAmount === '' || item.manualTransportAmount === null || item.manualTransportAmount === undefined
+          ? ''
+          : normalizeEditNumber(item.manualTransportAmount);
+        const placeholder = Number.isFinite(item.transportAmount) ? formatCurrency(item.transportAmount) : '';
+        return `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" placeholder="${placeholder}" />`;
+      }
     }
 
     const display = (() => {
@@ -1040,6 +1075,8 @@ function renderBillingResult() {
           return item.payerType || '編集';
         case 'unitPrice':
           return formatCurrency(item.unitPrice);
+        case 'transportAmount':
+          return formatCurrency(item.transportAmount);
         case 'carryOverAmount':
           return formatCurrency(item.carryOverAmount);
         default:
@@ -1073,7 +1110,7 @@ function renderBillingResult() {
         <td>${safeItem.visitCount || 0}</td>
         <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
         <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
-        <td class="right">${formatCurrency(safeItem.transportAmount)}</td>
+        <td class="right">${renderEditableCell(safeItem, 'transportAmount', true)}</td>
         <td class="right">${renderEditableCell(safeItem, 'carryOverAmount', true)}</td>
         <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
         <td>${formatPaidStatus(safeItem) || '—'}</td>
@@ -1146,6 +1183,9 @@ function attachBillingEditHandlers() {
       }
       if (field === 'unitPrice' || field === 'carryOverAmount') {
         value = normalizeMoneyNumber(value);
+      }
+      if (field === 'transportAmount') {
+        value = value === '' ? '' : normalizeMoneyNumber(value);
       }
       if (field === 'visitCount') {
         value = normalizeVisitCount(value);

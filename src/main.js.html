@@ -31,6 +31,7 @@ const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeo
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
 const BILLING_PATIENT_INFO_FIELDS = ['insuranceType', 'medicalAssistance', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
 const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount'];
+const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'insuranceType', 'burdenRate'];
 
 function qs(id) {
   return document.getElementById(id);
@@ -223,6 +224,31 @@ function isDeprecatedInsuranceType(value) {
 
 function getBillingBaseUrl() {
   return (window.APP_CONFIG && window.APP_CONFIG.baseUrl) || '';
+}
+
+function getBillingOverrideFlags() {
+  const source = billingState.prepared || billingState.result || {};
+  return (source && source.billingOverrideFlags) || {};
+}
+
+function shouldShowBillingOverrideBadge(field) {
+  return BILLING_OVERRIDE_BADGE_FIELDS.indexOf(field) >= 0;
+}
+
+function hasBillingOverride(patientId, field) {
+  if (!patientId || !shouldShowBillingOverrideBadge(field)) return false;
+  const flags = getBillingOverrideFlags();
+  const entry = flags && flags[patientId];
+  return !!(entry && entry[field]);
+}
+
+function wrapWithOverrideBadge(content, patientId, field, alignRight) {
+  if (!shouldShowBillingOverrideBadge(field) || !hasBillingOverride(patientId, field)) {
+    return content;
+  }
+  const badge = '<span class="override-badge" title="月次編集されています">※上書き</span>';
+  const klass = alignRight ? 'cell-badge right' : 'cell-badge';
+  return `<div class="${klass}">${content}${badge}</div>`;
 }
 
 function getMergedBillingRows() {
@@ -611,7 +637,8 @@ function normalizeBillingResultPayload(raw) {
         patients: {},
         bankInfoByName: {},
         bankStatuses: {},
-        carryOverByPatient: {}
+        carryOverByPatient: {},
+        billingOverrideFlags: {}
       },
       payload,
       {
@@ -621,7 +648,8 @@ function normalizeBillingResultPayload(raw) {
         patients: payload.patients || payload.patientMap || {},
         bankInfoByName: payload.bankInfoByName || {},
         bankStatuses: payload.bankStatuses || {},
-        carryOverByPatient: payload.carryOverByPatient || {}
+        carryOverByPatient: payload.carryOverByPatient || {},
+        billingOverrideFlags: payload.billingOverrideFlags || {}
       }
     );
   }
@@ -1132,30 +1160,36 @@ function renderBillingResult() {
         const options = BILLING_INSURANCE_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.insuranceType ? 'selected' : ''}>${opt}</option>`).join('');
         const select = `<select class="${editClass}" ${baseAttrs}>${needsUpdate ? '<option value="" disabled selected>保険種別を選択</option>' : ''}${options}</select>`;
         if (needsUpdate) {
-          return `<div class="insurance-editor">${select}<div class="field-note warn">以前の「マッサージ」種別が設定されています。現在の保険種別を選び直してください。</div></div>`;
+          const editor = `<div class="insurance-editor">${select}<div class="field-note warn">以前の「マッサージ」種別が設定されています。現在の保険種別を選び直してください。</div></div>`;
+          return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
         }
-        return select;
+        return wrapWithOverrideBadge(select, item.patientId, field, alignRight);
       }
       if (field === 'burdenRate') {
-        return `<select class="${editClass}" ${baseAttrs}>${BILLING_BURDEN_OPTIONS.map(opt => `<option value="${opt.value}" ${String(opt.value) === String(item.burdenRate) ? 'selected' : ''}>${opt.label}</option>`).join('')}</select>`;
+        const editor = `<select class="${editClass}" ${baseAttrs}>${BILLING_BURDEN_OPTIONS.map(opt => `<option value="${opt.value}" ${String(opt.value) === String(item.burdenRate) ? 'selected' : ''}>${opt.label}</option>`).join('')}</select>`;
+        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
       if (field === 'payerType') {
-        return `<select class="${editClass}" ${baseAttrs}>${BILLING_PAYER_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.payerType ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
+        const editor = `<select class="${editClass}" ${baseAttrs}>${BILLING_PAYER_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.payerType ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
+        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
       if (field === 'medicalAssistance') {
         const checked = normalizeMedicalAssistanceFlag(item.medicalAssistance) ? 'checked' : '';
-        return `<label class="${editClass}" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" ${baseAttrs} ${checked} />医療助成</label>`;
+        const editor = `<label class="${editClass}" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" ${baseAttrs} ${checked} />医療助成</label>`;
+        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
       if (field === 'unitPrice' || field === 'carryOverAmount') {
         const val = normalizeEditNumber(item[field]);
-        return `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" />`;
+        const editor = `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" />`;
+        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
       if (field === 'transportAmount') {
         const val = item.manualTransportAmount === '' || item.manualTransportAmount === null || item.manualTransportAmount === undefined
           ? ''
           : normalizeEditNumber(item.manualTransportAmount);
         const placeholder = Number.isFinite(item.transportAmount) ? formatCurrency(item.transportAmount) : '';
-        return `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" placeholder="${placeholder}" />`;
+        const editor = `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" placeholder="${placeholder}" />`;
+        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
     }
 
@@ -1180,7 +1214,8 @@ function renderBillingResult() {
           return item[field] || '';
       }
     })();
-    return `<button type="button" class="${viewClass}" ${baseAttrs} aria-label="${field} を編集">${display}</button>`;
+    const view = `<button type="button" class="${viewClass}" ${baseAttrs} aria-label="${field} を編集">${display}</button>`;
+    return wrapWithOverrideBadge(view, item.patientId, field, alignRight);
   }
 
   const legacyRows = rows.filter(row => isDeprecatedInsuranceType(row.insuranceType));
@@ -1204,7 +1239,7 @@ function renderBillingResult() {
         <td>${renderEditableCell(safeItem, 'medicalAssistance')}</td>
         <td>${renderEditableCell(safeItem, 'payerType')}</td>
         <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
-        <td>${safeItem.visitCount || 0}</td>
+        <td>${wrapWithOverrideBadge(safeItem.visitCount || 0, safeItem.patientId, 'visitCount')}</td>
         <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
         <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
         <td class="right">${renderEditableCell(safeItem, 'transportAmount', true)}</td>

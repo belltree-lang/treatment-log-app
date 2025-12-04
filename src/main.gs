@@ -299,7 +299,8 @@ function buildPreparedBillingPayload_(billingMonth) {
     bankInfoByName: source.bankInfoByName || {},
     staffByPatient: source.staffByPatient || {},
     staffDirectory: source.staffDirectory || {},
-    staffDisplayByPatient: source.staffDisplayByPatient || {}
+    staffDisplayByPatient: source.staffDisplayByPatient || {},
+    billingOverrideFlags: source.billingOverrideFlags || {}
   };
 }
 
@@ -338,7 +339,8 @@ function toClientBillingPayload_(prepared) {
     bankInfoByName: normalized.bankInfoByName || {},
     staffByPatient: normalized.staffByPatient || {},
     staffDirectory: normalized.staffDirectory || {},
-    staffDisplayByPatient: normalized.staffDisplayByPatient || {}
+    staffDisplayByPatient: normalized.staffDisplayByPatient || {},
+    billingOverrideFlags: normalized.billingOverrideFlags || {}
   };
 }
 

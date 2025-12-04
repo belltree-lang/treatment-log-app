@@ -300,7 +300,11 @@ function buildPreparedBillingPayload_(billingMonth) {
     staffByPatient: source.staffByPatient || {},
     staffDirectory: source.staffDirectory || {},
     staffDisplayByPatient: source.staffDisplayByPatient || {},
-    billingOverrideFlags: source.billingOverrideFlags || {}
+    billingOverrideFlags: source.billingOverrideFlags || {},
+    carryOverByPatient: source.carryOverByPatient || {},
+    carryOverLedger: source.carryOverLedger || [],
+    carryOverLedgerByPatient: source.carryOverLedgerByPatient || {},
+    unpaidHistory: source.unpaidHistory || []
   };
 }
 
@@ -340,7 +344,11 @@ function toClientBillingPayload_(prepared) {
     staffByPatient: normalized.staffByPatient || {},
     staffDirectory: normalized.staffDirectory || {},
     staffDisplayByPatient: normalized.staffDisplayByPatient || {},
-    billingOverrideFlags: normalized.billingOverrideFlags || {}
+    billingOverrideFlags: normalized.billingOverrideFlags || {},
+    carryOverByPatient: normalized.carryOverByPatient || {},
+    carryOverLedger: normalized.carryOverLedger || [],
+    carryOverLedgerByPatient: normalized.carryOverLedgerByPatient || {},
+    unpaidHistory: normalized.unpaidHistory || []
   };
 }
 

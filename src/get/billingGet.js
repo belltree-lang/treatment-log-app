@@ -813,6 +813,61 @@ function extractMonthlyVisitCounts(billingMonth) {
   return normalized;
 }
 
+function normalizeCarryOverLedgerMonth_(value, fallbackKey) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone() || 'Asia/Tokyo', 'yyyyMM');
+  }
+  const raw = String(value || '').trim();
+  if (!raw && fallbackKey) return fallbackKey;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length >= 6) {
+    return digits.slice(0, 6);
+  }
+  return fallbackKey || '';
+}
+
+function loadCarryOverLedgerEntries_(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const sheet = billingSs().getSheetByName('CarryOverLedger');
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+
+  const colPid = resolveBillingColumn_(headers, ['patientId', '患者ID', '患者番号', 'カルテ番号'], 'patientId', { required: true });
+  const colMonth = resolveBillingColumn_(headers, ['month', 'billingMonth', 'ym', '年月', '月'], 'month', {});
+  const colReason = resolveBillingColumn_(headers, ['reason', '調整理由', '内訳', 'メモ', 'reasonCode'], 'reason', {});
+  const colAmount = resolveBillingColumn_(headers, ['amount', '金額', 'carryOverAmount', '差額', '繰越'], 'amount', { required: true });
+  const colCreatedAt = resolveBillingColumn_(headers, ['入力日', '作成日', 'createdAt', '記入日'], '入力日', {});
+  const colUser = resolveBillingColumn_(headers, ['操作ユーザー', '作成者', '更新者', 'user', 'operator'], '操作ユーザー', {});
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const targetMonthNum = Number(month.key);
+
+  return values.map((row, idx) => {
+    const pid = billingNormalizePatientId_(row[colPid - 1]);
+    if (!pid) return null;
+    const amount = normalizeMoneyValue_(row[colAmount - 1]);
+    if (!Number.isFinite(amount)) return null;
+    const normalizedMonth = normalizeCarryOverLedgerMonth_(colMonth ? row[colMonth - 1] : '', month.key);
+    const monthNum = Number(String(normalizedMonth || '').replace(/\D/g, '')) || 0;
+    if (targetMonthNum && monthNum && monthNum > targetMonthNum) return null;
+    const createdAt = colCreatedAt ? billingParseDateFlexible_(row[colCreatedAt - 1]) : null;
+    const reason = colReason ? String(row[colReason - 1] || '').trim() : '';
+    const operator = colUser ? String(row[colUser - 1] || '').trim() : '';
+    return {
+      patientId: pid,
+      month: normalizedMonth,
+      reason,
+      amount,
+      createdAt: createdAt || null,
+      operator,
+      rowNumber: idx + 2
+    };
+  }).filter(Boolean);
+}
+
 function loadBillingOverridesMap_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const sheet = billingSs().getSheetByName(BILLING_OVERRIDES_SHEET_NAME);
@@ -1122,13 +1177,24 @@ function getBillingSourceData(billingMonth) {
   });
   const staffDirectory = loadBillingStaffDirectory_();
   const staffDisplayByPatient = buildStaffDisplayByPatient_(visitCountsResult.staffByPatient || {}, staffDirectory);
+  const carryOverLedger = loadCarryOverLedgerEntries_(month);
+  const carryOverLedgerByPatient = (carryOverLedger || []).reduce((map, entry) => {
+    const pid = billingNormalizePatientId_(entry.patientId);
+    if (!pid) return map;
+    map[pid] = (map[pid] || 0) + (Number(entry.amount) || 0);
+    return map;
+  }, {});
   const unpaidHistory = extractUnpaidBillingHistory(month);
-  const carryOverByPatient = (unpaidHistory || []).reduce((map, entry) => {
+  const carryOverFromUnpaid = (unpaidHistory || []).reduce((map, entry) => {
     const pid = billingNormalizePatientId_(entry.patientId);
     if (!pid) return map;
     map[pid] = (map[pid] || 0) + (Number(entry.unpaidAmount) || 0);
     return map;
   }, {});
+  const carryOverByPatient = Object.assign({}, carryOverLedgerByPatient);
+  Object.keys(carryOverFromUnpaid || {}).forEach(pid => {
+    carryOverByPatient[pid] = (carryOverByPatient[pid] || 0) + (carryOverFromUnpaid[pid] || 0);
+  });
   const zeroVisitSamples = Object.keys(treatmentVisitCounts || {})
     .filter(pid => {
       const entry = treatmentVisitCounts[pid];
@@ -1143,6 +1209,7 @@ function getBillingSourceData(billingMonth) {
     treatmentVisitCountEntries: Object.keys(treatmentVisitCounts || {}).length,
     zeroVisitSamples,
     unpaidHistoryCount: (unpaidHistory || []).length,
+    carryOverLedgerCount: (carryOverLedger || []).length,
     carryOverPatients: Object.keys(carryOverByPatient || {}).length,
     staffByPatientCount: Object.keys(visitCountsResult.staffByPatient || {}).length,
     staffDirectorySize: Object.keys(staffDirectory || {}).length
@@ -1160,6 +1227,8 @@ function getBillingSourceData(billingMonth) {
     staffDirectory,
     staffDisplayByPatient,
     unpaidHistory,
+    carryOverLedger,
+    carryOverLedgerByPatient,
     carryOverByPatient,
     billingOverrideFlags
   };

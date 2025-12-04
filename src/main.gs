@@ -437,6 +437,12 @@ function normalizeBillingEdits_(maybeEdits) {
     const pid = edit && edit.patientId ? String(edit.patientId).trim() : '';
     if (!pid) return null;
     const burden = normalizeBillingEditBurden_(edit.burdenRate);
+    const bankInfo = edit && typeof edit.bankInfo === 'object' ? edit.bankInfo : edit;
+    const normalizedBankCode = bankInfo && bankInfo.bankCode != null ? String(bankInfo.bankCode).trim() : undefined;
+    const normalizedBranchCode = bankInfo && bankInfo.branchCode != null ? String(bankInfo.branchCode).trim() : undefined;
+    const normalizedAccountNumber = bankInfo && bankInfo.accountNumber != null
+      ? String(bankInfo.accountNumber).trim()
+      : undefined;
     const hasManualUnitPriceInput = edit && Object.prototype.hasOwnProperty.call(edit, 'unitPrice');
     const hasManualUnitPrice = hasManualUnitPriceInput && edit.unitPrice !== null && edit.unitPrice !== '';
     const hasManualTransportInput = edit && (Object.prototype.hasOwnProperty.call(edit, 'manualTransportAmount')
@@ -458,7 +464,14 @@ function normalizeBillingEdits_(maybeEdits) {
       manualUnitPrice: hasManualUnitPriceInput ? edit.unitPrice : undefined,
       carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
       payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined,
-      manualTransportAmount: hasManualTransportInput ? normalizedManualTransport : undefined
+      manualTransportAmount: hasManualTransportInput ? normalizedManualTransport : undefined,
+      responsible: edit && edit.responsible != null ? String(edit.responsible).trim() : undefined,
+      bankCode: normalizedBankCode,
+      branchCode: normalizedBranchCode,
+      accountNumber: normalizedAccountNumber,
+      isNew: edit && Object.prototype.hasOwnProperty.call(edit, 'isNew')
+        ? normalizeZeroOneFlag_(edit.isNew)
+        : undefined
     };
   }).filter(Boolean);
 }
@@ -486,6 +499,11 @@ function savePatientUpdate(patientId, updatedFields) {
   const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
   const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
   const colTransport = resolveBillingColumn_(headers, ['交通費', '交通費(手動)', '交通費（手動）', 'transportAmount', 'manualTransportAmount'], '交通費', {});
+  const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { fallbackLetter: 'N' });
+  const colBranch = resolveBillingColumn_(headers, ['支店コード', '支店番号', '支店CD', 'branchCode'], '支店コード', { fallbackLetter: 'O' });
+  const colAccount = resolveBillingColumn_(headers, ['口座番号', '口座No', '口座NO', 'accountNumber', '口座'], '口座番号', { fallbackLetter: 'Q' });
+  const colIsNew = resolveBillingColumn_(headers, ['新規', '新患', 'isNew', '新規フラグ', '新規区分'], '新規区分', { fallbackLetter: 'U' });
+  const colResponsible = resolveBillingColumn_(headers, ['担当者', 'responsible', 'responsibleName', '担当', '担当者名'], '担当者', {});
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   for (let idx = 0; idx < values.length; idx++) {
@@ -507,6 +525,11 @@ function savePatientUpdate(patientId, updatedFields) {
     }
     if (colCarryOver && fields.carryOverAmount !== undefined) newRow[colCarryOver - 1] = fields.carryOverAmount;
     if (colPayer && fields.payerType !== undefined) newRow[colPayer - 1] = fields.payerType;
+    if (colBank && fields.bankCode !== undefined) newRow[colBank - 1] = String(fields.bankCode || '').trim();
+    if (colBranch && fields.branchCode !== undefined) newRow[colBranch - 1] = String(fields.branchCode || '').trim();
+    if (colAccount && fields.accountNumber !== undefined) newRow[colAccount - 1] = String(fields.accountNumber || '').trim();
+    if (colIsNew && fields.isNew !== undefined) newRow[colIsNew - 1] = normalizeZeroOneFlag_(fields.isNew);
+    if (colResponsible && fields.responsible !== undefined) newRow[colResponsible - 1] = String(fields.responsible || '').trim();
 
     sheet.getRange(idx + 2, 1, 1, newRow.length).setValues([newRow]);
     return { updated: true, rowNumber: idx + 2 };
@@ -527,7 +550,12 @@ function applyBillingPatientEdits_(edits) {
       manualUnitPrice: edit.manualUnitPrice,
       manualTransportAmount: edit.manualTransportAmount,
       carryOverAmount: edit.carryOverAmount,
-      payerType: edit.payerType
+      payerType: edit.payerType,
+      responsible: edit.responsible,
+      bankCode: edit.bankCode,
+      branchCode: edit.branchCode,
+      accountNumber: edit.accountNumber,
+      isNew: edit.isNew
     });
     if (result && result.updated) {
       updatedCount += 1;

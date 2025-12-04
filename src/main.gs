@@ -443,8 +443,13 @@ function normalizeBillingEdits_(maybeEdits) {
     const normalizedAccountNumber = bankInfo && bankInfo.accountNumber != null
       ? String(bankInfo.accountNumber).trim()
       : undefined;
-    const hasManualUnitPriceInput = edit && Object.prototype.hasOwnProperty.call(edit, 'unitPrice');
-    const hasManualUnitPrice = hasManualUnitPriceInput && edit.unitPrice !== null && edit.unitPrice !== '';
+    const unitPriceInput = edit && Object.prototype.hasOwnProperty.call(edit, 'unitPrice')
+      ? edit.unitPrice
+      : edit.manualUnitPrice;
+    const hasManualUnitPriceInput = edit
+      && (Object.prototype.hasOwnProperty.call(edit, 'unitPrice')
+        || Object.prototype.hasOwnProperty.call(edit, 'manualUnitPrice'));
+    const hasManualUnitPrice = hasManualUnitPriceInput && unitPriceInput !== null && unitPriceInput !== '';
     const hasManualTransportInput = edit && (Object.prototype.hasOwnProperty.call(edit, 'manualTransportAmount')
       || Object.prototype.hasOwnProperty.call(edit, 'transportAmount'));
     const manualTransportSource = edit && Object.prototype.hasOwnProperty.call(edit, 'manualTransportAmount')
@@ -453,9 +458,12 @@ function normalizeBillingEdits_(maybeEdits) {
     const normalizedManualTransport = manualTransportSource === '' || manualTransportSource === null
       ? ''
       : Number(manualTransportSource) || 0;
-    const normalizedAdjustedVisit = edit && Object.prototype.hasOwnProperty.call(edit, 'visitCount')
-      ? billingNormalizeVisitCount_(edit.visitCount)
-      : undefined;
+    const hasAdjustedVisitInput = edit && Object.prototype.hasOwnProperty.call(edit, 'adjustedVisitCount');
+    const normalizedAdjustedVisit = hasAdjustedVisitInput
+      ? billingNormalizeVisitCount_(edit.adjustedVisitCount)
+      : edit && Object.prototype.hasOwnProperty.call(edit, 'visitCount')
+        ? billingNormalizeVisitCount_(edit.visitCount)
+        : undefined;
     return {
       patientId: pid,
       insuranceType: edit.insuranceType != null ? String(edit.insuranceType).trim() : undefined,
@@ -463,8 +471,8 @@ function normalizeBillingEdits_(maybeEdits) {
       burdenRate: burden !== null ? burden : undefined,
       // normalized unitPrice retains legacy behavior for immediate billing recalculation,
       // while manualUnitPrice preserves blank input for persistence.
-      unitPrice: hasManualUnitPrice ? Number(edit.unitPrice) || 0 : undefined,
-      manualUnitPrice: hasManualUnitPriceInput ? edit.unitPrice : undefined,
+      unitPrice: hasManualUnitPrice ? Number(unitPriceInput) || 0 : undefined,
+      manualUnitPrice: hasManualUnitPriceInput ? unitPriceInput : undefined,
       carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
       payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined,
       manualTransportAmount: hasManualTransportInput ? normalizedManualTransport : undefined,
@@ -478,6 +486,27 @@ function normalizeBillingEdits_(maybeEdits) {
       adjustedVisitCount: normalizedAdjustedVisit
     };
   }).filter(Boolean);
+}
+
+function splitBillingEditsByTarget_(edits) {
+  const normalized = normalizeBillingEdits_(Array.isArray(edits) ? edits : []);
+  return {
+    patientEdits: normalized.filter(edit => hasDefinedField_(extractPatientInfoUpdateFields_(edit))),
+    overrideEdits: normalized.filter(hasBillingOverrideValues_)
+  };
+}
+
+function normalizeBillingEditsPayload_(options) {
+  const opts = options || {};
+  if (Array.isArray(opts.patientInfoUpdates) || Array.isArray(opts.billingOverridesUpdates)) {
+    const patientEdits = splitBillingEditsByTarget_(opts.patientInfoUpdates || []);
+    const overrideEdits = splitBillingEditsByTarget_(opts.billingOverridesUpdates || []);
+    return {
+      patientEdits: patientEdits.patientEdits,
+      overrideEdits: overrideEdits.overrideEdits
+    };
+  }
+  return splitBillingEditsByTarget_(opts.edits);
 }
 
 function extractPatientInfoUpdateFields_(edit) {
@@ -697,9 +726,9 @@ function applyBillingOverrideEdits_(billingMonthKey, edits) {
 
 function applyBillingEdits(billingMonth, options) {
   const opts = options || {};
-  const edits = normalizeBillingEdits_(opts.edits);
-  const patientEdits = edits.filter(edit => hasDefinedField_(extractPatientInfoUpdateFields_(edit)));
-  const overrideEdits = edits.filter(hasBillingOverrideValues_);
+  const normalized = normalizeBillingEditsPayload_(opts);
+  const patientEdits = normalized && normalized.patientEdits ? normalized.patientEdits : [];
+  const overrideEdits = normalized && normalized.overrideEdits ? normalized.overrideEdits : [];
   let refreshedPatients = null;
   if (patientEdits.length) {
     applyBillingPatientEdits_(patientEdits);

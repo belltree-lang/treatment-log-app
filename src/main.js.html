@@ -6,6 +6,8 @@ const billingState = {
   statusMessage: '',
   errorMessage: '',
   edits: {},
+  patientInfoEdits: {},
+  billingOverrideEdits: {},
   previewTotals: {},
   editing: null,
   sort: { field: null, direction: 'asc' }
@@ -27,6 +29,8 @@ const BILLING_TRANSPORT_UNIT_PRICE_FALLBACK = 33;
 const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeof globalThis.BILLING_TRANSPORT_UNIT_PRICE === 'number')
   ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
+const BILLING_PATIENT_INFO_FIELDS = ['insuranceType', 'medicalAssistance', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
+const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount'];
 
 function qs(id) {
   return document.getElementById(id);
@@ -417,6 +421,75 @@ function calculateBillingRowTotals(row) {
   return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal };
 }
 
+function resetBillingEdits() {
+  billingState.edits = {};
+  billingState.patientInfoEdits = {};
+  billingState.billingOverrideEdits = {};
+  billingState.previewTotals = {};
+  billingState.editing = null;
+}
+
+function getBillingEditTarget(field) {
+  if (!field) return null;
+  if (BILLING_PATIENT_INFO_FIELDS.indexOf(field) >= 0) return 'patientInfo';
+  if (BILLING_BILLING_OVERRIDES_FIELDS.indexOf(field) >= 0) return 'billingOverrides';
+  return null;
+}
+
+function resolvePatientInfoEditFields(field, value) {
+  if (!field) return {};
+  if (field === 'bankInfo' && value && typeof value === 'object') {
+    return {
+      bankCode: value.bankCode,
+      branchCode: value.branchCode,
+      accountNumber: value.accountNumber
+    };
+  }
+  return { [field]: value };
+}
+
+function resolveBillingOverrideFields(field, value) {
+  switch (field) {
+    case 'unitPrice':
+      return { manualUnitPrice: value };
+    case 'transportAmount':
+      return { manualTransportAmount: value === '' ? '' : value };
+    case 'visitCount':
+      return { visitCount: value };
+    case 'carryOverAmount':
+      return { carryOverAmount: value };
+    default:
+      return {};
+  }
+}
+
+function recordBillingEditForPersistence(patientId, field, value) {
+  const target = getBillingEditTarget(field);
+  const pid = String(patientId || '').trim();
+  if (!pid || !target) return;
+
+  if (target === 'patientInfo') {
+    const current = billingState.patientInfoEdits[pid] || {};
+    billingState.patientInfoEdits[pid] = Object.assign({}, current, resolvePatientInfoEditFields(field, value));
+    return;
+  }
+
+  if (target === 'billingOverrides') {
+    const current = billingState.billingOverrideEdits[pid] || {};
+    billingState.billingOverrideEdits[pid] = Object.assign({}, current, resolveBillingOverrideFields(field, value));
+  }
+}
+
+function buildBillingSavePayload() {
+  const patientInfoUpdates = Object.keys(billingState.patientInfoEdits || {}).map(pid =>
+    Object.assign({ patientId: pid }, billingState.patientInfoEdits[pid])
+  );
+  const billingOverridesUpdates = Object.keys(billingState.billingOverrideEdits || {}).map(pid =>
+    Object.assign({ patientId: pid }, billingState.billingOverrideEdits[pid])
+  );
+  return { patientInfoUpdates, billingOverridesUpdates };
+}
+
 function recalculateBillingRow(patientId) {
   const pid = String(patientId || '').trim();
   if (!pid) return;
@@ -441,6 +514,7 @@ function commitBillingEdit(patientId, field, value) {
   if (field === 'transportAmount') {
     baseUpdate.manualTransportAmount = value === '' ? '' : value;
   }
+  recordBillingEditForPersistence(pid, field, value);
   billingState.edits[pid] = baseUpdate;
   billingState.editing = null;
   recalculateBillingRow(pid);
@@ -754,9 +828,7 @@ function onBillingPrepared(result) {
     billingState.loading = false;
     billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
     billingState.errorMessage = '';
-    billingState.edits = {};
-    billingState.previewTotals = {};
-    billingState.editing = null;
+    resetBillingEdits();
     logBillingState('onBillingPrepared', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
     renderBillingResult();
   } catch (err) {
@@ -775,9 +847,7 @@ function handleBillingPdfGeneration() {
   google.script.run
     .withSuccessHandler(onBillingPdfCompleted)
     .withFailureHandler(onBillingFailed)
-    .applyBillingEditsAndGenerateInvoices(billingState.prepared.billingMonth, {
-      edits: Object.keys(billingState.edits || {}).map(pid => Object.assign({ patientId: pid }, billingState.edits[pid]))
-    });
+    .applyBillingEditsAndGenerateInvoices(billingState.prepared.billingMonth, buildBillingSavePayload());
 }
 
 function onBillingPdfCompleted(result) {
@@ -788,9 +858,7 @@ function onBillingPdfCompleted(result) {
     billingState.loading = false;
     billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
     billingState.errorMessage = '';
-    billingState.edits = {};
-    billingState.previewTotals = {};
-    billingState.editing = null;
+    resetBillingEdits();
     logBillingState('onBillingPdfCompleted', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
     renderBillingResult();
   } catch (err) {
@@ -829,9 +897,7 @@ function handleBillingSaveEdits() {
   google.script.run
     .withSuccessHandler(onBillingSaveCompleted)
     .withFailureHandler(onBillingFailed)
-    .applyBillingEdits(billingState.prepared.billingMonth, {
-      edits: Object.keys(billingState.edits || {}).map(pid => Object.assign({ patientId: pid }, billingState.edits[pid]))
-    });
+    .applyBillingEdits(billingState.prepared.billingMonth, buildBillingSavePayload());
 }
 
 function onBillingSaveCompleted(result) {
@@ -843,9 +909,7 @@ function onBillingSaveCompleted(result) {
   billingState.loading = false;
   billingState.statusMessage = '保存が完了しました';
   billingState.errorMessage = '';
-  billingState.edits = {};
-  billingState.previewTotals = {};
-  billingState.editing = null;
+  resetBillingEdits();
   const rowCount = billingState.prepared && billingState.prepared.billingJson
     ? billingState.prepared.billingJson.length
     : 0;

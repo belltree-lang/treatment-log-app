@@ -826,6 +826,8 @@ function loadBillingOverridesMap_(billingMonth) {
   const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {
     fallbackIndex: 6
   });
+  const colInsuranceType = resolveBillingColumn_(headers, ['insuranceType', '保険種別', '保険区分', '保険タイプ'], 'insuranceType', {});
+  const colBurdenRate = resolveBillingColumn_(headers, BILLING_LABELS.share.concat(['burdenRate']), 'burdenRate', {});
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const map = {};
@@ -857,16 +859,34 @@ function loadBillingOverridesMap_(billingMonth) {
     const adjustedVisitCount = colAdjustedVisits
       ? billingNormalizeVisitCount_(row[colAdjustedVisits - 1])
       : undefined;
+    const insuranceType = colInsuranceType
+      ? (row[colInsuranceType - 1] === '' || row[colInsuranceType - 1] === null
+        ? undefined
+        : String(row[colInsuranceType - 1]).trim())
+      : undefined;
+    const burdenRate = colBurdenRate
+      ? (row[colBurdenRate - 1] === '' || row[colBurdenRate - 1] === null
+        ? undefined
+        : normalizeBurdenRateInt_(row[colBurdenRate - 1]))
+      : undefined;
 
-    const hasOverride = [manualUnitPrice, manualTransportAmount, carryOverAmount, adjustedVisitCount]
-      .some(value => value !== undefined);
+    const hasOverride = [
+      manualUnitPrice,
+      manualTransportAmount,
+      carryOverAmount,
+      adjustedVisitCount,
+      insuranceType,
+      burdenRate
+    ].some(value => value !== undefined);
     if (!hasOverride) return;
 
     const override = {
       manualUnitPrice,
       manualTransportAmount,
       carryOverAmount,
-      adjustedVisitCount
+      adjustedVisitCount,
+      insuranceType,
+      burdenRate
     };
     const existing = latestRowByKey[key];
     if (existing && existing.rowNumber > rowNumber) {

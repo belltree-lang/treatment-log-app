@@ -453,6 +453,9 @@ function normalizeBillingEdits_(maybeEdits) {
     const normalizedManualTransport = manualTransportSource === '' || manualTransportSource === null
       ? ''
       : Number(manualTransportSource) || 0;
+    const normalizedAdjustedVisit = edit && Object.prototype.hasOwnProperty.call(edit, 'visitCount')
+      ? billingNormalizeVisitCount_(edit.visitCount)
+      : undefined;
     return {
       patientId: pid,
       insuranceType: edit.insuranceType != null ? String(edit.insuranceType).trim() : undefined,
@@ -471,9 +474,44 @@ function normalizeBillingEdits_(maybeEdits) {
       accountNumber: normalizedAccountNumber,
       isNew: edit && Object.prototype.hasOwnProperty.call(edit, 'isNew')
         ? normalizeZeroOneFlag_(edit.isNew)
-        : undefined
+        : undefined,
+      adjustedVisitCount: normalizedAdjustedVisit
     };
   }).filter(Boolean);
+}
+
+function extractPatientInfoUpdateFields_(edit) {
+  return {
+    insuranceType: edit.insuranceType,
+    burdenRate: edit.burdenRate,
+    medicalAssistance: edit.medicalAssistance,
+    payerType: edit.payerType,
+    responsible: edit.responsible,
+    bankCode: edit.bankCode,
+    branchCode: edit.branchCode,
+    accountNumber: edit.accountNumber,
+    isNew: edit.isNew
+  };
+}
+
+function extractBillingOverrideFields_(edit) {
+  return {
+    patientId: edit.patientId,
+    manualUnitPrice: edit.manualUnitPrice,
+    manualTransportAmount: edit.manualTransportAmount,
+    carryOverAmount: edit.carryOverAmount,
+    adjustedVisitCount: edit.adjustedVisitCount
+  };
+}
+
+function hasBillingOverrideValues_(edit) {
+  const fields = extractBillingOverrideFields_(edit);
+  return ['manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount']
+    .some(key => fields[key] !== undefined);
+}
+
+function hasDefinedField_(obj) {
+  return Object.keys(obj || {}).some(key => obj[key] !== undefined);
 }
 
 function savePatientUpdate(patientId, updatedFields) {
@@ -543,20 +581,9 @@ function applyBillingPatientEdits_(edits) {
 
   let updatedCount = 0;
   edits.forEach(edit => {
-    const result = savePatientUpdate(edit.patientId, {
-      insuranceType: edit.insuranceType,
-      burdenRate: edit.burdenRate,
-      medicalAssistance: edit.medicalAssistance,
-      manualUnitPrice: edit.manualUnitPrice,
-      manualTransportAmount: edit.manualTransportAmount,
-      carryOverAmount: edit.carryOverAmount,
-      payerType: edit.payerType,
-      responsible: edit.responsible,
-      bankCode: edit.bankCode,
-      branchCode: edit.branchCode,
-      accountNumber: edit.accountNumber,
-      isNew: edit.isNew
-    });
+    const patientFields = extractPatientInfoUpdateFields_(edit);
+    if (!hasDefinedField_(patientFields)) return;
+    const result = savePatientUpdate(edit.patientId, patientFields);
     if (result && result.updated) {
       updatedCount += 1;
     }
@@ -565,13 +592,121 @@ function applyBillingPatientEdits_(edits) {
   return { updated: updatedCount };
 }
 
+function ensureBillingOverridesSheet_() {
+  const ss = billingSs();
+  let sheet = ss.getSheetByName(BILLING_OVERRIDES_SHEET_NAME);
+  if (sheet) return sheet;
+
+  sheet = ss.insertSheet(BILLING_OVERRIDES_SHEET_NAME);
+  sheet.appendRow(['ym', 'patientId', 'manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount']);
+  return sheet;
+}
+
+function resolveBillingOverridesColumns_(headers) {
+  const colYm = resolveBillingColumn_(headers, ['ym', 'billingMonth', 'month'], 'ym', { required: true, fallbackIndex: 1 });
+  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', 'patientId']), 'patientId', {
+    required: true,
+    fallbackIndex: 2
+  });
+  const colManualUnitPrice = resolveBillingColumn_(headers, ['manualUnitPrice', 'unitPrice', '単価'], 'manualUnitPrice', {
+    fallbackIndex: 3
+  });
+  const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {
+    fallbackIndex: 4
+  });
+  const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {
+    fallbackIndex: 5
+  });
+  const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {
+    fallbackIndex: 6
+  });
+  return { colYm, colPid, colManualUnitPrice, colManualTransport, colCarryOver, colAdjustedVisits };
+}
+
+function saveBillingOverrideUpdate_(billingMonthKey, edit) {
+  const ym = billingMonthKey ? String(billingMonthKey).trim() : '';
+  const pid = billingNormalizePatientId_(edit && edit.patientId);
+  if (!ym || !pid) return { updated: false };
+  const sheet = ensureBillingOverridesSheet_();
+  const lastRow = sheet.getLastRow();
+  const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const cols = resolveBillingOverridesColumns_(headers);
+  const values = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
+
+  const assignField = (row, col, value) => {
+    if (!col || value === undefined) return;
+    row[col - 1] = value;
+  };
+
+  for (let idx = 0; idx < values.length; idx++) {
+    const row = values[idx];
+    const rowYm = String(row[cols.colYm - 1] || '').trim();
+    const rowPid = billingNormalizePatientId_(row[cols.colPid - 1]);
+    if (rowYm !== ym || rowPid !== pid) continue;
+
+    const newRow = row.slice();
+    assignField(newRow, cols.colYm, ym);
+    assignField(newRow, cols.colPid, pid);
+    assignField(newRow, cols.colManualUnitPrice, edit.manualUnitPrice);
+    assignField(newRow, cols.colManualTransport, edit.manualTransportAmount);
+    assignField(newRow, cols.colCarryOver, edit.carryOverAmount);
+    assignField(newRow, cols.colAdjustedVisits, edit.adjustedVisitCount);
+
+    sheet.getRange(idx + 2, 1, 1, newRow.length).setValues([newRow]);
+    return { updated: true, rowNumber: idx + 2 };
+  }
+
+  const newRow = new Array(Math.max(lastCol, 6)).fill('');
+  assignField(newRow, cols.colYm, ym);
+  assignField(newRow, cols.colPid, pid);
+  assignField(newRow, cols.colManualUnitPrice, edit.manualUnitPrice);
+  assignField(newRow, cols.colManualTransport, edit.manualTransportAmount);
+  assignField(newRow, cols.colCarryOver, edit.carryOverAmount);
+  assignField(newRow, cols.colAdjustedVisits, edit.adjustedVisitCount);
+
+  sheet.appendRow(newRow);
+  return { updated: true, rowNumber: sheet.getLastRow() };
+}
+
+function applyBillingOverrideEdits_(billingMonthKey, edits) {
+  if (!Array.isArray(edits) || !edits.length) return { updated: 0 };
+  let updatedCount = 0;
+  edits.forEach(edit => {
+    if (!hasBillingOverrideValues_(edit)) return;
+    const normalizedCarryOver = edit.carryOverAmount === '' || edit.carryOverAmount === null
+      ? ''
+      : edit.carryOverAmount;
+    const normalizedManualUnitPrice = edit.manualUnitPrice === '' || edit.manualUnitPrice === null
+      ? ''
+      : edit.manualUnitPrice;
+    const normalizedManualTransport = edit.manualTransportAmount === '' || edit.manualTransportAmount === null
+      ? ''
+      : edit.manualTransportAmount;
+    const result = saveBillingOverrideUpdate_(billingMonthKey, Object.assign({}, edit, {
+      carryOverAmount: normalizedCarryOver,
+      manualUnitPrice: normalizedManualUnitPrice,
+      manualTransportAmount: normalizedManualTransport
+    }));
+    if (result && result.updated) {
+      updatedCount += 1;
+    }
+  });
+  return { updated: updatedCount };
+}
+
 function applyBillingEdits(billingMonth, options) {
   const opts = options || {};
   const edits = normalizeBillingEdits_(opts.edits);
+  const patientEdits = edits.filter(edit => hasDefinedField_(extractPatientInfoUpdateFields_(edit)));
+  const overrideEdits = edits.filter(hasBillingOverrideValues_);
   let refreshedPatients = null;
-  if (edits.length) {
-    applyBillingPatientEdits_(edits);
+  if (patientEdits.length) {
+    applyBillingPatientEdits_(patientEdits);
     refreshedPatients = getBillingPatientRecords();
+  }
+  if (overrideEdits.length) {
+    applyBillingOverrideEdits_(billingMonth, overrideEdits);
   }
   const prepared = buildPreparedBillingPayload_(billingMonth);
   if (refreshedPatients) {

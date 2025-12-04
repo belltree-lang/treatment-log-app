@@ -220,6 +220,7 @@ const BILLING_TREATMENT_SHEET_NAME = '施術録';
 const BILLING_PAYMENT_RESULT_SHEET_PREFIX = '入金結果_';
 const BILLING_PATIENT_SHEET_NAME = '患者情報';
 const BILLING_BANK_SHEET_NAME = '銀行情報';
+const BILLING_OVERRIDES_SHEET_NAME = 'BillingOverrides';
 const BILLING_BANK_STATUS_ALLOWLIST = ['OK', 'NO_DOCUMENT', 'INSUFFICIENT', 'NOT_FOUND'];
 const BILLING_PAID_STATUS_ALLOWLIST = ['回収', '未回収', '手続き中', '手続中', 'エラー'];
 
@@ -799,6 +800,75 @@ function extractMonthlyVisitCounts(billingMonth) {
   return normalized;
 }
 
+function loadBillingOverridesMap_(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const sheet = billingSs().getSheetByName(BILLING_OVERRIDES_SHEET_NAME);
+  if (!sheet) return {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return {};
+
+  const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const colYm = resolveBillingColumn_(headers, ['ym', 'billingMonth', 'month'], 'ym', { required: true, fallbackIndex: 1 });
+  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', 'patientId']), 'patientId', {
+    required: true,
+    fallbackIndex: 2
+  });
+  const colManualUnitPrice = resolveBillingColumn_(headers, ['manualUnitPrice', 'unitPrice', '単価'], 'manualUnitPrice', {
+    fallbackIndex: 3
+  });
+  const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {
+    fallbackIndex: 4
+  });
+  const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {
+    fallbackIndex: 5
+  });
+  const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {
+    fallbackIndex: 6
+  });
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const map = {};
+  values.forEach(row => {
+    const ym = String(row[colYm - 1] || '').trim();
+    if (!ym || ym !== month.key) return;
+    const pid = billingNormalizePatientId_(row[colPid - 1]);
+    if (!pid) return;
+
+    const manualUnitPrice = colManualUnitPrice
+      ? (row[colManualUnitPrice - 1] === '' || row[colManualUnitPrice - 1] === null
+        ? ''
+        : normalizeMoneyValue_(row[colManualUnitPrice - 1]))
+      : undefined;
+    const manualTransportAmount = colManualTransport
+      ? (row[colManualTransport - 1] === '' || row[colManualTransport - 1] === null
+        ? ''
+        : normalizeMoneyValue_(row[colManualTransport - 1]))
+      : undefined;
+    const carryOverAmount = colCarryOver
+      ? (row[colCarryOver - 1] === '' || row[colCarryOver - 1] === null
+        ? ''
+        : normalizeMoneyValue_(row[colCarryOver - 1]))
+      : undefined;
+    const adjustedVisitCount = colAdjustedVisits
+      ? billingNormalizeVisitCount_(row[colAdjustedVisits - 1])
+      : undefined;
+
+    const hasOverride = [manualUnitPrice, manualTransportAmount, carryOverAmount, adjustedVisitCount]
+      .some(value => value !== undefined);
+    if (!hasOverride) return;
+
+    map[pid] = Object.assign({}, map[pid] || {}, {
+      manualUnitPrice,
+      manualTransportAmount,
+      carryOverAmount,
+      adjustedVisitCount
+    });
+  });
+
+  return map;
+}
+
 function getBillingPatientRecords() {
   const sheet = billingSs().getSheetByName(BILLING_PATIENT_SHEET_NAME);
   if (!sheet) {
@@ -976,6 +1046,17 @@ function getBillingSourceData(billingMonth) {
   const patientMap = indexByPatientId_(patientRecords);
   const visitCountsResult = buildVisitCountMap_(month);
   const treatmentVisitCounts = visitCountsResult.counts;
+  const billingOverrides = loadBillingOverridesMap_(month);
+  const mergedPatients = Object.assign({}, patientMap);
+  Object.keys(billingOverrides).forEach(pid => {
+    const override = billingOverrides[pid];
+    if (!override) return;
+    const target = Object.assign({}, mergedPatients[pid] || {}, override);
+    mergedPatients[pid] = target;
+    if (override.adjustedVisitCount !== undefined) {
+      treatmentVisitCounts[pid] = override.adjustedVisitCount;
+    }
+  });
   const staffDirectory = loadBillingStaffDirectory_();
   const staffDisplayByPatient = buildStaffDisplayByPatient_(visitCountsResult.staffByPatient || {}, staffDirectory);
   const unpaidHistory = extractUnpaidBillingHistory(month);
@@ -1008,8 +1089,8 @@ function getBillingSourceData(billingMonth) {
     month,
     treatmentVisitCounts,
     visitCounts: treatmentVisitCounts,
-    patients: patientMap,
-    patientMap,
+    patients: mergedPatients,
+    patientMap: mergedPatients,
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
     bankStatuses: getBillingPaymentResultsIfExists_(month),
     staffByPatient: visitCountsResult.staffByPatient || {},

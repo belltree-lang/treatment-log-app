@@ -35,6 +35,41 @@ function getBillingSource(billingMonth) {
   return getBillingSourceData(billingMonth);
 }
 
+/**
+ * Expose billing row total calculation for the web UI.
+ *
+ * This delegates to the shared billingLogic implementation so that
+ * browser previews stay in sync with the final server-side totals
+ * used for PDFs and exports.
+ * @param {Object} row - Merged billing row (base + edits) from the UI.
+ * @return {Object} normalized totals for preview rendering.
+ */
+function calculateBillingRowTotalsServer(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  const amountCalc = calculateBillingAmounts_({
+    visitCount: source.visitCount,
+    insuranceType: source.insuranceType,
+    burdenRate: source.burdenRate,
+    manualUnitPrice: source.manualUnitPrice != null ? source.manualUnitPrice : source.unitPrice,
+    manualTransportAmount: Object.prototype.hasOwnProperty.call(source, 'manualTransportAmount')
+      ? source.manualTransportAmount
+      : source.transportAmount,
+    unitPrice: source.unitPrice,
+    medicalAssistance: source.medicalAssistance,
+    carryOverAmount: source.carryOverAmount
+  });
+
+  return {
+    visitCount: amountCalc.visits,
+    treatmentUnitPrice: amountCalc.unitPrice,
+    treatmentAmount: amountCalc.treatmentAmount,
+    transportAmount: amountCalc.transportAmount,
+    carryOverAmount: amountCalc.carryOverAmount,
+    billingAmount: amountCalc.billingAmount,
+    grandTotal: amountCalc.grandTotal
+  };
+}
+
 const BILLING_CACHE_PREFIX = 'billing_prepared_';
 const BILLING_CACHE_TTL_SECONDS = 3600; // 1 hour
 

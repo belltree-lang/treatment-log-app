@@ -356,7 +356,7 @@ function toggleBillingSort(field) {
   renderBillingResult();
 }
 
-function calculateBillingRowTotals(row) {
+function calculateBillingRowTotalsLocal(row) {
   const source = row && typeof row === 'object' ? row : {};
   const insuranceType = source.insuranceType ? String(source.insuranceType).trim() : '';
   const burdenRate = normalizeBurdenRateInt(source.burdenRate);
@@ -419,6 +419,22 @@ function calculateBillingRowTotals(row) {
   const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
 
   return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal };
+}
+
+function normalizeServerBillingTotals(result, fallback) {
+  const payload = result && typeof result === 'object' ? result : {};
+  const base = fallback && typeof fallback === 'object' ? fallback : {};
+  return {
+    visitCount: Number(payload.visitCount != null ? payload.visitCount : payload.visits) || base.visitCount || 0,
+    treatmentUnitPrice: Number(payload.treatmentUnitPrice != null ? payload.treatmentUnitPrice : payload.unitPrice)
+      || base.treatmentUnitPrice
+      || 0,
+    treatmentAmount: Number(payload.treatmentAmount) || base.treatmentAmount || 0,
+    transportAmount: Number(payload.transportAmount) || base.transportAmount || 0,
+    carryOverAmount: Number(payload.carryOverAmount) || base.carryOverAmount || 0,
+    billingAmount: Number(payload.billingAmount) || base.billingAmount || 0,
+    grandTotal: Number(payload.grandTotal) || base.grandTotal || 0
+  };
 }
 
 function resetBillingEdits() {
@@ -499,8 +515,21 @@ function recalculateBillingRow(patientId) {
   const baseRow = baseRows.find(row => String(row && row.patientId ? row.patientId : '') === pid) || {};
   const edits = billingState.edits[pid] || {};
   const merged = Object.assign({}, baseRow, edits);
-  const calculated = calculateBillingRowTotals(merged);
-  billingState.previewTotals[pid] = calculated;
+  const fallbackTotals = calculateBillingRowTotalsLocal(merged);
+  billingState.previewTotals[pid] = fallbackTotals;
+
+  const scriptRun = typeof google !== 'undefined' && google.script && google.script.run;
+  if (scriptRun && typeof google.script.run.calculateBillingRowTotalsServer === 'function') {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        billingState.previewTotals[pid] = normalizeServerBillingTotals(result, fallbackTotals);
+        renderBillingResult();
+      })
+      .withFailureHandler(function(err) {
+        console.error('Failed to calculate billing totals on server', err);
+      })
+      .calculateBillingRowTotalsServer(merged);
+  }
 }
 
 function commitBillingEdit(patientId, field, value) {

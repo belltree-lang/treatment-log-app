@@ -829,11 +829,15 @@ function loadBillingOverridesMap_(billingMonth) {
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const map = {};
-  values.forEach(row => {
+  const latestRowByKey = {};
+  const cleanupRows = [];
+  values.forEach((row, idx) => {
     const ym = String(row[colYm - 1] || '').trim();
     if (!ym || ym !== month.key) return;
     const pid = billingNormalizePatientId_(row[colPid - 1]);
     if (!pid) return;
+    const rowNumber = idx + 2;
+    const key = ym + '#' + pid;
 
     const manualUnitPrice = colManualUnitPrice
       ? (row[colManualUnitPrice - 1] === '' || row[colManualUnitPrice - 1] === null
@@ -858,13 +862,39 @@ function loadBillingOverridesMap_(billingMonth) {
       .some(value => value !== undefined);
     if (!hasOverride) return;
 
-    map[pid] = Object.assign({}, map[pid] || {}, {
+    const override = {
       manualUnitPrice,
       manualTransportAmount,
       carryOverAmount,
       adjustedVisitCount
-    });
+    };
+    const existing = latestRowByKey[key];
+    if (existing && existing.rowNumber > rowNumber) {
+      cleanupRows.push(rowNumber);
+      return;
+    }
+    if (existing && existing.rowNumber < rowNumber) {
+      cleanupRows.push(existing.rowNumber);
+    }
+    latestRowByKey[key] = { rowNumber, override };
+    map[pid] = Object.assign({}, map[pid] || {}, override);
   });
+
+  if (cleanupRows.length && typeof sheet.deleteRow === 'function') {
+    cleanupRows
+      .sort((a, b) => b - a)
+      .forEach(rowNumber => {
+        try {
+          sheet.deleteRow(rowNumber);
+        } catch (err) {
+          try {
+            billingLogger_.log('[billing] Failed to cleanup duplicate BillingOverrides row=' + rowNumber + ' err=' + err);
+          } catch (logErr) {
+            // ignore logging errors in non-GAS environments
+          }
+        }
+      });
+  }
 
   return map;
 }

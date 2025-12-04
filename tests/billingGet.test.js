@@ -273,6 +273,49 @@ function testStaffDirectorySkipsDisabledRows() {
   assert.strictEqual(directory['staff002'], '有効ユーザー', '他の有効行は辞書に含める');
 }
 
+function testBillingOverridesDeduplicatesLatestRow() {
+  const headers = ['ym', 'patientId', 'manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount'];
+  const rows = [
+    ['202501', '001', 1000, '', '', ''],
+    ['202501', '001', 2000, '', '', ''],
+    ['202501', '002', '', 120, '', 2],
+    ['202501', '002', '', 150, 500, 3],
+    ['202412', '003', 500, '', '', '']
+  ];
+  const deletedRows = [];
+  const sheet = {
+    getLastRow: () => rows.length + 1,
+    getLastColumn: () => headers.length,
+    getMaxColumns: () => headers.length,
+    getRange: (row, col, numRows, numCols) => {
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [headers.slice(col - 1, col - 1 + numCols)] };
+      }
+      const startIdx = Math.max(0, row - 2);
+      return {
+        getValues: () => rows
+          .slice(startIdx, startIdx + numRows)
+          .map(r => r.slice(col - 1, col - 1 + numCols))
+      };
+    },
+    deleteRow: rowNumber => {
+      deletedRows.push(rowNumber);
+      rows.splice(rowNumber - 2, 1);
+    }
+  };
+
+  workbook = {
+    getSheetByName: name => (name === 'BillingOverrides' ? sheet : null)
+  };
+
+  const overrides = context.loadBillingOverridesMap_('202501');
+
+  assert.strictEqual(overrides['001'].manualUnitPrice, 2000, '最新行の単価で上書きされる');
+  assert.strictEqual(overrides['002'].manualTransportAmount, 150, '同一患者の最新行の交通費を採用する');
+  assert.strictEqual(overrides['002'].carryOverAmount, 500, '最新行の繰越を保持する');
+  assert.deepStrictEqual(deletedRows, [4, 2], '古い重複行が下から順に削除される');
+}
+
 function testStaffKeyNormalizationIsSharedAcrossSources() {
   const staffHeaders = ['氏名', 'スタッフID'];
   const staffValues = [
@@ -499,6 +542,7 @@ function run() {
   testStaffKeyNormalizationIsSharedAcrossSources();
   testStaffDirectoryFallsBackToNameAndRomanizedKeys();
   testStaffDirectoryCollapsesPlusAliases();
+  testBillingOverridesDeduplicatesLatestRow();
   console.log('billingGet burden rate tests passed');
 }
 

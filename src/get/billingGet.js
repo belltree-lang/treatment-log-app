@@ -93,6 +93,19 @@ const billingBuildHeaderMap_ = typeof buildHeaderMap_ === 'function'
     return map;
   };
 
+const billingHeaderMapCache_ = {};
+
+function billingGetCachedHeaderMap_(headers) {
+  const normalizedHeaders = Array.isArray(headers)
+    ? headers.map(header => billingNormalizeHeaderKey_(header)).join('|')
+    : '';
+  if (!normalizedHeaders) return billingBuildHeaderMap_(headers);
+  if (!billingHeaderMapCache_[normalizedHeaders]) {
+    billingHeaderMapCache_[normalizedHeaders] = billingBuildHeaderMap_(headers);
+  }
+  return billingHeaderMapCache_[normalizedHeaders];
+}
+
 const billingNormalizeVisitCount_ = typeof normalizeVisitCount_ === 'function'
   ? normalizeVisitCount_
   : function normalizeVisitCount_(value) {
@@ -294,7 +307,7 @@ function columnNumberToLetter_(num) {
 
 function resolveBillingColumn_(headers, labelCandidates, fieldLabel, options) {
   const opts = options || {};
-  const headerMap = billingBuildHeaderMap_(headers);
+  const headerMap = billingGetCachedHeaderMap_(headers);
   for (let i = 0; i < labelCandidates.length; i++) {
     const key = billingNormalizeHeaderKey_(labelCandidates[i]);
     if (key && headerMap[key]) {
@@ -809,23 +822,12 @@ function loadBillingOverridesMap_(billingMonth) {
 
   const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
-  const colYm = resolveBillingColumn_(headers, ['ym', 'billingMonth', 'month'], 'ym', { required: true, fallbackIndex: 1 });
-  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', 'patientId']), 'patientId', {
-    required: true,
-    fallbackIndex: 2
-  });
-  const colManualUnitPrice = resolveBillingColumn_(headers, ['manualUnitPrice', 'unitPrice', '単価'], 'manualUnitPrice', {
-    fallbackIndex: 3
-  });
-  const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {
-    fallbackIndex: 4
-  });
-  const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {
-    fallbackIndex: 5
-  });
-  const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {
-    fallbackIndex: 6
-  });
+  const colYm = resolveBillingColumn_(headers, ['ym', 'billingMonth', 'month'], 'ym', { required: true });
+  const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', 'patientId']), 'patientId', { required: true });
+  const colManualUnitPrice = resolveBillingColumn_(headers, ['manualUnitPrice', 'unitPrice', '単価'], 'manualUnitPrice', {});
+  const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {});
+  const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {});
+  const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {});
   const colInsuranceType = resolveBillingColumn_(headers, ['insuranceType', '保険種別', '保険区分', '保険タイプ'], 'insuranceType', {});
   const colBurdenRate = resolveBillingColumn_(headers, BILLING_LABELS.share.concat(['burdenRate']), 'burdenRate', {});
 

@@ -52,6 +52,7 @@ const { loadTreatmentLogs_ } = context;
 const { billingParseTreatmentTimestamp_ } = context;
 const { loadBillingStaffDirectory_ } = context;
 const { buildStaffDisplayByPatient_ } = context;
+const { getBillingSourceData } = context;
 
 if (typeof normalizeBurdenRateInt_ !== 'function') {
   throw new Error('normalizeBurdenRateInt_ failed to load in the test context');
@@ -316,6 +317,82 @@ function testBillingOverridesDeduplicatesLatestRow() {
   assert.deepStrictEqual(deletedRows, [4, 2], '古い重複行が下から順に削除される');
 }
 
+function testBillingOverrideFlagsHighlightPatientInfoOverrides() {
+  const overrideHeaders = [
+    'ym',
+    'patientId',
+    'manualUnitPrice',
+    'manualTransportAmount',
+    'carryOverAmount',
+    'adjustedVisitCount',
+    'insuranceType',
+    'burdenRate'
+  ];
+  const overrideValues = [
+    ['202504', '001', '', '', '', '', '生保', '1割'],
+    ['202504', '002', 6000, 0, 0, 2, '', '']
+  ];
+  const overridesSheet = {
+    getLastRow: () => overrideValues.length + 1,
+    getLastColumn: () => overrideHeaders.length,
+    getMaxColumns: () => overrideHeaders.length,
+    getRange: (row, col, numRows, numCols) => {
+      const sliceValues = rows => rows.map(r => r.slice(col - 1, col - 1 + numCols));
+      if (row === 1 && numRows === 1) {
+        return { getDisplayValues: () => [overrideHeaders.slice(col - 1, col - 1 + numCols)] };
+      }
+      const startIdx = Math.max(0, row - 2);
+      return { getValues: () => sliceValues(overrideValues.slice(startIdx, startIdx + numRows)) };
+    },
+    deleteRow: () => {}
+  };
+
+  const patientRecords = [
+    { patientId: '001', nameKanji: '対象患者', insuranceType: '国保', burdenRate: 3, unitPrice: 4000 },
+    { patientId: '002', nameKanji: '料金上書き', insuranceType: '国保', burdenRate: 3, unitPrice: 4000 }
+  ];
+
+  const originalBillingSs = context.billingSs;
+  const originalGetPatientRecords = context.getBillingPatientRecords;
+  const originalGetBankRecords = context.getBillingBankRecords;
+  const originalVisitCountMap = context.buildVisitCountMap_;
+  const originalStaffDirectory = context.loadBillingStaffDirectory_;
+  const originalUnpaidHistory = context.extractUnpaidBillingHistory;
+
+  workbook = {
+    getSheetByName: name => (name === 'BillingOverrides' ? overridesSheet : null)
+  };
+
+  context.billingSs = () => workbook;
+  context.getBillingPatientRecords = () => patientRecords;
+  context.getBillingBankRecords = () => [];
+  context.buildVisitCountMap_ = () => ({ counts: { '001': 2, '002': 3 }, staffByPatient: {} });
+  context.loadBillingStaffDirectory_ = () => ({ });
+  context.extractUnpaidBillingHistory = () => [];
+
+  const sheetFromStub = context.billingSs().getSheetByName('BillingOverrides');
+  assert.ok(sheetFromStub, 'スタブしたスプレッドシートから BillingOverrides を取得できる');
+  const overrides = context.loadBillingOverridesMap_('202504');
+  const source = getBillingSourceData('202504');
+  const flags = source.billingOverrideFlags || {};
+
+  assert.strictEqual(overrides['001'].insuranceType, '生保', '上書きシートから保険種別を取得する');
+  assert.strictEqual(overrides['001'].burdenRate, 1, '上書きシートの負担割合を正規化する');
+  assert.strictEqual(source.patients['001'].insuranceType, '生保', '患者情報に上書き保険種別が反映される');
+  assert.strictEqual(source.patients['001'].burdenRate, 1, '負担割合の上書きも正規化して適用される');
+  assert.strictEqual(flags['001'].insuranceType, true, '保険種別の上書きフラグが付与される');
+  assert.strictEqual(flags['001'].burdenRate, true, '負担割合の上書きフラグが付与される');
+  assert.ok(!flags['002'] || !flags['002'].insuranceType, '上書きがない項目にはフラグが付かない');
+
+  context.billingSs = originalBillingSs;
+  context.getBillingPatientRecords = originalGetPatientRecords;
+  context.getBillingBankRecords = originalGetBankRecords;
+  context.buildVisitCountMap_ = originalVisitCountMap;
+  context.loadBillingStaffDirectory_ = originalStaffDirectory;
+  context.extractUnpaidBillingHistory = originalUnpaidHistory;
+  workbook = null;
+}
+
 function testStaffKeyNormalizationIsSharedAcrossSources() {
   const staffHeaders = ['氏名', 'スタッフID'];
   const staffValues = [
@@ -543,6 +620,7 @@ function run() {
   testStaffDirectoryFallsBackToNameAndRomanizedKeys();
   testStaffDirectoryCollapsesPlusAliases();
   testBillingOverridesDeduplicatesLatestRow();
+  testBillingOverrideFlagsHighlightPatientInfoOverrides();
   console.log('billingGet burden rate tests passed');
 }
 

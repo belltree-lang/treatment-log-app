@@ -1077,12 +1077,23 @@ function getBillingSourceData(billingMonth) {
   const visitCountsResult = buildVisitCountMap_(month);
   const treatmentVisitCounts = visitCountsResult.counts;
   const billingOverrides = loadBillingOverridesMap_(month);
+  const billingOverrideFlags = {};
   const mergedPatients = Object.assign({}, patientMap);
   Object.keys(billingOverrides).forEach(pid => {
     const override = billingOverrides[pid];
     if (!override) return;
     const target = Object.assign({}, mergedPatients[pid] || {}, override);
     mergedPatients[pid] = target;
+    const flags = billingOverrideFlags[pid] || {};
+    if (override.manualUnitPrice !== undefined) flags.unitPrice = true;
+    if (override.manualTransportAmount !== undefined) flags.transportAmount = true;
+    if (override.carryOverAmount !== undefined) flags.carryOverAmount = true;
+    if (override.adjustedVisitCount !== undefined) flags.visitCount = true;
+    if (override.insuranceType !== undefined) flags.insuranceType = true;
+    if (override.burdenRate !== undefined) flags.burdenRate = true;
+    if (Object.keys(flags).length) {
+      billingOverrideFlags[pid] = flags;
+    }
     if (override.adjustedVisitCount !== undefined) {
       treatmentVisitCounts[pid] = override.adjustedVisitCount;
     }
@@ -1127,7 +1138,8 @@ function getBillingSourceData(billingMonth) {
     staffDirectory,
     staffDisplayByPatient,
     unpaidHistory,
-    carryOverByPatient
+    carryOverByPatient,
+    billingOverrideFlags
   };
 }
 

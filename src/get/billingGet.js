@@ -889,7 +889,6 @@ function loadBillingOverridesMap_(billingMonth) {
   const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {});
   const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {});
   const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {});
-  const colInsuranceType = resolveBillingColumn_(headers, ['insuranceType', '保険種別', '保険区分', '保険タイプ'], 'insuranceType', {});
   const colBurdenRate = resolveBillingColumn_(headers, BILLING_LABELS.share.concat(['burdenRate']), 'burdenRate', {});
   const colManualSelfPay = resolveBillingColumn_(headers, ['manualSelfPayAmount', '自費', 'selfPayAmount'], 'manualSelfPayAmount', {});
 
@@ -923,11 +922,6 @@ function loadBillingOverridesMap_(billingMonth) {
     const adjustedVisitCount = colAdjustedVisits
       ? billingNormalizeVisitCount_(row[colAdjustedVisits - 1])
       : undefined;
-    const insuranceType = colInsuranceType
-      ? (row[colInsuranceType - 1] === '' || row[colInsuranceType - 1] === null
-        ? undefined
-        : String(row[colInsuranceType - 1]).trim())
-      : undefined;
     const burdenRate = colBurdenRate
       ? (row[colBurdenRate - 1] === '' || row[colBurdenRate - 1] === null
         ? undefined
@@ -944,7 +938,6 @@ function loadBillingOverridesMap_(billingMonth) {
       manualTransportAmount,
       carryOverAmount,
       adjustedVisitCount,
-      insuranceType,
       burdenRate,
       manualSelfPayAmount
     ].some(value => value !== undefined);
@@ -955,7 +948,6 @@ function loadBillingOverridesMap_(billingMonth) {
       manualTransportAmount,
       carryOverAmount,
       adjustedVisitCount,
-      insuranceType,
       burdenRate,
       manualSelfPayAmount,
       selfPayItems: buildSelfPayItemsFromLegacy_(manualSelfPayAmount)
@@ -1183,7 +1175,6 @@ function getBillingSourceData(billingMonth) {
     if (override.manualTransportAmount !== undefined) flags.transportAmount = true;
     if (override.carryOverAmount !== undefined) flags.carryOverAmount = true;
     if (override.adjustedVisitCount !== undefined) flags.visitCount = true;
-    if (override.insuranceType !== undefined) flags.insuranceType = true;
     if (override.burdenRate !== undefined) flags.burdenRate = true;
     if (override.manualSelfPayAmount !== undefined) flags.manualSelfPayAmount = true;
     if (Object.keys(flags).length) {

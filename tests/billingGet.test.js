@@ -376,13 +376,12 @@ function testBillingOverrideFlagsHighlightPatientInfoOverrides() {
   const source = getBillingSourceData('202504');
   const flags = source.billingOverrideFlags || {};
 
-  assert.strictEqual(overrides['001'].insuranceType, '生保', '上書きシートから保険種別を取得する');
+  assert.strictEqual(overrides['001'].insuranceType, undefined, '保険種別の上書きは無視される');
   assert.strictEqual(overrides['001'].burdenRate, 1, '上書きシートの負担割合を正規化する');
-  assert.strictEqual(source.patients['001'].insuranceType, '生保', '患者情報に上書き保険種別が反映される');
+  assert.strictEqual(source.patients['001'].insuranceType, '国保', '患者情報の保険種別は元データを維持する');
   assert.strictEqual(source.patients['001'].burdenRate, 1, '負担割合の上書きも正規化して適用される');
-  assert.strictEqual(flags['001'].insuranceType, true, '保険種別の上書きフラグが付与される');
   assert.strictEqual(flags['001'].burdenRate, true, '負担割合の上書きフラグが付与される');
-  assert.ok(!flags['002'] || !flags['002'].insuranceType, '上書きがない項目にはフラグが付かない');
+  assert.ok(!flags['002'] || !flags['002'].insuranceType, '保険種別の上書きフラグは付与されない');
 
   context.billingSs = originalBillingSs;
   context.getBillingPatientRecords = originalGetPatientRecords;

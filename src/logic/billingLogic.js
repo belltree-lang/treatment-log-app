@@ -124,6 +124,15 @@ function normalizeMoneyNumber_(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function normalizePatientIdSortKey_(value) {
+  const num = Number(value);
+  if (Number.isFinite(num)) return num;
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return 0;
+  const fallback = Number(trimmed.replace(/[^0-9]/g, ''));
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
 function normalizeBurdenRateInt_(burdenRate) {
   if (burdenRate == null || burdenRate === '') return 0;
   if (String(burdenRate).trim() === '自費') return '自費';
@@ -251,7 +260,8 @@ function generateBillingJsonFromSource(sourceData) {
     bankStatuses,
     carryOverByPatient
   } = normalizeBillingSource_(sourceData);
-  const patientIds = Object.keys(treatmentVisitCounts || {});
+  const patientIds = Object.keys(treatmentVisitCounts || {})
+    .sort((a, b) => normalizePatientIdSortKey_(a) - normalizePatientIdSortKey_(b));
   const zeroVisitDebug = [];
 
   const billingJson = patientIds.map(pid => {

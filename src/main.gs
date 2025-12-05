@@ -568,6 +568,7 @@ function extractPatientInfoUpdateFields_(edit) {
     insuranceType: edit.insuranceType,
     burdenRate: edit.burdenRate,
     medicalAssistance: edit.medicalAssistance,
+    medicalSubsidy: edit.medicalSubsidy,
     payerType: edit.payerType,
     responsible: edit.responsible,
     bankCode: edit.bankCode,
@@ -619,7 +620,7 @@ function savePatientUpdate(patientId, updatedFields) {
   const colUnitPrice = resolveBillingColumn_(headers, ['単価', '請求単価', '自費単価', '単価(自費)', '単価（自費）', '単価（手動上書き）', '単価(手動上書き)'], '単価', {});
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
   const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
-  const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
+  const colMedicalSubsidy = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
   const colTransport = resolveBillingColumn_(headers, ['交通費', '交通費(手動)', '交通費（手動）', 'transportAmount', 'manualTransportAmount'], '交通費', {});
   const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { fallbackLetter: 'N' });
   const colBranch = resolveBillingColumn_(headers, ['支店コード', '支店番号', '支店CD', 'branchCode'], '支店コード', { fallbackLetter: 'O' });
@@ -635,7 +636,10 @@ function savePatientUpdate(patientId, updatedFields) {
 
     const newRow = row.slice();
     if (colInsurance && fields.insuranceType !== undefined) newRow[colInsurance - 1] = fields.insuranceType;
-    if (colMedical && fields.medicalAssistance !== undefined) newRow[colMedical - 1] = normalizeBillingEditMedicalAssistance_(fields.medicalAssistance) ? 1 : 0;
+    const normalizedMedicalFlag = fields.medicalSubsidy !== undefined
+      ? normalizeZeroOneFlag_(fields.medicalSubsidy)
+      : (fields.medicalAssistance !== undefined ? normalizeBillingEditMedicalAssistance_(fields.medicalAssistance) : undefined);
+    if (colMedicalSubsidy && normalizedMedicalFlag !== undefined) newRow[colMedicalSubsidy - 1] = normalizedMedicalFlag ? 1 : 0;
     if (colBurden && fields.burdenRate !== undefined) newRow[colBurden - 1] = fields.burdenRate;
     if (colUnitPrice && fields.manualUnitPrice !== undefined) {
       const isBlank = fields.manualUnitPrice === '' || fields.manualUnitPrice === null;

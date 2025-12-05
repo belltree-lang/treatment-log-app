@@ -94,6 +94,33 @@ function testCarryOverIncludesUnpaidHistory() {
   assert.strictEqual(billingJson[0].grandTotal, 4566, '合計には繰越を含めた金額が反映される');
 }
 
+function testMedicalSubsidyExcludesBillingEntries() {
+  const logs = [];
+  const contextWithLogger = createLogicContext({
+    billingLogger_: { log: message => logs.push(message) }
+  });
+  const { generateBillingJsonFromSource } = contextWithLogger;
+
+  const source = {
+    billingMonth: '202501',
+    patients: {
+      '148': {
+        nameKanji: '磯部登志子',
+        burdenRate: 1,
+        insuranceType: '鍼灸',
+        unitPrice: 1000,
+        medicalSubsidy: 1
+      }
+    },
+    treatmentVisitCounts: { '148': 2 },
+    bankStatuses: {}
+  };
+
+  const billingJson = generateBillingJsonFromSource(source);
+  assert.strictEqual(billingJson.length, 0, '医療助成対象は請求一覧から除外される');
+  assert.ok(logs.some(msg => msg.includes('患者ID 148') && msg.includes('請求対象外')), '除外ログが出力される');
+}
+
 function testCustomTransportUnitPriceIsUsed() {
   const customContext = createLogicContext({ BILLING_TRANSPORT_UNIT_PRICE: 50 });
   const { calculateBillingAmounts_ } = customContext;
@@ -228,6 +255,7 @@ function run() {
   testBillingAmountRoundsToNearestTen();
   testPaidStatusIsIncludedInBillingJson();
   testCarryOverIncludesUnpaidHistory();
+  testMedicalSubsidyExcludesBillingEntries();
   testCustomTransportUnitPriceIsUsed();
   testMedicalAssistanceNormalizationIsStrict();
   testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice();

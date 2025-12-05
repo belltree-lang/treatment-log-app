@@ -45,6 +45,10 @@ function normalizeMedicalAssistanceFlag_(value) {
   return 0;
 }
 
+function normalizeMedicalSubsidyFlag_(value) {
+  return normalizeMedicalAssistanceFlag_(value);
+}
+
 function normalizeSelfPayItems_(params) {
   const items = [];
   if (Array.isArray(params && params.selfPayItems)) {
@@ -252,6 +256,12 @@ function generateBillingJsonFromSource(sourceData) {
 
   const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
+    const isMedicalSubsidy = normalizeMedicalSubsidyFlag_(patient.medicalSubsidy);
+    if (isMedicalSubsidy) {
+      const name = patient.nameKanji || patient.nameKana || '';
+      billingLogger_.log(`[exclude] 患者ID ${pid}${name ? `（${name}）` : ''}は医療助成のため請求対象外`);
+      return null;
+    }
     const rawVisitCount = treatmentVisitCounts[pid];
     const visitCount = normalizeVisitCount_(rawVisitCount);
     if (!visitCount && zeroVisitDebug.length < 20) {
@@ -320,7 +330,7 @@ function generateBillingJsonFromSource(sourceData) {
       bankStatus: bankStatusEntry && bankStatusEntry.bankStatus ? bankStatusEntry.bankStatus : '',
       paidStatus: bankStatusEntry && bankStatusEntry.paidStatus ? bankStatusEntry.paidStatus : ''
     };
-  });
+  }).filter(Boolean);
 
   billingLogger_.log('[billing] raw billingJson=' + JSON.stringify(billingJson));
   billingLogger_.log('[billing] generateBillingJsonFromSource: zero visit samples=' + JSON.stringify(zeroVisitDebug));

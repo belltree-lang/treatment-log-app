@@ -313,9 +313,13 @@ function calculateInvoiceChargeBreakdown_(params) {
     && hasManualTransportInput)
     ? '手動入力'
     : formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回';
-  const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
+  const selfPayItems = Array.isArray(params && params.selfPayItems)
+    ? params.selfPayItems
+    : (params && params.manualSelfPayAmount ? [{ type: '自費', amount: params.manualSelfPayAmount }] : []);
+  const selfPayTotal = selfPayItems.reduce((sum, entry) => sum + (normalizeInvoiceMoney_(entry.amount) || 0), 0);
+  const grandTotal = carryOverAmount + treatmentAmount + transportAmount + selfPayTotal;
 
-  return { treatmentUnitPrice, treatmentAmount, transportAmount, transportDetail, grandTotal, visits };
+  return { treatmentUnitPrice, treatmentAmount, transportAmount, transportDetail, grandTotal, visits, selfPayItems, selfPayTotal };
 }
 
   function buildBillingInvoiceHtml_(item, billingMonth) {

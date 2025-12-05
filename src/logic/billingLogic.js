@@ -45,6 +45,27 @@ function normalizeMedicalAssistanceFlag_(value) {
   return 0;
 }
 
+function normalizeSelfPayItems_(params) {
+  const items = [];
+  if (Array.isArray(params && params.selfPayItems)) {
+    params.selfPayItems.forEach(entry => {
+      if (!entry || typeof entry !== 'object') return;
+      const amount = normalizeMoneyNumber_(entry.amount);
+      if (!Number.isFinite(amount) || amount === 0) return;
+      items.push({ type: entry.type || '自費', amount });
+    });
+  }
+
+  if (items.length === 0 && params && params.manualSelfPayAmount !== undefined) {
+    const manualAmount = normalizeMoneyNumber_(params.manualSelfPayAmount);
+    if (Number.isFinite(manualAmount) && manualAmount !== 0) {
+      items.push({ type: '自費', amount: manualAmount });
+    }
+  }
+
+  return items;
+}
+
 function normalizeBillingSource_(source) {
   if (!source || typeof source !== 'object') {
     throw new Error('請求生成の入力が不正です');
@@ -175,11 +196,13 @@ function calculateBillingAmounts_(params) {
     : transportAmount;
   const burdenMultiplier = normalizeBurdenMultiplier_(normalizedBurdenRate, insuranceType);
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
+  const selfPayItems = normalizeSelfPayItems_(params);
+  const selfPayTotal = selfPayItems.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
   const billingAmount = isSelfPaid
     ? treatmentAmount
     : roundToNearestTen_(treatmentAmount * burdenMultiplier);
   const total = treatmentAmount + resolvedTransportAmount;
-  const grandTotal = billingAmount + resolvedTransportAmount + carryOverAmount;
+  const grandTotal = billingAmount + resolvedTransportAmount + carryOverAmount + selfPayTotal;
 
   return {
     visits,
@@ -191,6 +214,8 @@ function calculateBillingAmounts_(params) {
       ? ''
       : manualTransportAmount,
     carryOverAmount,
+    manualSelfPayAmount: params && params.manualSelfPayAmount !== undefined ? params.manualSelfPayAmount : selfPayTotal,
+    selfPayItems,
     billingAmount,
     total,
     grandTotal
@@ -257,6 +282,8 @@ function generateBillingJsonFromSource(sourceData) {
       burdenRate: normalizedBurdenRate,
       manualUnitPrice,
       manualTransportAmount: patient.manualTransportAmount,
+      manualSelfPayAmount: patient.manualSelfPayAmount,
+      selfPayItems: Array.isArray(patient.selfPayItems) ? patient.selfPayItems : [],
       unitPrice: patientUnitPrice,
       medicalAssistance: normalizedMedicalAssistance,
       carryOverAmount: carryOverFromPatient + carryOverFromHistory
@@ -279,6 +306,8 @@ function generateBillingJsonFromSource(sourceData) {
       treatmentAmount: amountCalc.treatmentAmount,
       manualTransportAmount: amountCalc.manualTransportAmount,
       transportAmount: amountCalc.transportAmount,
+      manualSelfPayAmount: amountCalc.manualSelfPayAmount,
+      selfPayItems: amountCalc.selfPayItems,
       carryOverAmount: amountCalc.carryOverAmount,
       carryOverFromHistory,
       billingAmount: amountCalc.billingAmount,

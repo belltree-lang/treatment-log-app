@@ -868,6 +868,12 @@ function loadCarryOverLedgerEntries_(billingMonth) {
   }).filter(Boolean);
 }
 
+function buildSelfPayItemsFromLegacy_(manualSelfPayAmount) {
+  const amount = normalizeMoneyValue_(manualSelfPayAmount);
+  if (!Number.isFinite(amount) || amount === 0) return [];
+  return [{ type: '自費', amount }];
+}
+
 function loadBillingOverridesMap_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const sheet = billingSs().getSheetByName(BILLING_OVERRIDES_SHEET_NAME);
@@ -885,6 +891,7 @@ function loadBillingOverridesMap_(billingMonth) {
   const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {});
   const colInsuranceType = resolveBillingColumn_(headers, ['insuranceType', '保険種別', '保険区分', '保険タイプ'], 'insuranceType', {});
   const colBurdenRate = resolveBillingColumn_(headers, BILLING_LABELS.share.concat(['burdenRate']), 'burdenRate', {});
+  const colManualSelfPay = resolveBillingColumn_(headers, ['manualSelfPayAmount', '自費', 'selfPayAmount'], 'manualSelfPayAmount', {});
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const map = {};
@@ -926,6 +933,11 @@ function loadBillingOverridesMap_(billingMonth) {
         ? undefined
         : normalizeBurdenRateInt_(row[colBurdenRate - 1]))
       : undefined;
+    const manualSelfPayAmount = colManualSelfPay
+      ? (row[colManualSelfPay - 1] === '' || row[colManualSelfPay - 1] === null
+        ? ''
+        : normalizeMoneyValue_(row[colManualSelfPay - 1]))
+      : undefined;
 
     const hasOverride = [
       manualUnitPrice,
@@ -933,7 +945,8 @@ function loadBillingOverridesMap_(billingMonth) {
       carryOverAmount,
       adjustedVisitCount,
       insuranceType,
-      burdenRate
+      burdenRate,
+      manualSelfPayAmount
     ].some(value => value !== undefined);
     if (!hasOverride) return;
 
@@ -943,7 +956,9 @@ function loadBillingOverridesMap_(billingMonth) {
       carryOverAmount,
       adjustedVisitCount,
       insuranceType,
-      burdenRate
+      burdenRate,
+      manualSelfPayAmount,
+      selfPayItems: buildSelfPayItemsFromLegacy_(manualSelfPayAmount)
     };
     const existing = latestRowByKey[key];
     if (existing && existing.rowNumber > rowNumber) {
@@ -1168,6 +1183,7 @@ function getBillingSourceData(billingMonth) {
     if (override.adjustedVisitCount !== undefined) flags.visitCount = true;
     if (override.insuranceType !== undefined) flags.insuranceType = true;
     if (override.burdenRate !== undefined) flags.burdenRate = true;
+    if (override.manualSelfPayAmount !== undefined) flags.manualSelfPayAmount = true;
     if (Object.keys(flags).length) {
       billingOverrideFlags[pid] = flags;
     }

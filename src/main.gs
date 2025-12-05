@@ -199,7 +199,29 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
   if (expectedMonthKey && String(billingMonth) !== String(expectedMonthKey)) {
     return { ok: false, reason: 'billingMonth mismatch' };
   }
-  if (!Array.isArray(payload.billingJson)) return { ok: false, reason: 'billingJson missing' };
+  const requiredArrays = [
+    { key: 'billingJson', reason: 'billingJson missing' },
+    { key: 'carryOverLedger', reason: 'carryOverLedger missing' },
+    { key: 'unpaidHistory', reason: 'unpaidHistory missing' }
+  ];
+  const requiredMaps = [
+    { key: 'carryOverLedgerMeta', reason: 'carryOverLedgerMeta missing' },
+    { key: 'carryOverLedgerByPatient', reason: 'carryOverLedgerByPatient missing' },
+    { key: 'visitsByPatient', reason: 'visitsByPatient missing' },
+    { key: 'totalsByPatient', reason: 'totalsByPatient missing' }
+  ];
+
+  for (const field of requiredArrays) {
+    if (!Array.isArray(payload[field.key])) return { ok: false, reason: field.reason };
+  }
+
+  for (const field of requiredMaps) {
+    const value = payload[field.key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { ok: false, reason: field.reason };
+    }
+  }
+
   return { ok: true, billingMonth };
 }
 
@@ -899,7 +921,7 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
       throw new Error('銀行データを生成できません。請求月が指定されていません。先に「請求データを集計」を実行してください。');
     }
 
-    if (!normalizedPrepared || !normalizedPrepared.billingJson) {
+    if (!normalizedPrepared || !Array.isArray(normalizedPrepared.billingJson)) {
       throw new Error('銀行データを生成できません。CarryOverLedger シートが存在しないか、初期化されていません。「請求データを集計」を実行する前に、CarryOverLedger シートの作成を確認してください。');
     }
 

@@ -755,8 +755,14 @@ function normalizeBillingResultPayload(raw) {
   function normalizeBillingPayload(payload) {
     const withDefaults = applyBillingFieldDefaults(payload);
     const billingJson = coerceBillingJson(withDefaults.billingJson) || [];
+    const fallbackBillingMonth = billingJson && billingJson.length ? billingJson[0].billingMonth : '';
+    const resolvedBillingMonth =
+      withDefaults.billingMonth ||
+      (withDefaults.month && withDefaults.month.key) ||
+      fallbackBillingMonth ||
+      '';
     const enrichedRows = mergePatientMetaIntoRows(billingJson, withDefaults.patients || {});
-    return Object.assign({}, withDefaults, { billingJson: enrichedRows });
+    return Object.assign({}, withDefaults, { billingMonth: resolvedBillingMonth, billingJson: enrichedRows });
   }
 
   function parseMaybeJson(value) {

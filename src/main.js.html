@@ -965,7 +965,9 @@ function handleBankExport() {
   google.script.run
     .withSuccessHandler(onBankExportCompleted)
     .withFailureHandler(onBillingFailed)
-    .generateBankTransferDataFromCache(billingState.prepared.billingMonth, {});
+    .generateBankTransferDataFromCache(billingState.prepared.billingMonth, {
+      billingMonth: billingState.prepared.billingMonth
+    });
 }
 
 function onBankExportCompleted(result) {

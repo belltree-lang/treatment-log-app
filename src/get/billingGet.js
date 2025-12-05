@@ -1205,14 +1205,27 @@ function getBillingSourceData(billingMonth) {
   });
   const staffDirectory = loadBillingStaffDirectory_();
   const staffDisplayByPatient = buildStaffDisplayByPatient_(visitCountsResult.staffByPatient || {}, staffDirectory);
-  const carryOverLedger = loadCarryOverLedgerEntries_(month);
+  let carryOverLedger = [];
+  try {
+    carryOverLedger = loadCarryOverLedgerEntries_(month);
+  } catch (err) {
+    billingLogger_.log('[billing] CarryOverLedger missing or inaccessible → using empty fallback: ' + err);
+    carryOverLedger = [];
+  }
+
   const carryOverLedgerByPatient = (carryOverLedger || []).reduce((map, entry) => {
     const pid = billingNormalizePatientId_(entry.patientId);
     if (!pid) return map;
     map[pid] = (map[pid] || 0) + (Number(entry.amount) || 0);
     return map;
   }, {});
-  const unpaidHistory = extractUnpaidBillingHistory(month);
+  let unpaidHistory = [];
+  try {
+    unpaidHistory = extractUnpaidBillingHistory(month);
+  } catch (err) {
+    billingLogger_.log('[billing] unpaidHistory fallback (CarryOverLedger or history missing): ' + err);
+    unpaidHistory = [];
+  }
   const carryOverFromUnpaid = (unpaidHistory || []).reduce((map, entry) => {
     const pid = billingNormalizePatientId_(entry.patientId);
     if (!pid) return map;

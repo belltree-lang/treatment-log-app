@@ -832,20 +832,31 @@ function normalizeCarryOverLedgerMonth_(value, fallbackKey) {
     const ss = billingSs();
     let sheet = ss.getSheetByName('CarryOverLedger');
     let didCreate = false;
+    const defaultHeader = ['patientId', 'month', 'reason', 'amount', 'createdAt', 'operator'];
     if (!sheet) {
       sheet = ss.insertSheet('CarryOverLedger');
       didCreate = true;
       meta.wasAutoCreated = true;
     }
 
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(['patientId', 'month', 'reason', 'amount', 'createdAt', 'operator']);
+    const lastRow = sheet.getLastRow();
+    const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+    const hasDataRows = lastRow > 1;
+    const headerWidth = Math.max(lastCol, defaultHeader.length);
+    const headerValues = headerWidth > 0 ? sheet.getRange(1, 1, 1, headerWidth).getDisplayValues()[0] : [];
+    const normalizedHeader = (headerValues || []).map(value => String(value || '').trim());
+    const hasAnyHeaderValue = normalizedHeader.some(value => !!value);
+    const hasRequiredHeader = defaultHeader.every(label => normalizedHeader.indexOf(label) >= 0);
+    const shouldInitializeHeader = lastRow === 0 || (!hasAnyHeaderValue && !hasDataRows) || (!hasRequiredHeader && !hasDataRows);
+
+    if (shouldInitializeHeader) {
+      sheet.getRange(1, 1, 1, defaultHeader.length).setValues([defaultHeader]);
       didCreate = true;
       meta.headerInserted = true;
     }
 
     if (didCreate) {
-      billingLogger_.log('[billing] CarryOverLedger auto-created');
+      billingLogger_.log('[billing] CarryOverLedger auto-created/initialized');
     }
     meta.rowCount = sheet.getLastRow();
     meta.dataRowCount = Math.max(0, meta.rowCount - 1);

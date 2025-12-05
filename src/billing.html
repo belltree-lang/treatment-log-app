@@ -43,9 +43,10 @@
   .sort-header{ display:flex; align-items:center; gap:6px; padding:0; background:none; border:0; font:inherit; color:inherit; cursor:pointer; width:100%; text-align:left; }
   .sort-indicator{ font-size:0.8rem; color:var(--muted); }
   th.sortable{ padding:6px 8px; }
-  .pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:0.8rem; font-weight:600; }
-  .pill.warn{ background:#fef2f2; color:#b91c1c; }
-  .pill.ok{ background:#ecfeff; color:#0f172a; }
+    .pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:0.8rem; font-weight:600; }
+    .pill.warn{ background:#fef2f2; color:#b91c1c; }
+    .pill.ok{ background:#ecfeff; color:#0f172a; }
+    .pill.neutral{ background:#e5e7eb; color:#111827; }
   .downloads{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .download-link{ display:inline-flex; align-items:center; gap:8px; padding:10px 12px; border-radius:10px; background:#eff6ff; color:#1d4ed8; font-weight:600; text-decoration:none; }
   .download-link svg{ width:16px; height:16px; }
@@ -94,12 +95,15 @@
         </label>
           <button class="btn" id="billingAggregateBtn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
           <button class="btn secondary" id="billingSaveBtn" type="button" onclick="handleBillingSaveEdits()">変更を保存</button>
-          <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
-          <button class="btn secondary" id="billingBankBtn" type="button" onclick="handleBankExport()">銀行データ出力</button>
-        <div id="billingStatus" class="status-line"></div>
-        <div id="billingError" class="alert danger" style="display:none"></div>
-      </div>
-    </section>
+        <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
+        <button class="btn secondary" id="billingBankBtn" type="button" onclick="handleBankExport()">銀行データ出力</button>
+          <div class="status-line">
+            <div id="billingStatus" class="status-line" style="flex:1"></div>
+            <div id="carryOverLedgerStatus" class="pill neutral" style="display:none"></div>
+          </div>
+          <div id="billingError" class="alert danger" style="display:none"></div>
+        </div>
+      </section>
 
     <section class="card">
       <div class="status-line" style="margin-bottom:6px">

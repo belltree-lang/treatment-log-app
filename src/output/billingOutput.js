@@ -577,14 +577,34 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
   return { billingMonth, inserted: mapped.length };
 }
 
-function exportBankTransferDataForPrepared_(prepared) {
-  const normalized = normalizePreparedBilling_(prepared);
-  if (!normalized || !normalized.billingJson) {
-    throw new Error('請求データが見つかりません。先に集計を実行してください。');
+  function logPreparedBankPayloadStatus_(prepared) {
+    const requiredKeys = ['billingJson', 'visitsByPatient', 'totalsByPatient', 'carryOverByPatient', 'unpaidHistory', 'bankAccountInfoByPatient'];
+    const normalized = normalizePreparedBilling_(prepared) || {};
+    const missing = requiredKeys.filter(key => {
+      const value = normalized[key];
+      if (key === 'billingJson') {
+        return !Array.isArray(value) || value.length === 0;
+      }
+      if (Array.isArray(value)) return value.length === 0;
+      return !value || (typeof value === 'object' && Object.keys(value).length === 0);
+    });
+    if (missing.length) {
+      billingLogger_.log('[billing] Prepared payload is incomplete (missing: ' + missing.join(', ') + ')');
+    }
+    if (normalized && normalized.carryOverLedgerMeta && (normalized.carryOverLedgerMeta.wasAutoCreated || normalized.carryOverLedgerMeta.headerInserted)) {
+      billingLogger_.log('[billing] CarryOverLedger sheet missing → using fallback model');
+    }
   }
-  let bankInfoByName = normalized.bankInfoByName || {};
-  let patientMap = normalized.patients || normalized.patientMap || {};
-  let bankStatuses = normalized.bankStatuses || {};
+
+  function exportBankTransferDataForPrepared_(prepared) {
+    const normalized = normalizePreparedBilling_(prepared);
+    if (!normalized || !normalized.billingJson) {
+      throw new Error('銀行データを生成できません。CarryOverLedger シートが存在しないか、初期化されていません。「請求データを集計」を実行する前に、CarryOverLedger シートの作成を確認してください。');
+    }
+    logPreparedBankPayloadStatus_(normalized);
+    let bankInfoByName = normalized.bankInfoByName || {};
+    let patientMap = normalized.patients || normalized.patientMap || {};
+    let bankStatuses = normalized.bankStatuses || {};
   if (!Object.keys(bankInfoByName).length || !Object.keys(patientMap).length) {
     const source = getBillingSourceData(normalized.billingMonth);
     bankInfoByName = source.bankInfoByName || bankInfoByName;

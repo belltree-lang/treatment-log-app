@@ -826,33 +826,42 @@ function normalizeCarryOverLedgerMonth_(value, fallbackKey) {
   return fallbackKey || '';
 }
 
-function ensureCarryOverLedgerSheet_() {
-  const ss = billingSs();
-  let sheet = ss.getSheetByName('CarryOverLedger');
-  let didCreate = false;
-  if (!sheet) {
-    sheet = ss.insertSheet('CarryOverLedger');
-    didCreate = true;
+  function ensureCarryOverLedgerSheet_(options) {
+    const opts = options || {};
+    const meta = opts.meta || {};
+    const ss = billingSs();
+    let sheet = ss.getSheetByName('CarryOverLedger');
+    let didCreate = false;
+    if (!sheet) {
+      sheet = ss.insertSheet('CarryOverLedger');
+      didCreate = true;
+      meta.wasAutoCreated = true;
+    }
+
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(['patientId', 'month', 'reason', 'amount', 'createdAt', 'operator']);
+      didCreate = true;
+      meta.headerInserted = true;
+    }
+
+    if (didCreate) {
+      billingLogger_.log('[billing] CarryOverLedger auto-created');
+    }
+    meta.rowCount = sheet.getLastRow();
+    meta.dataRowCount = Math.max(0, meta.rowCount - 1);
+    return sheet;
   }
 
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(['patientId', 'month', 'reason', 'amount', 'createdAt', 'operator']);
-    didCreate = true;
-  }
-
-  if (didCreate) {
-    billingLogger_.log('[billing] CarryOverLedger auto-created');
-  }
-  return sheet;
-}
-
-function loadCarryOverLedgerEntries_(billingMonth) {
-  const month = normalizeBillingMonthInput(billingMonth);
-  const sheet = ensureCarryOverLedgerSheet_();
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  function loadCarryOverLedgerEntries_(billingMonth, ledgerMeta) {
+    const month = normalizeBillingMonthInput(billingMonth);
+    const meta = ledgerMeta || {};
+    const sheet = ensureCarryOverLedgerSheet_({ meta });
+    const lastRow = sheet.getLastRow();
+    meta.rowCount = lastRow;
+    meta.dataRowCount = Math.max(0, lastRow - 1);
+    if (lastRow < 2) return [];
+    const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+    const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
 
   const colPid = resolveBillingColumn_(headers, ['patientId', '患者ID', '患者番号', 'カルテ番号'], 'patientId', { required: true });
   const colMonth = resolveBillingColumn_(headers, ['month', 'billingMonth', 'ym', '年月', '月'], 'month', {});
@@ -861,8 +870,8 @@ function loadCarryOverLedgerEntries_(billingMonth) {
   const colCreatedAt = resolveBillingColumn_(headers, ['入力日', '作成日', 'createdAt', '記入日'], '入力日', {});
   const colUser = resolveBillingColumn_(headers, ['操作ユーザー', '作成者', '更新者', 'user', 'operator'], '操作ユーザー', {});
 
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const targetMonthNum = Number(month.key);
+    const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+    const targetMonthNum = Number(month.key);
 
   return values.map((row, idx) => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
@@ -1174,7 +1183,7 @@ function getBillingPaymentResultsIfExists_(billingMonth) {
   }
 }
 
-function getBillingSourceData(billingMonth) {
+  function getBillingSourceData(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const patientRecords = getBillingPatientRecords();
   const bankRecords = getBillingBankRecords();
@@ -1205,13 +1214,15 @@ function getBillingSourceData(billingMonth) {
   });
   const staffDirectory = loadBillingStaffDirectory_();
   const staffDisplayByPatient = buildStaffDisplayByPatient_(visitCountsResult.staffByPatient || {}, staffDirectory);
-  let carryOverLedger = [];
-  try {
-    carryOverLedger = loadCarryOverLedgerEntries_(month);
-  } catch (err) {
-    billingLogger_.log('[billing] CarryOverLedger missing or inaccessible → using empty fallback: ' + err);
-    carryOverLedger = [];
-  }
+    let carryOverLedger = [];
+    const carryOverLedgerMeta = {};
+    try {
+      carryOverLedger = loadCarryOverLedgerEntries_(month, carryOverLedgerMeta);
+    } catch (err) {
+      billingLogger_.log('[billing] CarryOverLedger missing or inaccessible → using empty fallback: ' + err);
+      carryOverLedger = [];
+      carryOverLedgerMeta.loadError = String(err);
+    }
 
   const carryOverLedgerByPatient = (carryOverLedger || []).reduce((map, entry) => {
     const pid = billingNormalizePatientId_(entry.patientId);
@@ -1250,13 +1261,14 @@ function getBillingSourceData(billingMonth) {
     treatmentVisitCountEntries: Object.keys(treatmentVisitCounts || {}).length,
     zeroVisitSamples,
     unpaidHistoryCount: (unpaidHistory || []).length,
-    carryOverLedgerCount: (carryOverLedger || []).length,
-    carryOverPatients: Object.keys(carryOverByPatient || {}).length,
-    staffByPatientCount: Object.keys(visitCountsResult.staffByPatient || {}).length,
-    staffDirectorySize: Object.keys(staffDirectory || {}).length
-  }));
-  return {
-    billingMonth: month.key,
+      carryOverLedgerCount: (carryOverLedger || []).length,
+      carryOverPatients: Object.keys(carryOverByPatient || {}).length,
+      staffByPatientCount: Object.keys(visitCountsResult.staffByPatient || {}).length,
+      staffDirectorySize: Object.keys(staffDirectory || {}).length
+    }));
+    billingLogger_.log('[billing] CarryOverLedger status=' + JSON.stringify(carryOverLedgerMeta));
+    return {
+      billingMonth: month.key,
     month,
     treatmentVisitCounts,
     visitCounts: treatmentVisitCounts,
@@ -1266,12 +1278,13 @@ function getBillingSourceData(billingMonth) {
     bankStatuses: getBillingPaymentResultsIfExists_(month),
     staffByPatient: visitCountsResult.staffByPatient || {},
     staffDirectory,
-    staffDisplayByPatient,
-    unpaidHistory,
-    carryOverLedger,
-    carryOverLedgerByPatient,
-    carryOverByPatient,
-    billingOverrideFlags
+      staffDisplayByPatient,
+      unpaidHistory,
+      carryOverLedger,
+      carryOverLedgerMeta,
+      carryOverLedgerByPatient,
+      carryOverByPatient,
+      billingOverrideFlags
   };
 }
 

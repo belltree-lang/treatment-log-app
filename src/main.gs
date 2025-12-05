@@ -341,13 +341,14 @@ function buildPreparedBillingPayload_(billingMonth) {
     staffDirectory: source.staffDirectory || {},
     staffDisplayByPatient: source.staffDisplayByPatient || {},
     billingOverrideFlags: source.billingOverrideFlags || {},
-    carryOverByPatient: source.carryOverByPatient || {},
-    carryOverLedger: source.carryOverLedger || [],
-    carryOverLedgerByPatient: source.carryOverLedgerByPatient || {},
-    unpaidHistory: source.unpaidHistory || [],
-    visitsByPatient,
-    totalsByPatient,
-    bankAccountInfoByPatient
+      carryOverByPatient: source.carryOverByPatient || {},
+      carryOverLedger: source.carryOverLedger || [],
+      carryOverLedgerMeta: source.carryOverLedgerMeta || {},
+      carryOverLedgerByPatient: source.carryOverLedgerByPatient || {},
+      unpaidHistory: source.unpaidHistory || [],
+      visitsByPatient,
+      totalsByPatient,
+      bankAccountInfoByPatient
   };
 }
 
@@ -364,11 +365,11 @@ function coerceBillingJsonArray_(raw) {
   return [];
 }
 
-function normalizePreparedBilling_(payload) {
-  if (!payload) return null;
-  const normalizeMap_ = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
-  return Object.assign({}, payload, {
-    billingJson: coerceBillingJsonArray_(payload.billingJson),
+  function normalizePreparedBilling_(payload) {
+    if (!payload) return null;
+    const normalizeMap_ = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+    return Object.assign({}, payload, {
+      billingJson: coerceBillingJsonArray_(payload.billingJson),
     patients: normalizeMap_(payload.patients || payload.patientMap),
     patientMap: normalizeMap_(payload.patientMap || payload.patients),
     bankInfoByName: normalizeMap_(payload.bankInfoByName),
@@ -377,15 +378,16 @@ function normalizePreparedBilling_(payload) {
     totalsByPatient: normalizeMap_(payload.totalsByPatient),
     staffByPatient: normalizeMap_(payload.staffByPatient),
     staffDirectory: normalizeMap_(payload.staffDirectory),
-    staffDisplayByPatient: normalizeMap_(payload.staffDisplayByPatient),
-    billingOverrideFlags: normalizeMap_(payload.billingOverrideFlags),
-    carryOverByPatient: normalizeMap_(payload.carryOverByPatient),
-    carryOverLedger: Array.isArray(payload.carryOverLedger) ? payload.carryOverLedger : [],
-    carryOverLedgerByPatient: normalizeMap_(payload.carryOverLedgerByPatient),
-    unpaidHistory: Array.isArray(payload.unpaidHistory) ? payload.unpaidHistory : [],
-    bankStatuses: normalizeMap_(payload.bankStatuses)
-  });
-}
+      staffDisplayByPatient: normalizeMap_(payload.staffDisplayByPatient),
+      billingOverrideFlags: normalizeMap_(payload.billingOverrideFlags),
+      carryOverByPatient: normalizeMap_(payload.carryOverByPatient),
+      carryOverLedger: Array.isArray(payload.carryOverLedger) ? payload.carryOverLedger : [],
+      carryOverLedgerMeta: normalizeMap_(payload.carryOverLedgerMeta),
+      carryOverLedgerByPatient: normalizeMap_(payload.carryOverLedgerByPatient),
+      unpaidHistory: Array.isArray(payload.unpaidHistory) ? payload.unpaidHistory : [],
+      bankStatuses: normalizeMap_(payload.bankStatuses)
+    });
+  }
 
 function toClientBillingPayload_(prepared) {
   const rawLength = prepared && prepared.billingJson
@@ -406,13 +408,14 @@ function toClientBillingPayload_(prepared) {
     staffDirectory: normalized.staffDirectory || {},
     staffDisplayByPatient: normalized.staffDisplayByPatient || {},
     billingOverrideFlags: normalized.billingOverrideFlags || {},
-    carryOverByPatient: normalized.carryOverByPatient || {},
-    carryOverLedger: normalized.carryOverLedger || [],
-    carryOverLedgerByPatient: normalized.carryOverLedgerByPatient || {},
-    unpaidHistory: normalized.unpaidHistory || [],
-    visitsByPatient: normalized.visitsByPatient || {},
-    totalsByPatient: normalized.totalsByPatient || {},
-    bankAccountInfoByPatient: normalized.bankAccountInfoByPatient || {},
+      carryOverByPatient: normalized.carryOverByPatient || {},
+      carryOverLedger: normalized.carryOverLedger || [],
+      carryOverLedgerMeta: normalized.carryOverLedgerMeta || {},
+      carryOverLedgerByPatient: normalized.carryOverLedgerByPatient || {},
+      unpaidHistory: normalized.unpaidHistory || [],
+      visitsByPatient: normalized.visitsByPatient || {},
+      totalsByPatient: normalized.totalsByPatient || {},
+      bankAccountInfoByPatient: normalized.bankAccountInfoByPatient || {},
     bankStatuses: normalized.bankStatuses || {}
   };
 }
@@ -881,14 +884,14 @@ function generateBankTransferData(billingMonth, options) {
   return exportBankTransferDataForPrepared_(prepared, options || {});
 }
 
-function generateBankTransferDataFromCache(billingMonth, options) {
-  const month = normalizeBillingMonthInput(billingMonth);
-  const prepared = loadPreparedBilling_(month.key);
-  if (!prepared || !prepared.billingJson) {
-    throw new Error('事前集計が見つかりません。先に「請求データを集計」を実行してください。');
+  function generateBankTransferDataFromCache(billingMonth, options) {
+    const month = normalizeBillingMonthInput(billingMonth);
+    const prepared = loadPreparedBilling_(month.key);
+    if (!prepared || !prepared.billingJson) {
+      throw new Error('銀行データを生成できません。CarryOverLedger シートが存在しないか、初期化されていません。「請求データを集計」を実行する前に、CarryOverLedger シートの作成を確認してください。');
+    }
+    return exportBankTransferDataForPrepared_(prepared, options || {});
   }
-  return exportBankTransferDataForPrepared_(prepared, options || {});
-}
 
 function applyBillingPaymentResultsEntry(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);

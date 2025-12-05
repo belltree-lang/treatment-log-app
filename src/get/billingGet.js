@@ -826,10 +826,29 @@ function normalizeCarryOverLedgerMonth_(value, fallbackKey) {
   return fallbackKey || '';
 }
 
+function ensureCarryOverLedgerSheet_() {
+  const ss = billingSs();
+  let sheet = ss.getSheetByName('CarryOverLedger');
+  let didCreate = false;
+  if (!sheet) {
+    sheet = ss.insertSheet('CarryOverLedger');
+    didCreate = true;
+  }
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['patientId', 'month', 'reason', 'amount', 'createdAt', 'operator']);
+    didCreate = true;
+  }
+
+  if (didCreate) {
+    billingLogger_.log('[billing] CarryOverLedger auto-created');
+  }
+  return sheet;
+}
+
 function loadCarryOverLedgerEntries_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
-  const sheet = billingSs().getSheetByName('CarryOverLedger');
-  if (!sheet) return [];
+  const sheet = ensureCarryOverLedgerSheet_();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());

@@ -75,6 +75,7 @@ function calculateBillingRowTotalsServer(row) {
 
 const BILLING_CACHE_PREFIX = 'billing_prepared_';
 const BILLING_CACHE_TTL_SECONDS = 3600; // 1 hour
+const PREPARED_BILLING_SCHEMA_VERSION = 2;
 
 function buildBillingCacheKey_(billingMonthKey) {
   const monthKey = String(billingMonthKey || '').trim();
@@ -199,6 +200,13 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
   if (expectedMonthKey && String(billingMonth) !== String(expectedMonthKey)) {
     return { ok: false, reason: 'billingMonth mismatch' };
   }
+
+  const schemaVersion = payload.schemaVersion;
+  if (schemaVersion == null) return { ok: false, reason: 'schemaVersion missing' };
+  if (Number(schemaVersion) !== PREPARED_BILLING_SCHEMA_VERSION) {
+    return { ok: false, reason: 'schemaVersion mismatch' };
+  }
+
   const requiredArrays = [
     { key: 'billingJson', reason: 'billingJson missing' },
     { key: 'carryOverLedger', reason: 'carryOverLedger missing' },
@@ -208,7 +216,15 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
     { key: 'carryOverLedgerMeta', reason: 'carryOverLedgerMeta missing' },
     { key: 'carryOverLedgerByPatient', reason: 'carryOverLedgerByPatient missing' },
     { key: 'visitsByPatient', reason: 'visitsByPatient missing' },
-    { key: 'totalsByPatient', reason: 'totalsByPatient missing' }
+    { key: 'totalsByPatient', reason: 'totalsByPatient missing' },
+    { key: 'patients', reason: 'patients missing' },
+    { key: 'bankInfoByName', reason: 'bankInfoByName missing' },
+    { key: 'staffByPatient', reason: 'staffByPatient missing' },
+    { key: 'staffDirectory', reason: 'staffDirectory missing' },
+    { key: 'staffDisplayByPatient', reason: 'staffDisplayByPatient missing' },
+    { key: 'billingOverrideFlags', reason: 'billingOverrideFlags missing' },
+    { key: 'carryOverByPatient', reason: 'carryOverByPatient missing' },
+    { key: 'bankAccountInfoByPatient', reason: 'bankAccountInfoByPatient missing' }
   ];
 
   for (const field of requiredArrays) {
@@ -354,6 +370,7 @@ function buildPreparedBillingPayload_(billingMonth) {
     billingLogger_.log('[billing] buildPreparedBillingPayload_ firstBillingEntry=' + JSON.stringify(billingJson[0]));
   }
   return {
+    schemaVersion: PREPARED_BILLING_SCHEMA_VERSION,
     billingMonth: source.billingMonth,
     billingJson,
     preparedAt: new Date().toISOString(),
@@ -390,16 +407,20 @@ function coerceBillingJsonArray_(raw) {
   function normalizePreparedBilling_(payload) {
     if (!payload) return null;
     const normalizeMap_ = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+    const schemaVersion = Number(payload.schemaVersion);
     return Object.assign({}, payload, {
+      schemaVersion: Number.isFinite(schemaVersion) ? schemaVersion : null,
+      billingMonth: payload.billingMonth || payload.month || '',
+      preparedAt: payload.preparedAt || payload.prepared_at || null,
       billingJson: coerceBillingJsonArray_(payload.billingJson),
-    patients: normalizeMap_(payload.patients || payload.patientMap),
-    patientMap: normalizeMap_(payload.patientMap || payload.patients),
-    bankInfoByName: normalizeMap_(payload.bankInfoByName),
-    bankAccountInfoByPatient: normalizeMap_(payload.bankAccountInfoByPatient),
-    visitsByPatient: normalizeMap_(payload.visitsByPatient || payload.visitCounts),
-    totalsByPatient: normalizeMap_(payload.totalsByPatient),
-    staffByPatient: normalizeMap_(payload.staffByPatient),
-    staffDirectory: normalizeMap_(payload.staffDirectory),
+      patients: normalizeMap_(payload.patients || payload.patientMap),
+      patientMap: normalizeMap_(payload.patientMap || payload.patients),
+      bankInfoByName: normalizeMap_(payload.bankInfoByName),
+      bankAccountInfoByPatient: normalizeMap_(payload.bankAccountInfoByPatient),
+      visitsByPatient: normalizeMap_(payload.visitsByPatient || payload.visitCounts),
+      totalsByPatient: normalizeMap_(payload.totalsByPatient),
+      staffByPatient: normalizeMap_(payload.staffByPatient),
+      staffDirectory: normalizeMap_(payload.staffDirectory),
       staffDisplayByPatient: normalizeMap_(payload.staffDisplayByPatient),
       billingOverrideFlags: normalizeMap_(payload.billingOverrideFlags),
       carryOverByPatient: normalizeMap_(payload.carryOverByPatient),
@@ -421,6 +442,7 @@ function toClientBillingPayload_(prepared) {
   billingLogger_.log('[billing] toClientBillingPayload_: billingJson length before normalize=' + rawLength +
     ' after normalize=' + billingJson.length);
   return {
+    schemaVersion: normalized.schemaVersion,
     billingMonth: normalized.billingMonth || '',
     billingJson,
     preparedAt: normalized.preparedAt || null,

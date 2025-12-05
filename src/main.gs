@@ -56,7 +56,9 @@ function calculateBillingRowTotalsServer(row) {
       : source.transportAmount,
     unitPrice: source.unitPrice,
     medicalAssistance: source.medicalAssistance,
-    carryOverAmount: source.carryOverAmount
+    carryOverAmount: source.carryOverAmount,
+    selfPayItems: source.selfPayItems,
+    manualSelfPayAmount: source.manualSelfPayAmount
   });
 
   return {
@@ -66,6 +68,7 @@ function calculateBillingRowTotalsServer(row) {
     transportAmount: amountCalc.transportAmount,
     carryOverAmount: amountCalc.carryOverAmount,
     billingAmount: amountCalc.billingAmount,
+    manualSelfPayAmount: amountCalc.manualSelfPayAmount,
     grandTotal: amountCalc.grandTotal
   };
 }
@@ -503,6 +506,11 @@ function normalizeBillingEdits_(maybeEdits) {
     const normalizedManualTransport = manualTransportSource === '' || manualTransportSource === null
       ? ''
       : Number(manualTransportSource) || 0;
+    const hasManualSelfPayInput = edit && Object.prototype.hasOwnProperty.call(edit, 'manualSelfPayAmount');
+    const manualSelfPaySource = hasManualSelfPayInput ? edit.manualSelfPayAmount : edit && edit.selfPayAmount;
+    const normalizedManualSelfPay = manualSelfPaySource === '' || manualSelfPaySource === null
+      ? ''
+      : Number(manualSelfPaySource) || 0;
     const hasAdjustedVisitInput = edit && Object.prototype.hasOwnProperty.call(edit, 'adjustedVisitCount');
     const normalizedAdjustedVisit = hasAdjustedVisitInput
       ? billingNormalizeVisitCount_(edit.adjustedVisitCount)
@@ -521,6 +529,7 @@ function normalizeBillingEdits_(maybeEdits) {
       carryOverAmount: edit.carryOverAmount != null ? Number(edit.carryOverAmount) || 0 : undefined,
       payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined,
       manualTransportAmount: hasManualTransportInput ? normalizedManualTransport : undefined,
+      manualSelfPayAmount: hasManualSelfPayInput ? normalizedManualSelfPay : undefined,
       responsible: edit && edit.responsible != null ? String(edit.responsible).trim() : undefined,
       bankCode: normalizedBankCode,
       branchCode: normalizedBranchCode,
@@ -574,13 +583,14 @@ function extractBillingOverrideFields_(edit) {
     manualUnitPrice: edit.manualUnitPrice,
     manualTransportAmount: edit.manualTransportAmount,
     carryOverAmount: edit.carryOverAmount,
-    adjustedVisitCount: edit.adjustedVisitCount
+    adjustedVisitCount: edit.adjustedVisitCount,
+    manualSelfPayAmount: edit.manualSelfPayAmount
   };
 }
 
 function hasBillingOverrideValues_(edit) {
   const fields = extractBillingOverrideFields_(edit);
-  return ['manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount']
+  return ['manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount', 'manualSelfPayAmount']
     .some(key => fields[key] !== undefined);
 }
 
@@ -672,7 +682,15 @@ function ensureBillingOverridesSheet_() {
   if (sheet) return sheet;
 
   sheet = ss.insertSheet(BILLING_OVERRIDES_SHEET_NAME);
-  sheet.appendRow(['ym', 'patientId', 'manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount']);
+  sheet.appendRow([
+    'ym',
+    'patientId',
+    'manualUnitPrice',
+    'manualTransportAmount',
+    'carryOverAmount',
+    'adjustedVisitCount',
+    'manualSelfPayAmount'
+  ]);
   return sheet;
 }
 
@@ -683,7 +701,8 @@ function resolveBillingOverridesColumns_(headers) {
   const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {});
   const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {});
   const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {});
-  return { colYm, colPid, colManualUnitPrice, colManualTransport, colCarryOver, colAdjustedVisits };
+  const colManualSelfPay = resolveBillingColumn_(headers, ['manualSelfPayAmount', 'selfPayAmount', '自費'], 'manualSelfPayAmount', {});
+  return { colYm, colPid, colManualUnitPrice, colManualTransport, colCarryOver, colAdjustedVisits, colManualSelfPay };
 }
 
 function saveBillingOverrideUpdate_(billingMonthKey, edit) {
@@ -715,18 +734,20 @@ function saveBillingOverrideUpdate_(billingMonthKey, edit) {
     assignField(newRow, cols.colManualTransport, edit.manualTransportAmount);
     assignField(newRow, cols.colCarryOver, edit.carryOverAmount);
     assignField(newRow, cols.colAdjustedVisits, edit.adjustedVisitCount);
+    assignField(newRow, cols.colManualSelfPay, edit.manualSelfPayAmount);
 
     sheet.getRange(idx + 2, 1, 1, newRow.length).setValues([newRow]);
     return { updated: true, rowNumber: idx + 2 };
   }
 
-  const newRow = new Array(Math.max(lastCol, 6)).fill('');
+  const newRow = new Array(Math.max(lastCol, 7)).fill('');
   assignField(newRow, cols.colYm, ym);
   assignField(newRow, cols.colPid, pid);
   assignField(newRow, cols.colManualUnitPrice, edit.manualUnitPrice);
   assignField(newRow, cols.colManualTransport, edit.manualTransportAmount);
   assignField(newRow, cols.colCarryOver, edit.carryOverAmount);
   assignField(newRow, cols.colAdjustedVisits, edit.adjustedVisitCount);
+  assignField(newRow, cols.colManualSelfPay, edit.manualSelfPayAmount);
 
   sheet.appendRow(newRow);
   return { updated: true, rowNumber: sheet.getLastRow() };
@@ -746,10 +767,14 @@ function applyBillingOverrideEdits_(billingMonthKey, edits) {
     const normalizedManualTransport = edit.manualTransportAmount === '' || edit.manualTransportAmount === null
       ? ''
       : edit.manualTransportAmount;
+    const normalizedManualSelfPay = edit.manualSelfPayAmount === '' || edit.manualSelfPayAmount === null
+      ? ''
+      : edit.manualSelfPayAmount;
     const result = saveBillingOverrideUpdate_(billingMonthKey, Object.assign({}, edit, {
       carryOverAmount: normalizedCarryOver,
       manualUnitPrice: normalizedManualUnitPrice,
-      manualTransportAmount: normalizedManualTransport
+      manualTransportAmount: normalizedManualTransport,
+      manualSelfPayAmount: normalizedManualSelfPay
     }));
     if (result && result.updated) {
       updatedCount += 1;

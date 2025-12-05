@@ -30,8 +30,8 @@ const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeo
   ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
 const BILLING_PATIENT_INFO_FIELDS = ['insuranceType', 'medicalAssistance', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
-const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount'];
-const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'insuranceType', 'burdenRate'];
+const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount'];
+const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount', 'insuranceType', 'burdenRate'];
 
 function qs(id) {
   return document.getElementById(id);
@@ -442,9 +442,10 @@ function calculateBillingRowTotalsLocal(row) {
     : hasChargeablePrice && visitCount > 0
       ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
       : 0;
-  const grandTotal = carryOverAmount + treatmentAmount + transportAmount;
+  const manualSelfPayAmount = normalizeMoneyNumber(source.manualSelfPayAmount);
+  const grandTotal = carryOverAmount + treatmentAmount + transportAmount + manualSelfPayAmount;
 
-  return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, grandTotal };
+  return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, manualSelfPayAmount, grandTotal };
 }
 
 function normalizeServerBillingTotals(result, fallback) {
@@ -459,6 +460,7 @@ function normalizeServerBillingTotals(result, fallback) {
     transportAmount: Number(payload.transportAmount) || base.transportAmount || 0,
     carryOverAmount: Number(payload.carryOverAmount) || base.carryOverAmount || 0,
     billingAmount: Number(payload.billingAmount) || base.billingAmount || 0,
+    manualSelfPayAmount: Number(payload.manualSelfPayAmount) || base.manualSelfPayAmount || 0,
     grandTotal: Number(payload.grandTotal) || base.grandTotal || 0
   };
 }
@@ -500,6 +502,8 @@ function resolveBillingOverrideFields(field, value) {
       return { visitCount: value };
     case 'carryOverAmount':
       return { carryOverAmount: value };
+    case 'selfPayAmount':
+      return { manualSelfPayAmount: value === '' ? '' : value };
     default:
       return {};
   }
@@ -569,6 +573,9 @@ function commitBillingEdit(patientId, field, value) {
   if (field === 'transportAmount') {
     baseUpdate.manualTransportAmount = value === '' ? '' : value;
   }
+  if (field === 'selfPayAmount') {
+    baseUpdate.manualSelfPayAmount = value === '' ? '' : value;
+  }
   recordBillingEditForPersistence(pid, field, value);
   billingState.edits[pid] = baseUpdate;
   billingState.editing = null;
@@ -606,10 +613,13 @@ function normalizeBillingResultPayload(raw) {
     medicalAssistance: 0,
     manualUnitPrice: '',
     manualTransportAmount: '',
+    manualSelfPayAmount: '',
+    selfPayItems: [],
     unitPrice: 0,
     visitCount: 0,
     treatmentAmount: 0,
     transportAmount: 0,
+    selfPayTotal: 0,
     carryOverAmount: 0,
     carryOverFromHistory: 0,
     billingAmount: 0,
@@ -664,6 +674,11 @@ function normalizeBillingResultPayload(raw) {
     return normalizeMoneyNumber(value);
   }
 
+  function normalizeManualSelfPayAmountValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    return normalizeMoneyNumber(value);
+  }
+
   function mergePatientMetaIntoRows(rows, patients) {
     if (!Array.isArray(rows)) return [];
     return rows.map(row => {
@@ -680,6 +695,8 @@ function normalizeBillingResultPayload(raw) {
         medicalAssistance: patient.medicalAssistance,
         manualUnitPrice: patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice,
         manualTransportAmount: patient.manualTransportAmount,
+        manualSelfPayAmount: patient.manualSelfPayAmount,
+        selfPayItems: patient.selfPayItems,
         unitPrice: patient.unitPrice,
         visitCount: patient.visitCount,
         carryOverAmount: patient.carryOverAmount,
@@ -715,6 +732,14 @@ function normalizeBillingResultPayload(raw) {
         ? row.manualTransportAmount
         : patientSeed.manualTransportAmount;
       merged.manualTransportAmount = normalizeManualTransportAmountValue(manualTransportSource);
+
+      const manualSelfPaySource = row && row.hasOwnProperty('manualSelfPayAmount')
+        ? row.manualSelfPayAmount
+        : patientSeed.manualSelfPayAmount;
+      merged.manualSelfPayAmount = normalizeManualSelfPayAmountValue(manualSelfPaySource);
+      merged.selfPayItems = Array.isArray(row && row.selfPayItems)
+        ? row.selfPayItems
+        : Array.isArray(patientSeed.selfPayItems) ? patientSeed.selfPayItems : [];
 
       merged.insuranceType = (row && row.insuranceType) || patient.insuranceType || '';
       merged.responsibleNames = Array.isArray(merged.responsibleNames) ? merged.responsibleNames : [];
@@ -1167,7 +1192,20 @@ function renderBillingResult() {
       }
       if (field === 'burdenRate') {
         const editor = `<select class="${editClass}" ${baseAttrs}>${BILLING_BURDEN_OPTIONS.map(opt => `<option value="${opt.value}" ${String(opt.value) === String(item.burdenRate) ? 'selected' : ''}>${opt.label}</option>`).join('')}</select>`;
-        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
+        const showSelfPay = String(item.burdenRate) === '自費' || String(item.insuranceType).trim() === '自費';
+        const selfPayValue = item.manualSelfPayAmount === '' || item.manualSelfPayAmount === null || item.manualSelfPayAmount === undefined
+          ? ''
+          : normalizeEditNumber(item.manualSelfPayAmount);
+        const selfPayAttrs = `data-edit-field="selfPayAmount" data-edit-patient="${item.patientId}"`;
+        const selfPayEditor = showSelfPay
+          ? wrapWithOverrideBadge(
+            `<div class="selfpay-editor"><label>自費金額<input class="${editClass}" ${selfPayAttrs} type="number" step="10" value="${selfPayValue}" /></label></div>`,
+            item.patientId,
+            'selfPayAmount',
+            alignRight
+          )
+          : '';
+        return wrapWithOverrideBadge(`<div class="burden-editor">${editor}${selfPayEditor}</div>`, item.patientId, field, alignRight);
       }
       if (field === 'payerType') {
         const editor = `<select class="${editClass}" ${baseAttrs}>${BILLING_PAYER_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.payerType ? 'selected' : ''}>${opt}</option>`).join('')}</select>`;
@@ -1201,6 +1239,11 @@ function renderBillingResult() {
         case 'medicalAssistance':
           return normalizeMedicalAssistanceFlag(item.medicalAssistance) ? '有' : 'なし';
         case 'burdenRate':
+          if (String(item.burdenRate) === '自費') {
+            const selfPayAmount = item.manualSelfPayAmount || 0;
+            const label = normalizeBurdenRateDisplay(item.burdenRate) || '自費';
+            return selfPayAmount ? `${label}（${formatCurrency(selfPayAmount)}円）` : label;
+          }
           return normalizeBurdenRateDisplay(item.burdenRate) || '編集';
         case 'payerType':
           return item.payerType || '編集';
@@ -1317,6 +1360,9 @@ function attachBillingEditHandlers() {
         value = normalizeMoneyNumber(value);
       }
       if (field === 'transportAmount') {
+        value = value === '' ? '' : normalizeMoneyNumber(value);
+      }
+      if (field === 'selfPayAmount') {
         value = value === '' ? '' : normalizeMoneyNumber(value);
       }
       if (field === 'visitCount') {

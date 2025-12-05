@@ -13,8 +13,6 @@ const billingState = {
   sort: { field: null, direction: 'asc' }
 };
 
-const BILLING_INSURANCE_OPTIONS = ['後期高齢', '国保', '社保', '生保', '自費'];
-const BILLING_DEPRECATED_INSURANCE_TYPES = ['マッサージ'];
 const BILLING_BURDEN_OPTIONS = [
   { value: 1, label: '1割' },
   { value: 2, label: '2割' },
@@ -29,9 +27,9 @@ const BILLING_TRANSPORT_UNIT_PRICE_FALLBACK = 33;
 const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeof globalThis.BILLING_TRANSPORT_UNIT_PRICE === 'number')
   ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
-const BILLING_PATIENT_INFO_FIELDS = ['insuranceType', 'medicalAssistance', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
+const BILLING_PATIENT_INFO_FIELDS = ['medicalAssistance', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
 const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount'];
-const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount', 'insuranceType', 'burdenRate'];
+const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount', 'burdenRate'];
 
 function qs(id) {
   return document.getElementById(id);
@@ -217,11 +215,6 @@ function normalizeMedicalAssistanceFlag(value) {
   return 0;
 }
 
-function isDeprecatedInsuranceType(value) {
-  if (!value) return false;
-  return BILLING_DEPRECATED_INSURANCE_TYPES.includes(String(value).trim());
-}
-
 function getBillingBaseUrl() {
   return (window.APP_CONFIG && window.APP_CONFIG.baseUrl) || '';
 }
@@ -315,8 +308,6 @@ function resolveBillingSortValue(row, field) {
   switch (field) {
     case 'nameKanji':
       return row.nameKanji || '';
-    case 'insuranceType':
-      return row.insuranceType || '';
     case 'burdenRate':
       return resolveBurdenSortValue(row.burdenRate);
     case 'unitPrice':
@@ -1147,7 +1138,6 @@ function renderBillingResult() {
     { key: 'patientId', label: '患者ID', sortable: true },
     { key: 'nameKanji', label: '氏名', sortable: true },
     { key: 'responsible', label: '担当者', sortable: true },
-    { key: 'insuranceType', label: '保険種別', sortable: true },
     { key: 'medicalAssistance', label: '医療助成', sortable: false },
     { key: 'payerType', label: '保険者', sortable: false },
     { key: 'burdenRate', label: '負担', sortable: true },
@@ -1180,16 +1170,6 @@ function renderBillingResult() {
     const editClass = alignRight ? 'cell-edit inline-editor right' : 'cell-edit inline-editor';
     const viewClass = alignRight ? 'cell-edit right' : 'cell-edit';
     if (editing) {
-      if (field === 'insuranceType') {
-        const needsUpdate = isDeprecatedInsuranceType(item.insuranceType);
-        const options = BILLING_INSURANCE_OPTIONS.map(opt => `<option value="${opt}" ${opt === item.insuranceType ? 'selected' : ''}>${opt}</option>`).join('');
-        const select = `<select class="${editClass}" ${baseAttrs}>${needsUpdate ? '<option value="" disabled selected>保険種別を選択</option>' : ''}${options}</select>`;
-        if (needsUpdate) {
-          const editor = `<div class="insurance-editor">${select}<div class="field-note warn">以前の「マッサージ」種別が設定されています。現在の保険種別を選び直してください。</div></div>`;
-          return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
-        }
-        return wrapWithOverrideBadge(select, item.patientId, field, alignRight);
-      }
       if (field === 'burdenRate') {
         const editor = `<select class="${editClass}" ${baseAttrs}>${BILLING_BURDEN_OPTIONS.map(opt => `<option value="${opt.value}" ${String(opt.value) === String(item.burdenRate) ? 'selected' : ''}>${opt.label}</option>`).join('')}</select>`;
         const showSelfPay = String(item.burdenRate) === '自費' || String(item.insuranceType).trim() === '自費';
@@ -1233,9 +1213,6 @@ function renderBillingResult() {
 
     const display = (() => {
       switch (field) {
-        case 'insuranceType':
-          if (isDeprecatedInsuranceType(item.insuranceType)) return '要修正: マッサージ';
-          return item.insuranceType || '編集';
         case 'medicalAssistance':
           return normalizeMedicalAssistanceFlag(item.medicalAssistance) ? '有' : 'なし';
         case 'burdenRate':
@@ -1261,14 +1238,6 @@ function renderBillingResult() {
     return wrapWithOverrideBadge(view, item.patientId, field, alignRight);
   }
 
-  const legacyRows = rows.filter(row => isDeprecatedInsuranceType(row.insuranceType));
-  const notices = [];
-  if (legacyRows.length) {
-    const sample = legacyRows.slice(0, 3).map(r => (r.nameKanji || r.patientId || '不明')).join('／');
-    const overflow = legacyRows.length > 3 ? `、ほか ${legacyRows.length - 3} 名` : '';
-    notices.push(`<div class="alert warn">「マッサージ」保険種別は廃止されました。${sample}${overflow} に古い種別が残っています。保険種別を選び直してください。</div>`);
-  }
-
   const bodyRows = [];
   rows.forEach(item => {
     try {
@@ -1278,7 +1247,6 @@ function renderBillingResult() {
         <td>${safeItem.patientId || ''}</td>
         <td>${safeItem.nameKanji || ''}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td>${renderEditableCell(safeItem, 'insuranceType')}</td>
         <td>${renderEditableCell(safeItem, 'medicalAssistance')}</td>
         <td>${renderEditableCell(safeItem, 'payerType')}</td>
         <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
@@ -1300,7 +1268,6 @@ function renderBillingResult() {
   });
 
   const tableHtml = [
-    ...notices,
     '<table><thead><tr>',
     header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',

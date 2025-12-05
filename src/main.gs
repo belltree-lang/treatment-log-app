@@ -878,19 +878,38 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   return generatePreparedInvoices_(prepared, options || {});
 }
 
-function generateBankTransferData(billingMonth, options) {
-  const prepared = buildPreparedBillingPayload_(billingMonth);
-  savePreparedBilling_(prepared);
-  return exportBankTransferDataForPrepared_(prepared, options || {});
-}
+  function generateBankTransferData(billingMonth, options) {
+    const prepared = buildPreparedBillingPayload_(billingMonth);
+    savePreparedBilling_(prepared);
+    return exportBankTransferDataForPrepared_(prepared, options || {});
+  }
 
   function generateBankTransferDataFromCache(billingMonth, options) {
-    const month = normalizeBillingMonthInput(billingMonth);
-    const prepared = loadPreparedBilling_(month.key);
-    if (!prepared || !prepared.billingJson) {
+    const opts = options || {};
+    const monthInput = billingMonth || opts.billingMonth || (opts.prepared && opts.prepared.billingMonth);
+    const month = monthInput ? normalizeBillingMonthInput(monthInput) : null;
+    const prepared = month ? loadPreparedBilling_(month.key) : null;
+    const normalizedPrepared = normalizePreparedBilling_(prepared);
+
+    const resolvedMonth = month || (normalizedPrepared && normalizedPrepared.billingMonth
+      ? normalizeBillingMonthInput(normalizedPrepared.billingMonth)
+      : null);
+
+    if (!resolvedMonth) {
+      throw new Error('銀行データを生成できません。請求月が指定されていません。先に「請求データを集計」を実行してください。');
+    }
+
+    if (!normalizedPrepared || !normalizedPrepared.billingJson) {
       throw new Error('銀行データを生成できません。CarryOverLedger シートが存在しないか、初期化されていません。「請求データを集計」を実行する前に、CarryOverLedger シートの作成を確認してください。');
     }
-    return exportBankTransferDataForPrepared_(prepared, options || {});
+
+    const preparedWithMonth = Object.assign({}, normalizedPrepared, {
+      billingMonth: normalizedPrepared.billingMonth || resolvedMonth.key
+    });
+
+    return exportBankTransferDataForPrepared_(preparedWithMonth, Object.assign({}, opts, {
+      billingMonth: resolvedMonth.key
+    }));
   }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

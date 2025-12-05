@@ -1021,6 +1021,7 @@ function getBillingPatientRecords() {
   const colIsNew = resolveBillingColumn_(headers, ['新規', '新患', 'isNew', '新規フラグ', '新規区分'], '新規区分', { fallbackLetter: 'U' });
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
   const colMedical = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
+  const colMedicalSubsidy = colMedical;
   const colTransport = resolveBillingColumn_(
     headers,
     ['交通費', '交通費(手動)', '交通費（手動）', 'transportAmount', 'manualTransportAmount'],
@@ -1061,7 +1062,8 @@ function getBillingPatientRecords() {
       branchCode: colBranch ? String(row[colBranch - 1] || '').trim() : '',
       accountNumber: colAccount ? String(row[colAccount - 1] || '').trim() : '',
       isNew: colIsNew ? normalizeZeroOneFlag_(row[colIsNew - 1]) : 0,
-      carryOverAmount: colCarryOver ? normalizeMoneyValue_(row[colCarryOver - 1]) : 0
+      carryOverAmount: colCarryOver ? normalizeMoneyValue_(row[colCarryOver - 1]) : 0,
+      medicalSubsidy: colMedicalSubsidy ? normalizeZeroOneFlag_(row[colMedicalSubsidy - 1]) : 0
     };
   }).filter(Boolean);
 }

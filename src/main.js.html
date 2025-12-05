@@ -1038,6 +1038,48 @@ function renderBillingStatus(result) {
   el.textContent = '';
 }
 
+function renderCarryOverLedgerStatus() {
+  const badge = qs('carryOverLedgerStatus');
+  if (!badge) return;
+  const meta = billingState.prepared && billingState.prepared.carryOverLedgerMeta
+    ? billingState.prepared.carryOverLedgerMeta
+    : null;
+  const hasMeta = meta && Object.keys(meta).length > 0;
+  if (!billingState.prepared || !hasMeta) {
+    badge.style.display = 'none';
+    badge.textContent = '';
+    badge.removeAttribute('title');
+    return;
+  }
+  const loadError = meta.loadError;
+  const wasAutoCreated = !!meta.wasAutoCreated;
+  const headerInserted = !!meta.headerInserted;
+  const dataRowCount = Number(meta.dataRowCount || 0);
+  const wasInitialized = wasAutoCreated || headerInserted;
+
+  if (loadError) {
+    badge.className = 'pill warn';
+    badge.textContent = 'Ledger 読み込みエラー';
+    badge.title = loadError;
+    badge.style.display = 'inline-flex';
+    return;
+  }
+  if (wasInitialized) {
+    badge.className = 'pill warn';
+    badge.textContent = 'Ledger 未作成 → 自動初期化';
+    badge.title = 'CarryOverLedger シートが見つからなかったため、自動で作成または初期化しました。';
+    badge.style.display = 'inline-flex';
+    return;
+  }
+
+  badge.className = dataRowCount > 0 ? 'pill ok' : 'pill neutral';
+  badge.textContent = dataRowCount > 0 ? `Ledger OK（${dataRowCount}件）` : 'Ledger 0件（作成済み）';
+  badge.title = dataRowCount > 0
+    ? 'CarryOverLedger の読み込みに成功しました'
+    : 'CarryOverLedger は空ですが作成済みです';
+  badge.style.display = 'inline-flex';
+}
+
 function renderBillingError() {
   const box = qs('billingError');
   if (!box) return;
@@ -1121,11 +1163,12 @@ function renderBillingResult() {
   const box = qs('billingResult');
   if (!box) return;
   const result = billingState.result;
-  renderBillingError();
-  renderBillingStatus(result);
-  renderDownloads(result);
-  renderMonthBadge(result);
-  renderBillingSummary(null);
+    renderBillingError();
+    renderBillingStatus(result);
+    renderCarryOverLedgerStatus();
+    renderDownloads(result);
+    renderMonthBadge(result);
+    renderBillingSummary(null);
 
   if (billingState.loading) {
     box.innerHTML = '<div class="loading"><span class="spinner"></span>請求データを生成中です…</div>';

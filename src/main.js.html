@@ -297,6 +297,15 @@ function formatNewFlag(item) {
   return '<span class="badge">新規</span>';
 }
 
+function resolvePatientIdSortValue(value) {
+  const num = Number(value);
+  if (Number.isFinite(num)) return num;
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return 0;
+  const fallback = Number(trimmed.replace(/[^0-9]/g, ''));
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
 function resolveBurdenSortValue(value) {
   if (value === '自費') return 99;
   const num = Number(value);
@@ -325,7 +334,7 @@ function resolveBillingSortValue(row, field) {
     case 'responsible':
       return getResponsibleDisplay(row);
     case 'patientId':
-      return row.patientId || '';
+      return resolvePatientIdSortValue(row.patientId);
     default:
       return null;
   }

@@ -841,13 +841,14 @@ function normalizeCarryOverLedgerMonth_(value, fallbackKey) {
 
     const lastRow = sheet.getLastRow();
     const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
-    const hasDataRows = lastRow > 1;
     const headerWidth = Math.max(lastCol, defaultHeader.length);
     const headerValues = headerWidth > 0 ? sheet.getRange(1, 1, 1, headerWidth).getDisplayValues()[0] : [];
     const normalizedHeader = (headerValues || []).map(value => String(value || '').trim());
-    const hasAnyHeaderValue = normalizedHeader.some(value => !!value);
     const hasRequiredHeader = defaultHeader.every(label => normalizedHeader.indexOf(label) >= 0);
-    const shouldInitializeHeader = lastRow === 0 || (!hasAnyHeaderValue && !hasDataRows) || (!hasRequiredHeader && !hasDataRows);
+    const headerPreview = sheet.getRange(1, 1, 1, 10).getDisplayValues()[0];
+    billingLogger_.log('[billing] CarryOverLedger header preview=' + JSON.stringify(headerPreview));
+
+    const shouldInitializeHeader = lastRow === 0 || !hasRequiredHeader;
 
     if (shouldInitializeHeader) {
       sheet.getRange(1, 1, 1, defaultHeader.length).setValues([defaultHeader]);

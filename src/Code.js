@@ -10483,7 +10483,17 @@ function submitTreatment(payload) {
     const categoryInfo = resolveTreatmentCategoryFromPayload_(payload);
     const categoryKey = categoryInfo.key || '';
     const categoryLabel = categoryInfo.label || '';
-    if (!categoryKey) {
+
+    const presetLabel = String(payload?.presetLabel || '').trim();
+    const actions = payload?.actions || {};
+    const categoryRequired = !(
+      presetLabel === '同意書受渡'
+        || presetLabel === '再同意取得確認'
+        || actions.visitPlanDate
+        || actions.consentUndecided
+    );
+
+    if (categoryRequired && !categoryKey) {
       throw new Error('施術区分を特定できませんでした。画面を再読み込みしてから再度お試しください。');
     }
     pid = String(payload?.patientId || '').trim();
@@ -10603,8 +10613,6 @@ function submitTreatment(payload) {
       job.treatmentCategoryLabel = treatmentCategoryLabel;
     }
     let hasFollowUp = false;
-
-    const presetLabel = String(payload?.presetLabel || '').trim();
     if (presetLabel) {
       job.presetLabel = presetLabel;
       hasFollowUp = true;

@@ -551,9 +551,13 @@ function serializeBillingPayload_(payload) {
 }
 
 function prepareBillingData(billingMonth) {
-  const prepared = buildPreparedBillingPayload_(billingMonth);
+  const normalizedMonth = normalizeBillingMonthInput(billingMonth);
+  const prepared = buildPreparedBillingPayload_(normalizedMonth);
   const clientPayload = toClientBillingPayload_(prepared);
-  const serialized = serializeBillingPayload_(clientPayload) || clientPayload;
+  const payloadWithMonth = clientPayload
+    ? Object.assign({}, clientPayload, { billingMonth: normalizedMonth.key })
+    : clientPayload;
+  const serialized = serializeBillingPayload_(payloadWithMonth) || payloadWithMonth;
   const payloadJson = serialized ? JSON.stringify(serialized) : '';
   const payloadPreview = payloadJson.length > 50000 ? payloadJson.slice(0, 50000) + '…<truncated>' : payloadJson;
 
@@ -569,8 +573,11 @@ function prepareBillingData(billingMonth) {
       '\n[billing] prepareBillingData payloadRaw=' + payloadPreview
   );
 
-  savePreparedBilling_(serialized);
-  return serialized;
+  const cachePayload = serialized
+    ? Object.assign({}, serialized, { billingMonth: normalizedMonth.key })
+    : { billingMonth: normalizedMonth.key };
+  savePreparedBilling_(cachePayload);
+  return cachePayload;
 }
 
 /**

@@ -7310,7 +7310,14 @@ function deleteTreatmentRow(row, treatmentId){
   if (pid) {
     invalidatePatientCaches_(pid, { header: true, treatments: true, latestTreatmentRow: true });
   }
-  return true;
+  try {
+    const normalizedPid = normId_(pid);
+    const treatments = normalizedPid ? listTreatmentsForCurrentMonth(normalizedPid) : [];
+    return { ok: true, patientId: normalizedPid, treatments };
+  } catch (err) {
+    Logger.log('[deleteTreatmentRow] failed to fetch updated list: ' + (err && err.message ? err.message : err));
+    return { ok: true, patientId: normId_(pid) || '', treatments: null };
+  }
 }
 
 function splitTreatmentNoteForSummary_(text){

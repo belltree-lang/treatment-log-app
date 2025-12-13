@@ -100,6 +100,31 @@ function testBankExportPassesWhenArrayProvided() {
   assert.strictEqual(result.inserted, 1);
 }
 
+function testBankExportAcceptsYmObject() {
+  const exportCalls = [];
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => {
+      const raw = typeof input === 'object' && input && input.ym ? input.ym : input;
+      return { key: String(raw).replace(/\D/g, '') };
+    },
+    normalizePreparedBilling_: payload => payload,
+    loadPreparedBilling_: monthKey => {
+      exportCalls.push(monthKey);
+      return { billingJson: [{ billingMonth: '202501', patientId: 'p1' }], billingMonth: '202501' };
+    },
+    exportBankTransferDataForPrepared_: prepared => ({
+      billingMonth: prepared.billingMonth,
+      inserted: prepared.billingJson.length
+    })
+  });
+
+  const result = ctx.generateBankTransferDataFromCache({ ym: '2025-01' }, { billingMonth: { ym: '2025-01' } });
+
+  assert.deepStrictEqual(exportCalls, ['202501']);
+  assert.strictEqual(result.billingMonth, '202501');
+  assert.strictEqual(result.inserted, 1);
+}
+
 function testBankExportReturnsEmptyForZeroBilling() {
   const exportCalls = [];
   const ctx = createMainContext({
@@ -148,6 +173,7 @@ function run() {
   testSchemaVersionIsValidated();
   testBankExportRejectsNonArrayBillingJson();
   testBankExportPassesWhenArrayProvided();
+  testBankExportAcceptsYmObject();
   testBankExportReturnsEmptyForZeroBilling();
   testBankExportReportsLedgerIssues();
   testBankExportReportsMissingPreparation();

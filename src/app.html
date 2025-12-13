@@ -3340,7 +3340,7 @@ function renderThisMonthList(rows, options){
           <td class="actions">
             <button class="btn ghost" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
             <button class="btn ghost" onclick="editRowTime(${r.row}, '${isoWhen}')">日時</button>
-            <button class="btn warn" onclick="delRow(${r.row}, ${treatmentIdLiteral})">削除</button>
+            <button class="btn warn" onclick="delRow(${treatmentIdLiteral})">削除</button>
 
           </td>
         </tr>`;
@@ -3371,7 +3371,12 @@ function editRow(row, note){
   if(v==null) return;
   google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).updateTreatmentRow(row, v);
 }
-function delRow(row, treatmentId){
+function delRow(treatmentId){
+  const normalizedId = String(treatmentId || '').trim();
+  if (!normalizedId) {
+    alert('削除対象の施術IDを取得できませんでした。画面を再読み込みしてやり直してください。');
+    return;
+  }
   if (_deleteInFlight) {
     toast('削除処理中です。完了までお待ちください');
     return;
@@ -3402,7 +3407,7 @@ function delRow(row, treatmentId){
       hideGlobalLoading();
       alert((e && e.message) ? e.message : '削除に失敗しました');
     })
-    .deleteTreatmentRow(row, treatmentId || '');
+    .deleteTreatmentRow(normalizedId);
 }
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 

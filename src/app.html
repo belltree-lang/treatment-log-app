@@ -3328,7 +3328,7 @@ function renderThisMonthList(rows, options){
     const tagBlock = tagHtml ? `<div class="treatment-tag-wrap">${tagHtml}</div>` : '';
     const emailHtml = r.email ? `<div class="treatment-meta">登録者：${escapeHtml(r.email)}</div>` : '';
     const noteForEdit = JSON.stringify(r.note || '').replace(/"/g,'&quot;');
-    const treatmentIdLiteral = JSON.stringify(r.treatmentId || '');
+    const treatmentIdAttr = escapeHtml(String(r.treatmentId || ''));
     return `
         <tr>
           <td>${whenHtml}</td>
@@ -3340,7 +3340,7 @@ function renderThisMonthList(rows, options){
           <td class="actions">
             <button class="btn ghost" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
             <button class="btn ghost" onclick="editRowTime(${r.row}, '${isoWhen}')">日時</button>
-            <button class="btn warn" onclick="delRow(${treatmentIdLiteral})">削除</button>
+            <button class="btn warn" data-treatment-id="${treatmentIdAttr}" onclick="delRow(this.dataset.treatmentId)">削除</button>
 
           </td>
         </tr>`;

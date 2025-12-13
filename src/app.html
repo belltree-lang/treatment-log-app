@@ -604,6 +604,10 @@ function waitMs(ms){
   });
 }
 
+function invalidatePatientInfoRequests(){
+  _patientInfoRequestToken++;
+}
+
 function isActivePatientInfoRequest(token){
   return token == null || token === _patientInfoRequestToken;
 }
@@ -2650,6 +2654,7 @@ function handlePatientIdKeydown(evt){
 function handlePatientIdInput(){
   unlockInitialPatientIdRender();
   pausePatientIdRender();
+  invalidatePatientInfoRequests();
   _patientIdInputEditing = true;
   const inputEl = q('pid');
   const rawValue = inputEl && inputEl.value != null ? String(inputEl.value) : '';

@@ -3322,6 +3322,7 @@ function renderThisMonthList(rows, options){
     const tagBlock = tagHtml ? `<div class="treatment-tag-wrap">${tagHtml}</div>` : '';
     const emailHtml = r.email ? `<div class="treatment-meta">登録者：${escapeHtml(r.email)}</div>` : '';
     const noteForEdit = JSON.stringify(r.note || '').replace(/"/g,'&quot;');
+    const treatmentIdLiteral = JSON.stringify(r.treatmentId || '');
     return `
         <tr>
           <td>${whenHtml}</td>
@@ -3333,7 +3334,7 @@ function renderThisMonthList(rows, options){
           <td class="actions">
             <button class="btn ghost" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
             <button class="btn ghost" onclick="editRowTime(${r.row}, '${isoWhen}')">日時</button>
-            <button class="btn warn" onclick="delRow(${r.row})">削除</button>
+            <button class="btn warn" onclick="delRow(${r.row}, ${treatmentIdLiteral})">削除</button>
 
           </td>
         </tr>`;
@@ -3364,9 +3365,12 @@ function editRow(row, note){
   if(v==null) return;
   google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).updateTreatmentRow(row, v);
 }
-function delRow(row){
+function delRow(row, treatmentId){
   if(!confirm('この記録を削除します。よろしいですか？')) return;
-  google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).deleteTreatmentRow(row);
+  google.script.run
+    .withSuccessHandler(()=>{ refresh(); })
+    .withFailureHandler(e=> alert(e.message||e))
+    .deleteTreatmentRow(row, treatmentId || '');
 }
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 

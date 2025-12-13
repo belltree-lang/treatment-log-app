@@ -7213,6 +7213,7 @@ function listTreatmentsForCurrentMonth(pid){
     const ids = s.getRange(2, 2, rows, 1).getDisplayValues();
     const notes = s.getRange(2, 3, rows, 1).getValues();
     const emails = s.getRange(2, 4, rows, 1).getValues();
+    const treatmentIds = s.getRange(2, 7, rows, 1).getValues();
     const categories = s.getRange(2, 8, rows, 1).getValues();
 
     const out = [];
@@ -7230,6 +7231,7 @@ function listTreatmentsForCurrentMonth(pid){
         when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
         note: String((notes[i] && notes[i][0]) || ''),
         email: String((emails[i] && emails[i][0]) || ''),
+        treatmentId: String((treatmentIds[i] && treatmentIds[i][0]) || ''),
         category: categoryLabel,
         categoryKey
       });
@@ -7265,17 +7267,33 @@ function updateTreatmentRow(row, note) {
   return { ok: true, updatedRow: row, newNote };
 }
 
-function deleteTreatmentRow(row){
-  const s=sh('施術録'); const lr = s.getLastRow();
-  if(row<=1 || row>lr) throw new Error('行が不正です');
+function deleteTreatmentRow(row, treatmentId){
+  const s=sh('施術録');
+  const lr = s.getLastRow();
+
+  let targetRow = Number(row);
+  let normalizedTreatmentId = String(treatmentId || '').trim();
+
+  if (normalizedTreatmentId) {
+    const found = findTreatmentRowById_(s, normalizedTreatmentId);
+    if (found && found.rowNumber) {
+      targetRow = found.rowNumber;
+    } else if (!targetRow || targetRow <= 1 || targetRow > lr) {
+      throw new Error('指定した施術記録が見つかりませんでした');
+    }
+  }
+
+  if(targetRow<=1 || targetRow>lr) throw new Error('行が不正です');
   const maxCols = s.getMaxColumns();
   const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
-  const rowVals = s.getRange(row, 1, 1, width).getValues()[0];
-  const treatmentId = width >= 7 ? String(rowVals[6] || '').trim() : '';
+  const rowVals = s.getRange(targetRow, 1, 1, width).getValues()[0];
+  const treatmentIdFromRow = width >= 7 ? String(rowVals[6] || '').trim() : '';
   const pid = String(rowVals[1] || '').trim();
-  s.deleteRow(row);
-  if (treatmentId) clearNewsByTreatment_(treatmentId);
-  log_('施術削除', '(row:'+row+')', '');
+  normalizedTreatmentId = normalizedTreatmentId || treatmentIdFromRow;
+
+  s.deleteRow(targetRow);
+  if (normalizedTreatmentId) clearNewsByTreatment_(normalizedTreatmentId);
+  log_('施術削除', `(row:${targetRow})`, '');
   if (pid) {
     invalidatePatientCaches_(pid, { header: true, treatments: true, latestTreatmentRow: true });
   }

@@ -10550,6 +10550,26 @@ function submitTreatment(payload) {
       };
     }
 
+    const existingToday = findExistingTreatmentOnDate_(s, pid, nowDate, tz, incomingTreatmentId);
+    markTiming('sameDayScan');
+    if (existingToday) {
+      logSubmitTreatmentTimings_(
+        pid,
+        existingToday.treatmentId || incomingTreatmentId,
+        'duplicate-day',
+        timings
+      );
+      timingLogged = true;
+      return {
+        ok: false,
+        skipped: true,
+        duplicate: true,
+        msg: '本日はすでに施術記録が登録されています。編集が必要な場合は、既存の記録を編集してください。',
+        row: existingToday.rowNumber,
+        treatmentId: existingToday.treatmentId,
+      };
+    }
+
     const treatmentId = incomingTreatmentId || Utilities.getUuid();
     treatmentIdForLog = treatmentId;
     const treatmentCategoryLabel = categoryLabel;
@@ -10788,6 +10808,48 @@ function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTr
       break;
     }
   }
+  return null;
+}
+
+function findExistingTreatmentOnDate_(sheet, pid, targetDate, tz, ignoreTreatmentId) {
+  const normalizedPid = String(pid || '').trim();
+  if (!normalizedPid) return null;
+
+  const lr = sheet.getLastRow();
+  if (lr < 2) return null;
+
+  const maxCols = sheet.getMaxColumns();
+  const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
+  const rowsToScan = Math.min(lr - 1, 200);
+  const startRow = Math.max(2, lr - rowsToScan + 1);
+  const values = sheet.getRange(startRow, 1, lr - startRow + 1, width).getValues();
+
+  const targetDateStr = Utilities.formatDate(targetDate, tz, 'yyyy-MM-dd');
+  const startOfDay = normalizeTreatmentTimestamp_(`${targetDateStr} 00:00:00`, tz);
+  const startOfDayMs = startOfDay ? startOfDay.getTime() : null;
+
+  for (let i = values.length - 1; i >= 0; i--) {
+    const row = values[i];
+    const existingPid = String(row[1] || '').trim();
+    if (existingPid !== normalizedPid) continue;
+
+    const tsDate = normalizeTreatmentTimestamp_(row[0], tz);
+    if (!tsDate) continue;
+
+    const dateStr = Utilities.formatDate(tsDate, tz, 'yyyy-MM-dd');
+    if (dateStr === targetDateStr) {
+      const existingTreatmentId = String(row[6] || '').trim();
+      if (ignoreTreatmentId && existingTreatmentId && existingTreatmentId === ignoreTreatmentId) {
+        continue;
+      }
+      return { rowNumber: startRow + i, treatmentId: existingTreatmentId, row };
+    }
+
+    if (startOfDayMs != null && tsDate.getTime() < startOfDayMs) {
+      break;
+    }
+  }
+
   return null;
 }
 

@@ -7280,32 +7280,22 @@ function updateTreatmentRow(row, note) {
   return { ok: true, updatedRow: row, newNote };
 }
 
-function deleteTreatmentRow(row, treatmentId){
-  const s=sh('施術録');
-  const lr = s.getLastRow();
+function deleteTreatmentRow(treatmentId){
+  const s = sh('施術録');
+  const normalizedTreatmentId = String(treatmentId || '').trim();
+  if (!normalizedTreatmentId) throw new Error('削除対象の施術IDが指定されていません');
 
-  let targetRow = Number(row);
-  let normalizedTreatmentId = String(treatmentId || '').trim();
+  const found = findTreatmentRowById_(s, normalizedTreatmentId);
+  if (!found || !found.rowNumber) throw new Error('指定した施術記録が見つかりませんでした');
 
-  if (normalizedTreatmentId) {
-    const found = findTreatmentRowById_(s, normalizedTreatmentId);
-    if (found && found.rowNumber) {
-      targetRow = found.rowNumber;
-    } else if (!targetRow || targetRow <= 1 || targetRow > lr) {
-      throw new Error('指定した施術記録が見つかりませんでした');
-    }
-  }
-
-  if(targetRow<=1 || targetRow>lr) throw new Error('行が不正です');
-  const maxCols = s.getMaxColumns();
-  const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
-  const rowVals = s.getRange(targetRow, 1, 1, width).getValues()[0];
-  const treatmentIdFromRow = width >= 7 ? String(rowVals[6] || '').trim() : '';
+  const targetRow = found.rowNumber;
+  const rowVals = (found && found.row && Array.isArray(found.row))
+    ? found.row
+    : s.getRange(targetRow, 1, 1, Math.min(TREATMENT_SHEET_HEADER.length, s.getMaxColumns())).getValues()[0];
   const pid = String(rowVals[1] || '').trim();
-  normalizedTreatmentId = normalizedTreatmentId || treatmentIdFromRow;
 
   s.deleteRow(targetRow);
-  if (normalizedTreatmentId) clearNewsByTreatment_(normalizedTreatmentId);
+  clearNewsByTreatment_(normalizedTreatmentId);
   log_('施術削除', `(row:${targetRow})`, '');
   if (pid) {
     invalidatePatientCaches_(pid, { header: true, treatments: true, latestTreatmentRow: true });

@@ -7213,8 +7213,10 @@ function listTreatmentsForCurrentMonth(pid){
     const ids = s.getRange(2, 2, rows, 1).getDisplayValues();
     const notes = s.getRange(2, 3, rows, 1).getValues();
     const emails = s.getRange(2, 4, rows, 1).getValues();
-    const treatmentIds = s.getRange(2, 7, rows, 1).getValues();
+    const treatmentIdRange = s.getRange(2, 7, rows, 1);
+    const treatmentIds = treatmentIdRange.getValues();
     const categories = s.getRange(2, 8, rows, 1).getValues();
+    const missingTreatmentIds = [];
 
     const out = [];
     for (let i = 0; i < rows; i++) {
@@ -7225,6 +7227,12 @@ function listTreatmentsForCurrentMonth(pid){
       const timestamp = d instanceof Date ? d.getTime() : NaN;
       if (!Number.isFinite(timestamp)) continue;
       if (d < start || d > end) continue;
+      let treatmentId = String((treatmentIds[i] && treatmentIds[i][0]) || '').trim();
+      if (!treatmentId) {
+        treatmentId = Utilities.getUuid();
+        treatmentIds[i][0] = treatmentId;
+        missingTreatmentIds.push(i);
+      }
       const categoryLabel = String((categories[i] && categories[i][0]) || '');
       const categoryKey = mapTreatmentCategoryCellToKey_(categoryLabel);
       out.push({
@@ -7232,11 +7240,19 @@ function listTreatmentsForCurrentMonth(pid){
         when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
         note: String((notes[i] && notes[i][0]) || ''),
         email: String((emails[i] && emails[i][0]) || ''),
-        treatmentId: String((treatmentIds[i] && treatmentIds[i][0]) || ''),
+        treatmentId,
         category: categoryLabel,
         categoryKey,
         timestamp
       });
+    }
+
+    if (missingTreatmentIds.length) {
+      try {
+        treatmentIdRange.setValues(treatmentIds);
+      } catch (err) {
+        Logger.log('[listTreatmentsForCurrentMonth] failed to backfill treatmentId: ' + (err && err.message ? err.message : err));
+      }
     }
 
     return out

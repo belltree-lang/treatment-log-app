@@ -80,14 +80,14 @@ function testBankExportRejectsNonArrayBillingJson() {
 
   assert.throws(() => {
     ctx.generateBankTransferDataFromCache('202501');
-  }, /CarryOverLedger シート/);
+  }, /請求データが未生成/);
 }
 
 function testBankExportPassesWhenArrayProvided() {
   const exportCalls = [];
   const ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBilling_: () => ({ billingJson: [], billingMonth: '202501' }),
+    loadPreparedBilling_: () => ({ billingJson: [{ billingMonth: '202501', patientId: 'p1' }], billingMonth: '202501' }),
     normalizePreparedBilling_: payload => payload,
     exportBankTransferDataForPrepared_: prepared => {
       exportCalls.push(prepared.billingMonth);
@@ -100,12 +100,30 @@ function testBankExportPassesWhenArrayProvided() {
   assert.strictEqual(result.inserted, 1);
 }
 
+function testBankExportReturnsEmptyForZeroBilling() {
+  const exportCalls = [];
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({ key: String(input) }),
+    loadPreparedBilling_: () => ({ billingJson: [], billingMonth: '202501' }),
+    normalizePreparedBilling_: payload => payload,
+    exportBankTransferDataForPrepared_: () => exportCalls.push('called')
+  });
+
+  const result = ctx.generateBankTransferDataFromCache('202501');
+  assert.deepStrictEqual(exportCalls, [], '0件のときはエクスポート処理を呼ばない');
+  assert.strictEqual(result.billingMonth, '202501');
+  assert.ok(Array.isArray(result.rows) && result.rows.length === 0, 'rows should be empty array');
+  assert.strictEqual(result.inserted, 0);
+  assert.strictEqual(result.skipped, 0);
+}
+
 function run() {
   testValidationRequiresLedgerFields();
   testValidationAcceptsCompletePayload();
   testSchemaVersionIsValidated();
   testBankExportRejectsNonArrayBillingJson();
   testBankExportPassesWhenArrayProvided();
+  testBankExportReturnsEmptyForZeroBilling();
   console.log('prepared billing cache tests passed');
 }
 

@@ -598,8 +598,8 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
 
   function exportBankTransferDataForPrepared_(prepared) {
     const normalized = normalizePreparedBilling_(prepared);
-    if (!normalized || !normalized.billingJson) {
-      throw new Error('銀行データを生成できません。CarryOverLedger シートが存在しないか、初期化されていません。「請求データを集計」を実行する前に、CarryOverLedger シートの作成を確認してください。');
+    if (!normalized || !Array.isArray(normalized.billingJson)) {
+      throw new Error('銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。');
     }
     logPreparedBankPayloadStatus_(normalized);
     let bankInfoByName = normalized.bankInfoByName || {};

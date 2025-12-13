@@ -1008,7 +1008,11 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     }
 
     if (!normalizedPrepared || !Array.isArray(normalizedPrepared.billingJson)) {
-      throw new Error('銀行データを生成できません。CarryOverLedger シートが存在しないか、初期化されていません。「請求データを集計」を実行する前に、CarryOverLedger シートの作成を確認してください。');
+      throw new Error('銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。');
+    }
+
+    if (normalizedPrepared.billingJson.length === 0) {
+      return createEmptyBankTransferResult_(resolvedMonth.key);
     }
 
     const preparedWithMonth = Object.assign({}, normalizedPrepared, {
@@ -1018,6 +1022,11 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     return exportBankTransferDataForPrepared_(preparedWithMonth, Object.assign({}, opts, {
       billingMonth: resolvedMonth.key
     }));
+  }
+
+  function createEmptyBankTransferResult_(billingMonth) {
+    const resolvedMonth = typeof billingMonth === 'string' ? billingMonth : (billingMonth && billingMonth.key) || '';
+    return { billingMonth: resolvedMonth, rows: [], inserted: 0, skipped: 0 };
   }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

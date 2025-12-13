@@ -82,7 +82,9 @@ function normalizeBillingMonthKeySafe_(value) {
   if (value && typeof value === 'object') {
     if (value.key) candidates.push(value.key);
     if (value.billingMonth) candidates.push(value.billingMonth);
+    if (value.ym) candidates.push(value.ym);
     if (value.month && value.month.key) candidates.push(value.month.key);
+    if (value.month && value.month.ym) candidates.push(value.month.ym);
     if (value.month) candidates.push(value.month);
   } else {
     candidates.push(value);
@@ -1004,8 +1006,9 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
 
   function generateBankTransferDataFromCache(billingMonth, options) {
     const opts = options || {};
-    const monthInput = billingMonth || opts.billingMonth || (opts.prepared && opts.prepared.billingMonth);
-    const month = monthInput ? normalizeBillingMonthInput(monthInput) : null;
+    const monthInput = billingMonth || opts.billingMonth || (opts.prepared && (opts.prepared.billingMonth || opts.prepared.month));
+    const resolvedMonthKey = normalizeBillingMonthKeySafe_(monthInput);
+    const month = resolvedMonthKey ? normalizeBillingMonthInput(resolvedMonthKey) : null;
     const preparedResult = month ? loadPreparedBilling_(month.key, { withValidation: true }) : null;
     const prepared = preparedResult && preparedResult.hasOwnProperty('prepared') ? preparedResult.prepared : preparedResult;
     const validation = preparedResult && preparedResult.validation ? preparedResult.validation : null;

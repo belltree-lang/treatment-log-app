@@ -597,27 +597,40 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
   }
 
   function exportBankTransferDataForPrepared_(prepared) {
+    const hasBillingJson = prepared && Object.prototype.hasOwnProperty.call(prepared, 'billingJson');
     const normalized = normalizePreparedBilling_(prepared);
-    if (!normalized || !Array.isArray(normalized.billingJson)) {
+    if (!normalized || !hasBillingJson) {
       throw new Error('銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。');
     }
+
+    if (!Array.isArray(normalized.billingJson)) {
+      throw new Error('銀行データを生成できません。請求データの形式が不正です。先に「請求データを集計」を実行してください。');
+    }
     logPreparedBankPayloadStatus_(normalized);
+
+    if (normalized.billingJson.length === 0) {
+      billingLogger_.log('[billing] exportBankTransferDataForPrepared_: billingJson empty for ' + (normalized.billingMonth || ''));
+      return { billingMonth: normalized.billingMonth || '', rows: [], inserted: 0, skipped: 0, message: '当月の請求対象はありません' };
+    }
+
     let bankInfoByName = normalized.bankInfoByName || {};
     let patientMap = normalized.patients || normalized.patientMap || {};
     let bankStatuses = normalized.bankStatuses || {};
-  if (!Object.keys(bankInfoByName).length || !Object.keys(patientMap).length) {
-    const source = getBillingSourceData(normalized.billingMonth);
-    bankInfoByName = source.bankInfoByName || bankInfoByName;
-    patientMap = source.patients || source.patientMap || patientMap;
-    bankStatuses = source.bankStatuses || bankStatuses;
-    if (!normalized.billingJson || !normalized.billingJson.length) {
-      normalized.billingJson = generateBillingJsonFromSource(source);
+
+    if (!Object.keys(bankInfoByName).length || !Object.keys(patientMap).length) {
+      const source = getBillingSourceData(normalized.billingMonth);
+      bankInfoByName = source.bankInfoByName || bankInfoByName;
+      patientMap = source.patients || source.patientMap || patientMap;
+      bankStatuses = source.bankStatuses || bankStatuses;
+      if (!normalized.billingJson || !normalized.billingJson.length) {
+        normalized.billingJson = generateBillingJsonFromSource(source);
+      }
     }
+
+    const buildResult = buildBankTransferRowsForBilling_(normalized.billingJson, bankInfoByName, patientMap, normalized.billingMonth, bankStatuses);
+    const outputResult = exportBankTransferRows_(buildResult.billingMonth, buildResult.rows, bankStatuses);
+    return Object.assign({}, buildResult, outputResult);
   }
-  const buildResult = buildBankTransferRowsForBilling_(normalized.billingJson, bankInfoByName, patientMap, normalized.billingMonth, bankStatuses);
-  const outputResult = exportBankTransferRows_(buildResult.billingMonth, buildResult.rows, bankStatuses);
-  return Object.assign({}, buildResult, outputResult);
-}
 
 /***** Billing history and payment result utilities (retained for compatibility) *****/
 

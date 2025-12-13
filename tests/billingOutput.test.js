@@ -16,6 +16,32 @@ function createContext() {
   };
 }
 
+function createExportContext(overrides = {}) {
+  const base = {
+    console,
+    billingLogger_: { log: () => {} },
+    normalizePreparedBilling_: payload => payload,
+    logPreparedBankPayloadStatus_: () => {},
+    getBillingSourceData: () => ({
+      billingMonth: '202501',
+      bankInfoByName: {},
+      patients: {},
+      bankStatuses: {}
+    }),
+    generateBillingJsonFromSource: () => ([{ billingMonth: '202501', patientId: 'P001', nameKanji: 'テスト' }])
+  };
+
+  const context = Object.assign({}, base, overrides);
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  if (overrides.exportBankTransferRows_) {
+    context.exportBankTransferRows_ = overrides.exportBankTransferRows_;
+  }
+
+  return context;
+}
+
 function createFakeFile(mimeType, tracker) {
   const blobTracker = tracker || { getAsCalled: false, setNameCalledWith: null };
   const blob = {
@@ -246,6 +272,33 @@ function testCarryOverHistoryIsIncluded() {
   assert.strictEqual(breakdown.grandTotal, 1153, '未回収分も繰越に合算される');
 }
 
+function testBankExportRejectsMissingBillingJson() {
+  const context = createExportContext();
+  assert.throws(() => {
+    context.exportBankTransferDataForPrepared_({ billingMonth: '202501' });
+  }, /請求データが未生成/);
+}
+
+function testBankExportRejectsInvalidBillingJsonShape() {
+  const context = createExportContext();
+  assert.throws(() => {
+    context.exportBankTransferDataForPrepared_({ billingMonth: '202501', billingJson: 'not-array' });
+  }, /形式が不正/);
+}
+
+function testBankExportReturnsEmptyWhenNoRows() {
+  const context = createExportContext({
+    exportBankTransferRows_: () => assert.fail('export should not be called for empty payload')
+  });
+  const result = context.exportBankTransferDataForPrepared_({ billingMonth: '202501', billingJson: [] });
+
+  assert.strictEqual(result.billingMonth, '202501');
+  assert.ok(Array.isArray(result.rows) && result.rows.length === 0, 'rows should be an empty array');
+  assert.strictEqual(result.inserted, 0);
+  assert.strictEqual(result.skipped, 0);
+  assert.match(result.message, /請求対象はありません/);
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
@@ -259,6 +312,9 @@ function run() {
   testWelfareBillingStillAddsTransport();
   testMassageBillingDoesNotChargeTransport();
   testCarryOverHistoryIsIncluded();
+  testBankExportRejectsMissingBillingJson();
+  testBankExportRejectsInvalidBillingJsonShape();
+  testBankExportReturnsEmptyWhenNoRows();
   console.log('billingOutput blob guard tests passed');
 }
 

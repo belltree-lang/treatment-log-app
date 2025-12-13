@@ -7222,7 +7222,8 @@ function listTreatmentsForCurrentMonth(pid){
       if (pidCell !== normalized) continue;
       const ts = timestamps[i][0];
       const d = ts instanceof Date ? ts : new Date(ts);
-      if (isNaN(d.getTime())) continue;
+      const timestamp = d instanceof Date ? d.getTime() : NaN;
+      if (!Number.isFinite(timestamp)) continue;
       if (d < start || d > end) continue;
       const categoryLabel = String((categories[i] && categories[i][0]) || '');
       const categoryKey = mapTreatmentCategoryCellToKey_(categoryLabel);
@@ -7233,10 +7234,22 @@ function listTreatmentsForCurrentMonth(pid){
         email: String((emails[i] && emails[i][0]) || ''),
         treatmentId: String((treatmentIds[i] && treatmentIds[i][0]) || ''),
         category: categoryLabel,
-        categoryKey
+        categoryKey,
+        timestamp
       });
     }
-    return out.reverse();
+
+    return out
+      .sort((a, b) => {
+        const aTs = Number.isFinite(a.timestamp) ? a.timestamp : 0;
+        const bTs = Number.isFinite(b.timestamp) ? b.timestamp : 0;
+        if (aTs !== bTs) return bTs - aTs;
+        return b.row - a.row;
+      })
+      .map(row => {
+        const { timestamp, ...rest } = row;
+        return rest;
+      });
   }, PATIENT_CACHE_TTL_SECONDS);
 }
 function updateTreatmentRow(row, note) {

@@ -272,6 +272,7 @@ function loadPreparedBilling_(billingMonthKey, options) {
   const expectedMonthKey = normalizeBillingMonthKeySafe_(billingMonthKey);
   const key = buildBillingCacheKey_(expectedMonthKey);
   const withValidation = opts.withValidation === true;
+  const allowInvalid = opts.allowInvalid === true;
   const wrapResult = (payload, validation) => withValidation ? { prepared: payload, validation: validation || null } : payload;
   if (!key) return wrapResult(null, { ok: false, reason: 'cache key missing' });
   const cache = getBillingCache_();
@@ -312,6 +313,14 @@ function loadPreparedBilling_(billingMonthKey, options) {
         billingLogger_.log('[billing] loadPreparedBilling_ auto-correcting billingMonth mismatch for cache key=' + key);
         savePreparedBilling_(corrected);
         return wrapResult(corrected, validation);
+      }
+      if (allowInvalid && normalized && Array.isArray(normalized.billingJson)) {
+        try {
+          Logger.log('[billing] loadPreparedBilling_: allowing invalid cache for ' + key + ' reason=' + validation.reason);
+        } catch (err) {
+          // ignore logging errors in non-GAS environments
+        }
+        return wrapResult(Object.assign({}, normalized, { billingMonth: validation.billingMonth || expectedMonthKey }), validation);
       }
       try {
         Logger.log('[billing] loadPreparedBilling_: invalid cache for ' + key + ' reason=' + validation.reason);
@@ -1009,9 +1018,16 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     const monthInput = billingMonth || opts.billingMonth || (opts.prepared && (opts.prepared.billingMonth || opts.prepared.month));
     const resolvedMonthKey = normalizeBillingMonthKeySafe_(monthInput);
     const month = resolvedMonthKey ? normalizeBillingMonthInput(resolvedMonthKey) : null;
-    const preparedResult = month ? loadPreparedBilling_(month.key, { withValidation: true }) : null;
+    const preparedResult = month ? loadPreparedBilling_(month.key, { withValidation: true, allowInvalid: true }) : null;
     const prepared = preparedResult && preparedResult.hasOwnProperty('prepared') ? preparedResult.prepared : preparedResult;
     const validation = preparedResult && preparedResult.validation ? preparedResult.validation : null;
+    if (validation) {
+      try {
+        Logger.log('[bankExport][validation] ' + JSON.stringify(validation));
+      } catch (err) {
+        // ignore logging errors in non-GAS environments
+      }
+    }
     const normalizedPrepared = normalizePreparedBilling_(prepared);
 
     const resolvedMonth = month || (normalizedPrepared && normalizedPrepared.billingMonth
@@ -1044,14 +1060,18 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     return { billingMonth: resolvedMonth, rows: [], inserted: 0, skipped: 0, message: message || '' };
   }
 
-  function resolveBankExportErrorMessage_(validation) {
-    const reason = validation && validation.reason ? String(validation.reason) : '';
-    const ledgerReasons = ['carryOverLedger missing', 'carryOverLedgerByPatient missing', 'carryOverLedgerMeta missing', 'carryOverByPatient missing', 'unpaidHistory missing'];
-    if (ledgerReasons.indexOf(reason) >= 0) {
-      return '銀行データを生成できません。繰越金データを確認してください。';
-    }
-    return '銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。';
+function resolveBankExportErrorMessage_(validation) {
+  const reason = validation && validation.reason ? String(validation.reason) : '';
+  const ledgerReasons = ['carryOverLedger missing', 'carryOverLedgerByPatient missing', 'carryOverLedgerMeta missing', 'carryOverByPatient missing', 'unpaidHistory missing'];
+  const missingReasons = ['cache key missing', 'cache unavailable', 'cache miss', 'parse error'];
+  if (ledgerReasons.indexOf(reason) >= 0) {
+    return '銀行データを生成できません。繰越金データを確認してください。';
   }
+  if (reason && missingReasons.indexOf(reason) === -1) {
+    return '銀行データを生成できません。請求データは存在しますが、検証に失敗しました。';
+  }
+  return '銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。';
+}
 
 function applyBillingPaymentResultsEntry(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);

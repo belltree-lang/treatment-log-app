@@ -143,6 +143,33 @@ function testBankExportReturnsEmptyForZeroBilling() {
   assert.strictEqual(result.message, '当月の請求対象はありません', '0件の場合は案内メッセージを返す');
 }
 
+function testBankExportLogsValidationAndUsesPreparedData() {
+  const logs = [];
+  const exportCalls = [];
+  const ctx = createMainContext({
+    Logger: { log: value => logs.push(value) },
+    normalizeBillingMonthInput: input => ({ key: String(input) }),
+    loadPreparedBilling_: (monthKey, opts) => {
+      assert.strictEqual(opts.allowInvalid, true, 'bank export should allow invalid prepared cache');
+      return {
+        prepared: { billingJson: [{ patientId: 'p1', billingMonth: monthKey }], billingMonth: monthKey },
+        validation: { ok: false, reason: 'schemaVersion mismatch' }
+      };
+    },
+    normalizePreparedBilling_: payload => payload,
+    exportBankTransferDataForPrepared_: prepared => {
+      exportCalls.push(prepared.billingMonth);
+      return { billingMonth: prepared.billingMonth, inserted: prepared.billingJson.length };
+    }
+  });
+
+  const result = ctx.generateBankTransferDataFromCache('202501');
+
+  assert.strictEqual(result.inserted, 1, 'should continue export even if validation failed');
+  assert.deepStrictEqual(exportCalls, ['202501']);
+  assert.ok(logs.some(log => String(log).includes('[bankExport][validation]')), 'validation log should be recorded');
+}
+
 function testBankExportReportsLedgerIssues() {
   const ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
@@ -175,6 +202,7 @@ function run() {
   testBankExportPassesWhenArrayProvided();
   testBankExportAcceptsYmObject();
   testBankExportReturnsEmptyForZeroBilling();
+  testBankExportLogsValidationAndUsesPreparedData();
   testBankExportReportsLedgerIssues();
   testBankExportReportsMissingPreparation();
   testPrepareBillingDataNormalizesMonthKey();

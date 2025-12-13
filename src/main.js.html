@@ -972,7 +972,11 @@ function handleBankExport() {
 
 function onBankExportCompleted(result) {
   billingState.loading = false;
-  billingState.statusMessage = '銀行データを出力しました' + (result && result.inserted ? `（${result.inserted}件）` : '');
+  if (result && result.message) {
+    billingState.statusMessage = result.message;
+  } else {
+    billingState.statusMessage = '銀行データを出力しました' + (result && result.inserted ? `（${result.inserted}件）` : '');
+  }
   billingState.errorMessage = '';
   logBillingState('onBankExportCompleted');
   renderBillingResult();

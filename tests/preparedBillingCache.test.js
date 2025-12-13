@@ -115,6 +115,31 @@ function testBankExportReturnsEmptyForZeroBilling() {
   assert.ok(Array.isArray(result.rows) && result.rows.length === 0, 'rows should be empty array');
   assert.strictEqual(result.inserted, 0);
   assert.strictEqual(result.skipped, 0);
+  assert.strictEqual(result.message, '当月の請求対象はありません', '0件の場合は案内メッセージを返す');
+}
+
+function testBankExportReportsLedgerIssues() {
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({ key: String(input) }),
+    loadPreparedBilling_: () => ({ prepared: null, validation: { ok: false, reason: 'carryOverLedger missing' } }),
+    normalizePreparedBilling_: () => null
+  });
+
+  assert.throws(() => {
+    ctx.generateBankTransferDataFromCache('202501');
+  }, /繰越金データを確認してください/);
+}
+
+function testBankExportReportsMissingPreparation() {
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({ key: String(input) }),
+    loadPreparedBilling_: () => ({ prepared: null, validation: { ok: false, reason: 'cache miss' } }),
+    normalizePreparedBilling_: () => null
+  });
+
+  assert.throws(() => {
+    ctx.generateBankTransferDataFromCache('202501');
+  }, /請求データが未生成/);
 }
 
 function run() {
@@ -124,6 +149,8 @@ function run() {
   testBankExportRejectsNonArrayBillingJson();
   testBankExportPassesWhenArrayProvided();
   testBankExportReturnsEmptyForZeroBilling();
+  testBankExportReportsLedgerIssues();
+  testBankExportReportsMissingPreparation();
   console.log('prepared billing cache tests passed');
 }
 

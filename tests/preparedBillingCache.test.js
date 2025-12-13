@@ -151,7 +151,50 @@ function run() {
   testBankExportReturnsEmptyForZeroBilling();
   testBankExportReportsLedgerIssues();
   testBankExportReportsMissingPreparation();
+  testPrepareBillingDataNormalizesMonthKey();
   console.log('prepared billing cache tests passed');
 }
 
 run();
+
+function testPrepareBillingDataNormalizesMonthKey() {
+  const savedPayloads = [];
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({
+      key: String(input).replace(/\D/g, ''),
+      start: new Date(),
+      end: new Date(),
+      timezone: 'Asia/Tokyo',
+      year: 2025,
+      month: 1
+    }),
+    billingLogger_: { log: () => {} },
+    buildPreparedBillingPayload_: month => ({
+      billingMonth: month,
+      billingJson: [],
+      carryOverLedger: [],
+      carryOverLedgerMeta: {},
+      carryOverLedgerByPatient: {},
+      unpaidHistory: [],
+      visitsByPatient: {},
+      totalsByPatient: {},
+      patients: {},
+      bankInfoByName: {},
+      staffByPatient: {},
+      staffDirectory: {},
+      staffDisplayByPatient: {},
+      billingOverrideFlags: {},
+      carryOverByPatient: {},
+      bankAccountInfoByPatient: {}
+    }),
+    toClientBillingPayload_: payload => payload,
+    serializeBillingPayload_: payload => payload,
+    savePreparedBilling_: payload => savedPayloads.push(payload)
+  });
+
+  const result = ctx.prepareBillingData('2025-01');
+
+  assert.strictEqual(result.billingMonth, '202501', '返却されるbillingMonthはYYYYMMに正規化される');
+  assert.strictEqual(savedPayloads.length, 1, 'prepared payloadが保存される');
+  assert.strictEqual(savedPayloads[0].billingMonth, '202501', '保存されるpayloadのbillingMonthも正規化される');
+}

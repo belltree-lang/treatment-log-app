@@ -1362,6 +1362,7 @@ window._actions = window._actions || {};
 let _saveInFlight = false;
 let _pendingSaveRequestId = null;
 let _pendingRefreshTimer = null;
+let _deleteInFlight = false;
 
 function generateSaveRequestId(){
   if (window.crypto && typeof window.crypto.randomUUID === 'function'){
@@ -3371,10 +3372,36 @@ function editRow(row, note){
   google.script.run.withSuccessHandler(()=>{ refresh(); }).withFailureHandler(e=> alert(e.message||e)).updateTreatmentRow(row, v);
 }
 function delRow(row, treatmentId){
+  if (_deleteInFlight) {
+    toast('削除処理中です。完了までお待ちください');
+    return;
+  }
   if(!confirm('この記録を削除します。よろしいですか？')) return;
+  _deleteInFlight = true;
+  showGlobalLoading('削除中です…');
+  const targetPatientId = pid();
   google.script.run
-    .withSuccessHandler(()=>{ refresh(); })
-    .withFailureHandler(e=> alert(e.message||e))
+    .withSuccessHandler(res => {
+      _deleteInFlight = false;
+      hideGlobalLoading();
+      if (res && res.ok) {
+        const list = Array.isArray(res.treatments) ? res.treatments : null;
+        if (list) {
+          renderThisMonthList(list, { patientId: res.patientId || targetPatientId });
+        } else {
+          refresh(targetPatientId);
+        }
+        toast('施術記録を削除しました');
+        return;
+      }
+      alert('削除結果を取得できませんでした。画面を再読み込みして再度お試しください。');
+      refresh(targetPatientId);
+    })
+    .withFailureHandler(e => {
+      _deleteInFlight = false;
+      hideGlobalLoading();
+      alert((e && e.message) ? e.message : '削除に失敗しました');
+    })
     .deleteTreatmentRow(row, treatmentId || '');
 }
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }

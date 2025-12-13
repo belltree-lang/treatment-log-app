@@ -10493,6 +10493,12 @@ function submitTreatment(payload) {
 
     const presetLabel = String(payload?.presetLabel || '').trim();
     const actions = payload?.actions || {};
+    const allowsSameDayUpdate = (
+      presetLabel === '同意書受渡'
+        || presetLabel === '再同意取得確認'
+        || actions.visitPlanDate
+        || actions.consentUndecided
+    );
     const categoryRequired = !(
       presetLabel === '同意書受渡'
         || presetLabel === '再同意取得確認'
@@ -10570,6 +10576,81 @@ function submitTreatment(payload) {
     const existingToday = findExistingTreatmentOnDate_(s, pid, nowDate, tz, incomingTreatmentId);
     markTiming('sameDayScan');
     if (existingToday) {
+      if (allowsSameDayUpdate) {
+        const resolvedTreatmentId = existingToday.treatmentId || incomingTreatmentId || Utilities.getUuid();
+        treatmentIdForLog = resolvedTreatmentId;
+        const existingNoteRaw = Array.isArray(existingToday.row) ? existingToday.row[2] : '';
+        const normalizedExistingNote = normalizeTreatmentNoteForComparison_(existingNoteRaw);
+        const normalizedIncomingNote = normalizeTreatmentNoteForComparison_(merged);
+        let updatedNote = String(existingNoteRaw || '').trim();
+        if (normalizedIncomingNote && normalizedExistingNote.indexOf(normalizedIncomingNote) === -1) {
+          updatedNote = updatedNote ? `${updatedNote}\n${merged}` : merged;
+        }
+        if (!existingToday.treatmentId && resolvedTreatmentId) {
+          try {
+            s.getRange(existingToday.rowNumber, 7).setValue(resolvedTreatmentId);
+          } catch (err) {
+            Logger.log('[submitTreatment] Failed to write treatmentId to existing row: ' + (err && err.message ? err.message : err));
+          }
+        }
+        const updateResult = updateTreatmentRow(existingToday.rowNumber, updatedNote);
+        markTiming('sameDayUpdate');
+
+        const job = { treatmentId: resolvedTreatmentId, treatmentTimestamp: existingToday.row ? existingToday.row[0] : now };
+        let hasFollowUp = false;
+        if (pid) {
+          job.patientId = pid;
+        }
+        if (categoryKey) {
+          job.treatmentCategoryKey = categoryKey;
+        }
+        if (categoryLabel) {
+          job.treatmentCategoryLabel = categoryLabel;
+        }
+        if (presetLabel) {
+          job.presetLabel = presetLabel;
+          hasFollowUp = true;
+        }
+
+        const burdenShare = payload?.burdenShare;
+        if (burdenShare != null && String(burdenShare).trim() !== '') {
+          job.burdenShare = String(burdenShare).trim();
+          hasFollowUp = true;
+        }
+
+        const visitPlanDate = payload?.actions?.visitPlanDate;
+        if (visitPlanDate) {
+          job.visitPlanDate = String(visitPlanDate).trim();
+          if (job.visitPlanDate) {
+            hasFollowUp = true;
+          } else {
+            delete job.visitPlanDate;
+          }
+        }
+
+        if (payload?.actions && payload.actions.consentUndecided) {
+          job.consentUndecided = true;
+          hasFollowUp = true;
+        }
+
+        if (hasFollowUp && pid) {
+          queueAfterTreatmentJob(job);
+          markTiming('queueJob');
+        } else if (hasFollowUp && !pid) {
+          Logger.log('[submitTreatment] Follow-up skipped because patientId is empty');
+        }
+
+        markTiming('done');
+        logSubmitTreatmentTimings_(pid, resolvedTreatmentId, 'updated-existing', timings);
+        timingLogged = true;
+
+        return {
+          ok: true,
+          updatedRow: updateResult && updateResult.updatedRow ? updateResult.updatedRow : existingToday.rowNumber,
+          treatmentId: resolvedTreatmentId,
+          updatedExisting: true
+        };
+      }
       logSubmitTreatmentTimings_(
         pid,
         existingToday.treatmentId || incomingTreatmentId,

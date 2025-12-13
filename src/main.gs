@@ -77,6 +77,30 @@ const BILLING_CACHE_PREFIX = 'billing_prepared_';
 const BILLING_CACHE_TTL_SECONDS = 3600; // 1 hour
 const PREPARED_BILLING_SCHEMA_VERSION = 2;
 
+function normalizeBillingMonthKeySafe_(value) {
+  const candidates = [];
+  if (value && typeof value === 'object') {
+    if (value.key) candidates.push(value.key);
+    if (value.billingMonth) candidates.push(value.billingMonth);
+    if (value.month && value.month.key) candidates.push(value.month.key);
+    if (value.month) candidates.push(value.month);
+  } else {
+    candidates.push(value);
+  }
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    if (!candidate) continue;
+    try {
+      return normalizeBillingMonthInput(candidate).key;
+    } catch (err) {
+      const fallback = String(candidate || '').trim();
+      if (fallback) return fallback;
+    }
+  }
+  return '';
+}
+
 function buildBillingCacheKey_(billingMonthKey) {
   const monthKey = String(billingMonthKey || '').trim();
   if (!monthKey) return '';
@@ -242,7 +266,8 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
 }
 
 function loadPreparedBilling_(billingMonthKey) {
-  const key = buildBillingCacheKey_(billingMonthKey);
+  const expectedMonthKey = normalizeBillingMonthKeySafe_(billingMonthKey);
+  const key = buildBillingCacheKey_(expectedMonthKey);
   if (!key) return null;
   const cache = getBillingCache_();
   if (!cache) return null;
@@ -262,8 +287,27 @@ function loadPreparedBilling_(billingMonthKey) {
   }
   try {
     const parsed = JSON.parse(cached);
-    const validation = validatePreparedBillingPayload_(parsed, billingMonthKey);
+    const rawLength = Array.isArray(parsed && parsed.billingJson) ? parsed.billingJson.length : 0;
+    const validation = validatePreparedBillingPayload_(parsed, expectedMonthKey);
+    const normalized = normalizePreparedBilling_(parsed);
+    const normalizedLength = normalized && Array.isArray(normalized.billingJson) ? normalized.billingJson.length : 0;
+    billingLogger_.log('[billing] loadPreparedBilling_ parsed cache summary=' + JSON.stringify({
+      cacheKey: key,
+      expectedMonthKey,
+      parsedMonth: parsed && (parsed.billingMonth || parsed.month),
+      normalizedMonth: normalized && normalized.billingMonth,
+      rawBillingJsonLength: rawLength,
+      normalizedBillingJsonLength: normalizedLength,
+      validationReason: validation.reason || null,
+      validationOk: validation.ok
+    }));
     if (!validation.ok) {
+      if (validation.reason === 'billingMonth mismatch' && normalized && expectedMonthKey && Array.isArray(normalized.billingJson)) {
+        const corrected = Object.assign({}, normalized, { billingMonth: expectedMonthKey });
+        billingLogger_.log('[billing] loadPreparedBilling_ auto-correcting billingMonth mismatch for cache key=' + key);
+        savePreparedBilling_(corrected);
+        return corrected;
+      }
       try {
         Logger.log('[billing] loadPreparedBilling_: invalid cache for ' + key + ' reason=' + validation.reason);
       } catch (err) {
@@ -273,12 +317,7 @@ function loadPreparedBilling_(billingMonthKey) {
       clearBillingCache_(key);
       return null;
     }
-    try {
-      Logger.log('[billing] loadPreparedBilling_: parsed cache billingJson length=' + (parsed.billingJson || []).length);
-    } catch (err) {
-      // ignore logging errors in non-GAS environments
-    }
-    return Object.assign({}, parsed, { billingMonth: validation.billingMonth });
+    return Object.assign({}, normalized || parsed, { billingMonth: validation.billingMonth });
   } catch (err) {
     try {
       Logger.log('[billing] loadPreparedBilling_: failed to parse cache for ' + key + ' error=' + err);
@@ -292,12 +331,24 @@ function loadPreparedBilling_(billingMonthKey) {
 }
 
 function savePreparedBilling_(payload) {
-  const key = buildBillingCacheKey_(payload && payload.billingMonth);
+  const normalizedPayload = normalizePreparedBilling_(payload);
+  const resolvedMonthKey = normalizeBillingMonthKeySafe_(normalizedPayload && normalizedPayload.billingMonth);
+  if (!normalizedPayload || !resolvedMonthKey) {
+    billingLogger_.log('[billing] savePreparedBilling_ skipped due to invalid payload');
+    return;
+  }
+  const payloadToCache = Object.assign({}, normalizedPayload, { billingMonth: resolvedMonthKey });
+  const billingJsonLength = Array.isArray(payloadToCache.billingJson) ? payloadToCache.billingJson.length : 0;
+  billingLogger_.log('[billing] savePreparedBilling_ summary=' + JSON.stringify({
+    billingMonth: payloadToCache.billingMonth,
+    billingJsonLength
+  }));
+  const key = buildBillingCacheKey_(payloadToCache.billingMonth);
   if (!key) return;
   const cache = getBillingCache_();
   if (!cache) return;
   try {
-    cache.put(key, JSON.stringify(payload), BILLING_CACHE_TTL_SECONDS);
+    cache.put(key, JSON.stringify(payloadToCache), BILLING_CACHE_TTL_SECONDS);
   } catch (err) {
     try {
       if (Logger && typeof Logger.warning === 'function') {
@@ -311,8 +362,13 @@ function savePreparedBilling_(payload) {
 }
 
 function buildPreparedBillingPayload_(billingMonth) {
-  const source = getBillingSourceData(billingMonth);
+  const resolvedMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const source = getBillingSourceData(resolvedMonthKey || billingMonth);
+  const billingMonthKey = normalizeBillingMonthKeySafe_(
+    source.billingMonth || (source.month && source.month.key) || resolvedMonthKey
+  );
   const billingJson = generateBillingJsonFromSource(source);
+  const billingJsonArray = Array.isArray(billingJson) ? billingJson : [];
   const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
   const visitCountKeys = Object.keys(visitCounts || {});
   const normalizeNumber_ = value => {
@@ -326,7 +382,7 @@ function buildPreparedBillingPayload_(billingMonth) {
     return map;
   }, {});
   const totalsByPatient = {};
-  (billingJson || []).forEach(item => {
+  billingJsonArray.forEach(item => {
     const pid = billingNormalizePatientId_(item && item.patientId);
     if (!pid) return;
     totalsByPatient[pid] = {
@@ -361,18 +417,18 @@ function buildPreparedBillingPayload_(billingMonth) {
     .slice(0, 5);
 
   billingLogger_.log('[billing] buildPreparedBillingPayload_ summary=' + JSON.stringify({
-    billingMonth: source.billingMonth,
+    billingMonth: billingMonthKey || source.billingMonth,
     treatmentVisitCountEntries: visitCountKeys.length,
     zeroVisitSamples,
-    billingJsonLength: Array.isArray(billingJson) ? billingJson.length : null
+    billingJsonLength: billingJsonArray.length
   }));
-  if (Array.isArray(billingJson) && billingJson.length) {
-    billingLogger_.log('[billing] buildPreparedBillingPayload_ firstBillingEntry=' + JSON.stringify(billingJson[0]));
+  if (billingJsonArray.length) {
+    billingLogger_.log('[billing] buildPreparedBillingPayload_ firstBillingEntry=' + JSON.stringify(billingJsonArray[0]));
   }
   return {
     schemaVersion: PREPARED_BILLING_SCHEMA_VERSION,
-    billingMonth: source.billingMonth,
-    billingJson,
+    billingMonth: billingMonthKey || source.billingMonth,
+    billingJson: billingJsonArray,
     preparedAt: new Date().toISOString(),
     patients: source.patients || source.patientMap || {},
     bankInfoByName: source.bankInfoByName || {},
@@ -405,10 +461,11 @@ function coerceBillingJsonArray_(raw) {
 }
 
   function normalizePreparedBilling_(payload) {
+    const rawLength = Array.isArray(payload && payload.billingJson) ? payload.billingJson.length : 0;
     if (!payload) return null;
     const normalizeMap_ = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
     const schemaVersion = Number(payload.schemaVersion);
-    return Object.assign({}, payload, {
+    const normalized = Object.assign({}, payload, {
       schemaVersion: Number.isFinite(schemaVersion) ? schemaVersion : null,
       billingMonth: payload.billingMonth || payload.month || '',
       preparedAt: payload.preparedAt || payload.prepared_at || null,
@@ -430,6 +487,13 @@ function coerceBillingJsonArray_(raw) {
       unpaidHistory: Array.isArray(payload.unpaidHistory) ? payload.unpaidHistory : [],
       bankStatuses: normalizeMap_(payload.bankStatuses)
     });
+    const normalizedLength = Array.isArray(normalized.billingJson) ? normalized.billingJson.length : 0;
+    billingLogger_.log('[billing] normalizePreparedBilling_ lengths=' + JSON.stringify({
+      rawBillingJsonLength: rawLength,
+      normalizedBillingJsonLength: normalizedLength,
+      billingMonth: normalized.billingMonth
+    }));
+    return normalized;
   }
 
 function toClientBillingPayload_(prepared) {

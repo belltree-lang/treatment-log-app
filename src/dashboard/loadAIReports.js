@@ -2,7 +2,14 @@
  * AI報告書シートから患者ごとの最終発行日時を取得する。
  * @return {{reports: Object<string, string>, warnings: string[]}}
  */
-function loadAIReports() {
+function loadAIReports(options) {
+  const opts = options || {};
+  const fetchFn = () => loadAIReportsUncached_();
+  if (opts && opts.cache === false) return fetchFn();
+  return dashboardCacheFetch_('dashboard:aiReports:v1', fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
+}
+
+function loadAIReportsUncached_() {
   const reports = {};
   const warnings = [];
 

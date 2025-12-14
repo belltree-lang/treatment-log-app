@@ -1,7 +1,14 @@
 /**
  * 患者情報シートを読み込み、患者IDを主キーとした情報と氏名マッピングを返す。
  */
-function loadPatientInfo() {
+function loadPatientInfo(options) {
+  const opts = options || {};
+  const fetchFn = () => loadPatientInfoUncached_(opts);
+  if (opts && opts.cache === false) return fetchFn();
+  return dashboardCacheFetch_('dashboard:patientInfo:v1', fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
+}
+
+function loadPatientInfoUncached_(_options) {
   const patients = {};
   const nameToId = {};
   const warnings = [];

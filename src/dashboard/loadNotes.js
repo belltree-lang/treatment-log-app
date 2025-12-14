@@ -2,20 +2,43 @@
  * 申し送りシートを読み込み、患者IDごとの最新申し送りを返す。
  */
 function loadNotes(options) {
+  const opts = options || {};
+  const email = opts.email;
+  const fetchFn = () => loadNotesUncached_(opts);
+  const base = opts && opts.cache === false
+    ? fetchFn()
+    : dashboardCacheFetch_('dashboard:notes:v1', fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
+
+  const lastReadAt = loadHandoverLastRead_(email);
+  const notes = {};
+  Object.keys(base.notes || {}).forEach(pid => {
+    const note = base.notes[pid] || {};
+    const readAt = lastReadAt[pid] || '';
+    const readTs = readAt ? dashboardParseTimestamp_(readAt) : null;
+    const noteTs = note.timestamp instanceof Date ? note.timestamp : dashboardParseTimestamp_(note.timestamp || note.when);
+    const unread = noteTs ? (!readTs || noteTs.getTime() > readTs.getTime()) : false;
+    notes[pid] = Object.assign({}, note, { lastReadAt: readAt, unread });
+  });
+
+  const warnings = [];
+  if (Array.isArray(base.warnings)) warnings.push.apply(warnings, base.warnings);
+  return { notes, warnings, lastReadAt };
+}
+
+function loadNotesUncached_(_options) {
   const warnings = [];
   const latestByPatient = {};
-  const lastReadAt = loadHandoverLastRead_();
 
   const wb = dashboardGetSpreadsheet_();
   const sheet = wb && wb.getSheetByName ? wb.getSheetByName('申し送り') : null;
   if (!sheet) {
     warnings.push('申し送りシートが見つかりません');
     dashboardWarn_('[loadNotes] sheet not found');
-    return { notes: latestByPatient, warnings, lastReadAt };
+    return { notes: latestByPatient, warnings };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { notes: latestByPatient, warnings, lastReadAt };
+  if (lastRow < 2) return { notes: latestByPatient, warnings };
 
   const lastCol = Math.max(5, sheet.getLastColumn ? sheet.getLastColumn() : (sheet.getMaxColumns ? sheet.getMaxColumns() : 0));
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
@@ -53,13 +76,12 @@ function loadNotes(options) {
         preview,
         when,
         timestamp: ts,
-        row: rowNumber,
-        lastReadAt: lastReadAt[patientId] || ''
+        row: rowNumber
       };
     }
   }
 
-  return { notes: latestByPatient, warnings, lastReadAt };
+  return { notes: latestByPatient, warnings };
 }
 
 function dashboardTrimPreview_(text, limit) {
@@ -68,20 +90,32 @@ function dashboardTrimPreview_(text, limit) {
   return raw.slice(0, limit);
 }
 
-function loadHandoverLastRead_() {
+function loadHandoverLastRead_(email) {
   const key = 'HANDOVER_LAST_READ';
   if (typeof PropertiesService === 'undefined' || !PropertiesService.getScriptProperties) return {};
   try {
     const raw = PropertiesService.getScriptProperties().getProperty(key) || '{}';
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    if (!parsed || typeof parsed !== 'object') return {};
+    const emailKey = dashboardNormalizeEmail_(email);
+    if (!emailKey) return parsed;
+    const result = {};
+    Object.keys(parsed).forEach(pid => {
+      const entry = parsed[pid];
+      if (entry && typeof entry === 'object') {
+        if (entry[emailKey]) result[pid] = entry[emailKey];
+      } else if (typeof entry === 'string') {
+        result[pid] = entry;
+      }
+    });
+    return result;
   } catch (e) {
     dashboardWarn_('[loadHandoverLastRead] parse failed: ' + (e && e.message ? e.message : e));
     return {};
   }
 }
 
-function updateHandoverLastRead(patientId, readAt) {
+function updateHandoverLastRead(patientId, readAt, email) {
   const key = 'HANDOVER_LAST_READ';
   const pid = dashboardNormalizePatientId_(patientId);
   if (!pid) return false;
@@ -96,7 +130,16 @@ function updateHandoverLastRead(patientId, readAt) {
   }
   const ts = readAt instanceof Date ? readAt : (readAt ? dashboardParseTimestamp_(readAt) : new Date());
   if (!(ts instanceof Date) || Number.isNaN(ts.getTime())) return false;
-  current[pid] = ts.toISOString();
+  const tsIso = ts.toISOString();
+  const emailKey = dashboardNormalizeEmail_(email);
+  if (emailKey) {
+    const existing = current[pid];
+    const bucket = existing && typeof existing === 'object' ? existing : {};
+    bucket[emailKey] = tsIso;
+    current[pid] = bucket;
+  } else {
+    current[pid] = tsIso;
+  }
   try {
     store.setProperty(key, JSON.stringify(current));
     return true;
@@ -104,6 +147,12 @@ function updateHandoverLastRead(patientId, readAt) {
     dashboardWarn_('[updateHandoverLastRead] failed to save: ' + (e && e.message ? e.message : e));
     return false;
   }
+}
+
+function dashboardNormalizeEmail_(email) {
+  const raw = email == null ? '' : email;
+  const normalized = String(raw).trim().toLowerCase();
+  return normalized || '';
 }
 
 if (typeof dashboardGetSpreadsheet_ === 'undefined') {

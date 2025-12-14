@@ -1,21 +1,81 @@
-/**
- * Billing entry points for Apps Script deployment.
- *
- * These helper functions wire the Get/Logic/Output layers together so that
- * callers can preview JSON or generate patient invoice PDFs for a given billing month.
- */
-
 function doGet(e) {
-  const template = HtmlService.createTemplateFromFile('billing');
+  e = e || {};
+
+  const dashboardResponse = handleDashboardDoGet_(e);
+  if (dashboardResponse) {
+    return dashboardResponse;
+  }
+
+  const view = e.parameter ? (e.parameter.view || 'billing') : 'billing';
+  let templateFile = '';
+
+  switch (view) {
+    case 'billing':      templateFile = 'billing'; break;
+    case 'dashboard':    templateFile = 'dashboard'; break;
+    default:             templateFile = 'billing'; break;
+  }
+
+  const template = HtmlService.createTemplateFromFile(templateFile);
   template.baseUrl = ScriptApp.getService().getUrl() || '';
+  template.patientId = e.parameter && e.parameter.id ? e.parameter.id : '';
+  template.payrollPdfData = {};
+
+  if (e.parameter && e.parameter.lead) template.lead = e.parameter.lead;
+
   return template
     .evaluate()
-    .setTitle('請求処理アプリ')
+    .setTitle(templateFile === 'dashboard' ? '施術者ダッシュボード' : '請求処理アプリ')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+function handleDashboardDoGet_(e) {
+  if (!shouldHandleDashboardRequest_(e)) return null;
+
+  if (shouldHandleDashboardApi_(e)) {
+    const data = typeof getDashboardData === 'function' ? getDashboardData() : {};
+    return createJsonResponse_(data);
+  }
+
+  const template = HtmlService.createTemplateFromFile('dashboard');
+  template.baseUrl = ScriptApp.getService().getUrl() || '';
+
+  return template
+    .evaluate()
+    .setTitle('施術者ダッシュボード')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function shouldHandleDashboardRequest_(e) {
+  const path = (e && e.pathInfo ? String(e.pathInfo) : '').replace(/^\/+|\/+$/g, '').toLowerCase();
+  if (path === 'dashboard' || path === 'getdashboarddata') return true;
+  const view = e && e.parameter ? String(e.parameter.view || '').toLowerCase() : '';
+  if (view === 'dashboard') return true;
+  const action = e && e.parameter ? String(e.parameter.action || e.parameter.api || '').toLowerCase() : '';
+  return action === 'getdashboarddata';
+}
+
+function shouldHandleDashboardApi_(e) {
+  const path = (e && e.pathInfo ? String(e.pathInfo) : '').replace(/^\/+|\/+$/g, '').toLowerCase();
+  if (path === 'getdashboarddata') return true;
+  const action = e && e.parameter ? (e.parameter.action || e.parameter.api) : '';
+  return String(action || '').toLowerCase() === 'getdashboarddata';
+}
+
+function createJsonResponse_(payload) {
+  if (typeof ContentService === 'undefined' || !ContentService || typeof ContentService.createTextOutput !== 'function') {
+    return JSON.stringify(payload || {});
+  }
+  const output = ContentService.createTextOutput(JSON.stringify(payload || {}));
+  if (output && typeof output.setMimeType === 'function' && ContentService && ContentService.MimeType) {
+    output.setMimeType(ContentService.MimeType.JSON);
+  }
+  return output;
 }
 
 /**

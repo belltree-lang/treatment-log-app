@@ -16,6 +16,36 @@
  * @param {string} [options.user] - セッションユーザーを明示的に指定する場合に利用。
  * @return {{tasks: Object[], todayVisits: Object[], patients: Object[], warnings: string[], meta: Object}}
  */
+if (typeof dashboardResolveTimeZone_ !== 'function') {
+  var dashboardResolveTimeZone_ = function() {
+    if (typeof Session !== 'undefined' && Session && typeof Session.getScriptTimeZone === 'function') {
+      const tz = Session.getScriptTimeZone();
+      if (tz) return tz;
+    }
+    if (typeof DASHBOARD_TIME_ZONE !== 'undefined') return DASHBOARD_TIME_ZONE;
+    return 'Asia/Tokyo';
+  };
+}
+
+if (typeof dashboardFormatDate_ !== 'function') {
+  var dashboardFormatDate_ = function(date, tz, format) {
+    const targetFormat = format || 'yyyy-MM-dd';
+    const targetTz = tz || dashboardResolveTimeZone_();
+    if (typeof Utilities !== 'undefined' && Utilities && typeof Utilities.formatDate === 'function') {
+      try { return Utilities.formatDate(date, targetTz, targetFormat); } catch (e) { /* ignore */ }
+    }
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    return date.toISOString();
+  };
+}
+
+if (typeof dashboardNormalizePatientId_ !== 'function') {
+  var dashboardNormalizePatientId_ = function(value) {
+    const raw = value == null ? '' : value;
+    return String(raw).trim();
+  };
+}
+
 function getDashboardData(options) {
   const opts = options || {};
   const meta = {

@@ -5,8 +5,9 @@ function loadNotes(options) {
   const warnings = [];
   const latestByPatient = {};
   const lastReadAt = loadHandoverLastRead_();
+  const opts = options || {};
 
-  const wb = dashboardGetSpreadsheet_();
+  const wb = opts.workbook || dashboardGetSpreadsheet_();
   const sheet = wb && wb.getSheetByName ? wb.getSheetByName('申し送り') : null;
   if (!sheet) {
     warnings.push('申し送りシートが見つかりません');
@@ -18,6 +19,12 @@ function loadNotes(options) {
   if (lastRow < 2) return { notes: latestByPatient, warnings, lastReadAt };
 
   const lastCol = Math.max(5, sheet.getLastColumn ? sheet.getLastColumn() : (sheet.getMaxColumns ? sheet.getMaxColumns() : 0));
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
+  const colTimestamp = dashboardResolveColumn_(headers, ['日時', '日付', 'timestamp', 'ts', 'タイムスタンプ'], 1);
+  const colPatientId = dashboardResolveColumn_(headers, ['患者ID', 'patientId', 'id'], 2);
+  const colAuthor = dashboardResolveColumn_(headers, ['投稿者', 'author', 'authorEmail', 'メール', 'email', '内容'], 3);
+  const colBody = dashboardResolveColumn_(headers, ['本文', 'note', '申し送り', 'body', '画像url', '画像URL'], 4);
+
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
   const tz = dashboardResolveTimeZone_();
@@ -27,20 +34,20 @@ function loadNotes(options) {
     const rowDisplay = displayValues[i] || [];
     const rowNumber = i + 2;
 
-    const patientId = dashboardNormalizePatientId_(row[1] || rowDisplay[1]);
+    const patientId = dashboardNormalizePatientId_(colPatientId ? (row[colPatientId - 1] || rowDisplay[colPatientId - 1]) : '');
     if (!patientId) {
       warnings.push(`患者IDが未入力の申し送りをスキップしました (row:${rowNumber})`);
       continue;
     }
 
-    const ts = dashboardParseTimestamp_(row[0] || rowDisplay[0]);
+    const ts = dashboardParseTimestamp_(colTimestamp ? (row[colTimestamp - 1] || rowDisplay[colTimestamp - 1]) : '');
     if (!ts) {
       warnings.push(`申し送りの日時を解釈できません (row:${rowNumber})`);
       continue;
     }
 
-    const authorEmail = String(row[2] || rowDisplay[2] || '').trim();
-    const body = String(rowDisplay[3] || row[3] || '').trim();
+    const authorEmail = String(colAuthor ? (row[colAuthor - 1] || rowDisplay[colAuthor - 1] || '') : '').trim();
+    const body = String(colBody ? (rowDisplay[colBody - 1] || row[colBody - 1] || '') : '').trim();
     const preview = dashboardTrimPreview_(body, 20);
     const when = dashboardFormatDate_(ts, tz, 'yyyy-MM-dd HH:mm');
 
@@ -122,6 +129,22 @@ if (typeof dashboardNormalizePatientId_ === 'undefined') {
   function dashboardNormalizePatientId_(value) {
     const raw = value == null ? '' : value;
     return String(raw).trim();
+  }
+}
+
+if (typeof dashboardResolveColumn_ === 'undefined') {
+  function dashboardResolveColumn_(headers, candidates, fallbackIndex) {
+    if (Array.isArray(candidates)) {
+      const normalizedHeaders = (headers || []).map(h => String(h || '').trim().toLowerCase());
+      for (let i = 0; i < normalizedHeaders.length; i++) {
+        const header = normalizedHeaders[i];
+        if (!header) continue;
+        if (candidates.some(c => header === String(c || '').trim().toLowerCase())) {
+          return i + 1;
+        }
+      }
+    }
+    return fallbackIndex || 0;
   }
 }
 

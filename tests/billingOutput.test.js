@@ -340,6 +340,36 @@ function testBankRowsSkipWhenNormalizedLengthsAreInvalid() {
   assert.strictEqual(result.skipped, 1, '不正データはスキップ数としてカウントされる');
 }
 
+function testNameKanaFallsBackToKanjiWhenEmpty() {
+  const context = createExportContext();
+  const { buildBankTransferRowsForBilling_ } = context;
+
+  const billingJson = [{ billingMonth: '202502', patientId: '003', nameKanji: '山田太郎' }];
+  const patientMap = {
+    '003': { bankCode: '1', branchCode: '2', accountNumber: '3', nameKanji: '山田太郎' }
+  };
+
+  const result = buildBankTransferRowsForBilling_(billingJson, {}, patientMap, '202502', {});
+
+  assert.strictEqual(result.rows.length, 1, '名義カナが空でも行が生成される');
+  assert.strictEqual(result.rows[0].nameKana, '山田太郎', '名義カナが空の場合は漢字から代替生成される');
+}
+
+function testNameKanaIsNormalizedToFullWidth() {
+  const context = createExportContext();
+  const { buildBankTransferRowsForBilling_ } = context;
+
+  const billingJson = [{ billingMonth: '202502', patientId: '004', nameKanji: '佐藤花子', nameKana: ' ﾊﾅｺ ' }];
+  const patientMap = {
+    '004': { bankCode: '1', branchCode: '2', accountNumber: '3', nameKanji: '佐藤花子' }
+  };
+
+  const result = buildBankTransferRowsForBilling_(billingJson, {}, patientMap, '202502', {});
+
+  assert.strictEqual(result.rows.length, 1, '半角名義カナでも行が生成される');
+  assert.strictEqual(result.rows[0].nameKana, 'ハナコ', '名義カナはNFKC変換とtrimで正規化される');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
@@ -358,6 +388,8 @@ function run() {
   testBankExportReturnsEmptyWhenNoRows();
   testBankCodesAreNormalizedBeforeValidation();
   testBankRowsSkipWhenNormalizedLengthsAreInvalid();
+  testNameKanaFallsBackToKanjiWhenEmpty();
+  testNameKanaIsNormalizedToFullWidth();
   console.log('billingOutput blob guard tests passed');
 }
 

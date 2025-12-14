@@ -120,6 +120,12 @@ function normalizeBillingNameKey_(value) {
   return String(value || '').replace(/\s+/g, '').trim();
 }
 
+function normalizeKana_(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .trim();
+}
+
 function normalizeInvoiceMoney_(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : 0;
@@ -425,10 +431,11 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     const rawBranchCode = pickWithPriority('branchCode', '');
     const branchCode = String(rawBranchCode).replace(/\D/g, '').padStart(3, '0');
     const regulationCode = pickWithPriority('regulationCode', 1);
+    const mergedNameKanji = pickWithPriority('nameKanji', nameKanji);
+    const rawNameKana = pickWithPriority('nameKana', '');
+    const nameKana = rawNameKana ? normalizeKana_(rawNameKana) : normalizeKana_(mergedNameKanji);
     const rawAccountNumber = pickWithPriority('accountNumber', '');
     const accountNumber = String(rawAccountNumber).replace(/\D/g, '').padStart(7, '0');
-    const nameKana = pickWithPriority('nameKana', '');
-    const mergedNameKanji = pickWithPriority('nameKanji', nameKanji);
     const isNew = normalizeZeroOneFlag_(pickWithPriority('isNew', ''));
     const statusEntry = bankStatuses && pid ? bankStatuses[pid] : null;
     const paidStatus = item && item.paidStatus ? item.paidStatus : (statusEntry && statusEntry.paidStatus ? statusEntry.paidStatus : '');

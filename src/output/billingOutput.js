@@ -630,9 +630,8 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
   }
 
   function exportBankTransferDataForPrepared_(prepared) {
-    const hasBillingJson = prepared && Object.prototype.hasOwnProperty.call(prepared, 'billingJson');
     const normalized = normalizePreparedBilling_(prepared);
-    if (!normalized || !hasBillingJson) {
+    if (!normalized) {
       throw new Error('銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。');
     }
 

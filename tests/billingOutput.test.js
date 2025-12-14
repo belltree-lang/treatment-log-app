@@ -338,6 +338,14 @@ function testBankRowsSkipWhenNormalizedLengthsAreInvalid() {
 
   assert.strictEqual(result.rows.length, 0, '不正な桁数のデータは行に含まれない');
   assert.strictEqual(result.skipped, 1, '不正データはスキップ数としてカウントされる');
+  assert.strictEqual(result.total, 1, '総件数がカウントされる');
+  assert.strictEqual(result.passed, 0, '有効データが0件であることが分かる');
+  const skipSummary = Object.assign({}, result.skipReasons);
+  assert.deepStrictEqual(skipSummary, {
+    invalidBankCode: 1,
+    invalidBranchCode: 0,
+    invalidAccountNumber: 1
+  }, 'スキップ理由の内訳が返却される');
 }
 
 function testNameKanaFallsBackToKanjiWhenEmpty() {
@@ -370,6 +378,31 @@ function testNameKanaIsNormalizedToFullWidth() {
   assert.strictEqual(result.rows[0].nameKana, 'ハナコ', '名義カナはNFKC変換とtrimで正規化される');
 }
 
+function testSkipMessageIncludesReasonsWhenAllRowsInvalid() {
+  const context = createExportContext({
+    exportBankTransferRows_: (billingMonth, rows) => ({ billingMonth, inserted: rows.length })
+  });
+
+  const prepared = {
+    billingMonth: '202503',
+    billingJson: [{ billingMonth: '202503', patientId: '005', nameKanji: '銀行不備' }],
+    bankInfoByName: { placeholder: {} },
+    patients: {
+      '005': { bankCode: '12345', branchCode: '1234', accountNumber: '123456789' }
+    },
+    bankStatuses: {}
+  };
+
+  const result = context.exportBankTransferDataForPrepared_(prepared);
+
+  assert.strictEqual(result.rows.length, 0, '全件スキップ時は行が空のままになる');
+  assert.ok(result.message.includes('銀行CSVが生成されませんでした'), 'スキップ理由がメッセージに含まれる');
+  assert.match(result.message, /総件数: 1/, '総件数がメッセージに含まれる');
+  assert.match(result.message, /銀行コード不正: 1/, '銀行コードの不正件数が含まれる');
+  assert.match(result.message, /支店コード不正: 1/, '支店コードの不正件数が含まれる');
+  assert.match(result.message, /口座番号不正: 1/, '口座番号の不正件数が含まれる');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
@@ -390,6 +423,7 @@ function run() {
   testBankRowsSkipWhenNormalizedLengthsAreInvalid();
   testNameKanaFallsBackToKanjiWhenEmpty();
   testNameKanaIsNormalizedToFullWidth();
+  testSkipMessageIncludesReasonsWhenAllRowsInvalid();
   console.log('billingOutput blob guard tests passed');
 }
 

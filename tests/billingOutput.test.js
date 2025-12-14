@@ -20,7 +20,11 @@ function createExportContext(overrides = {}) {
   const base = {
     console,
     billingLogger_: { log: () => {} },
-    normalizePreparedBilling_: payload => payload,
+    normalizePreparedBilling_: payload => {
+      if (!payload) return null;
+      const billingJson = Array.isArray(payload.billingJson) ? payload.billingJson : [];
+      return Object.assign({ billingJson }, payload);
+    },
     logPreparedBankPayloadStatus_: () => {},
     normalizeZeroOneFlag_: value => (value === 1 || value === '1' || value === true ? 1 : 0),
     getBillingSourceData: () => ({
@@ -273,11 +277,46 @@ function testCarryOverHistoryIsIncluded() {
   assert.strictEqual(breakdown.grandTotal, 1153, '未回収分も繰越に合算される');
 }
 
-function testBankExportRejectsMissingBillingJson() {
+function testBankExportRejectsNullPreparedPayload() {
   const context = createExportContext();
   assert.throws(() => {
-    context.exportBankTransferDataForPrepared_({ billingMonth: '202501' });
+    context.exportBankTransferDataForPrepared_(null);
   }, /請求データが未生成/);
+}
+
+function testBankExportUsesNormalizedBillingJsonWhenMissingFromPayload() {
+  const normalizedBillingJson = [{ billingMonth: '202501', patientId: 'P001', nameKanji: '正規化済み' }];
+  const bankInfoByName = { normalized: { bankCode: '0001', branchCode: '002', accountNumber: '1234567' } };
+  const patients = { P001: { bankCode: '0001', branchCode: '002', accountNumber: '1234567' } };
+  const buildCalls = [];
+  const exportCalls = [];
+
+  const context = createExportContext({
+    normalizePreparedBilling_: payload => Object.assign({
+      billingMonth: payload.billingMonth,
+      billingJson: normalizedBillingJson,
+      bankInfoByName,
+      patients,
+      bankStatuses: {}
+    }, payload),
+    logPreparedBankPayloadStatus_: () => {}
+  });
+
+  context.buildBankTransferRowsForBilling_ = (billingJson, bankInfoByNameParam, patientMapParam, billingMonth, bankStatuses) => {
+    buildCalls.push({ billingJson, bankInfoByName: bankInfoByNameParam, patientMap: patientMapParam, billingMonth, bankStatuses });
+    return { billingMonth, rows: [{ patientId: 'P001' }], total: billingJson.length, passed: billingJson.length, skipped: 0, skipReasons: {} };
+  };
+  context.exportBankTransferRows_ = (billingMonth, rows) => {
+    exportCalls.push({ billingMonth, rows });
+    return { inserted: rows.length, skipped: 0 };
+  };
+
+  const result = context.exportBankTransferDataForPrepared_({ billingMonth: '202501' });
+
+  assert.strictEqual(buildCalls.length, 1, '正規化済みの billingJson で銀行CSV構築に進む');
+  assert.deepStrictEqual(buildCalls[0].billingJson, normalizedBillingJson, 'billingJson は正規化結果がそのまま渡される');
+  assert.strictEqual(exportCalls.length, 1, 'エクスポート処理まで到達する');
+  assert.strictEqual(result.rows.length, 1, '正規化済みデータから行が生成される');
 }
 
 function testBankExportRejectsInvalidBillingJsonShape() {
@@ -416,7 +455,8 @@ function run() {
   testWelfareBillingStillAddsTransport();
   testMassageBillingDoesNotChargeTransport();
   testCarryOverHistoryIsIncluded();
-  testBankExportRejectsMissingBillingJson();
+  testBankExportRejectsNullPreparedPayload();
+  testBankExportUsesNormalizedBillingJsonWhenMissingFromPayload();
   testBankExportRejectsInvalidBillingJsonShape();
   testBankExportReturnsEmptyWhenNoRows();
   testBankCodesAreNormalizedBeforeValidation();

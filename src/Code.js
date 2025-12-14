@@ -9609,6 +9609,7 @@ function doGet(e) {
     case 'payroll':      templateFile = 'payroll'; break;
     case 'payroll_pdf_family': templateFile = 'payroll_pdf_family'; break;
     case 'billing':      templateFile = 'billing'; break;
+    case 'dashboard':    templateFile = 'dashboard'; break;
     case 'record':       templateFile = 'app'; break;   // ★ app.html を record として表示
     case 'report':       templateFile = 'report'; break;
     default:             templateFile = 'welcome'; break;

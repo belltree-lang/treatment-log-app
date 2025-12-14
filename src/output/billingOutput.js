@@ -403,11 +403,19 @@ const BANK_TRANSFER_HEADERS = ['請求月', '番号', '氏名（漢字）', '銀
 function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, billingMonth, bankStatuses) {
   const rows = [];
   let skipped = 0;
+  let passed = 0;
+  let total = 0;
+  const skipReasons = {
+    invalidBankCode: 0,
+    invalidBranchCode: 0,
+    invalidAccountNumber: 0
+  };
   const billingMonthKey = billingMonth || (billingJson && billingJson.length ? billingJson[0].billingMonth : '');
 
   (billingJson || []).forEach(item => {
     const pid = item && item.patientId ? String(item.patientId).trim() : '';
     if (!pid) return;
+    total += 1;
     const patient = patientMap && patientMap[pid] ? patientMap[pid] : {};
     const nameKanji = item && item.nameKanji ? String(item.nameKanji).trim() : '';
     const nameKey = normalizeBillingNameKey_(nameKanji);
@@ -440,11 +448,19 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     const statusEntry = bankStatuses && pid ? bankStatuses[pid] : null;
     const paidStatus = item && item.paidStatus ? item.paidStatus : (statusEntry && statusEntry.paidStatus ? statusEntry.paidStatus : '');
 
-    if (bankCode.length !== 4 || branchCode.length !== 3 || accountNumber.length !== 7) {
+    const bankCodeInvalid = bankCode.length !== 4;
+    const branchCodeInvalid = branchCode.length !== 3;
+    const accountNumberInvalid = accountNumber.length !== 7;
+
+    if (bankCodeInvalid || branchCodeInvalid || accountNumberInvalid) {
       skipped += 1;
+      if (bankCodeInvalid) skipReasons.invalidBankCode += 1;
+      if (branchCodeInvalid) skipReasons.invalidBranchCode += 1;
+      if (accountNumberInvalid) skipReasons.invalidAccountNumber += 1;
       return;
     }
 
+    passed += 1;
     rows.push({
       billingMonth: billingMonthKey,
       patientId: pid,
@@ -459,7 +475,14 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     });
   });
 
-  return { billingMonth: billingMonthKey, rows, skipped };
+  return {
+    billingMonth: billingMonthKey,
+    rows,
+    skipped,
+    total,
+    passed,
+    skipReasons
+  };
 }
 
 function ensureBankTransferSheet_() {
@@ -639,7 +662,22 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
 
     const buildResult = buildBankTransferRowsForBilling_(normalized.billingJson, bankInfoByName, patientMap, normalized.billingMonth, bankStatuses);
     const outputResult = exportBankTransferRows_(buildResult.billingMonth, buildResult.rows, bankStatuses);
-    return Object.assign({}, buildResult, outputResult);
+    const combined = Object.assign({}, buildResult, outputResult);
+
+    if (!buildResult.rows.length) {
+      const reasonSummary = buildResult.skipReasons || {};
+      const parts = [
+        '銀行CSVが生成されませんでした',
+        `総件数: ${buildResult.total || 0}`,
+        `有効: ${buildResult.passed || 0}`,
+        `銀行コード不正: ${reasonSummary.invalidBankCode || 0}`,
+        `支店コード不正: ${reasonSummary.invalidBranchCode || 0}`,
+        `口座番号不正: ${reasonSummary.invalidAccountNumber || 0}`
+      ];
+      combined.message = parts.join(' / ');
+    }
+
+    return combined;
   }
 
 /***** Billing history and payment result utilities (retained for compatibility) *****/

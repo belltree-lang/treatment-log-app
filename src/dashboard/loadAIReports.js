@@ -74,6 +74,17 @@ if (typeof dashboardGetSpreadsheet_ === 'undefined') {
   }
 }
 
+if (typeof DASHBOARD_CACHE_TTL_SECONDS === 'undefined') {
+  var DASHBOARD_CACHE_TTL_SECONDS = 60 * 60 * 12;
+}
+
+if (typeof dashboardCacheFetch_ === 'undefined') {
+  function dashboardCacheFetch_(cacheKey, fetchFn) {
+    if (typeof fetchFn === 'function') return fetchFn();
+    return null;
+  }
+}
+
 if (typeof dashboardParseTimestamp_ === 'undefined') {
   function dashboardParseTimestamp_(value) {
     if (value instanceof Date) return value;

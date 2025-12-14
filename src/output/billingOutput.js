@@ -420,17 +420,20 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
       return fallbackValue;
     };
 
-    const bankCode = pickWithPriority('bankCode', '');
-    const branchCode = pickWithPriority('branchCode', '');
+    const rawBankCode = pickWithPriority('bankCode', '');
+    const bankCode = String(rawBankCode).replace(/\D/g, '').padStart(4, '0');
+    const rawBranchCode = pickWithPriority('branchCode', '');
+    const branchCode = String(rawBranchCode).replace(/\D/g, '').padStart(3, '0');
     const regulationCode = pickWithPriority('regulationCode', 1);
-    const accountNumber = pickWithPriority('accountNumber', '');
+    const rawAccountNumber = pickWithPriority('accountNumber', '');
+    const accountNumber = String(rawAccountNumber).replace(/\D/g, '').padStart(7, '0');
     const nameKana = pickWithPriority('nameKana', '');
     const mergedNameKanji = pickWithPriority('nameKanji', nameKanji);
     const isNew = normalizeZeroOneFlag_(pickWithPriority('isNew', ''));
     const statusEntry = bankStatuses && pid ? bankStatuses[pid] : null;
     const paidStatus = item && item.paidStatus ? item.paidStatus : (statusEntry && statusEntry.paidStatus ? statusEntry.paidStatus : '');
 
-    if (!bankCode || !branchCode || !accountNumber) {
+    if (bankCode.length !== 4 || branchCode.length !== 3 || accountNumber.length !== 7) {
       skipped += 1;
       return;
     }

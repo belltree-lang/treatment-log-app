@@ -22,6 +22,7 @@ function createExportContext(overrides = {}) {
     billingLogger_: { log: () => {} },
     normalizePreparedBilling_: payload => payload,
     logPreparedBankPayloadStatus_: () => {},
+    normalizeZeroOneFlag_: value => (value === 1 || value === '1' || value === true ? 1 : 0),
     getBillingSourceData: () => ({
       billingMonth: '202501',
       bankInfoByName: {},
@@ -299,6 +300,46 @@ function testBankExportReturnsEmptyWhenNoRows() {
   assert.match(result.message, /請求対象はありません/);
 }
 
+function testBankCodesAreNormalizedBeforeValidation() {
+  const context = createExportContext();
+  const { buildBankTransferRowsForBilling_, normalizeBillingNameKey_ } = context;
+
+  const billingJson = [{ billingMonth: '202502', patientId: '001', nameKanji: '山田太郎' }];
+  const patientMap = { '001': { bankCode: '12', branchCode: '3', accountNumber: '45678' } };
+  const bankInfoByName = {
+    [normalizeBillingNameKey_('山田太郎')]: {
+      bankCode: '1-23',
+      branchCode: '45',
+      accountNumber: '6789'
+    }
+  };
+
+  const result = buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, '202502', {});
+
+  assert.strictEqual(result.skipped, 0, '正規化後の銀行情報はスキップされない');
+  assert.strictEqual(result.rows.length, 1, '銀行CSVの行が生成される');
+
+  const row = result.rows[0];
+  assert.strictEqual(row.bankCode, '0123', '銀行コードは数字のみ・左ゼロ埋めで4桁になる');
+  assert.strictEqual(row.branchCode, '045', '支店コードは数字のみ・左ゼロ埋めで3桁になる');
+  assert.strictEqual(row.accountNumber, '0006789', '口座番号は数字のみ・左ゼロ埋めで7桁になる');
+}
+
+function testBankRowsSkipWhenNormalizedLengthsAreInvalid() {
+  const context = createExportContext();
+  const { buildBankTransferRowsForBilling_ } = context;
+
+  const billingJson = [{ billingMonth: '202502', patientId: '002', nameKanji: '銀行エラー' }];
+  const patientMap = {
+    '002': { bankCode: '12345', branchCode: '678', accountNumber: '123456789' }
+  };
+
+  const result = buildBankTransferRowsForBilling_(billingJson, {}, patientMap, '202502', {});
+
+  assert.strictEqual(result.rows.length, 0, '不正な桁数のデータは行に含まれない');
+  assert.strictEqual(result.skipped, 1, '不正データはスキップ数としてカウントされる');
+}
+
 function run() {
   testRejectsPdfBlobConversion();
   testSpreadsheetBlobIsConverted();
@@ -315,6 +356,8 @@ function run() {
   testBankExportRejectsMissingBillingJson();
   testBankExportRejectsInvalidBillingJsonShape();
   testBankExportReturnsEmptyWhenNoRows();
+  testBankCodesAreNormalizedBeforeValidation();
+  testBankRowsSkipWhenNormalizedLengthsAreInvalid();
   console.log('billingOutput blob guard tests passed');
 }
 

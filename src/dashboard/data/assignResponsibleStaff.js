@@ -33,29 +33,3 @@ function assignResponsibleStaff(options) {
 
   return { responsible, warnings };
 }
-
-if (typeof dashboardNormalizePatientId_ === 'undefined') {
-  function dashboardNormalizePatientId_(value) {
-    const raw = value == null ? '' : value;
-    return String(raw).trim();
-  }
-}
-
-if (typeof loadPatientInfo === 'undefined') {
-  function loadPatientInfo() { return { patients: {}, nameToId: {}, warnings: [] }; }
-}
-
-if (typeof loadTreatmentLogs === 'undefined') {
-  function loadTreatmentLogs() { return { logs: [], warnings: [], lastStaffByPatient: {} }; }
-}
-
-if (typeof dashboardWarn_ === 'undefined') {
-  function dashboardWarn_(message) {
-    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      try { Logger.log(message); return; } catch (e) { /* ignore */ }
-    }
-    if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
-      console.warn(message);
-    }
-  }
-}

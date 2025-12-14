@@ -9587,6 +9587,12 @@ function ensureIntakeScaffolding_() {
 /***** ── 差し替え：doGet ──*****/
 function doGet(e) {
   e = e || {};
+
+  if (shouldHandleDashboardApi_(e)) {
+    const data = getDashboardData();
+    return createJsonResponse_(data);
+  }
+
   const view = e.parameter ? (e.parameter.view || 'welcome') : 'welcome';
   let templateFile = '';
 
@@ -9626,6 +9632,24 @@ function doGet(e) {
   return t.evaluate()
            .setTitle('受付アプリ')
            .addMetaTag('viewport','width=device-width, initial-scale=1.0');
+}
+
+function shouldHandleDashboardApi_(e) {
+  const path = (e && e.pathInfo ? String(e.pathInfo) : '').replace(/^\/+|\/+$/g, '').toLowerCase();
+  if (path === 'getdashboarddata') return true;
+  const action = e && e.parameter ? (e.parameter.action || e.parameter.api) : '';
+  return String(action || '').toLowerCase() === 'getdashboarddata';
+}
+
+function createJsonResponse_(payload) {
+  if (typeof ContentService === 'undefined' || !ContentService || typeof ContentService.createTextOutput !== 'function') {
+    return JSON.stringify(payload || {});
+  }
+  const output = ContentService.createTextOutput(JSON.stringify(payload || {}));
+  if (output && typeof output.setMimeType === 'function' && ContentService && ContentService.MimeType) {
+    output.setMimeType(ContentService.MimeType.JSON);
+  }
+  return output;
 }
 
 function notifyChat_(message){

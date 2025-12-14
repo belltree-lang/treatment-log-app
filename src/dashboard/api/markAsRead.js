@@ -34,31 +34,3 @@ function getActiveUserEmail_() {
   }
   return '';
 }
-
-if (typeof dashboardNormalizePatientId_ === 'undefined') {
-  function dashboardNormalizePatientId_(value) {
-    const raw = value == null ? '' : value;
-    return String(raw).trim();
-  }
-}
-
-if (typeof dashboardNormalizeEmail_ === 'undefined') {
-  function dashboardNormalizeEmail_(email) {
-    const raw = email == null ? '' : email;
-    const normalized = String(raw).trim().toLowerCase();
-    return normalized || '';
-  }
-}
-
-if (typeof dashboardCoerceDate_ === 'undefined') {
-  function dashboardCoerceDate_(value) {
-    if (value instanceof Date) return value;
-    if (value && typeof value.getTime === 'function') {
-      const ts = value.getTime();
-      if (Number.isFinite(ts)) return new Date(ts);
-    }
-    if (value === null || value === undefined) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-}

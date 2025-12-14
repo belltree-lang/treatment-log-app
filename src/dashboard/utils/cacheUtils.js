@@ -2,7 +2,6 @@
  * ダッシュボード用のシンプルなキャッシュユーティリティ。
  * CacheService が利用可能な場合のみ動作し、利用できない場合は透過的にバイパスする。
  */
-const DASHBOARD_CACHE_TTL_SECONDS = 60 * 60 * 12; // 12h
 
 function dashboardGetCache_() {
   if (typeof CacheService === 'undefined' || !CacheService || typeof CacheService.getScriptCache !== 'function') return null;
@@ -16,7 +15,8 @@ function dashboardGetCache_() {
 
 function dashboardCacheFetch_(key, fetchFn, ttlSeconds) {
   const cache = dashboardGetCache_();
-  const ttl = Math.max(5, ttlSeconds || DASHBOARD_CACHE_TTL_SECONDS);
+  const fallbackTtl = typeof DASHBOARD_CACHE_TTL_SECONDS !== 'undefined' ? DASHBOARD_CACHE_TTL_SECONDS : 60 * 60 * 12;
+  const ttl = Math.max(5, ttlSeconds || fallbackTtl);
   if (!cache || !key || typeof fetchFn !== 'function') {
     return typeof fetchFn === 'function' ? fetchFn() : null;
   }
@@ -49,13 +49,7 @@ function dashboardCacheInvalidate_(key) {
   }
 }
 
-if (typeof dashboardWarn_ === 'undefined') {
-  function dashboardWarn_(message) {
-    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      try { Logger.log(message); return; } catch (e) { /* ignore */ }
-    }
-    if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
-      console.warn(message);
-    }
-  }
+function dashboardCacheKey_(suffix) {
+  const prefix = typeof DASHBOARD_PREFIX !== 'undefined' ? DASHBOARD_PREFIX : 'dashboard';
+  return suffix ? `${prefix}:${suffix}` : prefix;
 }

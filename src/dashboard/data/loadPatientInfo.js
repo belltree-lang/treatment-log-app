@@ -5,7 +5,7 @@ function loadPatientInfo(options) {
   const opts = options || {};
   const fetchFn = () => loadPatientInfoUncached_(opts);
   if (opts && opts.cache === false) return fetchFn();
-  return dashboardCacheFetch_('dashboard:patientInfo:v1', fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
+  return dashboardCacheFetch_(dashboardCacheKey_('patientInfo:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
 }
 
 function loadPatientInfoUncached_(_options) {
@@ -75,59 +75,4 @@ function loadPatientInfoUncached_(_options) {
   }
 
   return { patients, nameToId, warnings };
-}
-
-if (typeof dashboardGetSpreadsheet_ === 'undefined') {
-  function dashboardGetSpreadsheet_() {
-    if (typeof ss === 'function') {
-      try { return ss(); } catch (e) { /* ignore */ }
-    }
-    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp.getActiveSpreadsheet) {
-      return SpreadsheetApp.getActiveSpreadsheet();
-    }
-    return null;
-  }
-}
-
-if (typeof dashboardNormalizePatientId_ === 'undefined') {
-  function dashboardNormalizePatientId_(value) {
-    const raw = value == null ? '' : value;
-    const normalized = String(raw).trim();
-    return normalized;
-  }
-}
-
-if (typeof dashboardNormalizeNameKey_ === 'undefined') {
-  function dashboardNormalizeNameKey_(name) {
-    return String(name == null ? '' : name)
-      .replace(/\s+/g, '')
-      .toLowerCase();
-  }
-}
-
-if (typeof dashboardResolveColumn_ === 'undefined') {
-  function dashboardResolveColumn_(headers, candidates, fallbackIndex) {
-    if (Array.isArray(candidates)) {
-      const normalizedHeaders = (headers || []).map(h => String(h || '').trim().toLowerCase());
-      for (let i = 0; i < normalizedHeaders.length; i++) {
-        const header = normalizedHeaders[i];
-        if (!header) continue;
-        if (candidates.some(c => header === String(c || '').trim().toLowerCase())) {
-          return i + 1;
-        }
-      }
-    }
-    return fallbackIndex || 0;
-  }
-}
-
-if (typeof dashboardWarn_ === 'undefined') {
-  function dashboardWarn_(message) {
-    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      try { Logger.log(message); return; } catch (e) { /* ignore */ }
-    }
-    if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
-      console.warn(message);
-    }
-  }
 }

@@ -7,7 +7,7 @@ function loadNotes(options) {
   const fetchFn = () => loadNotesUncached_(opts);
   const base = opts && opts.cache === false
     ? fetchFn()
-    : dashboardCacheFetch_('dashboard:notes:v1', fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
+    : dashboardCacheFetch_(dashboardCacheKey_('notes:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
 
   const lastReadAt = loadHandoverLastRead_(email);
   const notes = {};
@@ -146,71 +146,5 @@ function updateHandoverLastRead(patientId, readAt, email) {
   } catch (e) {
     dashboardWarn_('[updateHandoverLastRead] failed to save: ' + (e && e.message ? e.message : e));
     return false;
-  }
-}
-
-function dashboardNormalizeEmail_(email) {
-  const raw = email == null ? '' : email;
-  const normalized = String(raw).trim().toLowerCase();
-  return normalized || '';
-}
-
-if (typeof dashboardGetSpreadsheet_ === 'undefined') {
-  function dashboardGetSpreadsheet_() {
-    if (typeof ss === 'function') {
-      try { return ss(); } catch (e) { /* ignore */ }
-    }
-    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp.getActiveSpreadsheet) {
-      return SpreadsheetApp.getActiveSpreadsheet();
-    }
-    return null;
-  }
-}
-
-if (typeof dashboardNormalizePatientId_ === 'undefined') {
-  function dashboardNormalizePatientId_(value) {
-    const raw = value == null ? '' : value;
-    return String(raw).trim();
-  }
-}
-
-if (typeof dashboardResolveTimeZone_ === 'undefined') {
-  function dashboardResolveTimeZone_() {
-    if (typeof Session !== 'undefined' && Session && typeof Session.getScriptTimeZone === 'function') {
-      const tz = Session.getScriptTimeZone();
-      if (tz) return tz;
-    }
-    return 'Asia/Tokyo';
-  }
-}
-
-if (typeof dashboardParseTimestamp_ === 'undefined') {
-  function dashboardParseTimestamp_(value) {
-    if (value instanceof Date) return value;
-    if (typeof value === 'number' && Number.isFinite(value)) return new Date(value);
-    const str = String(value == null ? '' : value).trim();
-    if (!str) return null;
-    const parsed = new Date(str);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-}
-
-if (typeof dashboardFormatDate_ === 'undefined') {
-  function dashboardFormatDate_(date, tz, format) {
-    if (typeof Utilities !== 'undefined' && Utilities && typeof Utilities.formatDate === 'function') {
-      try { return Utilities.formatDate(date, tz, format); } catch (e) { /* ignore */ }
-    }
-    return date.toISOString();
-  }
-}
-
-if (typeof dashboardWarn_ === 'undefined') {
-  function dashboardWarn_(message) {
-    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      try { Logger.log(message); return; } catch (e) { /* ignore */ }
-    }
-    if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
-      console.warn(message);
-    }
   }
 }

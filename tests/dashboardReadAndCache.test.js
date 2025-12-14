@@ -33,7 +33,8 @@ function createBaseContext() {
     cacheStore,
     propertyStore,
     dashboardWarn_: () => {},
-    dashboardResolveTimeZone_: () => 'Asia/Tokyo'
+    dashboardResolveTimeZone_: () => 'Asia/Tokyo',
+    DASHBOARD_CACHE_TTL_SECONDS: 60 * 60
   };
 
   vm.createContext(ctx);
@@ -59,15 +60,15 @@ function createNotesContext() {
       };
     }
   };
-  ctx.dashboardGetSpreadsheet_ = () => ({ getSheetByName: () => sheet });
   ctx.rangeCalls = () => rangeCalls;
-  loadDashboardScripts(ctx, ['cacheUtils.js', 'loadNotes.js', 'markAsRead.js']);
+  loadDashboardScripts(ctx, ['utils/sheetUtils.js', 'utils/cacheUtils.js', 'data/loadNotes.js', 'api/markAsRead.js']);
+  ctx.dashboardGetSpreadsheet_ = () => ({ getSheetByName: () => sheet });
   return ctx;
 }
 
 function testMarkAsReadStoresPerUser() {
   const ctx = createBaseContext();
-  loadDashboardScripts(ctx, ['cacheUtils.js', 'loadNotes.js', 'markAsRead.js']);
+  loadDashboardScripts(ctx, ['utils/sheetUtils.js', 'utils/cacheUtils.js', 'data/loadNotes.js', 'api/markAsRead.js']);
   const ts = new Date('2025-01-01T00:00:00Z');
 
   const res = ctx.markAsRead('P001', 'User@example.com', ts);

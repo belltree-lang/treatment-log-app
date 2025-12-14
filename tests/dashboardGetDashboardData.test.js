@@ -3,7 +3,14 @@ const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
 
-const dashboardCode = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'getDashboardData.js'), 'utf8');
+const sheetUtilsCode = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'dashboard', 'utils', 'sheetUtils.js'),
+  'utf8'
+);
+const dashboardCode = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'dashboard', 'api', 'getDashboardData.js'),
+  'utf8'
+);
 
 function createContext(overrides = {}) {
   const context = {
@@ -21,6 +28,7 @@ function createContext(overrides = {}) {
   };
   Object.assign(context, overrides);
   vm.createContext(context);
+  vm.runInContext(sheetUtilsCode, context);
   vm.runInContext(dashboardCode, context);
   return context;
 }

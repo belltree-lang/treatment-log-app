@@ -3,7 +3,18 @@ const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
 
-const aiReportCode = fs.readFileSync(path.join(__dirname, '../src/dashboard/loadAIReports.js'), 'utf8');
+const sheetUtilsCode = fs.readFileSync(
+  path.join(__dirname, '../src/dashboard/utils/sheetUtils.js'),
+  'utf8'
+);
+const cacheUtilsCode = fs.readFileSync(
+  path.join(__dirname, '../src/dashboard/utils/cacheUtils.js'),
+  'utf8'
+);
+const aiReportCode = fs.readFileSync(
+  path.join(__dirname, '../src/dashboard/data/loadAIReports.js'),
+  'utf8'
+);
 
 function createSheet(rows) {
   const headers = ['TS', '患者ID', 'memo'];
@@ -43,8 +54,17 @@ function createAiContext(sheet) {
     }
   };
 
-  const context = { console, Utilities, Session: { getScriptTimeZone: () => 'Asia/Tokyo' }, dashboardGetSpreadsheet_: () => workbook };
+  const context = {
+    console,
+    Utilities,
+    Session: { getScriptTimeZone: () => 'Asia/Tokyo' },
+    dashboardGetSpreadsheet_: () => workbook,
+    DASHBOARD_CACHE_TTL_SECONDS: 60 * 60
+  };
   vm.createContext(context);
+  vm.runInContext(sheetUtilsCode, context);
+  vm.runInContext(cacheUtilsCode, context);
+  context.dashboardGetSpreadsheet_ = () => workbook;
   vm.runInContext(aiReportCode, context);
   return context;
 }
@@ -71,9 +91,13 @@ function testMissingSheetReturnsWarning() {
     console,
     Utilities: { formatDate: () => '' },
     Session: { getScriptTimeZone: () => 'Asia/Tokyo' },
-    dashboardGetSpreadsheet_: () => workbook
+    dashboardGetSpreadsheet_: () => workbook,
+    DASHBOARD_CACHE_TTL_SECONDS: 60 * 60
   };
   vm.createContext(context);
+  vm.runInContext(sheetUtilsCode, context);
+  vm.runInContext(cacheUtilsCode, context);
+  context.dashboardGetSpreadsheet_ = () => workbook;
   vm.runInContext(aiReportCode, context);
   const result = context.loadAIReports();
   const reports = Object.assign({}, result.reports);

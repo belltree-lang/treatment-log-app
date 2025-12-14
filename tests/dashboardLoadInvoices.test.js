@@ -3,7 +3,14 @@ const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
 
-const loadInvoicesCode = fs.readFileSync(path.join(__dirname, '../src/dashboard/loadInvoices.js'), 'utf8');
+const sheetUtilsCode = fs.readFileSync(
+  path.join(__dirname, '../src/dashboard/utils/sheetUtils.js'),
+  'utf8'
+);
+const loadInvoicesCode = fs.readFileSync(
+  path.join(__dirname, '../src/dashboard/data/loadInvoices.js'),
+  'utf8'
+);
 
 function createIterator(items) {
   let idx = 0;
@@ -44,6 +51,7 @@ function createContext() {
   };
   const context = { console, Utilities, Session: { getScriptTimeZone: () => 'Asia/Tokyo' } };
   vm.createContext(context);
+  vm.runInContext(sheetUtilsCode, context);
   vm.runInContext(loadInvoicesCode, context);
   return context;
 }

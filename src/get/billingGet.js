@@ -1335,12 +1335,50 @@ function getBillingPaymentResultsIfExists_(billingMonth) {
 
 function extractUnpaidBillingHistory(targetBillingMonth) {
   const month = normalizeBillingMonthInput(targetBillingMonth);
+  const targetKeyNum = Number(month.key);
+  const history = extractUnpaidHistoryFromSheet_();
+  if (history.length) {
+    return history.filter(entry => {
+      if (!entry.patientId || !entry.billingMonth) return false;
+      if (!entry.entryMonthNum || entry.entryMonthNum >= targetKeyNum) return false;
+      return entry.unpaidAmount > 0;
+    }).map(entry => {
+      const clone = Object.assign({}, entry);
+      delete clone.entryMonthNum;
+      return clone;
+    });
+  }
+
+  return extractLegacyUnpaidHistory_(targetKeyNum);
+}
+
+function extractUnpaidHistoryFromSheet_() {
+  const sheet = billingSs().getSheetByName(UNPAID_HISTORY_SHEET_NAME);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  return values.map(row => {
+    const billingMonth = row[1] ? String(row[1]).trim() : '';
+    const entryMonthNum = Number(billingMonth.replace(/\D/g, '')) || 0;
+    return {
+      patientId: billingNormalizePatientId_(row[0]),
+      billingMonth,
+      unpaidAmount: Number(row[2]) || 0,
+      reason: row[3] || '',
+      memo: row[4] || '',
+      recordedAt: billingParseDateFlexible_(row[5]) || null,
+      entryMonthNum
+    };
+  }).filter(entry => entry.patientId && entry.billingMonth && entry.unpaidAmount > 0);
+}
+
+function extractLegacyUnpaidHistory_(targetKeyNum) {
   const sheet = billingSs().getSheetByName('請求履歴');
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
-  const targetKeyNum = Number(month.key);
 
   return values.map(row => {
     const billingMonth = row[0] ? String(row[0]).trim() : '';

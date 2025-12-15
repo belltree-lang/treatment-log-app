@@ -3,6 +3,15 @@
  */
 function loadTreatmentLogs(options) {
   const opts = options || {};
+  const fetchFn = () => loadTreatmentLogsUncached_(opts);
+  if (typeof dashboardCacheFetch_ === 'function') {
+    return dashboardCacheFetch_(dashboardCacheKey_('treatmentLogs:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
+  }
+  return fetchFn();
+}
+
+function loadTreatmentLogsUncached_(options) {
+  const opts = options || {};
   const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : null);
   const nameToId = opts.nameToId || (patientInfo && patientInfo.nameToId) || {};
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];

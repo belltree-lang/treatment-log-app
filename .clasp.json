@@ -15,6 +15,7 @@
     "dashboard/api/getTodayVisits.js",
     "dashboard/api/getDashboardData.js",
     "dashboard/api/markAsRead.js",
+    "dashboard/tests/dashboardMockData.gs",
     "Code.js"
   ]
 }

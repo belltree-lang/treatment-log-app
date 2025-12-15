@@ -1,74 +1,12 @@
 /**
  * 当月の請求書PDFリンクを患者IDと紐付けて返す。
  * @param {Object} [options]
- * @param {Object} [options.patientInfo] - loadPatientInfo() の戻り値を差し込む場合に利用。
- * @param {Object} [options.nameToId] - 氏名から患者IDへのマップを直接指定する場合に利用。
- * @param {Object} [options.rootFolder] - 請求書フォルダのルートを直接指定する場合に利用。
- * @param {Date} [options.now] - テスト用に現在日時を差し替える。
+ * @param {Object} [options.patientInfo]
+ * @param {Object} [options.nameToId]
+ * @param {Object} [options.rootFolder]
+ * @param {Date} [options.now]
  * @return {{invoices: Object<string, string|null>, warnings: string[]}}
  */
-if (typeof dashboardWarn_ !== 'function') {
-  var dashboardWarn_ = function(message) {
-    if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
-      console.warn(message);
-    }
-  };
-}
-
-if (typeof dashboardNormalizePatientId_ !== 'function') {
-  var dashboardNormalizePatientId_ = function(value) {
-    const raw = value == null ? '' : value;
-    return String(raw).trim();
-  };
-}
-
-if (typeof dashboardResolvePatientIdFromName_ !== 'function') {
-  var dashboardResolvePatientIdFromName_ = function(name, nameToId) {
-    const key = String(name == null ? '' : name).replace(/\s+/g, '').toLowerCase();
-    return key && nameToId ? nameToId[key] : '';
-  };
-}
-
-if (typeof dashboardResolveTimeZone_ !== 'function') {
-  var dashboardResolveTimeZone_ = function() {
-    if (typeof Session !== 'undefined' && Session && typeof Session.getScriptTimeZone === 'function') {
-      const tz = Session.getScriptTimeZone();
-      if (tz) return tz;
-    }
-    if (typeof DEFAULT_TZ !== 'undefined') return DEFAULT_TZ;
-    return 'Asia/Tokyo';
-  };
-}
-
-if (typeof dashboardFormatDate_ !== 'function') {
-  var dashboardFormatDate_ = function(date, tz, format) {
-    const targetFormat = format || (typeof DATE_FORMAT !== 'undefined' ? DATE_FORMAT : 'yyyy/MM/dd');
-    const targetTz = tz || dashboardResolveTimeZone_();
-    if (typeof Utilities !== 'undefined' && Utilities && typeof Utilities.formatDate === 'function') {
-      try { return Utilities.formatDate(date, targetTz, targetFormat); } catch (e) { /* ignore */ }
-    }
-    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-    return date.toISOString();
-  };
-}
-
-if (typeof dashboardCoerceDate_ !== 'function') {
-  var dashboardCoerceDate_ = function(value) {
-    if (value instanceof Date) return value;
-    if (value && typeof value.getTime === 'function') {
-      const ts = value.getTime();
-      if (Number.isFinite(ts)) return new Date(ts);
-    }
-    if (value === null || value === undefined) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  };
-}
-
-if (typeof dashboardGetInvoiceRootFolder_ !== 'function') {
-  var dashboardGetInvoiceRootFolder_ = function() { return null; };
-}
-
 function loadInvoices(options) {
   const opts = options || {};
   const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : null);

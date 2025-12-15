@@ -20,6 +20,10 @@ function dashboardGetSpreadsheet_() {
   return null;
 }
 
+function dashboardGetInvoiceRootFolder_() {
+  return null;
+}
+
 function dashboardResolveTimeZone_() {
   if (typeof Session !== 'undefined' && Session && typeof Session.getScriptTimeZone === 'function') {
     const tz = Session.getScriptTimeZone();

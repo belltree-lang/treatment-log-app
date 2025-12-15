@@ -9,6 +9,15 @@
  */
 function loadInvoices(options) {
   const opts = options || {};
+  const fetchFn = () => loadInvoicesUncached_(opts);
+  if (typeof dashboardCacheFetch_ === 'function') {
+    return dashboardCacheFetch_(dashboardCacheKey_('invoices:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
+  }
+  return fetchFn();
+}
+
+function loadInvoicesUncached_(options) {
+  const opts = options || {};
   const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : null);
   const patients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
   const nameToId = opts.nameToId || (patientInfo && patientInfo.nameToId) || {};

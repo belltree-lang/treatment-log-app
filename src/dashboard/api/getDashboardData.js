@@ -6,6 +6,12 @@
  */
 function getDashboardData(options) {
   const opts = options || {};
+  if (opts.mock && typeof buildDashboardMockData_ === 'function') {
+    const mockOptions = buildDashboardMockData_(opts) || {};
+    const normalized = Object.assign({}, mockOptions);
+    normalized.mock = '';
+    return getDashboardData(normalized);
+  }
   const cacheOptions = opts.cache === false ? { cache: false } : {};
   const meta = {
     generatedAt: dashboardFormatDate_(new Date(), dashboardResolveTimeZone_(), "yyyy-MM-dd'T'HH:mm:ssXXX") || new Date().toISOString(),

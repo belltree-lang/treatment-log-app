@@ -142,11 +142,15 @@ function fetchDashboardData() {
 
   const runner = typeof google !== 'undefined' && google.script && google.script.run;
   if (runner && typeof runner.getDashboardData === 'function') {
-    runner.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getDashboardData();
+    const mockFlag = resolveDashboardMockParam_();
+    const args = mockFlag ? { mock: mockFlag } : {};
+    runner.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getDashboardData(args);
     return;
   }
 
-  const url = (typeof baseUrl !== 'undefined' ? baseUrl : '') + '?action=getDashboardData';
+  const mock = resolveDashboardMockParam_();
+  const mockQuery = mock ? `&mock=${encodeURIComponent(mock)}` : '';
+  const url = (typeof baseUrl !== 'undefined' ? baseUrl : '') + `?action=getDashboardData${mockQuery}`;
   fetch(url)
     .then(res => res.json())
     .then(onSuccess)
@@ -202,6 +206,13 @@ function renderWarnings() {
   const warnings = dashboardState.data && Array.isArray(dashboardState.data.warnings)
     ? dashboardState.data.warnings
     : [];
+  if (!warnings.length) {
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = '警告はありません';
+    list.appendChild(empty);
+    return;
+  }
   warnings.forEach(w => {
     const item = document.createElement('div');
     item.className = 'warning-item';
@@ -219,6 +230,14 @@ function renderTasks() {
     ? dashboardState.data.tasks
     : [];
   if (count) count.textContent = tasks.length ? `${tasks.length}件` : 'タスクなし';
+
+  if (!tasks.length) {
+    const empty = document.createElement('div');
+    empty.className = 'card task-card';
+    empty.textContent = '現在対応すべきタスクはありません';
+    list.appendChild(empty);
+    return;
+  }
 
   tasks.forEach(task => {
     const card = document.createElement('div');
@@ -265,6 +284,14 @@ function renderVisits() {
   const visits = dashboardState.data && Array.isArray(dashboardState.data.todayVisits)
     ? dashboardState.data.todayVisits
     : [];
+
+  if (!visits.length) {
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = '訪問データはありません';
+    list.appendChild(empty);
+    return;
+  }
 
   const grouped = visits.reduce((map, entry) => {
     const key = entry.dateKey || '不明';
@@ -326,6 +353,14 @@ function renderPatients() {
     : [];
 
   if (count) count.textContent = patients.length ? `${patients.length}名` : '患者データなし';
+
+  if (!patients.length) {
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = '患者データはありません';
+    list.appendChild(empty);
+    return;
+  }
 
   patients.forEach(p => {
     const details = document.createElement('details');
@@ -411,7 +446,10 @@ function markNoteAsRead(patient) {
   if (dashboardState.marking.has(pid)) return;
 
   const runner = typeof google !== 'undefined' && google.script && google.script.run;
-  if (!runner || typeof runner.markAsRead !== 'function') return;
+  if (!runner || typeof runner.markAsRead !== 'function') {
+    markPatientNoteLocally_(pid);
+    return;
+  }
 
   dashboardState.marking.add(pid);
   runner.withSuccessHandler(res => {
@@ -427,6 +465,15 @@ function markNoteAsRead(patient) {
   }).withFailureHandler(() => {
     dashboardState.marking.delete(pid);
   }).markAsRead({ patientId: pid });
+}
+
+function markPatientNoteLocally_(pid) {
+  if (!dashboardState.data || !Array.isArray(dashboardState.data.patients)) return;
+  const target = dashboardState.data.patients.find(entry => entry.patientId === pid);
+  if (!target || !target.note) return;
+  target.note.unread = false;
+  target.note.lastReadAt = target.note.lastReadAt || new Date().toISOString();
+  renderPatients();
 }
 
 function makeBadge(text) {
@@ -466,6 +513,13 @@ function keyFromDate(date) {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+function resolveDashboardMockParam_() {
+  if (typeof dashboardMockFlag !== 'undefined' && dashboardMockFlag) return dashboardMockFlag;
+  if (typeof window === 'undefined' || !window.location || !window.location.search) return '';
+  const search = new URLSearchParams(window.location.search);
+  return search.get('mock') || '';
 }
 </script>
 </body>

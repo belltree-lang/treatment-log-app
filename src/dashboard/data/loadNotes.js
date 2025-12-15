@@ -28,10 +28,12 @@ function loadNotesUncached_(_options) {
   const latestByPatient = {};
 
   const wb = dashboardGetSpreadsheet_();
-  const sheet = wb && wb.getSheetByName ? wb.getSheetByName('申し送り') : null;
+  const sheetName = typeof DASHBOARD_SHEET_NOTES !== 'undefined' ? DASHBOARD_SHEET_NOTES : '申し送り';
+  const sheet = wb && wb.getSheetByName ? wb.getSheetByName(sheetName) : null;
   if (!sheet) {
-    warnings.push('申し送りシートが見つかりません');
-    dashboardWarn_('[loadNotes] sheet not found');
+    const warning = `${sheetName}シートが見つかりません`;
+    warnings.push(warning);
+    dashboardWarn_(`[loadNotes] sheet not found: ${sheetName}`);
     return { notes: latestByPatient, warnings };
   }
 

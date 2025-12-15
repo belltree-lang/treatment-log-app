@@ -13,10 +13,12 @@ function loadPatientInfoUncached_(_options) {
   const warnings = [];
 
   const wb = dashboardGetSpreadsheet_();
-  const sheet = wb && wb.getSheetByName ? wb.getSheetByName('患者情報') : null;
+  const sheetName = typeof DASHBOARD_SHEET_PATIENTS !== 'undefined' ? DASHBOARD_SHEET_PATIENTS : '患者情報';
+  const sheet = wb && wb.getSheetByName ? wb.getSheetByName(sheetName) : null;
   if (!sheet) {
-    warnings.push('患者情報シートが見つかりません');
-    dashboardWarn_('[loadPatientInfo] sheet not found');
+    const warning = `${sheetName}シートが見つかりません`;
+    warnings.push(warning);
+    dashboardWarn_(`[loadPatientInfo] sheet not found: ${sheetName}`);
     return { patients, nameToId, warnings };
   }
 

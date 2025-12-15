@@ -53,6 +53,7 @@ function testAggregatesDashboardData() {
   const responsible = { responsible: { '001': 'staff@example.com' }, warnings: ['r1'] };
   const tasksResult = { tasks: [{ type: 'consentWarning', patientId: '001' }], warnings: ['task'] };
   const visitsResult = { visits: [{ patientId: '001', time: '10:00' }], warnings: ['visit'] };
+  const unpaidAlerts = { alerts: [{ patientId: '001', patientName: '山田太郎', consecutiveMonths: 3, totalAmount: 15000, months: [], followUp: { phone: false, visit: false } }], warnings: ['u1'] };
 
   const ctx = createContext();
   const result = ctx.getDashboardData({
@@ -63,6 +64,7 @@ function testAggregatesDashboardData() {
     invoices,
     treatmentLogs,
     responsible,
+    unpaidAlerts,
     tasksResult,
     visitsResult
   });
@@ -90,8 +92,10 @@ function testAggregatesDashboardData() {
       row: 5
     }
   });
+  assert.strictEqual(result.unpaidAlerts.length, 1, '未回収アラートが伝搬する');
+  assert.strictEqual(result.unpaidAlerts[0].patientId, '001');
   const warnings = JSON.parse(JSON.stringify(result.warnings)).sort();
-  assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'visit'].sort());
+  assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'u1', 'visit'].sort());
 }
 
 function testErrorIsCapturedInMeta() {

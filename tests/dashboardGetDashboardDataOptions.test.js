@@ -32,13 +32,15 @@ function createContext(overrides = {}) {
 function testOptionsArePropagated() {
   const now = new Date('2025-04-15T00:00:00Z');
   const seen = {};
+  const patientInfo = { patients: {}, nameToId: {}, warnings: [] };
   const ctx = createContext({
-    loadPatientInfo: () => ({ patients: {}, nameToId: {}, warnings: [] }),
+    loadPatientInfo: () => patientInfo,
     loadNotes: () => ({ notes: {}, warnings: [] }),
     loadAIReports: () => ({ reports: {}, warnings: [] }),
     loadInvoices: opts => { seen.invoices = opts; return { invoices: {}, warnings: [] }; },
     loadTreatmentLogs: opts => { seen.treatmentLogs = opts; return { logs: [], warnings: [], lastStaffByPatient: {} }; },
     assignResponsibleStaff: opts => { seen.responsible = opts; return { responsible: {}, warnings: [] }; },
+    loadUnpaidAlerts: opts => { seen.unpaidAlerts = opts; return { alerts: [], warnings: [] }; },
     getTasks: () => ({ tasks: [], warnings: [] }),
     getTodayVisits: () => ({ visits: [], warnings: [] })
   });
@@ -51,6 +53,9 @@ function testOptionsArePropagated() {
   assert.strictEqual(seen.invoices.cache, false, 'cache:false が請求書読み込みに伝搬する');
   assert.strictEqual(seen.treatmentLogs.cache, false, 'cache:false が施術録読み込みに伝搬する');
   assert.strictEqual(seen.responsible.cache, false, 'cache:false が担当者判定に伝搬する');
+  assert.strictEqual(seen.unpaidAlerts.patientInfo, patientInfo, '未回収アラートに患者情報が伝搬する');
+  assert.strictEqual(seen.unpaidAlerts.now, now, '未回収アラートに now が伝搬する');
+  assert.strictEqual(seen.unpaidAlerts.cache, false, '未回収アラート読み込みも cache:false を受け取る');
 }
 
 (function run() {

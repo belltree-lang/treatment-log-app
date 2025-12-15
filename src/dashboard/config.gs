@@ -14,3 +14,7 @@ const DASHBOARD_SHEET_PATIENTS = '患者情報';
 const DASHBOARD_SHEET_TREATMENTS = '施術録';
 const DASHBOARD_SHEET_NOTES = '申し送り';
 const DASHBOARD_SHEET_AI_REPORTS = 'AI報告書';
+const DASHBOARD_SHEET_UNPAID_HISTORY = '未回収履歴';
+
+// 未回収アラート判定に利用する連続月数のデフォルト値
+const DASHBOARD_UNPAID_ALERT_MONTHS = 3;

@@ -20,25 +20,34 @@ function loadNotes(options) {
 
   const warnings = [];
   if (Array.isArray(base.warnings)) warnings.push.apply(warnings, base.warnings);
-  return { notes, warnings, lastReadAt };
+  return { notes, warnings, lastReadAt, setupIncomplete: !!base.setupIncomplete };
 }
 
 function loadNotesUncached_(_options) {
   const warnings = [];
   const latestByPatient = {};
+  let setupIncomplete = false;
 
   const wb = dashboardGetSpreadsheet_();
+  if (!wb) {
+    const warning = 'スプレッドシートを取得できませんでした';
+    warnings.push(warning);
+    setupIncomplete = true;
+    dashboardWarn_('[loadNotes] spreadsheet unavailable');
+    return { notes: latestByPatient, warnings, setupIncomplete };
+  }
   const sheetName = typeof DASHBOARD_SHEET_NOTES !== 'undefined' ? DASHBOARD_SHEET_NOTES : '申し送り';
   const sheet = wb && wb.getSheetByName ? wb.getSheetByName(sheetName) : null;
   if (!sheet) {
     const warning = `${sheetName}シートが見つかりません`;
     warnings.push(warning);
+    setupIncomplete = true;
     dashboardWarn_(`[loadNotes] sheet not found: ${sheetName}`);
-    return { notes: latestByPatient, warnings };
+    return { notes: latestByPatient, warnings, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { notes: latestByPatient, warnings };
+  if (lastRow < 2) return { notes: latestByPatient, warnings, setupIncomplete };
 
   const lastCol = Math.max(5, sheet.getLastColumn ? sheet.getLastColumn() : (sheet.getMaxColumns ? sheet.getMaxColumns() : 0));
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
@@ -81,7 +90,7 @@ function loadNotesUncached_(_options) {
     }
   }
 
-  return { notes: latestByPatient, warnings };
+  return { notes: latestByPatient, warnings, setupIncomplete };
 }
 
 function dashboardTrimPreview_(text, limit) {

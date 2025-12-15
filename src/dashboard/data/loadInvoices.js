@@ -22,6 +22,7 @@ function loadInvoicesUncached_(options) {
   const patients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
   const nameToId = opts.nameToId || (patientInfo && patientInfo.nameToId) || {};
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];
+  const setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
   const invoices = {};
   const latestMeta = {};
 
@@ -36,7 +37,7 @@ function loadInvoicesUncached_(options) {
   if (!root || typeof root.getFolders !== 'function') {
     warnings.push('請求書フォルダが取得できませんでした');
     dashboardWarn_('[loadInvoices] invoice root folder not found');
-    return { invoices, warnings };
+    return { invoices, warnings, setupIncomplete: true };
   }
 
   const tz = dashboardResolveTimeZone_();
@@ -76,7 +77,7 @@ function loadInvoicesUncached_(options) {
     }
   }
 
-  return { invoices, warnings };
+  return { invoices, warnings, setupIncomplete };
 }
 
 function isTargetInvoiceFolder_(name, targetYmDigits, targetYmKanji) {

@@ -11,12 +11,14 @@ function loadAIReports(options) {
 function loadAIReportsUncached_() {
   const reports = {};
   const warnings = [];
+  let setupIncomplete = false;
 
   const wb = dashboardGetSpreadsheet_();
   if (!wb || typeof wb.getSheetByName !== 'function') {
     warnings.push('スプレッドシートを取得できませんでした');
+    setupIncomplete = true;
     dashboardWarn_('[loadAIReports] spreadsheet unavailable');
-    return { reports, warnings };
+    return { reports, warnings, setupIncomplete };
   }
 
   const sheetName = typeof DASHBOARD_SHEET_AI_REPORTS !== 'undefined' ? DASHBOARD_SHEET_AI_REPORTS : 'AI報告書';
@@ -24,12 +26,13 @@ function loadAIReportsUncached_() {
   if (!sheet) {
     const warning = `${sheetName}シートが見つかりません`;
     warnings.push(warning);
+    setupIncomplete = true;
     dashboardWarn_(`[loadAIReports] sheet not found: ${sheetName}`);
-    return { reports, warnings };
+    return { reports, warnings, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { reports, warnings };
+  if (lastRow < 2) return { reports, warnings, setupIncomplete };
 
   const lastCol = Math.max(2, sheet.getLastColumn ? sheet.getLastColumn() : (sheet.getMaxColumns ? sheet.getMaxColumns() : 2));
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
@@ -60,5 +63,5 @@ function loadAIReportsUncached_() {
     reports[patientId] = dashboardFormatDate_(tsDate, tz, 'yyyy-MM-dd HH:mm');
   }
 
-  return { reports, warnings };
+  return { reports, warnings, setupIncomplete };
 }

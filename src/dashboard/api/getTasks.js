@@ -23,6 +23,9 @@ function getTasks(options) {
   if (patientInfo && Array.isArray(patientInfo.warnings)) warnings.push.apply(warnings, patientInfo.warnings);
   if (notesResult && Array.isArray(notesResult.warnings)) warnings.push.apply(warnings, notesResult.warnings);
   if (aiReports && Array.isArray(aiReports.warnings)) warnings.push.apply(warnings, aiReports.warnings);
+  const setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete)
+    || !!(notesResult && notesResult.setupIncomplete)
+    || !!(aiReports && aiReports.setupIncomplete);
 
   const notesByPatient = notesResult && notesResult.notes ? notesResult.notes : {};
   const reportsByPatient = aiReports && aiReports.reports ? aiReports.reports : {};
@@ -65,7 +68,7 @@ function getTasks(options) {
     }
   });
 
-  return { tasks, warnings };
+  return { tasks, warnings, setupIncomplete };
 }
 
 function makeTask_(patientId, name, type, severity, detail) {

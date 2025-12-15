@@ -15,21 +15,29 @@ function loadTreatmentLogsUncached_(options) {
   const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : null);
   const nameToId = opts.nameToId || (patientInfo && patientInfo.nameToId) || {};
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];
+  let setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
   const logs = [];
   const lastStaffByPatient = {};
 
   const wb = dashboardGetSpreadsheet_();
+  if (!wb) {
+    warnings.push('スプレッドシートを取得できませんでした');
+    setupIncomplete = true;
+    dashboardWarn_('[loadTreatmentLogs] spreadsheet unavailable');
+    return { logs, warnings, lastStaffByPatient, setupIncomplete };
+  }
   const sheetName = typeof DASHBOARD_SHEET_TREATMENTS !== 'undefined' ? DASHBOARD_SHEET_TREATMENTS : '施術録';
   const sheet = wb && wb.getSheetByName ? wb.getSheetByName(sheetName) : null;
   if (!sheet) {
     const warning = `${sheetName}シートが見つかりません`;
     warnings.push(warning);
+    setupIncomplete = true;
     dashboardWarn_(`[loadTreatmentLogs] sheet not found: ${sheetName}`);
-    return { logs, warnings, lastStaffByPatient };
+    return { logs, warnings, lastStaffByPatient, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { logs, warnings, lastStaffByPatient };
+  if (lastRow < 2) return { logs, warnings, lastStaffByPatient, setupIncomplete };
 
   const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : sheet.getMaxColumns ? sheet.getMaxColumns() : 0;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
@@ -94,5 +102,5 @@ function loadTreatmentLogsUncached_(options) {
     lastStaffByPatient[pid] = entry ? entry.email || '' : '';
   });
 
-  return { logs, warnings, lastStaffByPatient };
+  return { logs, warnings, lastStaffByPatient, setupIncomplete };
 }

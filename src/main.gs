@@ -791,6 +791,100 @@ function buildPreparedBillingPayload_(billingMonth) {
   };
 }
 
+const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
+const BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER = 'S';
+
+function formatBankWithdrawalSheetName_(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const monthText = String(month.month).padStart(2, '0');
+  return `${BANK_WITHDRAWAL_SHEET_PREFIX}${month.year}-${monthText}`;
+}
+
+function ensureBankWithdrawalSheet_(billingMonth) {
+  const workbook = billingSs();
+  const baseSheet = ensureBankInfoSheet_();
+  const sheetName = formatBankWithdrawalSheetName_(billingMonth);
+  let sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = baseSheet.copyTo(workbook);
+    sheet.setName(sheetName);
+    const targetIndex = Math.max(baseSheet.getIndex() + 1, workbook.getNumSheets());
+    workbook.setActiveSheet(sheet);
+    workbook.moveActiveSheet(targetIndex);
+    try {
+      const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET) || [];
+      protections.forEach(protection => protection.remove());
+    } catch (err) {
+      console.warn('[billing] Failed to remove protection from bank withdrawal sheet', err);
+    }
+  }
+  return sheet;
+}
+
+function buildPatientNameToIdMap_(patients) {
+  const entries = patients && typeof patients === 'object' ? Object.keys(patients) : [];
+  return entries.reduce((map, pid) => {
+    const patient = patients[pid] || {};
+    const key = normalizeBillingNameKey_(patient.nameKanji || (patient.raw && patient.raw.nameKanji));
+    const normalizedPid = billingNormalizePatientId_(pid);
+    if (key && normalizedPid && !map[key]) {
+      map[key] = normalizedPid;
+    }
+    return map;
+  }, {});
+}
+
+function buildBillingAmountByPatientId_(billingJson) {
+  const amounts = {};
+  (billingJson || []).forEach(entry => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    if (!pid) return;
+    const amountCandidate = entry && entry.grandTotal != null
+      ? entry.grandTotal
+      : (entry && entry.total != null ? entry.total : entry && entry.billingAmount);
+    const amount = typeof normalizeMoneyNumber_ === 'function'
+      ? normalizeMoneyNumber_(amountCandidate)
+      : Number(amountCandidate) || 0;
+    amounts[pid] = amount;
+  });
+  return amounts;
+}
+
+function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
+  const month = normalizeBillingMonthInput(billingMonth || (prepared && prepared.billingMonth));
+  const sheet = ensureBankWithdrawalSheet_(month);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { billingMonth: month.key, updated: 0 };
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const amountCol = resolveBillingColumn_(
+    headers,
+    ['金額', '請求金額', '引落額', '引落金額'],
+    '金額',
+    { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
+  );
+
+  const rowCount = lastRow - 1;
+  const nameValues = sheet.getRange(2, nameCol, rowCount, 1).getDisplayValues();
+  const existingAmountValues = sheet.getRange(2, amountCol, rowCount, 1).getValues();
+  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
+  const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
+
+  const newAmountValues = nameValues.map((row, idx) => {
+    const nameKey = normalizeBillingNameKey_(row && row[0]);
+    const pid = nameKey ? nameToPatientId[nameKey] : '';
+    const resolvedAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid)
+      ? amountByPatientId[pid]
+      : existingAmountValues[idx][0];
+    return [resolvedAmount];
+  });
+
+  sheet.getRange(2, amountCol, rowCount, 1).setValues(newAmountValues);
+  return { billingMonth: month.key, updated: rowCount };
+}
+
 function coerceBillingJsonArray_(raw) {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === 'string') {
@@ -918,6 +1012,8 @@ function prepareBillingData(billingMonth) {
     : { billingMonth: normalizedMonth.key };
   savePreparedBilling_(cachePayload);
   savePreparedBillingToSheet_(normalizedMonth.key, cachePayload);
+  const bankSheetResult = syncBankWithdrawalSheetForMonth_(normalizedMonth, prepared);
+  billingLogger_.log('[billing] Bank withdrawal sheet synced: ' + JSON.stringify(bankSheetResult));
   return cachePayload;
 }
 

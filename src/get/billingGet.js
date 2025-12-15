@@ -11,6 +11,10 @@ if (typeof billingLogger_ === 'undefined') {
   billingLogger_ = { log: billingFallbackLog_ }; // eslint-disable-line no-global-assign
 }
 
+const billingUnpaidHistorySheetName_ = typeof UNPAID_HISTORY_SHEET_NAME === 'string'
+  ? UNPAID_HISTORY_SHEET_NAME
+  : '未回収履歴';
+
 const billingNormalizeHeaderKey_ = typeof normalizeHeaderKey_ === 'function'
   ? normalizeHeaderKey_
   : function normalizeHeaderKey_(s) {
@@ -1353,7 +1357,7 @@ function extractUnpaidBillingHistory(targetBillingMonth) {
 }
 
 function extractUnpaidHistoryFromSheet_() {
-  const sheet = billingSs().getSheetByName(UNPAID_HISTORY_SHEET_NAME);
+  const sheet = billingSs().getSheetByName(billingUnpaidHistorySheetName_);
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];

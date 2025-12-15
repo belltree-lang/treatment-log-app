@@ -849,9 +849,10 @@ function ensureBankWithdrawalSheet_(billingMonth, options) {
   const sheetName = formatBankWithdrawalSheetName_(billingMonth);
   const opts = options || {};
   const shouldRefresh = opts.refreshFromTemplate !== false;
+  const preserveExistingSheet = opts.preserveExistingSheet === true;
   const existingSheet = workbook.getSheetByName(sheetName);
 
-  if (existingSheet && shouldRefresh) {
+  if (existingSheet && shouldRefresh && !preserveExistingSheet) {
     try {
       workbook.deleteSheet(existingSheet);
     } catch (err) {
@@ -909,7 +910,7 @@ function buildBillingAmountByPatientId_(billingJson) {
 
 function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const month = normalizeBillingMonthInput(billingMonth || (prepared && prepared.billingMonth));
-  const sheet = ensureBankWithdrawalSheet_(month, { refreshFromTemplate: true });
+  const sheet = ensureBankWithdrawalSheet_(month, { refreshFromTemplate: true, preserveExistingSheet: true });
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { billingMonth: month.key, updated: 0 };
 
@@ -934,8 +935,13 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
     const pid = nameKey ? nameToPatientId[nameKey] : '';
     const resolvedAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid)
       ? amountByPatientId[pid]
-      : existingAmountValues[idx][0];
-    return [resolvedAmount];
+      : null;
+    const existingAmount = existingAmountValues[idx][0];
+    const hasManualAmount = existingAmount !== '' && existingAmount !== null && existingAmount !== undefined;
+    const nextAmount = hasManualAmount && resolvedAmount !== null && resolvedAmount !== undefined
+      ? existingAmount
+      : (resolvedAmount !== null && resolvedAmount !== undefined ? resolvedAmount : existingAmount);
+    return [nextAmount];
   });
 
   sheet.getRange(2, amountCol, rowCount, 1).setValues(newAmountValues);
@@ -984,6 +990,8 @@ function collectUnpaidWithdrawalRows_(billingMonth) {
     '金額',
     { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
   );
+  const reasonCol = resolveBillingColumn_(headers, ['未回収理由', '未回収メモ', '未回収備考', '理由'], '未回収理由', {});
+  const memoCol = resolveBillingColumn_(headers, ['備考', 'メモ', 'コメント', '未回収備考'], '備考', {});
   const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const effectiveLastCol = sheet.getLastColumn();
@@ -999,6 +1007,8 @@ function collectUnpaidWithdrawalRows_(billingMonth) {
     checkedRows += 1;
     const amount = amountCol ? Number(row[amountCol - 1]) || 0 : 0;
     if (!amount) return;
+    const reason = reasonCol ? String(row[reasonCol - 1] || '').trim() : '';
+    const memo = memoCol ? String(row[memoCol - 1] || '').trim() : '';
     const pid = pidCol
       ? billingNormalizePatientId_(row[pidCol - 1])
       : nameToPatientId[normalizeBillingNameKey_(row[nameCol - 1])];
@@ -1007,8 +1017,8 @@ function collectUnpaidWithdrawalRows_(billingMonth) {
       patientId: pid,
       billingMonth: month.key,
       unpaidAmount: amount,
-      reason: BANK_WITHDRAWAL_UNPAID_HEADER,
-      memo: ''
+      reason: reason || BANK_WITHDRAWAL_UNPAID_HEADER,
+      memo
     });
   });
 

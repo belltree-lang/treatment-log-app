@@ -11,6 +11,18 @@ function dashboardWarn_(message) {
 }
 
 function dashboardGetSpreadsheet_() {
+  if (typeof DASHBOARD_SPREADSHEET_ID !== 'undefined' && DASHBOARD_SPREADSHEET_ID) {
+    try {
+      if (typeof SpreadsheetApp !== 'undefined'
+        && SpreadsheetApp
+        && typeof SpreadsheetApp.openById === 'function') {
+        return SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+      }
+    } catch (e) {
+      dashboardWarn_('[dashboardGetSpreadsheet] failed to open by ID: ' + (e && e.message ? e.message : e));
+    }
+  }
+
   if (typeof ss === 'function') {
     try { return ss(); } catch (e) { /* ignore */ }
   }
@@ -21,6 +33,26 @@ function dashboardGetSpreadsheet_() {
 }
 
 function dashboardGetInvoiceRootFolder_() {
+  if (typeof DASHBOARD_INVOICE_FOLDER_ID !== 'undefined' && DASHBOARD_INVOICE_FOLDER_ID) {
+    try {
+      if (typeof DriveApp !== 'undefined' && DriveApp && typeof DriveApp.getFolderById === 'function') {
+        return DriveApp.getFolderById(DASHBOARD_INVOICE_FOLDER_ID);
+      }
+    } catch (e) {
+      dashboardWarn_('[dashboardGetInvoiceRootFolder] failed to open by ID: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  if (typeof INVOICE_PARENT_FOLDER_ID !== 'undefined' && INVOICE_PARENT_FOLDER_ID) {
+    try {
+      if (typeof DriveApp !== 'undefined' && DriveApp && typeof DriveApp.getFolderById === 'function') {
+        return DriveApp.getFolderById(INVOICE_PARENT_FOLDER_ID);
+      }
+    } catch (e) {
+      dashboardWarn_('[dashboardGetInvoiceRootFolder] failed to open fallback ID: ' + (e && e.message ? e.message : e));
+    }
+  }
+
   return null;
 }
 

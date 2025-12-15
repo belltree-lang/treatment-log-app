@@ -19,10 +19,12 @@ function loadTreatmentLogsUncached_(options) {
   const lastStaffByPatient = {};
 
   const wb = dashboardGetSpreadsheet_();
-  const sheet = wb && wb.getSheetByName ? wb.getSheetByName('施術録') : null;
+  const sheetName = typeof DASHBOARD_SHEET_TREATMENTS !== 'undefined' ? DASHBOARD_SHEET_TREATMENTS : '施術録';
+  const sheet = wb && wb.getSheetByName ? wb.getSheetByName(sheetName) : null;
   if (!sheet) {
-    warnings.push('施術録シートが見つかりません');
-    dashboardWarn_('[loadTreatmentLogs] sheet not found');
+    const warning = `${sheetName}シートが見つかりません`;
+    warnings.push(warning);
+    dashboardWarn_(`[loadTreatmentLogs] sheet not found: ${sheetName}`);
     return { logs, warnings, lastStaffByPatient };
   }
 

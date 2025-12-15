@@ -19,10 +19,12 @@ function loadAIReportsUncached_() {
     return { reports, warnings };
   }
 
-  const sheet = wb.getSheetByName('AI報告書');
+  const sheetName = typeof DASHBOARD_SHEET_AI_REPORTS !== 'undefined' ? DASHBOARD_SHEET_AI_REPORTS : 'AI報告書';
+  const sheet = wb.getSheetByName(sheetName);
   if (!sheet) {
-    warnings.push('AI報告書シートが見つかりません');
-    dashboardWarn_('[loadAIReports] sheet not found');
+    const warning = `${sheetName}シートが見つかりません`;
+    warnings.push(warning);
+    dashboardWarn_(`[loadAIReports] sheet not found: ${sheetName}`);
     return { reports, warnings };
   }
 

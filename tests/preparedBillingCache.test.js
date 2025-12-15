@@ -90,6 +90,9 @@ function createSheetMock() {
         }
       }
     }),
+    deleteRow: rowIndex => {
+      rows.splice(rowIndex - 1, 1);
+    },
     insertRows: (rowIndex, howMany) => {
       const inserts = new Array(howMany).fill(null).map(() => []);
       rows.splice(rowIndex - 1, 0, ...inserts);
@@ -301,16 +304,12 @@ function testInvoiceGenerationUsesSheetWhenCacheMissing() {
 }
 
 function testPreparedBillingSheetSaveAndLoad() {
-  const sheet = createSheetMock();
-  let created = false;
+  const sheets = {};
   const spreadsheet = {
-    getSheetByName: name => (name === 'PreparedBilling' && created ? sheet : null),
+    getSheetByName: name => sheets[name] || null,
     insertSheet: name => {
-      if (name === 'PreparedBilling') {
-        created = true;
-        return sheet;
-      }
-      return createSheetMock();
+      sheets[name] = createSheetMock();
+      return sheets[name];
     }
   };
   const ctx = createMainContext({
@@ -319,19 +318,31 @@ function testPreparedBillingSheetSaveAndLoad() {
     billingLogger_: { log: () => {} }
   });
 
-  const payload = buildValidPreparedPayload(ctx, { preparedAt: '2025-01-02T03:04:05.000Z' });
+  const payload = buildValidPreparedPayload(ctx, {
+    preparedAt: '2025-01-02T03:04:05.000Z',
+    billingJson: [
+      { patientId: 'P001', billingMonth: '202501' },
+      { patientId: 'P002', billingMonth: '202501' }
+    ]
+  });
 
   const saveResult = ctx.savePreparedBillingToSheet_('202501', payload);
   assert.strictEqual(saveResult && saveResult.billingMonth, '202501');
-  assert.deepStrictEqual(sheet._rows[0], ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'payloadJson', 'note'], 'ヘッダーが作成される');
-  assert.strictEqual(sheet._rows[1][0], '202501', 'billingMonthが保存される');
-  assert.ok(String(sheet._rows[1][2]).includes('user@example.com'), '実行ユーザーが保存される');
+  const metaSheet = sheets.PreparedBillingMeta;
+  const jsonSheet = sheets.PreparedBillingJson;
+  assert.ok(metaSheet && jsonSheet, 'Meta/Json シートが作成される');
+  assert.deepStrictEqual(metaSheet._rows[0], ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'payloadJson', 'note'], 'メタシートのヘッダーが作成される');
+  assert.deepStrictEqual(jsonSheet._rows[0], ['billingMonth', 'patientId', 'billingRowJson'], '明細シートのヘッダーが作成される');
+  assert.strictEqual(metaSheet._rows[1][0], '202501', 'billingMonthがメタに保存される');
+  assert.ok(String(metaSheet._rows[1][2]).includes('user@example.com'), '実行ユーザーが保存される');
+  assert.strictEqual(jsonSheet._rows.length, 3, 'billingJsonの件数分保存される');
 
   const loaded = ctx.loadPreparedBillingFromSheet_('202501');
   assert.ok(loaded, '保存したデータを読み込める');
   assert.strictEqual(loaded.billingMonth, '202501');
   assert.strictEqual(loaded.preparedAt, '2025-01-02T03:04:05.000Z');
   assert.strictEqual(loaded.schemaVersion, 2);
+  assert.strictEqual(Array.isArray(loaded.billingJson) ? loaded.billingJson.length : 0, 2, 'billingJsonが復元される');
 }
 
 function run() {

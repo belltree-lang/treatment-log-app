@@ -307,8 +307,8 @@ function clearBillingCache_(key) {
   }
 }
 
-function ensurePreparedBillingSheet_() {
-  const SHEET_NAME = 'PreparedBilling';
+function ensurePreparedBillingMetaSheet_() {
+  const SHEET_NAME = 'PreparedBillingMeta';
   const HEADER = ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'payloadJson', 'note'];
   const workbook = ss();
   let sheet = workbook.getSheetByName(SHEET_NAME);
@@ -319,21 +319,29 @@ function ensurePreparedBillingSheet_() {
   return sheet;
 }
 
-function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
-  const monthKey = normalizeBillingMonthKeySafe_(billingMonth || (preparedPayload && preparedPayload.billingMonth));
-  const normalized = normalizePreparedBilling_(preparedPayload);
-  if (!monthKey || !normalized) {
-    billingLogger_.log('[billing] savePreparedBillingToSheet_ skipped due to invalid payload');
-    return null;
+function ensurePreparedBillingJsonSheet_() {
+  const SHEET_NAME = 'PreparedBillingJson';
+  const HEADER = ['billingMonth', 'patientId', 'billingRowJson'];
+  const workbook = ss();
+  let sheet = workbook.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = workbook.insertSheet(SHEET_NAME);
+    sheet.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
   }
+  return sheet;
+}
 
-  const payload = Object.assign({}, normalized, { billingMonth: monthKey });
-  const sheet = ensurePreparedBillingSheet_();
+function savePreparedBillingMeta_(billingMonth, meta) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return null;
+
+  const sheet = ensurePreparedBillingMetaSheet_();
   const preparedAtValue = (() => {
-    const parsed = payload.preparedAt ? new Date(payload.preparedAt) : null;
+    const parsed = meta && meta.preparedAt ? new Date(meta.preparedAt) : null;
     return parsed instanceof Date && !isNaN(parsed.getTime()) ? parsed : new Date();
   })();
   const preparedBy = (() => {
+    if (meta && meta.preparedBy) return meta.preparedBy;
     try {
       const active = Session.getActiveUser && Session.getActiveUser();
       return active && typeof active.getEmail === 'function' ? active.getEmail() : '';
@@ -341,9 +349,10 @@ function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
       return '';
     }
   })();
-  const payloadVersion = payload.schemaVersion || PREPARED_BILLING_SCHEMA_VERSION;
-  const payloadJson = JSON.stringify(payload);
-  const rowValues = [monthKey, preparedAtValue, preparedBy, payloadVersion, payloadJson, ''];
+  const payloadVersion = meta && meta.payloadVersion ? meta.payloadVersion : PREPARED_BILLING_SCHEMA_VERSION;
+  const payloadJson = meta && meta.payloadJson ? String(meta.payloadJson) : '';
+  const note = meta && meta.note ? meta.note : '';
+  const rowValues = [monthKey, preparedAtValue, preparedBy, payloadVersion, payloadJson, note];
 
   const lastRow = sheet.getLastRow();
   const existing = lastRow >= 2
@@ -362,39 +371,129 @@ function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
   return { billingMonth: monthKey, row: 2, updated: false };
 }
 
+function savePreparedBillingJsonRows_(billingMonth, billingJson) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey || !Array.isArray(billingJson)) return { billingMonth: monthKey || '', inserted: 0 };
+
+  const sheet = ensurePreparedBillingJsonSheet_();
+  const lastRow = sheet.getLastRow();
+  const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
+
+  for (let i = existingRows.length - 1; i >= 0; i--) {
+    if (String(existingRows[i][0] || '').trim() === monthKey) {
+      sheet.deleteRow(i + 2);
+    }
+  }
+
+  if (!billingJson.length) return { billingMonth: monthKey, inserted: 0 };
+
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+
+  const rows = billingJson.map(entry => {
+    const rowPayload = entry || {};
+    const pid = normalizePid(rowPayload.patientId);
+    return [monthKey, pid || '', JSON.stringify(rowPayload)];
+  });
+
+  sheet.insertRows(2, rows.length);
+  sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+  return { billingMonth: monthKey, inserted: rows.length };
+}
+
+function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth || (preparedPayload && preparedPayload.billingMonth));
+  const normalized = normalizePreparedBilling_(preparedPayload);
+  if (!monthKey || !normalized) {
+    billingLogger_.log('[billing] savePreparedBillingToSheet_ skipped due to invalid payload');
+    return null;
+  }
+
+  const payload = Object.assign({}, normalized, { billingMonth: monthKey });
+  const metaPayload = Object.assign({}, payload);
+  delete metaPayload.billingJson;
+  const preparedAtValue = (() => {
+    const parsed = payload.preparedAt ? new Date(payload.preparedAt) : null;
+    return parsed instanceof Date && !isNaN(parsed.getTime()) ? parsed : new Date();
+  })();
+  const preparedBy = (() => {
+    try {
+      const active = Session.getActiveUser && Session.getActiveUser();
+      return active && typeof active.getEmail === 'function' ? active.getEmail() : '';
+    } catch (err) {
+      return '';
+    }
+  })();
+  const payloadVersion = payload.schemaVersion || PREPARED_BILLING_SCHEMA_VERSION;
+  const metaResult = savePreparedBillingMeta_(monthKey, {
+    preparedAt: preparedAtValue,
+    preparedBy,
+    payloadVersion,
+    payloadJson: JSON.stringify(metaPayload),
+    note: ''
+  });
+  const jsonResult = savePreparedBillingJsonRows_(monthKey, Array.isArray(payload.billingJson) ? payload.billingJson : []);
+  return { billingMonth: monthKey, meta: metaResult, json: jsonResult };
+}
+
 function loadPreparedBillingFromSheet_(billingMonth) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const workbook = ss();
-  const sheet = workbook.getSheetByName('PreparedBilling');
-  if (!monthKey || !sheet) return null;
+  const metaSheet = workbook.getSheetByName('PreparedBillingMeta');
+  if (!monthKey || !metaSheet) return null;
 
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return null;
+  const metaLastRow = metaSheet.getLastRow();
+  if (metaLastRow < 2) return null;
 
-  const values = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
-  const target = values.find(row => String(row[0] || '').trim() === monthKey);
-  if (!target) return null;
+  const metaValues = metaSheet.getRange(2, 1, metaLastRow - 1, 6).getValues();
+  const metaRow = metaValues.find(row => String(row[0] || '').trim() === monthKey);
+  if (!metaRow) return null;
 
-  const preparedAtCell = target[1];
-  const preparedByCell = target[2];
-  const payloadVersion = target[3];
-  const payloadJson = target[4];
+  const preparedAtCell = metaRow[1];
+  const preparedByCell = metaRow[2];
+  const payloadVersion = metaRow[3];
+  const payloadJson = metaRow[4];
 
-  if (!payloadJson) return null;
-  try {
-    const parsed = JSON.parse(payloadJson);
-    const normalized = normalizePreparedBilling_(Object.assign({}, parsed, { billingMonth: monthKey }));
-    if (!normalized) return null;
-    const preparedAt = normalized.preparedAt || (preparedAtCell instanceof Date ? preparedAtCell.toISOString() : null);
-    return Object.assign({}, normalized, {
-      preparedAt,
-      preparedBy: normalized.preparedBy || preparedByCell || '',
-      payloadVersion: payloadVersion || normalized.schemaVersion || null
-    });
-  } catch (err) {
-    billingLogger_.log('[billing] loadPreparedBillingFromSheet_ failed to parse payloadJson for ' + monthKey + ': ' + err);
-    return null;
+  let parsed = {};
+  if (payloadJson) {
+    try {
+      parsed = JSON.parse(payloadJson) || {};
+    } catch (err) {
+      billingLogger_.log('[billing] loadPreparedBillingFromSheet_ failed to parse meta payload for ' + monthKey + ': ' + err);
+    }
   }
+
+  const jsonSheet = workbook.getSheetByName('PreparedBillingJson');
+  const billingJsonRows = [];
+  if (jsonSheet) {
+    const jsonLastRow = jsonSheet.getLastRow();
+    if (jsonLastRow >= 2) {
+      const jsonValues = jsonSheet.getRange(2, 1, jsonLastRow - 1, 3).getValues();
+      jsonValues.forEach(row => {
+        if (String(row[0] || '').trim() !== monthKey) return;
+        const jsonText = row[2];
+        if (!jsonText) return;
+        try {
+          const parsedRow = JSON.parse(jsonText);
+          billingJsonRows.push(parsedRow);
+        } catch (err) {
+          billingLogger_.log('[billing] loadPreparedBillingFromSheet_ failed to parse billingRowJson for ' + monthKey + ': ' + err);
+        }
+      });
+    }
+  }
+
+  const merged = Object.assign({}, parsed, {
+    billingMonth: monthKey,
+    billingJson: billingJsonRows,
+    preparedAt: parsed.preparedAt || (preparedAtCell instanceof Date ? preparedAtCell.toISOString() : null),
+    preparedBy: parsed.preparedBy || preparedByCell || '',
+    schemaVersion: parsed.schemaVersion || payloadVersion || PREPARED_BILLING_SCHEMA_VERSION
+  });
+
+  const normalized = normalizePreparedBilling_(merged);
+  return normalized;
 }
 
 function validatePreparedBillingPayload_(payload, expectedMonthKey) {

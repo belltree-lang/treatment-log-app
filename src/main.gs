@@ -1342,6 +1342,7 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   return generatePreparedInvoices_(prepared, options || {});
 }
 
+  // Deprecated (legacy bank transfer export). New specifications do not rely on bank CSV/JSON outputs.
   function generateBankTransferData(billingMonth, options) {
     const prepared = buildPreparedBillingPayload_(billingMonth);
     savePreparedBilling_(prepared);
@@ -1349,6 +1350,7 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     return exportBankTransferDataForPrepared_(prepared, options || {});
   }
 
+  // Deprecated (legacy bank transfer export). New specifications do not rely on bank CSV/JSON outputs.
   function generateBankTransferDataFromCache(billingMonth, options) {
     const opts = options || {};
     const monthInput = billingMonth || opts.billingMonth || (opts.prepared && (opts.prepared.billingMonth || opts.prepared.month));

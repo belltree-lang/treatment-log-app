@@ -396,8 +396,9 @@ function generateInvoicePdfs(billingJson, options) {
   return { billingMonth, files };
 }
 
-/***** Bank transfer export helpers *****/
+/***** Bank transfer export helpers (legacy; not used in new billing specification) *****/
 
+const LEGACY_BANK_TRANSFER_SHEET_NAME = '銀行データ出力（旧仕様）';
 const BANK_TRANSFER_HEADERS = ['請求月', '番号', '氏名（漢字）', '銀行コード', '支店コード', '規定コード', '口座番号', '氏名（カナ）', '新規フラグ'];
 
 function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, billingMonth, bankStatuses) {
@@ -487,9 +488,9 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
 
 function ensureBankTransferSheet_() {
   const workbook = billingSs();
-  let sheet = workbook.getSheetByName(BILLING_BANK_SHEET_NAME);
+  let sheet = workbook.getSheetByName(LEGACY_BANK_TRANSFER_SHEET_NAME);
   if (!sheet) {
-    sheet = workbook.insertSheet(BILLING_BANK_SHEET_NAME);
+    sheet = workbook.insertSheet(LEGACY_BANK_TRANSFER_SHEET_NAME);
     sheet.getRange(1, 1, 1, BANK_TRANSFER_HEADERS.length).setValues([BANK_TRANSFER_HEADERS]);
     return { sheet, headers: BANK_TRANSFER_HEADERS.slice() };
   }
@@ -630,6 +631,12 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
   }
 
   function exportBankTransferDataForPrepared_(prepared) {
+    try {
+      billingLogger_.log('[billing][legacy] exportBankTransferDataForPrepared_ invoked (bank transfer export deprecated)');
+    } catch (err) {
+      // ignore logging errors in non-GAS environments
+    }
+
     const normalized = normalizePreparedBilling_(prepared);
     if (!normalized) {
       billingLogger_.log('[billing] exportBankTransferDataForPrepared_: normalized payload missing', {

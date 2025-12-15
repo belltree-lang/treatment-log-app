@@ -100,6 +100,105 @@ function createSheetMock() {
   };
 }
 
+function createBankSheetMock(name, rows = []) {
+  const data = rows.map(row => row.slice());
+  const sheet = {
+    _name: name,
+    _index: 1,
+    _workbook: null,
+    _rows: data,
+    getName: () => sheet._name,
+    setName: newName => {
+      const oldName = sheet._name;
+      sheet._name = newName;
+      if (sheet._workbook && typeof sheet._workbook._renameSheet === 'function') {
+        sheet._workbook._renameSheet(oldName, sheet);
+      }
+    },
+    getIndex: () => sheet._index,
+    setIndex: newIndex => { sheet._index = newIndex; },
+    getLastRow: () => sheet._rows.length,
+    getLastColumn: () => sheet._rows.reduce((max, row) => Math.max(max, row.length), 0),
+    getRange: (row, col, numRows = 1, numCols = 1) => {
+      const getValues = () => {
+        const values = [];
+        for (let r = 0; r < numRows; r++) {
+          const sourceRow = sheet._rows[row - 1 + r] || [];
+          const rowValues = [];
+          for (let c = 0; c < numCols; c++) {
+            rowValues.push(sourceRow[col - 1 + c] !== undefined ? sourceRow[col - 1 + c] : '');
+          }
+          values.push(rowValues);
+        }
+        return values;
+      };
+
+      return {
+        getValues,
+        getDisplayValues: () => getValues(),
+        setValues: values => {
+          for (let r = 0; r < numRows; r++) {
+            const destIndex = row - 1 + r;
+            sheet._rows[destIndex] = sheet._rows[destIndex] || [];
+            for (let c = 0; c < numCols; c++) {
+              sheet._rows[destIndex][col - 1 + c] = values[r][c];
+            }
+          }
+        }
+      };
+    },
+    getProtections: () => [],
+    copyTo: workbook => {
+      const copy = createBankSheetMock(name, sheet._rows);
+      workbook._registerSheet(copy);
+      return copy;
+    }
+  };
+  return sheet;
+}
+
+function createBankWorkbookMock(templateSheet) {
+  const sheets = {};
+  const order = [];
+  const workbook = {};
+  const register = sheet => {
+    const index = order.length + 1;
+    sheet.setIndex(index);
+    sheet._workbook = workbook;
+    order.push(sheet);
+    sheets[sheet.getName()] = sheet;
+    return sheet;
+  };
+
+  Object.assign(workbook, {
+    _registerSheet: register,
+    _renameSheet: (oldName, sheet) => {
+      if (oldName && sheets[oldName] === sheet) {
+        delete sheets[oldName];
+      }
+      sheets[sheet.getName()] = sheet;
+    },
+    getSheetByName: name => sheets[name] || null,
+    deleteSheet: sheet => {
+      const name = sheet.getName();
+      delete sheets[name];
+      const idx = order.indexOf(sheet);
+      if (idx >= 0) order.splice(idx, 1);
+    },
+    getNumSheets: () => order.length,
+    setActiveSheet: () => {},
+    moveActiveSheet: () => {},
+    insertSheet: name => register(createBankSheetMock(name)),
+    getActiveSheet: () => null
+  });
+
+  if (templateSheet) {
+    register(templateSheet);
+  }
+
+  return workbook;
+}
+
 function testValidationRequiresLedgerFields() {
   const ctx = createMainContext();
   const { validatePreparedBillingPayload_ } = ctx;
@@ -365,6 +464,84 @@ function testPreparedBillingSheetSaveAndLoad() {
   assert.strictEqual(Array.isArray(loaded.billingJson) ? loaded.billingJson.length : 0, 2, 'billingJsonが復元される');
 }
 
+function testBankWithdrawalSheetRegeneration() {
+  const bankTemplate = createBankSheetMock('銀行情報', [
+    ['名前', '金額', '口座'],
+    ['田中 太郎', '', '1234']
+  ]);
+  const workbook = createBankWorkbookMock(bankTemplate);
+  const columnLetterToNumber_ = letter => {
+    const normalized = String(letter || '').toUpperCase();
+    let result = 0;
+    for (let i = 0; i < normalized.length; i++) {
+      const code = normalized.charCodeAt(i);
+      if (code < 65 || code > 90) continue;
+      result = result * 26 + (code - 64);
+    }
+    return result;
+  };
+
+  const ctx = createMainContext({
+    BILLING_LABELS: { name: ['名前'] },
+    billingLogger_: { log: () => {} },
+    normalizeBillingMonthInput: () => ({ key: '202404', year: 2024, month: 4 }),
+    billingNormalizePatientId_: value => String(value || '').trim(),
+    normalizeBillingNameKey_: value => String(value || '').replace(/\s+/g, '').trim(),
+    normalizeMoneyNumber_: value => Number(value) || 0,
+    resolveBillingColumn_: (headers, candidates, _label, options) => {
+      const normalized = headers.map(header => String(header || '').trim());
+      for (let i = 0; i < candidates.length; i++) {
+        const idx = normalized.indexOf(candidates[i]);
+        if (idx >= 0) return idx + 1;
+      }
+      return options && options.fallbackLetter ? columnLetterToNumber_(options.fallbackLetter) : 1;
+    },
+    SpreadsheetApp: {
+      ProtectionType: { SHEET: 'SHEET' },
+      getActiveSpreadsheet: () => workbook
+    },
+    columnLetterToNumber_
+  });
+  ctx.ensureBankInfoSheet_ = () => bankTemplate;
+  ctx.billingSs = () => workbook;
+  ctx.ss = () => workbook;
+
+  const prepared = {
+    billingMonth: '202404',
+    patients: {
+      P001: { nameKanji: '田中 太郎' },
+      P002: { nameKanji: '新規 花子' }
+    },
+    billingJson: [
+      { patientId: 'P001', grandTotal: 1000 },
+      { patientId: 'P002', grandTotal: 2000 }
+    ]
+  };
+
+  ctx.syncBankWithdrawalSheetForMonth_('202404', prepared);
+
+  const firstSheet = workbook.getSheetByName('銀行引落_2024-04');
+  assert.ok(firstSheet, '初回生成で月次シートが作成される');
+  const firstValues = firstSheet.getRange(1, 1, firstSheet.getLastRow(), firstSheet.getLastColumn()).getValues();
+  assert.strictEqual(firstValues.length, 2, 'テンプレート行数を引き継ぐ');
+  assert.strictEqual(firstValues[1][1], 1000, '請求金額が金額列に出力される');
+
+  // Add a new account to the template and alter the existing monthly sheet to ensure it is refreshed.
+  bankTemplate.getRange(3, 1, 1, 3).setValues([['新規 花子', '', '5678']]);
+  firstSheet.getRange(2, 2, 1, 1).setValues([[9999]]);
+
+  ctx.syncBankWithdrawalSheetForMonth_('202404', prepared);
+
+  const refreshedSheet = workbook.getSheetByName('銀行引落_2024-04');
+  const refreshedValues = refreshedSheet.getRange(1, 1, refreshedSheet.getLastRow(), refreshedSheet.getLastColumn()).getValues();
+  assert.strictEqual(refreshedValues.length, 3, 'テンプレートの新規行が再生成で反映される');
+  assert.strictEqual(refreshedValues[1][1], 1000, '既存利用者の金額は再生成後も正しく計算される');
+  assert.strictEqual(refreshedValues[2][1], 2000, '再生成で新規利用者の金額も反映される');
+
+  const templateValues = bankTemplate.getRange(1, 1, bankTemplate.getLastRow(), bankTemplate.getLastColumn()).getValues();
+  assert.strictEqual(templateValues[1][1], '', '銀行情報シートは参照専用で金額が書き換わらない');
+}
+
 function run() {
   testValidationRequiresLedgerFields();
   testValidationAcceptsCompletePayload();
@@ -380,6 +557,7 @@ function run() {
   testInvoiceGenerationUsesSheetWhenCacheMissing();
   testPrepareBillingDataNormalizesMonthKey();
   testPreparedBillingSheetSaveAndLoad();
+  testBankWithdrawalSheetRegeneration();
   console.log('prepared billing cache tests passed');
 }
 
@@ -397,6 +575,7 @@ function testPrepareBillingDataNormalizesMonthKey() {
       year: 2025,
       month: 1
     }),
+    ensureBankWithdrawalSheet_: () => ({ getLastRow: () => 0 }),
     billingLogger_: { log: () => {} },
     buildPreparedBillingPayload_: month => ({
       billingMonth: month,

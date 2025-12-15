@@ -7,6 +7,10 @@ const sheetUtilsCode = fs.readFileSync(
   path.join(__dirname, '../src/dashboard/utils/sheetUtils.js'),
   'utf8'
 );
+const configCode = fs.readFileSync(
+  path.join(__dirname, '../src/dashboard/config.gs'),
+  'utf8'
+);
 const loadInvoicesCode = fs.readFileSync(
   path.join(__dirname, '../src/dashboard/data/loadInvoices.js'),
   'utf8'
@@ -51,6 +55,7 @@ function createContext() {
   };
   const context = { console, Utilities, Session: { getScriptTimeZone: () => 'Asia/Tokyo' } };
   vm.createContext(context);
+  vm.runInContext(configCode, context);
   vm.runInContext(sheetUtilsCode, context);
   vm.runInContext(loadInvoicesCode, context);
   return context;

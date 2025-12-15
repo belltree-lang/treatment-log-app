@@ -3,6 +3,8 @@ const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
 
+const configCode = fs.readFileSync(path.join(__dirname, '../src/dashboard/config.gs'), 'utf8');
+
 function loadDashboardScripts(ctx, files) {
   files.forEach(file => {
     const code = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', file), 'utf8');
@@ -33,11 +35,11 @@ function createBaseContext() {
     cacheStore,
     propertyStore,
     dashboardWarn_: () => {},
-    dashboardResolveTimeZone_: () => 'Asia/Tokyo',
-    DASHBOARD_CACHE_TTL_SECONDS: 60 * 60
+    dashboardResolveTimeZone_: () => 'Asia/Tokyo'
   };
 
   vm.createContext(ctx);
+  vm.runInContext(configCode, ctx);
   return ctx;
 }
 

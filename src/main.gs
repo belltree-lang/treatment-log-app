@@ -636,6 +636,7 @@ function loadPreparedBillingWithSheetFallback_(billingMonthKey, options) {
   const opts = options || {};
   const withValidation = opts.withValidation === true;
   const allowInvalid = opts.allowInvalid === true;
+  const restoreCache = opts.restoreCache !== false;
   const wrapResult = (payload, validation) => withValidation ? { prepared: payload, validation: validation || null } : payload;
 
   const cacheResult = loadPreparedBilling_(billingMonthKey, Object.assign({}, opts, { withValidation: true }));
@@ -657,6 +658,16 @@ function loadPreparedBillingWithSheetFallback_(billingMonthKey, options) {
 
   if (normalizedPrepared && (sheetValidation.ok || allowInvalid)) {
     const preparedWithMonth = Object.assign({}, normalizedPrepared, { billingMonth: sheetValidation.billingMonth || monthKey });
+    if (sheetValidation.ok && restoreCache && typeof savePreparedBilling_ === 'function') {
+      try {
+        savePreparedBilling_(preparedWithMonth);
+        if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+          billingLogger_.log('[billing] loadPreparedBillingWithSheetFallback_ restored cache for ' + preparedWithMonth.billingMonth);
+        }
+      } catch (err) {
+        // ignore caching/logging errors in non-GAS environments
+      }
+    }
     return wrapResult(preparedWithMonth, sheetValidation);
   }
 
@@ -1342,23 +1353,28 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     const opts = options || {};
     const monthInput = billingMonth || opts.billingMonth || (opts.prepared && (opts.prepared.billingMonth || opts.prepared.month));
     const resolvedMonthKey = normalizeBillingMonthKeySafe_(monthInput);
-    const month = resolvedMonthKey ? normalizeBillingMonthInput(resolvedMonthKey) : null;
-    const sheetPayload = month && month.key ? loadPreparedBillingFromSheet_(month.key) : null;
-    const validation = validatePreparedBillingPayload_(sheetPayload, month && month.key);
-    const normalizedPrepared = normalizePreparedBilling_(sheetPayload);
+    const month = normalizeBillingMonthInput
+      ? normalizeBillingMonthInput(resolvedMonthKey || monthInput)
+      : null;
+    const loaded = month && month.key
+      ? loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true, restoreCache: true })
+      : null;
+    const validation = loaded && loaded.validation
+      ? loaded.validation
+      : (loaded && loaded.ok !== undefined ? loaded : null);
+    const normalizedPrepared = normalizePreparedBilling_(loaded && loaded.prepared);
 
     try {
       billingLogger_.log('[bankExport] generateBankTransferDataFromCache summary=' + JSON.stringify({
         requestedMonth: monthInput || null,
         resolvedMonthKey: month ? month.key : null,
-        hasPrepared: !!sheetPayload,
-        preparedBillingMonth: sheetPayload && sheetPayload.billingMonth ? sheetPayload.billingMonth : null,
-        preparedBillingJsonLength: sheetPayload && Array.isArray(sheetPayload.billingJson)
-          ? sheetPayload.billingJson.length
+        preparedBillingMonth: normalizedPrepared && normalizedPrepared.billingMonth ? normalizedPrepared.billingMonth : null,
+        preparedBillingJsonLength: normalizedPrepared && Array.isArray(normalizedPrepared.billingJson)
+          ? normalizedPrepared.billingJson.length
           : null,
         validationBillingMonth: validation && validation.billingMonth ? validation.billingMonth : null,
         validationReason: validation && validation.reason ? validation.reason : null,
-        validationOk: validation && validation.hasOwnProperty('ok') ? validation.ok : null
+        validationOk: validation && Object.prototype.hasOwnProperty.call(validation, 'ok') ? validation.ok : null
       }));
     } catch (err) {
       // ignore logging errors in non-GAS environments

@@ -3,9 +3,12 @@
  */
 function loadTreatmentLogs(options) {
   const opts = options || {};
-  const fetchFn = () => loadTreatmentLogsUncached_(opts);
+  const now = dashboardCoerceDate_(opts.now) || new Date();
+  const fetchOptions = Object.assign({}, opts, { now });
+  const fetchFn = () => loadTreatmentLogsUncached_(fetchOptions);
   if (typeof dashboardCacheFetch_ === 'function') {
-    return dashboardCacheFetch_(dashboardCacheKey_('treatmentLogs:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
+    const keyMonth = dashboardFormatDate_(now, dashboardResolveTimeZone_(), 'yyyyMM');
+    return dashboardCacheFetch_(dashboardCacheKey_(`treatmentLogs:v1:${keyMonth}`), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, fetchOptions);
   }
   return fetchFn();
 }
@@ -50,7 +53,8 @@ function loadTreatmentLogsUncached_(options) {
   const colEmail = dashboardResolveColumn_(headers, ['作成者', '担当者', 'email', 'createdbyemail'], 0);
 
   const tz = dashboardResolveTimeZone_();
-  const monthStart = dashboardStartOfMonth_(tz, new Date());
+  const now = dashboardCoerceDate_(opts.now) || new Date();
+  const monthStart = dashboardStartOfMonth_(tz, now);
   const prevMonthEnd = dashboardEndOfPreviousMonth_(monthStart);
 
   for (let i = 0; i < values.length; i++) {

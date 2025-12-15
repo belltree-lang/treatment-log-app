@@ -9,9 +9,12 @@
  */
 function loadInvoices(options) {
   const opts = options || {};
-  const fetchFn = () => loadInvoicesUncached_(opts);
+  const now = dashboardCoerceDate_(opts.now) || new Date();
+  const fetchOptions = Object.assign({}, opts, { now });
+  const fetchFn = () => loadInvoicesUncached_(fetchOptions);
   if (typeof dashboardCacheFetch_ === 'function') {
-    return dashboardCacheFetch_(dashboardCacheKey_('invoices:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
+    const keyMonth = dashboardFormatDate_(now, dashboardResolveTimeZone_(), 'yyyyMM');
+    return dashboardCacheFetch_(dashboardCacheKey_(`invoices:v1:${keyMonth}`), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, fetchOptions);
   }
   return fetchFn();
 }

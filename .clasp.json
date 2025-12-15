@@ -1,4 +1,20 @@
 {
   "scriptId": "1fGY6S5ghX6i44PyoKO-vos6CV_wIRVETuDEy6Qt6RF2sZXG0pF0C5Az5",
-  "rootDir": "./src"
+  "rootDir": "./src",
+  "filePushOrder": [
+    "dashboard/config.gs",
+    "dashboard/utils/cacheUtils.js",
+    "dashboard/utils/sheetUtils.js",
+    "dashboard/data/loadPatientInfo.js",
+    "dashboard/data/loadTreatmentLogs.js",
+    "dashboard/data/loadNotes.js",
+    "dashboard/data/loadAIReports.js",
+    "dashboard/data/loadInvoices.js",
+    "dashboard/data/assignResponsibleStaff.js",
+    "dashboard/api/getTasks.js",
+    "dashboard/api/getTodayVisits.js",
+    "dashboard/api/getDashboardData.js",
+    "dashboard/api/markAsRead.js",
+    "Code.js"
+  ]
 }

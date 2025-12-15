@@ -510,8 +510,11 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
     return { ok: false, reason: 'schemaVersion mismatch' };
   }
 
+  const billingJson = payload.billingJson;
+  if (!Array.isArray(billingJson)) return { ok: false, reason: 'billingJson missing' };
+  if (billingJson.length === 0) return { ok: false, reason: 'billingJson empty' };
+
   const requiredArrays = [
-    { key: 'billingJson', reason: 'billingJson missing' },
     { key: 'carryOverLedger', reason: 'carryOverLedger missing' },
     { key: 'unpaidHistory', reason: 'unpaidHistory missing' }
   ];
@@ -1344,9 +1347,11 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
         requestedMonth: monthInput || null,
         resolvedMonthKey: month ? month.key : null,
         hasPrepared: !!sheetPayload,
+        preparedBillingMonth: sheetPayload && sheetPayload.billingMonth ? sheetPayload.billingMonth : null,
         preparedBillingJsonLength: sheetPayload && Array.isArray(sheetPayload.billingJson)
           ? sheetPayload.billingJson.length
           : null,
+        validationBillingMonth: validation && validation.billingMonth ? validation.billingMonth : null,
         validationReason: validation && validation.reason ? validation.reason : null,
         validationOk: validation && validation.hasOwnProperty('ok') ? validation.ok : null
       }));
@@ -1384,6 +1389,7 @@ function resolveBankExportErrorMessage_(validation) {
   const reason = validation && validation.reason ? String(validation.reason) : '';
   const ledgerReasons = ['carryOverLedger missing', 'carryOverLedgerByPatient missing', 'carryOverLedgerMeta missing', 'carryOverByPatient missing', 'unpaidHistory missing'];
   const missingReasons = ['payload missing', 'billingMonth missing'];
+  const corruptReasons = ['billingJson empty', 'billingJson missing'];
   try {
     billingLogger_.log('[bankExport] resolveBankExportErrorMessage_ reason=' + reason);
   } catch (err) {
@@ -1394,6 +1400,9 @@ function resolveBankExportErrorMessage_(validation) {
   }
   if (missingReasons.indexOf(reason) >= 0 || !reason) {
     return '銀行データを出力できません。請求データが見つかりません。先に請求データを集計・確定してください。';
+  }
+  if (corruptReasons.indexOf(reason) >= 0) {
+    return '銀行データを生成できません。請求データが破損しています。再集計してください。';
   }
   if (reason === 'billingMonth mismatch') {
     return '銀行データを生成できません。請求月が一致する請求データを集計・確定してください。';

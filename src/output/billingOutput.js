@@ -632,10 +632,18 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
   function exportBankTransferDataForPrepared_(prepared) {
     const normalized = normalizePreparedBilling_(prepared);
     if (!normalized) {
+      billingLogger_.log('[billing] exportBankTransferDataForPrepared_: normalized payload missing', {
+        hasPrepared: !!prepared,
+        preparedKeys: prepared && typeof prepared === 'object' ? Object.keys(prepared) : null
+      });
       throw new Error('銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。');
     }
 
     if (!Array.isArray(normalized.billingJson)) {
+      billingLogger_.log('[billing] exportBankTransferDataForPrepared_: billingJson missing or invalid', {
+        billingJsonType: typeof normalized.billingJson,
+        hasBillingJson: !!normalized.billingJson
+      });
       throw new Error('銀行データを生成できません。請求データの形式が不正です。先に「請求データを集計」を実行してください。');
     }
     logPreparedBankPayloadStatus_(normalized);

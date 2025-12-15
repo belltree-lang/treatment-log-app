@@ -1094,6 +1094,23 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
       ? normalizeBillingMonthInput(normalizedPrepared.billingMonth)
       : null);
 
+    try {
+      billingLogger_.log('[bankExport] generateBankTransferDataFromCache summary=' + JSON.stringify({
+        requestedMonth: monthInput || null,
+        resolvedMonthKey: resolvedMonth ? resolvedMonth.key : null,
+        cacheMonthKey: resolvedMonthKey || null,
+        hasPrepared: !!prepared,
+        preparedBillingJsonLength: prepared && Array.isArray(prepared.billingJson) ? prepared.billingJson.length : null,
+        normalizedBillingJsonLength: normalizedPrepared && Array.isArray(normalizedPrepared.billingJson)
+          ? normalizedPrepared.billingJson.length
+          : null,
+        validationReason: validation && validation.reason ? validation.reason : null,
+        validationOk: validation && validation.hasOwnProperty('ok') ? validation.ok : null
+      }));
+    } catch (err) {
+      // ignore logging errors in non-GAS environments
+    }
+
     if (!resolvedMonth) {
       throw new Error('銀行データを生成できません。請求月が指定されていません。先に「請求データを集計」を実行してください。');
     }
@@ -1124,6 +1141,11 @@ function resolveBankExportErrorMessage_(validation) {
   const reason = validation && validation.reason ? String(validation.reason) : '';
   const ledgerReasons = ['carryOverLedger missing', 'carryOverLedgerByPatient missing', 'carryOverLedgerMeta missing', 'carryOverByPatient missing', 'unpaidHistory missing'];
   const missingReasons = ['cache key missing', 'cache unavailable', 'cache miss', 'parse error'];
+  try {
+    billingLogger_.log('[bankExport] resolveBankExportErrorMessage_ reason=' + reason);
+  } catch (err) {
+    // ignore logging errors in non-GAS environments
+  }
   if (ledgerReasons.indexOf(reason) >= 0) {
     return '銀行データを生成できません。繰越金データを確認してください。';
   }

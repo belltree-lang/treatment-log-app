@@ -942,6 +942,28 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   return { billingMonth: month.key, updated: rowCount };
 }
 
+function summarizeBankWithdrawalSheet_(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(month);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) {
+    return { billingMonth: month.key, exists: false, rows: 0, unpaidChecked: 0 };
+  }
+
+  const lastRow = sheet.getLastRow();
+  const rows = Math.max(lastRow - 1, 0);
+  if (!rows) {
+    return { billingMonth: month.key, exists: true, rows: 0, unpaidChecked: 0 };
+  }
+
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const unpaidCol = ensureUnpaidCheckColumn_(sheet, headers);
+  const checkedRows = sheet.getRange(2, unpaidCol, rows, 1).getValues().filter(row => row[0]).length;
+
+  return { billingMonth: month.key, exists: true, rows, unpaidChecked: checkedRows };
+}
+
 function collectUnpaidWithdrawalRows_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const workbook = billingSs();
@@ -1000,6 +1022,76 @@ function applyBankWithdrawalUnpaidEntries(billingMonth) {
   }
   const appendResult = appendUnpaidHistoryEntries_(collected.entries);
   return Object.assign({}, collected, appendResult);
+}
+
+function prepareBankWithdrawalData(billingMonth) {
+  const prepared = prepareBillingData(billingMonth);
+  return summarizeBankWithdrawalState_(billingMonth, prepared, summarizeBankWithdrawalSheet_(billingMonth), {
+    phase: 'aggregated'
+  });
+}
+
+function generateBankWithdrawalSheetFromCache(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true, restoreCache: true });
+  const validation = loaded && loaded.validation ? loaded.validation : null;
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
+
+  if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
+    throw new Error('請求データが未集計です。先に「請求データ集計」を実行してください。');
+  }
+
+  const bankSheet = syncBankWithdrawalSheetForMonth_(month, prepared);
+  const sheetSummary = summarizeBankWithdrawalSheet_(month);
+
+  return summarizeBankWithdrawalState_(month, prepared, sheetSummary, {
+    bankSheet,
+    validation
+  });
+}
+
+function confirmBankWithdrawalDataReady(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true, restoreCache: true });
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
+  const validation = loaded && loaded.validation ? loaded.validation : null;
+
+  if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
+    throw new Error('請求データが未集計です。先に「請求データ集計」を実行してください。');
+  }
+
+  ensureBankWithdrawalSheet_(month, { refreshFromTemplate: false });
+  const sheetSummary = summarizeBankWithdrawalSheet_(month);
+
+  return summarizeBankWithdrawalState_(month, prepared, sheetSummary, {
+    ready: true,
+    validation
+  });
+}
+
+function applyBankWithdrawalUnpaidFromUi(billingMonth) {
+  const result = applyBankWithdrawalUnpaidEntries(billingMonth);
+  const summary = summarizeBankWithdrawalSheet_(billingMonth);
+  return Object.assign({}, result, {
+    billingMonth: normalizeBillingMonthInput(billingMonth).key,
+    sheetSummary: summary
+  });
+}
+
+function summarizeBankWithdrawalState_(billingMonth, prepared, sheetSummary, extra) {
+  const normalizedMonth = normalizeBillingMonthInput(billingMonth);
+  const normalizedPrepared = normalizePreparedBilling_(prepared);
+  const billingCount = normalizedPrepared && Array.isArray(normalizedPrepared.billingJson)
+    ? normalizedPrepared.billingJson.length
+    : 0;
+  const summary = sheetSummary || summarizeBankWithdrawalSheet_(normalizedMonth);
+
+  return Object.assign({
+    billingMonth: normalizedMonth.key,
+    billingCount,
+    preparedAt: normalizedPrepared && normalizedPrepared.preparedAt || null,
+    sheetSummary: summary
+  }, extra || {});
 }
 
 function coerceBillingJsonArray_(raw) {

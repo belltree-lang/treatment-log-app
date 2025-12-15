@@ -104,6 +104,25 @@
         </div>
       </section>
 
+    <section class="card" id="bankWithdrawalFlow">
+      <h2>銀行引落管理</h2>
+      <p class="muted">対象月の請求データ集計から未回収反映まで、手動で完結させるためのフローです。</p>
+      <div class="controls">
+        <label>対象月
+          <input type="month" id="bankWithdrawalMonth" />
+        </label>
+        <button class="btn" id="bankAggregateBtn" type="button" onclick="handleBankFlowAggregation()">請求データ集計</button>
+        <button class="btn secondary" id="bankSheetBtn" type="button" onclick="handleBankSheetGeneration()">銀行引落シート生成</button>
+        <button class="btn secondary" id="bankFinalizeBtn" type="button" onclick="handleBankFinalize()">確定</button>
+        <button class="btn danger" id="bankUnpaidBtn" type="button" onclick="handleBankUnpaidApply()">未回収反映</button>
+      </div>
+      <div class="status-line" style="margin-top:8px">
+        <div id="bankFlowStatus" class="status-line" style="flex:1"></div>
+      </div>
+      <div id="bankFlowError" class="alert danger" style="display:none"></div>
+      <div id="bankFlowDetail" class="alert" style="display:none"></div>
+    </section>
+
     <section class="card">
       <div class="status-line" style="margin-bottom:6px">
         <h2 style="flex:1">生成結果</h2>

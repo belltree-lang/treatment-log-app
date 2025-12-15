@@ -23,9 +23,15 @@ function getDashboardData(options) {
     const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo(cacheOptions) : { patients: {}, nameToId: {}, warnings: [] });
     const notes = opts.notes || (typeof loadNotes === 'function' ? loadNotes(Object.assign({ email: meta.user }, cacheOptions)) : { notes: {}, warnings: [] });
     const aiReports = opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports(cacheOptions) : { reports: {}, warnings: [] });
-    const invoices = opts.invoices || (typeof loadInvoices === 'function' ? loadInvoices({ patientInfo }) : { invoices: {}, warnings: [] });
-    const treatmentLogs = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs({ patientInfo }) : { logs: [], warnings: [] });
-    const responsible = opts.responsible || (typeof assignResponsibleStaff === 'function' ? assignResponsibleStaff({ patientInfo, treatmentLogs }) : { responsible: {}, warnings: [] });
+    const invoices = opts.invoices || (typeof loadInvoices === 'function'
+      ? loadInvoices(Object.assign({ patientInfo, now: opts.now }, cacheOptions))
+      : { invoices: {}, warnings: [] });
+    const treatmentLogs = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
+      ? loadTreatmentLogs(Object.assign({ patientInfo, now: opts.now }, cacheOptions))
+      : { logs: [], warnings: [] });
+    const responsible = opts.responsible || (typeof assignResponsibleStaff === 'function'
+      ? assignResponsibleStaff(Object.assign({ patientInfo, treatmentLogs, now: opts.now }, cacheOptions))
+      : { responsible: {}, warnings: [] });
 
     const tasksResult = opts.tasksResult || (typeof getTasks === 'function' ? getTasks({
       patientInfo,

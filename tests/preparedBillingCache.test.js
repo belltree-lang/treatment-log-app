@@ -34,10 +34,67 @@ function createMainContext(overrides = {}) {
       remove: () => {}
     })
   };
-  const ctx = Object.assign({ console, CacheService: baseCache }, overrides);
+  const baseSpreadsheet = {
+    getSheetByName: () => null,
+    insertSheet: () => ({
+      getRange: () => ({ setValues: () => {} }),
+      getLastRow: () => 0
+    })
+  };
+  const ctx = Object.assign({
+    console,
+    CacheService: baseCache,
+    Session: {},
+    SpreadsheetApp: { getActiveSpreadsheet: () => baseSpreadsheet }
+  }, overrides);
   vm.createContext(ctx);
   vm.runInContext(mainCode, ctx);
   return Object.assign(ctx, overrides);
+}
+
+function createSheetMock() {
+  const rows = [];
+  return {
+    _rows: rows,
+    getLastRow: () => rows.length,
+    getRange: (row, col, numRows = 1, numCols = 1) => ({
+      getValues: () => {
+        const values = [];
+        for (let r = 0; r < numRows; r++) {
+          const targetRow = rows[row - 1 + r] || [];
+          const rowValues = [];
+          for (let c = 0; c < numCols; c++) {
+            rowValues.push(targetRow[col - 1 + c] !== undefined ? targetRow[col - 1 + c] : '');
+          }
+          values.push(rowValues);
+        }
+        return values;
+      },
+      setValues: values => {
+        for (let r = 0; r < numRows; r++) {
+          const destIndex = row - 1 + r;
+          rows[destIndex] = rows[destIndex] || [];
+          for (let c = 0; c < numCols; c++) {
+            rows[destIndex][col - 1 + c] = values[r][c];
+          }
+        }
+      },
+      clearContent: () => {
+        for (let r = 0; r < numRows; r++) {
+          const destIndex = row - 1 + r;
+          if (rows[destIndex]) {
+            for (let c = 0; c < numCols; c++) {
+              rows[destIndex][col - 1 + c] = '';
+            }
+          }
+        }
+      }
+    }),
+    insertRows: (rowIndex, howMany) => {
+      const inserts = new Array(howMany).fill(null).map(() => []);
+      rows.splice(rowIndex - 1, 0, ...inserts);
+    }
+  };
 }
 
 function testValidationRequiresLedgerFields() {
@@ -73,21 +130,42 @@ function testSchemaVersionIsValidated() {
 function testBankExportRejectsNonArrayBillingJson() {
   const ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBilling_: () => ({ billingJson: {} }),
+    loadPreparedBillingFromSheet_: () => ({
+      billingMonth: '202501',
+      billingJson: {},
+      carryOverLedger: [],
+      carryOverLedgerMeta: {},
+      carryOverLedgerByPatient: {},
+      unpaidHistory: [],
+      visitsByPatient: {},
+      totalsByPatient: {},
+      patients: {},
+      bankInfoByName: {},
+      staffByPatient: {},
+      staffDirectory: {},
+      staffDisplayByPatient: {},
+      billingOverrideFlags: {},
+      carryOverByPatient: {},
+      bankAccountInfoByPatient: {}
+    }),
     normalizePreparedBilling_: payload => payload,
     exportBankTransferDataForPrepared_: () => assert.fail('invalid payload should not reach exporter')
   });
 
   assert.throws(() => {
     ctx.generateBankTransferDataFromCache('202501');
-  }, /請求データが未生成/);
+  }, /検証に失敗/);
 }
 
 function testBankExportPassesWhenArrayProvided() {
   const exportCalls = [];
-  const ctx = createMainContext({
+  let ctx;
+  ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBilling_: () => ({ billingJson: [{ billingMonth: '202501', patientId: 'p1' }], billingMonth: '202501' }),
+    loadPreparedBillingFromSheet_: () => buildValidPreparedPayload(ctx, {
+      billingJson: [{ billingMonth: '202501', patientId: 'p1' }],
+      billingMonth: '202501'
+    }),
     normalizePreparedBilling_: payload => payload,
     exportBankTransferDataForPrepared_: prepared => {
       exportCalls.push(prepared.billingMonth);
@@ -102,15 +180,19 @@ function testBankExportPassesWhenArrayProvided() {
 
 function testBankExportAcceptsYmObject() {
   const exportCalls = [];
-  const ctx = createMainContext({
+  let ctx;
+  ctx = createMainContext({
     normalizeBillingMonthInput: input => {
       const raw = typeof input === 'object' && input && input.ym ? input.ym : input;
       return { key: String(raw).replace(/\D/g, '') };
     },
     normalizePreparedBilling_: payload => payload,
-    loadPreparedBilling_: monthKey => {
+    loadPreparedBillingFromSheet_: monthKey => {
       exportCalls.push(monthKey);
-      return { billingJson: [{ billingMonth: '202501', patientId: 'p1' }], billingMonth: '202501' };
+      return buildValidPreparedPayload(ctx, {
+        billingJson: [{ billingMonth: '202501', patientId: 'p1' }],
+        billingMonth: '202501'
+      });
     },
     exportBankTransferDataForPrepared_: prepared => ({
       billingMonth: prepared.billingMonth,
@@ -127,9 +209,10 @@ function testBankExportAcceptsYmObject() {
 
 function testBankExportReturnsEmptyForZeroBilling() {
   const exportCalls = [];
-  const ctx = createMainContext({
+  let ctx;
+  ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBilling_: () => ({ billingJson: [], billingMonth: '202501' }),
+    loadPreparedBillingFromSheet_: () => buildValidPreparedPayload(ctx, { billingJson: [], billingMonth: '202501' }),
     normalizePreparedBilling_: payload => payload,
     exportBankTransferDataForPrepared_: () => exportCalls.push('called')
   });
@@ -143,38 +226,15 @@ function testBankExportReturnsEmptyForZeroBilling() {
   assert.strictEqual(result.message, '当月の請求対象はありません', '0件の場合は案内メッセージを返す');
 }
 
-function testBankExportLogsValidationAndUsesPreparedData() {
-  const logs = [];
-  const exportCalls = [];
-  const ctx = createMainContext({
-    Logger: { log: value => logs.push(value) },
-    normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBilling_: (monthKey, opts) => {
-      assert.strictEqual(opts.allowInvalid, true, 'bank export should allow invalid prepared cache');
-      return {
-        prepared: { billingJson: [{ patientId: 'p1', billingMonth: monthKey }], billingMonth: monthKey },
-        validation: { ok: false, reason: 'schemaVersion mismatch' }
-      };
-    },
-    normalizePreparedBilling_: payload => payload,
-    exportBankTransferDataForPrepared_: prepared => {
-      exportCalls.push(prepared.billingMonth);
-      return { billingMonth: prepared.billingMonth, inserted: prepared.billingJson.length };
-    }
-  });
-
-  const result = ctx.generateBankTransferDataFromCache('202501');
-
-  assert.strictEqual(result.inserted, 1, 'should continue export even if validation failed');
-  assert.deepStrictEqual(exportCalls, ['202501']);
-  assert.ok(logs.some(log => String(log).includes('[bankExport][validation]')), 'validation log should be recorded');
-}
-
 function testBankExportReportsLedgerIssues() {
-  const ctx = createMainContext({
+  let ctx;
+  ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBilling_: () => ({ prepared: null, validation: { ok: false, reason: 'carryOverLedger missing' } }),
-    normalizePreparedBilling_: () => null
+    loadPreparedBillingFromSheet_: () => ({ billingJson: [], billingMonth: '202501', schemaVersion: 2,
+      carryOverLedgerByPatient: {}, carryOverLedgerMeta: {}, visitsByPatient: {}, totalsByPatient: {}, patients: {},
+      bankInfoByName: {}, staffByPatient: {}, staffDirectory: {}, staffDisplayByPatient: {}, billingOverrideFlags: {},
+      carryOverByPatient: {}, bankAccountInfoByPatient: {} }),
+    normalizePreparedBilling_: payload => payload
   });
 
   assert.throws(() => {
@@ -185,13 +245,47 @@ function testBankExportReportsLedgerIssues() {
 function testBankExportReportsMissingPreparation() {
   const ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBilling_: () => ({ prepared: null, validation: { ok: false, reason: 'cache miss' } }),
+    loadPreparedBillingFromSheet_: () => null,
     normalizePreparedBilling_: () => null
   });
 
   assert.throws(() => {
     ctx.generateBankTransferDataFromCache('202501');
-  }, /請求データが未生成/);
+  }, /集計・確定/);
+}
+
+function testPreparedBillingSheetSaveAndLoad() {
+  const sheet = createSheetMock();
+  let created = false;
+  const spreadsheet = {
+    getSheetByName: name => (name === 'PreparedBilling' && created ? sheet : null),
+    insertSheet: name => {
+      if (name === 'PreparedBilling') {
+        created = true;
+        return sheet;
+      }
+      return createSheetMock();
+    }
+  };
+  const ctx = createMainContext({
+    SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet },
+    Session: { getActiveUser: () => ({ getEmail: () => 'user@example.com' }) },
+    billingLogger_: { log: () => {} }
+  });
+
+  const payload = buildValidPreparedPayload(ctx, { preparedAt: '2025-01-02T03:04:05.000Z' });
+
+  const saveResult = ctx.savePreparedBillingToSheet_('202501', payload);
+  assert.strictEqual(saveResult && saveResult.billingMonth, '202501');
+  assert.deepStrictEqual(sheet._rows[0], ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'payloadJson', 'note'], 'ヘッダーが作成される');
+  assert.strictEqual(sheet._rows[1][0], '202501', 'billingMonthが保存される');
+  assert.ok(String(sheet._rows[1][2]).includes('user@example.com'), '実行ユーザーが保存される');
+
+  const loaded = ctx.loadPreparedBillingFromSheet_('202501');
+  assert.ok(loaded, '保存したデータを読み込める');
+  assert.strictEqual(loaded.billingMonth, '202501');
+  assert.strictEqual(loaded.preparedAt, '2025-01-02T03:04:05.000Z');
+  assert.strictEqual(loaded.schemaVersion, 2);
 }
 
 function run() {
@@ -202,10 +296,10 @@ function run() {
   testBankExportPassesWhenArrayProvided();
   testBankExportAcceptsYmObject();
   testBankExportReturnsEmptyForZeroBilling();
-  testBankExportLogsValidationAndUsesPreparedData();
   testBankExportReportsLedgerIssues();
   testBankExportReportsMissingPreparation();
   testPrepareBillingDataNormalizesMonthKey();
+  testPreparedBillingSheetSaveAndLoad();
   console.log('prepared billing cache tests passed');
 }
 
@@ -213,6 +307,7 @@ run();
 
 function testPrepareBillingDataNormalizesMonthKey() {
   const savedPayloads = [];
+  const savedSheetPayloads = [];
   const ctx = createMainContext({
     normalizeBillingMonthInput: input => ({
       key: String(input).replace(/\D/g, ''),
@@ -243,7 +338,8 @@ function testPrepareBillingDataNormalizesMonthKey() {
     }),
     toClientBillingPayload_: payload => payload,
     serializeBillingPayload_: payload => payload,
-    savePreparedBilling_: payload => savedPayloads.push(payload)
+    savePreparedBilling_: payload => savedPayloads.push(payload),
+    savePreparedBillingToSheet_: (billingMonth, payload) => savedSheetPayloads.push(Object.assign({}, payload, { billingMonth }))
   });
 
   const result = ctx.prepareBillingData('2025-01');
@@ -251,4 +347,6 @@ function testPrepareBillingDataNormalizesMonthKey() {
   assert.strictEqual(result.billingMonth, '202501', '返却されるbillingMonthはYYYYMMに正規化される');
   assert.strictEqual(savedPayloads.length, 1, 'prepared payloadが保存される');
   assert.strictEqual(savedPayloads[0].billingMonth, '202501', '保存されるpayloadのbillingMonthも正規化される');
+  assert.strictEqual(savedSheetPayloads.length, 1, 'シート保存用のpayloadも保存される');
+  assert.strictEqual(savedSheetPayloads[0].billingMonth, '202501', 'シート保存payloadのbillingMonthも正規化される');
 }

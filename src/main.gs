@@ -1,32 +1,50 @@
 function doGet(e) {
-  e = e || {};
+  return handleBillingDoGet_(e);
+}
 
-  const dashboardResponse = handleDashboardDoGet_(e);
-  if (dashboardResponse) {
-    return dashboardResponse;
-  }
+/**
+ * Entry point for the billing web application.
+ *
+ * Dashboard GAS lives in a separate project and must not be referenced here.
+ * Any attempt to route dashboard requests through this endpoint is ignored and
+ * logged so that future regressions are visible without breaking billing.
+ *
+ * @param {Object} e - Apps Script request object.
+ * @return {HtmlOutput}
+ */
+function handleBillingDoGet_(e) {
+  const request = e || {};
+  guardAgainstDashboardRequest_(request);
 
-  const view = e.parameter ? (e.parameter.view || 'billing') : 'billing';
-  let templateFile = '';
-
-  switch (view) {
-    case 'billing':      templateFile = 'billing'; break;
-    case 'dashboard':    templateFile = 'dashboard'; break;
-    default:             templateFile = 'billing'; break;
-  }
-
-  const template = HtmlService.createTemplateFromFile(templateFile);
+  const template = HtmlService.createTemplateFromFile('billing');
   template.baseUrl = ScriptApp.getService().getUrl() || '';
-  template.patientId = e.parameter && e.parameter.id ? e.parameter.id : '';
+  template.patientId = request.parameter && request.parameter.id ? request.parameter.id : '';
   template.payrollPdfData = {};
 
-  if (e.parameter && e.parameter.lead) template.lead = e.parameter.lead;
+  if (request.parameter && request.parameter.lead) template.lead = request.parameter.lead;
 
   return template
     .evaluate()
-    .setTitle(templateFile === 'dashboard' ? '施術者ダッシュボード' : '請求処理アプリ')
+    .setTitle('請求処理アプリ')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Warn when a dashboard-specific route is accidentally passed to the billing app.
+ *
+ * This guard is intentionally non-fatal so that historical URLs do not break
+ * billing, while still making the separation between Dashboard and Billing
+ * explicit in logs.
+ */
+function guardAgainstDashboardRequest_(e) {
+  const path = (e && e.pathInfo ? String(e.pathInfo) : '').replace(/^\/+|\/+$/g, '').toLowerCase();
+  const view = e && e.parameter ? String(e.parameter.view || '').toLowerCase() : '';
+  const action = e && e.parameter ? String(e.parameter.action || e.parameter.api || '').toLowerCase() : '';
+
+  if (path === 'dashboard' || view === 'dashboard' || action.indexOf('dashboard') !== -1) {
+    console.warn('[billing] dashboard routes are not served in this project');
+  }
 }
 
 function include(filename) {

@@ -824,10 +824,13 @@ function ensureUnpaidCheckColumn_(sheet, headers) {
     targetSheet.getRange(1, col).setValue(BANK_WITHDRAWAL_UNPAID_HEADER);
   }
   try {
-    const range = targetSheet.getRange(2, col, Math.max(targetSheet.getMaxRows() - 1, 1), 1);
+    const maxRows = typeof targetSheet.getMaxRows === 'function'
+      ? targetSheet.getMaxRows()
+      : targetSheet.getLastRow();
+    const range = targetSheet.getRange(2, col, Math.max((maxRows || 0) - 1, 1), 1);
     if (typeof range.insertCheckboxes === 'function') {
       range.insertCheckboxes();
-    } else {
+    } else if (SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function') {
       const rule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
       range.setDataValidation(rule);
     }
@@ -841,6 +844,27 @@ function formatBankWithdrawalSheetName_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const monthText = String(month.month).padStart(2, '0');
   return `${BANK_WITHDRAWAL_SHEET_PREFIX}${month.year}-${monthText}`;
+}
+
+function refreshBankWithdrawalSheetFromTemplate_(targetSheet, templateSheet) {
+  if (!targetSheet || !templateSheet) return;
+
+  const lastRow = templateSheet.getLastRow();
+  const lastCol = templateSheet.getLastColumn();
+  const templateValues = templateSheet.getRange(1, 1, lastRow, lastCol).getValues();
+  targetSheet.getRange(1, 1, lastRow, lastCol).setValues(templateValues);
+
+  const targetLastRow = targetSheet.getLastRow();
+  if (targetLastRow > lastRow) {
+    const extraRows = targetLastRow - lastRow;
+    const clearRange = targetSheet.getRange(lastRow + 1, 1, extraRows, Math.max(targetSheet.getLastColumn(), lastCol));
+    if (clearRange && typeof clearRange.clearContent === 'function') {
+      clearRange.clearContent();
+    } else {
+      const blankRows = new Array(extraRows).fill(null).map(() => new Array(lastCol).fill(''));
+      clearRange.setValues(blankRows);
+    }
+  }
 }
 
 function ensureBankWithdrawalSheet_(billingMonth, options) {
@@ -858,6 +882,12 @@ function ensureBankWithdrawalSheet_(billingMonth, options) {
     } catch (err) {
       console.warn('[billing] Failed to replace existing bank withdrawal sheet, will reuse it', err);
       return existingSheet;
+    }
+  } else if (existingSheet && shouldRefresh) {
+    try {
+      refreshBankWithdrawalSheetFromTemplate_(existingSheet, baseSheet);
+    } catch (err) {
+      console.warn('[billing] Failed to refresh bank withdrawal sheet from template', err);
     }
   }
 

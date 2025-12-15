@@ -279,6 +279,96 @@ function clearBillingCache_(key) {
   }
 }
 
+function ensurePreparedBillingSheet_() {
+  const SHEET_NAME = 'PreparedBilling';
+  const HEADER = ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'payloadJson', 'note'];
+  const workbook = ss();
+  let sheet = workbook.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = workbook.insertSheet(SHEET_NAME);
+    sheet.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
+  }
+  return sheet;
+}
+
+function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth || (preparedPayload && preparedPayload.billingMonth));
+  const normalized = normalizePreparedBilling_(preparedPayload);
+  if (!monthKey || !normalized) {
+    billingLogger_.log('[billing] savePreparedBillingToSheet_ skipped due to invalid payload');
+    return null;
+  }
+
+  const payload = Object.assign({}, normalized, { billingMonth: monthKey });
+  const sheet = ensurePreparedBillingSheet_();
+  const preparedAtValue = (() => {
+    const parsed = payload.preparedAt ? new Date(payload.preparedAt) : null;
+    return parsed instanceof Date && !isNaN(parsed.getTime()) ? parsed : new Date();
+  })();
+  const preparedBy = (() => {
+    try {
+      const active = Session.getActiveUser && Session.getActiveUser();
+      return active && typeof active.getEmail === 'function' ? active.getEmail() : '';
+    } catch (err) {
+      return '';
+    }
+  })();
+  const payloadVersion = payload.schemaVersion || PREPARED_BILLING_SCHEMA_VERSION;
+  const payloadJson = JSON.stringify(payload);
+  const rowValues = [monthKey, preparedAtValue, preparedBy, payloadVersion, payloadJson, ''];
+
+  const lastRow = sheet.getLastRow();
+  const existing = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(row => String(row[0] || '').trim())
+    : [];
+  const existingIndex = existing.findIndex(value => value === monthKey);
+
+  if (existingIndex >= 0) {
+    const targetRow = existingIndex + 2;
+    sheet.getRange(targetRow, 1, 1, rowValues.length).setValues([rowValues]);
+    return { billingMonth: monthKey, row: targetRow, updated: true };
+  }
+
+  sheet.insertRows(2, 1);
+  sheet.getRange(2, 1, 1, rowValues.length).setValues([rowValues]);
+  return { billingMonth: monthKey, row: 2, updated: false };
+}
+
+function loadPreparedBillingFromSheet_(billingMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const workbook = ss();
+  const sheet = workbook.getSheetByName('PreparedBilling');
+  if (!monthKey || !sheet) return null;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  const target = values.find(row => String(row[0] || '').trim() === monthKey);
+  if (!target) return null;
+
+  const preparedAtCell = target[1];
+  const preparedByCell = target[2];
+  const payloadVersion = target[3];
+  const payloadJson = target[4];
+
+  if (!payloadJson) return null;
+  try {
+    const parsed = JSON.parse(payloadJson);
+    const normalized = normalizePreparedBilling_(Object.assign({}, parsed, { billingMonth: monthKey }));
+    if (!normalized) return null;
+    const preparedAt = normalized.preparedAt || (preparedAtCell instanceof Date ? preparedAtCell.toISOString() : null);
+    return Object.assign({}, normalized, {
+      preparedAt,
+      preparedBy: normalized.preparedBy || preparedByCell || '',
+      payloadVersion: payloadVersion || normalized.schemaVersion || null
+    });
+  } catch (err) {
+    billingLogger_.log('[billing] loadPreparedBillingFromSheet_ failed to parse payloadJson for ' + monthKey + ': ' + err);
+    return null;
+  }
+}
+
 function validatePreparedBillingPayload_(payload, expectedMonthKey) {
   if (!payload || typeof payload !== 'object') return { ok: false, reason: 'payload missing' };
   const billingMonth = payload.billingMonth || payload.month || '';
@@ -648,6 +738,7 @@ function prepareBillingData(billingMonth) {
     ? Object.assign({}, serialized, { billingMonth: normalizedMonth.key })
     : { billingMonth: normalizedMonth.key };
   savePreparedBilling_(cachePayload);
+  savePreparedBillingToSheet_(normalizedMonth.key, cachePayload);
   return cachePayload;
 }
 
@@ -659,6 +750,7 @@ function prepareBillingData(billingMonth) {
 function generateBillingJsonPreview(billingMonth) {
   const prepared = buildPreparedBillingPayload_(billingMonth);
   savePreparedBilling_(prepared);
+  savePreparedBillingToSheet_(billingMonth, prepared);
   return prepared;
 }
 
@@ -672,6 +764,7 @@ function generateInvoices(billingMonth, options) {
   try {
     const prepared = buildPreparedBillingPayload_(billingMonth);
     savePreparedBilling_(prepared);
+    savePreparedBillingToSheet_(billingMonth, prepared);
     return generatePreparedInvoices_(prepared, options);
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
@@ -1059,6 +1152,7 @@ function applyBillingEdits(billingMonth, options) {
     prepared.patients = indexByPatientId_(refreshedPatients);
   }
   savePreparedBilling_(prepared);
+  savePreparedBillingToSheet_(billingMonth, prepared);
   return prepared;
 }
 
@@ -1070,6 +1164,7 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   function generateBankTransferData(billingMonth, options) {
     const prepared = buildPreparedBillingPayload_(billingMonth);
     savePreparedBilling_(prepared);
+    savePreparedBillingToSheet_(billingMonth, prepared);
     return exportBankTransferDataForPrepared_(prepared, options || {});
   }
 
@@ -1078,31 +1173,17 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     const monthInput = billingMonth || opts.billingMonth || (opts.prepared && (opts.prepared.billingMonth || opts.prepared.month));
     const resolvedMonthKey = normalizeBillingMonthKeySafe_(monthInput);
     const month = resolvedMonthKey ? normalizeBillingMonthInput(resolvedMonthKey) : null;
-    const preparedResult = month ? loadPreparedBilling_(month.key, { withValidation: true, allowInvalid: true }) : null;
-    const prepared = preparedResult && preparedResult.hasOwnProperty('prepared') ? preparedResult.prepared : preparedResult;
-    const validation = preparedResult && preparedResult.validation ? preparedResult.validation : null;
-    if (validation) {
-      try {
-        Logger.log('[bankExport][validation] ' + JSON.stringify(validation));
-      } catch (err) {
-        // ignore logging errors in non-GAS environments
-      }
-    }
-    const normalizedPrepared = normalizePreparedBilling_(prepared);
-
-    const resolvedMonth = month || (normalizedPrepared && normalizedPrepared.billingMonth
-      ? normalizeBillingMonthInput(normalizedPrepared.billingMonth)
-      : null);
+    const preparedFromSheet = month ? loadPreparedBillingFromSheet_(month.key) : null;
+    const validation = validatePreparedBillingPayload_(preparedFromSheet, month && month.key);
+    const normalizedPrepared = normalizePreparedBilling_(preparedFromSheet);
 
     try {
       billingLogger_.log('[bankExport] generateBankTransferDataFromCache summary=' + JSON.stringify({
         requestedMonth: monthInput || null,
-        resolvedMonthKey: resolvedMonth ? resolvedMonth.key : null,
-        cacheMonthKey: resolvedMonthKey || null,
-        hasPrepared: !!prepared,
-        preparedBillingJsonLength: prepared && Array.isArray(prepared.billingJson) ? prepared.billingJson.length : null,
-        normalizedBillingJsonLength: normalizedPrepared && Array.isArray(normalizedPrepared.billingJson)
-          ? normalizedPrepared.billingJson.length
+        resolvedMonthKey: month ? month.key : null,
+        hasPrepared: !!preparedFromSheet,
+        preparedBillingJsonLength: preparedFromSheet && Array.isArray(preparedFromSheet.billingJson)
+          ? preparedFromSheet.billingJson.length
           : null,
         validationReason: validation && validation.reason ? validation.reason : null,
         validationOk: validation && validation.hasOwnProperty('ok') ? validation.ok : null
@@ -1111,24 +1192,24 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
       // ignore logging errors in non-GAS environments
     }
 
-    if (!resolvedMonth) {
-      throw new Error('銀行データを生成できません。請求月が指定されていません。先に「請求データを集計」を実行してください。');
+    if (!month) {
+      throw new Error('銀行データを出力できません。請求月が指定されていません。先に請求データを集計・確定してください。');
     }
 
-    if (!normalizedPrepared || !Array.isArray(normalizedPrepared.billingJson)) {
+    if (!validation || !validation.ok || !normalizedPrepared || !Array.isArray(normalizedPrepared.billingJson)) {
       throw new Error(resolveBankExportErrorMessage_(validation));
     }
 
     if (normalizedPrepared.billingJson.length === 0) {
-      return createEmptyBankTransferResult_(resolvedMonth.key, '当月の請求対象はありません');
+      return createEmptyBankTransferResult_(month.key, '当月の請求対象はありません');
     }
 
     const preparedWithMonth = Object.assign({}, normalizedPrepared, {
-      billingMonth: normalizedPrepared.billingMonth || resolvedMonth.key
+      billingMonth: month.key
     });
 
     return exportBankTransferDataForPrepared_(preparedWithMonth, Object.assign({}, opts, {
-      billingMonth: resolvedMonth.key
+      billingMonth: month.key
     }));
   }
 
@@ -1140,7 +1221,7 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
 function resolveBankExportErrorMessage_(validation) {
   const reason = validation && validation.reason ? String(validation.reason) : '';
   const ledgerReasons = ['carryOverLedger missing', 'carryOverLedgerByPatient missing', 'carryOverLedgerMeta missing', 'carryOverByPatient missing', 'unpaidHistory missing'];
-  const missingReasons = ['cache key missing', 'cache unavailable', 'cache miss', 'parse error'];
+  const missingReasons = ['payload missing', 'billingMonth missing', 'cache key missing', 'cache unavailable', 'cache miss', 'parse error'];
   try {
     billingLogger_.log('[bankExport] resolveBankExportErrorMessage_ reason=' + reason);
   } catch (err) {
@@ -1149,10 +1230,13 @@ function resolveBankExportErrorMessage_(validation) {
   if (ledgerReasons.indexOf(reason) >= 0) {
     return '銀行データを生成できません。繰越金データを確認してください。';
   }
+  if (reason === 'billingMonth mismatch') {
+    return '銀行データを生成できません。請求月が一致する請求データを集計・確定してください。';
+  }
   if (reason && missingReasons.indexOf(reason) === -1) {
     return '銀行データを生成できません。請求データは存在しますが、検証に失敗しました。';
   }
-  return '銀行データを生成できません。請求データが未生成です。先に「請求データを集計」を実行してください。';
+  return '銀行データを出力できません。先に請求データを集計・確定してください。';
 }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

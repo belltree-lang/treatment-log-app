@@ -7,6 +7,10 @@ const sheetUtilsCode = fs.readFileSync(
   path.join(__dirname, '../src/dashboard/utils/sheetUtils.js'),
   'utf8'
 );
+const configCode = fs.readFileSync(
+  path.join(__dirname, '../src/dashboard/config.gs'),
+  'utf8'
+);
 const cacheUtilsCode = fs.readFileSync(
   path.join(__dirname, '../src/dashboard/utils/cacheUtils.js'),
   'utf8'
@@ -58,10 +62,10 @@ function createAiContext(sheet) {
     console,
     Utilities,
     Session: { getScriptTimeZone: () => 'Asia/Tokyo' },
-    dashboardGetSpreadsheet_: () => workbook,
-    DASHBOARD_CACHE_TTL_SECONDS: 60 * 60
+    dashboardGetSpreadsheet_: () => workbook
   };
   vm.createContext(context);
+  vm.runInContext(configCode, context);
   vm.runInContext(sheetUtilsCode, context);
   vm.runInContext(cacheUtilsCode, context);
   context.dashboardGetSpreadsheet_ = () => workbook;
@@ -91,10 +95,10 @@ function testMissingSheetReturnsWarning() {
     console,
     Utilities: { formatDate: () => '' },
     Session: { getScriptTimeZone: () => 'Asia/Tokyo' },
-    dashboardGetSpreadsheet_: () => workbook,
-    DASHBOARD_CACHE_TTL_SECONDS: 60 * 60
+    dashboardGetSpreadsheet_: () => workbook
   };
   vm.createContext(context);
+  vm.runInContext(configCode, context);
   vm.runInContext(sheetUtilsCode, context);
   vm.runInContext(cacheUtilsCode, context);
   context.dashboardGetSpreadsheet_ = () => workbook;

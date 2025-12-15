@@ -27,8 +27,9 @@ function loadUnpaidAlertsUncached_(options) {
 
   const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo(opts) : null);
   const patients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
+  const nameToId = patientInfo && patientInfo.nameToId ? patientInfo.nameToId : {};
 
-  const history = readUnpaidHistory_(Object.assign({}, opts, { tz }));
+  const history = readUnpaidHistory_(Object.assign({}, opts, { tz, nameToId }));
 
   const warnings = [];
   if (patientInfo && Array.isArray(patientInfo.warnings)) warnings.push.apply(warnings, patientInfo.warnings);
@@ -73,6 +74,7 @@ function readUnpaidHistory_(options) {
   const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
 
   const colPatientId = dashboardResolveColumn_(headers, ['患者ID', 'patientId', 'ID', 'id'], 1);
+  const colPatientName = dashboardResolveColumn_(headers, ['氏名', '名前', '患者名'], 0);
   const colMonth = dashboardResolveColumn_(headers, ['対象月', '月', '年月', '請求月'], 2);
   const colAmount = dashboardResolveColumn_(headers, ['金額', '未回収金額', '請求額', '額'], 3);
   const colReason = dashboardResolveColumn_(headers, ['理由', '未回収理由', '未回収備考'], 4);
@@ -84,7 +86,11 @@ function readUnpaidHistory_(options) {
     const rowDisplay = displayValues[i] || [];
     const rowNumber = i + 2;
 
-    const patientId = dashboardNormalizePatientId_(rowDisplay[colPatientId - 1] || row[colPatientId - 1]);
+    let patientId = dashboardNormalizePatientId_(rowDisplay[colPatientId - 1] || row[colPatientId - 1]);
+    if (!patientId && colPatientName) {
+      const name = rowDisplay[colPatientName - 1] || row[colPatientName - 1];
+      patientId = dashboardResolvePatientIdFromName_(name, opts.nameToId);
+    }
     if (!patientId) {
       warnings.push(`未回収履歴の患者IDが空です (row:${rowNumber})`);
       continue;

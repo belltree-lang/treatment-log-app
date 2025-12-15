@@ -68,10 +68,18 @@
   .override-badge{ background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:8px; font-size:0.75rem; font-weight:700; white-space:nowrap; }
   .action-footer{ margin-top:12px; padding:12px 14px; border:1px dashed var(--border); border-radius:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; background:#f8fafc; }
   .action-buttons{ display:flex; gap:8px; flex-wrap:wrap; }
+  .bank-flow-grid{ display:grid; grid-template-columns:1.2fr 1fr; gap:18px; align-items:flex-start; }
+  .bank-actions{ display:flex; flex-direction:column; gap:12px; }
+  .bank-action{ border:1px solid var(--border); border-radius:12px; padding:12px; background:#f8fafc; display:flex; flex-direction:column; gap:8px; }
+  .bank-action .btn{ width:100%; justify-content:center; display:inline-flex; align-items:center; gap:8px; }
+  .bank-action .field-note{ margin:0; }
+  .bank-status-cards{ display:grid; grid-template-columns:1fr; gap:10px; }
+  .bank-status-cards .summary-card{ height:100%; }
   @media (max-width: 900px){
     .layout{ grid-template-columns:1fr; }
     .sidebar{ flex-direction:row; flex-wrap:wrap; align-items:center; }
     .sidebar button{ width:100%; }
+    .bank-flow-grid{ grid-template-columns:1fr; }
   }
 </style>
 </head>
@@ -107,14 +115,45 @@
     <section class="card" id="bankWithdrawalFlow">
       <h2>銀行引落管理</h2>
       <p class="muted">対象月の請求データ集計から未回収反映まで、手動で完結させるためのフローです。</p>
-      <div class="controls">
-        <label>対象月
-          <input type="month" id="bankWithdrawalMonth" />
-        </label>
-        <button class="btn" id="bankAggregateBtn" type="button" onclick="handleBankFlowAggregation()">請求データ集計</button>
-        <button class="btn secondary" id="bankSheetBtn" type="button" onclick="handleBankSheetGeneration()">銀行引落シート生成</button>
-        <button class="btn secondary" id="bankFinalizeBtn" type="button" onclick="handleBankFinalize()">確定</button>
-        <button class="btn danger" id="bankUnpaidBtn" type="button" onclick="handleBankUnpaidApply()">未回収反映</button>
+      <div class="bank-flow-grid">
+        <div class="bank-actions">
+          <div class="bank-action">
+            <label>対象月
+              <input type="month" id="bankWithdrawalMonth" />
+            </label>
+            <p class="field-note">最初に対象月を必ず選択してください。</p>
+          </div>
+          <div class="bank-action">
+            <button class="btn" id="bankAggregateBtn" type="button" onclick="handleBankFlowAggregation()">請求データ集計</button>
+            <p class="field-note">銀行引落用の請求データを集計します。</p>
+          </div>
+          <div class="bank-action">
+            <button class="btn secondary" id="bankSheetBtn" type="button" onclick="handleBankSheetGeneration()">銀行引落シート生成</button>
+            <p class="field-note">シートを作成・更新します（同月の重複生成を防止）。</p>
+          </div>
+          <div class="bank-action">
+            <button class="btn danger" id="bankUnpaidBtn" type="button" onclick="handleBankUnpaidApply()">未回収反映</button>
+            <p class="field-note">シートの未回収チェック結果を履歴へ反映します。</p>
+          </div>
+          <div class="bank-action">
+            <button class="btn secondary" id="bankFinalizeBtn" type="button" onclick="handleBankFinalize()">確定</button>
+            <p class="field-note">確定（データが揃った状態にするだけ）。</p>
+          </div>
+        </div>
+        <div class="bank-status-cards">
+          <div class="summary-card">
+            <p class="summary-label">現在の対象月</p>
+            <p class="summary-value" id="bankCurrentMonth">未選択</p>
+          </div>
+          <div class="summary-card">
+            <p class="summary-label">銀行引落シート</p>
+            <p class="summary-value" id="bankSheetStatus">未生成</p>
+          </div>
+          <div class="summary-card">
+            <p class="summary-label">未回収チェック件数</p>
+            <p class="summary-value" id="bankUnpaidCount">0件</p>
+          </div>
+        </div>
       </div>
       <div class="status-line" style="margin-top:8px">
         <div id="bankFlowStatus" class="status-line" style="flex:1"></div>

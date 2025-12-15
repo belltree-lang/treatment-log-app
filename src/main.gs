@@ -59,6 +59,10 @@ function ss() {
   return SpreadsheetApp.getActiveSpreadsheet();
 }
 
+function billingSs() {
+  return ss();
+}
+
 /**
  * Resolve source data for billing generation (patients, visits, bank statuses).
  * @param {string|Date|Object} billingMonth - YYYYMM string, Date, or normalized month object.
@@ -109,6 +113,7 @@ function calculateBillingRowTotalsServer(row) {
 const BILLING_CACHE_PREFIX = 'billing_prepared_';
 const BILLING_CACHE_TTL_SECONDS = 3600; // 1 hour
 const PREPARED_BILLING_SCHEMA_VERSION = 2;
+const BANK_INFO_SHEET_NAME = '銀行情報';
 
 function normalizeBillingMonthKeySafe_(value) {
   const candidates = [];
@@ -794,16 +799,39 @@ function buildPreparedBillingPayload_(billingMonth) {
 const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
 const BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER = 'S';
 
+function ensureBankInfoSheet_() {
+  const workbook = billingSs();
+  const sheet = workbook && typeof workbook.getSheetByName === 'function'
+    ? workbook.getSheetByName(BANK_INFO_SHEET_NAME)
+    : null;
+  if (sheet) return sheet;
+
+  throw new Error('銀行情報シートが見つかりません。参照専用のテンプレートを用意してください。');
+}
+
 function formatBankWithdrawalSheetName_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const monthText = String(month.month).padStart(2, '0');
   return `${BANK_WITHDRAWAL_SHEET_PREFIX}${month.year}-${monthText}`;
 }
 
-function ensureBankWithdrawalSheet_(billingMonth) {
+function ensureBankWithdrawalSheet_(billingMonth, options) {
   const workbook = billingSs();
   const baseSheet = ensureBankInfoSheet_();
   const sheetName = formatBankWithdrawalSheetName_(billingMonth);
+  const opts = options || {};
+  const shouldRefresh = opts.refreshFromTemplate !== false;
+  const existingSheet = workbook.getSheetByName(sheetName);
+
+  if (existingSheet && shouldRefresh) {
+    try {
+      workbook.deleteSheet(existingSheet);
+    } catch (err) {
+      console.warn('[billing] Failed to replace existing bank withdrawal sheet, will reuse it', err);
+      return existingSheet;
+    }
+  }
+
   let sheet = workbook.getSheetByName(sheetName);
   if (!sheet) {
     sheet = baseSheet.copyTo(workbook);
@@ -852,7 +880,7 @@ function buildBillingAmountByPatientId_(billingJson) {
 
 function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const month = normalizeBillingMonthInput(billingMonth || (prepared && prepared.billingMonth));
-  const sheet = ensureBankWithdrawalSheet_(month);
+  const sheet = ensureBankWithdrawalSheet_(month, { refreshFromTemplate: true });
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { billingMonth: month.key, updated: 0 };
 

@@ -57,7 +57,6 @@ function updateBillingControls() {
   const aggregateBtn = qs('billingAggregateBtn');
   const pdfBtn = qs('billingPdfBtn');
   const saveBtn = qs('billingSaveBtn');
-  const bankBtn = qs('billingBankBtn');
   const loading = billingState.loading;
   const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
 
@@ -79,12 +78,6 @@ function updateBillingControls() {
     saveBtn.disabled = disabled;
     saveBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     saveBtn.title = disabled && !prepared ? '先に「請求データを集計」を実行してください' : '';
-  }
-  if (bankBtn) {
-    const disabled = loading || !prepared;
-    bankBtn.disabled = disabled;
-    bankBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
-    bankBtn.title = disabled && !prepared ? '先に「請求データを集計」を実行してください' : '';
   }
 }
 
@@ -956,32 +949,6 @@ function onBillingPdfCompleted(result) {
   }
 }
 
-function handleBankExport() {
-  if (!billingState.prepared || !billingState.prepared.billingMonth) {
-    alert('先に「請求データを集計」を実行してください。');
-    return;
-  }
-  setBillingLoading(true, '銀行データ出力中…');
-  google.script.run
-    .withSuccessHandler(onBankExportCompleted)
-    .withFailureHandler(onBillingFailed)
-    .generateBankTransferDataFromCache(billingState.prepared.billingMonth, {
-      billingMonth: billingState.prepared.billingMonth
-    });
-}
-
-function onBankExportCompleted(result) {
-  billingState.loading = false;
-  if (result && result.message) {
-    billingState.statusMessage = result.message;
-  } else {
-    billingState.statusMessage = '銀行データを出力しました' + (result && result.inserted ? `（${result.inserted}件）` : '');
-  }
-  billingState.errorMessage = '';
-  logBillingState('onBankExportCompleted');
-  renderBillingResult();
-}
-
 function handleBillingSaveEdits() {
   if (!billingState.prepared || !billingState.prepared.billingMonth) {
     alert('先に「請求データを集計」を実行してください。');
@@ -1447,6 +1414,5 @@ if (billingGlobal) {
   billingGlobal.handleBillingAggregation = handleBillingAggregation;
   billingGlobal.handleBillingPdfGeneration = handleBillingPdfGeneration;
   billingGlobal.handleBillingSaveEdits = handleBillingSaveEdits;
-  billingGlobal.handleBankExport = handleBankExport;
 }
 </script>

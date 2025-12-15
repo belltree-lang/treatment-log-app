@@ -1100,11 +1100,44 @@ function getBillingPatientRecords() {
   }).filter(Boolean);
 }
 
-function getBillingBankRecords() {
-  const sheet = billingSs().getSheetByName(BILLING_BANK_SHEET_NAME);
+function ensureBankInfoSheet_() {
+  const workbook = billingSs();
+  let sheet = workbook.getSheetByName(BILLING_BANK_SHEET_NAME);
   if (!sheet) {
-    throw new Error('銀行情報シートが見つかりません: ' + BILLING_BANK_SHEET_NAME);
+    sheet = workbook.insertSheet(BILLING_BANK_SHEET_NAME);
   }
+
+  try {
+    const protections = workbook.getProtections(SpreadsheetApp.ProtectionType.SHEET) || [];
+    let protection = protections.find(p => {
+      const range = p && typeof p.getRange === 'function' ? p.getRange() : null;
+      return range && typeof range.getSheet === 'function' && range.getSheet().getName() === sheet.getName();
+    });
+
+    if (!protection) {
+      protection = sheet.protect();
+      protection.setDescription('銀行情報（参照専用マスタ）');
+    }
+
+    protection.setWarningOnly(false);
+    if (typeof protection.canDomainEdit === 'function' && protection.canDomainEdit()) {
+      protection.setDomainEdit(false);
+    }
+    const editors = typeof protection.getEditors === 'function' ? protection.getEditors() : [];
+    if (editors && editors.length) {
+      protection.removeEditors(editors);
+    }
+  } catch (err) {
+    console.warn('[billing] Failed to enforce bank info protection', err);
+  }
+
+  return sheet;
+}
+
+function getBillingBankRecords() {
+  // Bank info is a reference-only master without patientId columns; lookups rely on patient names
+  // maintained in the patient information sheet.
+  const sheet = ensureBankInfoSheet_();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 

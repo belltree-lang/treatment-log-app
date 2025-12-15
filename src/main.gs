@@ -798,16 +798,15 @@ function coerceBillingJsonArray_(raw) {
     if (!payload) return null;
     const normalizeMap_ = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
     const schemaVersion = Number(payload.schemaVersion);
-    const normalized = Object.assign({}, payload, {
+    const normalized = {
       schemaVersion: Number.isFinite(schemaVersion) ? schemaVersion : null,
-      billingMonth: payload.billingMonth || payload.month || '',
-      preparedAt: payload.preparedAt || payload.prepared_at || null,
+      billingMonth: payload.billingMonth || '',
+      preparedAt: payload.preparedAt || null,
       billingJson: coerceBillingJsonArray_(payload.billingJson),
-      patients: normalizeMap_(payload.patients || payload.patientMap),
-      patientMap: normalizeMap_(payload.patientMap || payload.patients),
+      patients: normalizeMap_(payload.patients),
       bankInfoByName: normalizeMap_(payload.bankInfoByName),
       bankAccountInfoByPatient: normalizeMap_(payload.bankAccountInfoByPatient),
-      visitsByPatient: normalizeMap_(payload.visitsByPatient || payload.visitCounts),
+      visitsByPatient: normalizeMap_(payload.visitsByPatient),
       totalsByPatient: normalizeMap_(payload.totalsByPatient),
       staffByPatient: normalizeMap_(payload.staffByPatient),
       staffDirectory: normalizeMap_(payload.staffDirectory),
@@ -819,7 +818,7 @@ function coerceBillingJsonArray_(raw) {
       carryOverLedgerByPatient: normalizeMap_(payload.carryOverLedgerByPatient),
       unpaidHistory: Array.isArray(payload.unpaidHistory) ? payload.unpaidHistory : [],
       bankStatuses: normalizeMap_(payload.bankStatuses)
-    });
+    };
     const normalizedLength = Array.isArray(normalized.billingJson) ? normalized.billingJson.length : 0;
     billingLogger_.log('[billing] normalizePreparedBilling_ lengths=' + JSON.stringify({
       rawBillingJsonLength: rawLength,

@@ -417,6 +417,8 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
   return { ok: true, billingMonth };
 }
 
+// Deprecated: Prepared billing should be read from the PreparedBilling sheet for durability.
+// This cache accessor is retained for backward compatibility with legacy flows.
 function loadPreparedBilling_(billingMonthKey, options) {
   const opts = options || {};
   const expectedMonthKey = normalizeBillingMonthKeySafe_(billingMonthKey);
@@ -1206,18 +1208,17 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     const monthInput = billingMonth || opts.billingMonth || (opts.prepared && (opts.prepared.billingMonth || opts.prepared.month));
     const resolvedMonthKey = normalizeBillingMonthKeySafe_(monthInput);
     const month = resolvedMonthKey ? normalizeBillingMonthInput(resolvedMonthKey) : null;
-    const loaded = loadPreparedBillingWithSheetFallback_(month && month.key, { withValidation: true });
-    const validation = loaded && loaded.validation ? loaded.validation : null;
-    const preparedPayload = loaded && loaded.prepared;
-    const normalizedPrepared = normalizePreparedBilling_(preparedPayload);
+    const sheetPayload = month && month.key ? loadPreparedBillingFromSheet_(month.key) : null;
+    const validation = validatePreparedBillingPayload_(sheetPayload, month && month.key);
+    const normalizedPrepared = normalizePreparedBilling_(sheetPayload);
 
     try {
       billingLogger_.log('[bankExport] generateBankTransferDataFromCache summary=' + JSON.stringify({
         requestedMonth: monthInput || null,
         resolvedMonthKey: month ? month.key : null,
-        hasPrepared: !!preparedPayload,
-        preparedBillingJsonLength: preparedPayload && Array.isArray(preparedPayload.billingJson)
-          ? preparedPayload.billingJson.length
+        hasPrepared: !!sheetPayload,
+        preparedBillingJsonLength: sheetPayload && Array.isArray(sheetPayload.billingJson)
+          ? sheetPayload.billingJson.length
           : null,
         validationReason: validation && validation.reason ? validation.reason : null,
         validationOk: validation && validation.hasOwnProperty('ok') ? validation.ok : null
@@ -1255,7 +1256,7 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
 function resolveBankExportErrorMessage_(validation) {
   const reason = validation && validation.reason ? String(validation.reason) : '';
   const ledgerReasons = ['carryOverLedger missing', 'carryOverLedgerByPatient missing', 'carryOverLedgerMeta missing', 'carryOverByPatient missing', 'unpaidHistory missing'];
-  const missingReasons = ['payload missing', 'billingMonth missing', 'cache key missing', 'cache unavailable', 'cache miss', 'parse error'];
+  const missingReasons = ['payload missing', 'billingMonth missing'];
   try {
     billingLogger_.log('[bankExport] resolveBankExportErrorMessage_ reason=' + reason);
   } catch (err) {
@@ -1264,13 +1265,13 @@ function resolveBankExportErrorMessage_(validation) {
   if (ledgerReasons.indexOf(reason) >= 0) {
     return '銀行データを生成できません。繰越金データを確認してください。';
   }
+  if (missingReasons.indexOf(reason) >= 0 || !reason) {
+    return '銀行データを出力できません。請求データが見つかりません。先に請求データを集計・確定してください。';
+  }
   if (reason === 'billingMonth mismatch') {
     return '銀行データを生成できません。請求月が一致する請求データを集計・確定してください。';
   }
-  if (reason && missingReasons.indexOf(reason) === -1) {
-    return '銀行データを生成できません。請求データは存在しますが、検証に失敗しました。';
-  }
-  return '銀行データを出力できません。先に請求データを集計・確定してください。';
+  return '銀行データを生成できません。請求データは存在しますが、検証に失敗しました。';
 }
 
 function applyBillingPaymentResultsEntry(billingMonth) {

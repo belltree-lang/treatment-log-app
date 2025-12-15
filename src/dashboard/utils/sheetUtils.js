@@ -25,12 +25,12 @@ function dashboardResolveTimeZone_() {
     const tz = Session.getScriptTimeZone();
     if (tz) return tz;
   }
-  if (typeof DASHBOARD_TIME_ZONE !== 'undefined') return DASHBOARD_TIME_ZONE;
+  if (typeof DEFAULT_TZ !== 'undefined') return DEFAULT_TZ;
   return 'Asia/Tokyo';
 }
 
 function dashboardFormatDate_(date, tz, format) {
-  const targetFormat = format || (typeof DASHBOARD_DATE_FORMAT !== 'undefined' ? DASHBOARD_DATE_FORMAT : 'yyyy-MM-dd');
+  const targetFormat = format || (typeof DATE_FORMAT !== 'undefined' ? DATE_FORMAT : 'yyyy/MM/dd');
   const targetTz = tz || dashboardResolveTimeZone_();
 
   if (typeof Utilities !== 'undefined' && Utilities && typeof Utilities.formatDate === 'function') {

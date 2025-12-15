@@ -16,10 +16,6 @@ if (typeof dashboardParseTimestamp_ === 'undefined') {
   }
 }
 
-if (typeof DASHBOARD_CACHE_TTL_SECONDS === 'undefined') {
-  var DASHBOARD_CACHE_TTL_SECONDS = 60 * 60 * 12;
-}
-
 if (typeof dashboardCoerceDate_ === 'undefined') {
   function dashboardCoerceDate_(value) {
     if (value instanceof Date) return value;
@@ -50,7 +46,7 @@ if (typeof dashboardNormalizeEmail_ === 'undefined') {
 
 if (typeof dashboardFormatDate_ === 'undefined') {
   function dashboardFormatDate_(date, tz, format) {
-    const targetFormat = format || (typeof DASHBOARD_DATE_FORMAT !== 'undefined' ? DASHBOARD_DATE_FORMAT : 'yyyy-MM-dd');
+    const targetFormat = format || (typeof DATE_FORMAT !== 'undefined' ? DATE_FORMAT : 'yyyy/MM/dd');
     const targetTz = tz || (typeof dashboardResolveTimeZone_ === 'function' ? dashboardResolveTimeZone_() : 'Asia/Tokyo');
 
     if (typeof Utilities !== 'undefined' && Utilities && typeof Utilities.formatDate === 'function') {

@@ -9,7 +9,7 @@ function buildValidPreparedPayload(ctx, overrides = {}) {
   return Object.assign({
     schemaVersion: ctx.PREPARED_BILLING_SCHEMA_VERSION || 2,
     billingMonth: '202501',
-    billingJson: [],
+    billingJson: [{ patientId: 'P001', billingMonth: '202501' }],
     carryOverLedger: [],
     carryOverLedgerMeta: {},
     carryOverLedgerByPatient: {},
@@ -211,29 +211,23 @@ function testBankExportAcceptsYmObject() {
 }
 
 function testBankExportReturnsEmptyForZeroBilling() {
-  const exportCalls = [];
-  let ctx;
-  ctx = createMainContext({
+  const ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
     loadPreparedBillingFromSheet_: () => buildValidPreparedPayload(ctx, { billingJson: [], billingMonth: '202501' }),
     normalizePreparedBilling_: payload => payload,
-    exportBankTransferDataForPrepared_: () => exportCalls.push('called')
+    exportBankTransferDataForPrepared_: () => assert.fail('invalid payload should not reach exporter')
   });
 
-  const result = ctx.generateBankTransferDataFromCache('202501');
-  assert.deepStrictEqual(exportCalls, [], '0件のときはエクスポート処理を呼ばない');
-  assert.strictEqual(result.billingMonth, '202501');
-  assert.ok(Array.isArray(result.rows) && result.rows.length === 0, 'rows should be empty array');
-  assert.strictEqual(result.inserted, 0);
-  assert.strictEqual(result.skipped, 0);
-  assert.strictEqual(result.message, '当月の請求対象はありません', '0件の場合は案内メッセージを返す');
+  assert.throws(() => {
+    ctx.generateBankTransferDataFromCache('202501');
+  }, /破損しています/);
 }
 
 function testBankExportReportsLedgerIssues() {
   let ctx;
   ctx = createMainContext({
     normalizeBillingMonthInput: input => ({ key: String(input) }),
-    loadPreparedBillingFromSheet_: () => ({ billingJson: [], billingMonth: '202501', schemaVersion: 2,
+    loadPreparedBillingFromSheet_: () => ({ billingJson: [{ patientId: 'P001', billingMonth: '202501' }], billingMonth: '202501', schemaVersion: 2,
       carryOverLedgerByPatient: {}, carryOverLedgerMeta: {}, visitsByPatient: {}, totalsByPatient: {}, patients: {},
       bankInfoByName: {}, staffByPatient: {}, staffDirectory: {}, staffDisplayByPatient: {}, billingOverrideFlags: {},
       carryOverByPatient: {}, bankAccountInfoByPatient: {} }),

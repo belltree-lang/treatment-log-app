@@ -254,7 +254,19 @@ function clearBillingCache_(key) {
 
 function ensurePreparedBillingMetaSheet_() {
   const SHEET_NAME = 'PreparedBillingMeta';
-  const HEADER = ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'payloadJson', 'note'];
+  const HEADER = ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'note'];
+  const workbook = ss();
+  let sheet = workbook.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = workbook.insertSheet(SHEET_NAME);
+    sheet.getRange(1, 1, 1, HEADER.length).setValues([HEADER]);
+  }
+  return sheet;
+}
+
+function ensurePreparedBillingMetaJsonSheet_() {
+  const SHEET_NAME = 'PreparedBillingMetaJson';
+  const HEADER = ['billingMonth', 'chunkIndex', 'payloadChunk'];
   const workbook = ss();
   let sheet = workbook.getSheetByName(SHEET_NAME);
   if (!sheet) {
@@ -295,9 +307,8 @@ function savePreparedBillingMeta_(billingMonth, meta) {
     }
   })();
   const payloadVersion = meta && meta.payloadVersion ? meta.payloadVersion : PREPARED_BILLING_SCHEMA_VERSION;
-  const payloadJson = meta && meta.payloadJson ? String(meta.payloadJson) : '';
   const note = meta && meta.note ? meta.note : '';
-  const rowValues = [monthKey, preparedAtValue, preparedBy, payloadVersion, payloadJson, note];
+  const rowValues = [monthKey, preparedAtValue, preparedBy, payloadVersion, note];
 
   const lastRow = sheet.getLastRow();
   const existing = lastRow >= 2
@@ -308,12 +319,47 @@ function savePreparedBillingMeta_(billingMonth, meta) {
   if (existingIndex >= 0) {
     const targetRow = existingIndex + 2;
     sheet.getRange(targetRow, 1, 1, rowValues.length).setValues([rowValues]);
+    savePreparedBillingMetaJson_(monthKey, meta && meta.metaPayload ? meta.metaPayload : null);
     return { billingMonth: monthKey, row: targetRow, updated: true };
   }
 
   sheet.insertRows(2, 1);
   sheet.getRange(2, 1, 1, rowValues.length).setValues([rowValues]);
+  savePreparedBillingMetaJson_(monthKey, meta && meta.metaPayload ? meta.metaPayload : null);
   return { billingMonth: monthKey, row: 2, updated: false };
+}
+
+function savePreparedBillingMetaJson_(billingMonth, metaPayload) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const sheet = ensurePreparedBillingMetaJsonSheet_();
+  if (!monthKey) return { billingMonth: monthKey || '', inserted: 0 };
+
+  const lastRow = sheet.getLastRow();
+  const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
+
+  for (let i = existingRows.length - 1; i >= 0; i--) {
+    if (String(existingRows[i][0] || '').trim() === monthKey) {
+      sheet.deleteRow(i + 2);
+    }
+  }
+
+  if (!metaPayload || typeof metaPayload !== 'object') {
+    return { billingMonth: monthKey, inserted: 0 };
+  }
+
+  const payloadJson = JSON.stringify(metaPayload);
+  const chunkSize = 40000;
+  const chunks = [];
+  for (let i = 0; i < payloadJson.length; i += chunkSize) {
+    chunks.push(payloadJson.slice(i, i + chunkSize));
+  }
+
+  if (!chunks.length) return { billingMonth: monthKey, inserted: 0 };
+
+  sheet.insertRows(2, chunks.length);
+  const rows = chunks.map((chunk, idx) => [monthKey, idx + 1, chunk]);
+  sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+  return { billingMonth: monthKey, inserted: rows.length };
 }
 
 function savePreparedBillingJsonRows_(billingMonth, billingJson) {
@@ -375,7 +421,7 @@ function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
     preparedAt: preparedAtValue,
     preparedBy,
     payloadVersion,
-    payloadJson: JSON.stringify(metaPayload),
+    metaPayload,
     note: ''
   });
   const jsonResult = savePreparedBillingJsonRows_(monthKey, Array.isArray(payload.billingJson) ? payload.billingJson : []);
@@ -391,22 +437,37 @@ function loadPreparedBillingFromSheet_(billingMonth) {
   const metaLastRow = metaSheet.getLastRow();
   if (metaLastRow < 2) return null;
 
-  const metaValues = metaSheet.getRange(2, 1, metaLastRow - 1, 6).getValues();
+  const metaValues = metaSheet.getRange(2, 1, metaLastRow - 1, 5).getValues();
   const metaRow = metaValues.find(row => String(row[0] || '').trim() === monthKey);
   if (!metaRow) return null;
 
   const preparedAtCell = metaRow[1];
   const preparedByCell = metaRow[2];
   const payloadVersion = metaRow[3];
-  const payloadJson = metaRow[4];
-
   let parsed = {};
-  if (payloadJson) {
-    try {
-      parsed = JSON.parse(payloadJson) || {};
-    } catch (err) {
-      billingLogger_.log('[billing] loadPreparedBillingFromSheet_ failed to parse meta payload for ' + monthKey + ': ' + err);
+  const metaJsonSheet = workbook.getSheetByName('PreparedBillingMetaJson');
+  if (metaJsonSheet) {
+    const metaLast = metaJsonSheet.getLastRow();
+    if (metaLast >= 2) {
+      const rows = metaJsonSheet.getRange(2, 1, metaLast - 1, 3).getValues();
+      const chunks = rows
+        .filter(row => String(row[0] || '').trim() === monthKey)
+        .sort((a, b) => Number(a[1]) - Number(b[1]))
+        .map(row => row[2] || '')
+        .filter(Boolean);
+      const payloadJson = chunks.join('');
+      if (payloadJson) {
+        try {
+          parsed = JSON.parse(payloadJson) || {};
+        } catch (err) {
+          billingLogger_.log('[billing] loadPreparedBillingFromSheet_ failed to parse meta payload for ' + monthKey + ': ' + err);
+        }
+      }
     }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    parsed = {};
   }
 
   const jsonSheet = workbook.getSheetByName('PreparedBillingJson');

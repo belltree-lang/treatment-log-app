@@ -323,12 +323,15 @@ function testPreparedBillingSheetSaveAndLoad() {
   const saveResult = ctx.savePreparedBillingToSheet_('202501', payload);
   assert.strictEqual(saveResult && saveResult.billingMonth, '202501');
   const metaSheet = sheets.PreparedBillingMeta;
+  const metaJsonSheet = sheets.PreparedBillingMetaJson;
   const jsonSheet = sheets.PreparedBillingJson;
-  assert.ok(metaSheet && jsonSheet, 'Meta/Json シートが作成される');
-  assert.deepStrictEqual(metaSheet._rows[0], ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'payloadJson', 'note'], 'メタシートのヘッダーが作成される');
+  assert.ok(metaSheet && jsonSheet && metaJsonSheet, 'Meta/Json シートが作成される');
+  assert.deepStrictEqual(metaSheet._rows[0], ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'note'], 'メタシートのヘッダーが作成される');
+  assert.deepStrictEqual(metaJsonSheet._rows[0], ['billingMonth', 'chunkIndex', 'payloadChunk'], 'メタJSONシートのヘッダーが作成される');
   assert.deepStrictEqual(jsonSheet._rows[0], ['billingMonth', 'patientId', 'billingRowJson'], '明細シートのヘッダーが作成される');
   assert.strictEqual(metaSheet._rows[1][0], '202501', 'billingMonthがメタに保存される');
   assert.ok(String(metaSheet._rows[1][2]).includes('user@example.com'), '実行ユーザーが保存される');
+  assert.strictEqual(metaJsonSheet._rows.length > 1, true, 'メタJSONが分割保存される');
   assert.strictEqual(jsonSheet._rows.length, 3, 'billingJsonの件数分保存される');
 
   const loaded = ctx.loadPreparedBillingFromSheet_('202501');

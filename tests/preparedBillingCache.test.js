@@ -254,6 +254,52 @@ function testBankExportReportsMissingPreparation() {
   }, /集計・確定/);
 }
 
+function testPreparedBillingSheetFallback() {
+  let cacheCalls = 0;
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({ key: String(input).replace(/\D/g, '') || '' }),
+    loadPreparedBilling_: () => { cacheCalls += 1; return null; },
+    loadPreparedBillingFromSheet_: () => buildValidPreparedPayload(ctx, {
+      billingMonth: '202501',
+      billingJson: [{ billingMonth: '202501', patientId: 'p1' }]
+    }),
+    normalizePreparedBilling_: payload => payload,
+    validatePreparedBillingPayload_: payload => payload
+      ? { ok: true, billingMonth: payload.billingMonth }
+      : { ok: false, reason: 'missing' }
+  });
+
+  const result = ctx.loadPreparedBillingWithSheetFallback_('2025-01', { withValidation: true });
+  assert.strictEqual(cacheCalls, 1, 'cache lookup is attempted first');
+  assert.ok(result && result.prepared, 'fallback returns prepared payload');
+  assert.strictEqual(result.prepared.billingMonth, '202501', 'sheet payload billingMonth is preserved');
+  assert.ok(result.validation && result.validation.ok, 'validation result is returned');
+}
+
+function testInvoiceGenerationUsesSheetWhenCacheMissing() {
+  const invoiceCalls = [];
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({ key: String(input).replace(/\D/g, '') || '' }),
+    loadPreparedBilling_: () => null,
+    loadPreparedBillingFromSheet_: () => buildValidPreparedPayload(ctx, {
+      billingMonth: '202501',
+      billingJson: [{ billingMonth: '202501', patientId: 'p1' }]
+    }),
+    normalizePreparedBilling_: payload => payload,
+    validatePreparedBillingPayload_: payload => payload
+      ? { ok: true, billingMonth: payload.billingMonth }
+      : { ok: false, reason: 'missing' },
+    generatePreparedInvoices_: prepared => {
+      invoiceCalls.push(prepared.billingMonth);
+      return { billingMonth: prepared.billingMonth, billingJson: prepared.billingJson };
+    }
+  });
+
+  const result = ctx.generateInvoicesFromCache('2025/01');
+  assert.deepStrictEqual(invoiceCalls, ['202501'], 'invoice generation uses normalized month from sheet payload');
+  assert.strictEqual(result && result.billingMonth, '202501');
+}
+
 function testPreparedBillingSheetSaveAndLoad() {
   const sheet = createSheetMock();
   let created = false;
@@ -298,6 +344,8 @@ function run() {
   testBankExportReturnsEmptyForZeroBilling();
   testBankExportReportsLedgerIssues();
   testBankExportReportsMissingPreparation();
+  testPreparedBillingSheetFallback();
+  testInvoiceGenerationUsesSheetWhenCacheMissing();
   testPrepareBillingDataNormalizesMonthKey();
   testPreparedBillingSheetSaveAndLoad();
   console.log('prepared billing cache tests passed');

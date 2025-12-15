@@ -494,6 +494,37 @@ function loadPreparedBilling_(billingMonthKey, options) {
   }
 }
 
+function loadPreparedBillingWithSheetFallback_(billingMonthKey, options) {
+  const opts = options || {};
+  const withValidation = opts.withValidation === true;
+  const allowInvalid = opts.allowInvalid === true;
+  const wrapResult = (payload, validation) => withValidation ? { prepared: payload, validation: validation || null } : payload;
+
+  const cacheResult = loadPreparedBilling_(billingMonthKey, Object.assign({}, opts, { withValidation: true }));
+  const cachePrepared = cacheResult && cacheResult.prepared !== undefined ? cacheResult.prepared : cacheResult;
+  const cacheValidation = cacheResult && cacheResult.validation
+    ? cacheResult.validation
+    : (cacheResult && cacheResult.ok !== undefined ? cacheResult : null);
+  const cacheOk = cacheValidation ? cacheValidation.ok : !!cachePrepared;
+
+  if (cachePrepared && (cacheOk || allowInvalid)) {
+    return wrapResult(cachePrepared, cacheValidation || null);
+  }
+
+  const month = normalizeBillingMonthInput ? normalizeBillingMonthInput(billingMonthKey) : null;
+  const monthKey = month && month.key ? month.key : normalizeBillingMonthKeySafe_(billingMonthKey);
+  const fromSheet = monthKey ? loadPreparedBillingFromSheet_(monthKey) : null;
+  const sheetValidation = validatePreparedBillingPayload_(fromSheet, monthKey);
+  const normalizedPrepared = normalizePreparedBilling_(fromSheet);
+
+  if (normalizedPrepared && (sheetValidation.ok || allowInvalid)) {
+    const preparedWithMonth = Object.assign({}, normalizedPrepared, { billingMonth: sheetValidation.billingMonth || monthKey });
+    return wrapResult(preparedWithMonth, sheetValidation);
+  }
+
+  return wrapResult(null, sheetValidation);
+}
+
 function savePreparedBilling_(payload) {
   const normalizedPayload = normalizePreparedBilling_(payload);
   const resolvedMonthKey = normalizeBillingMonthKeySafe_(normalizedPayload && normalizedPayload.billingMonth);
@@ -794,8 +825,10 @@ function generatePreparedInvoices_(prepared, options) {
 
 function generateInvoicesFromCache(billingMonth, options) {
   const month = normalizeBillingMonthInput(billingMonth);
-  const prepared = normalizePreparedBilling_(loadPreparedBilling_(month.key));
-  if (!prepared || !prepared.billingJson) {
+  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true });
+  const validation = loaded && loaded.validation ? loaded.validation : null;
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
+  if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
     throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
   }
   return generatePreparedInvoices_(prepared, options);
@@ -1173,17 +1206,18 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
     const monthInput = billingMonth || opts.billingMonth || (opts.prepared && (opts.prepared.billingMonth || opts.prepared.month));
     const resolvedMonthKey = normalizeBillingMonthKeySafe_(monthInput);
     const month = resolvedMonthKey ? normalizeBillingMonthInput(resolvedMonthKey) : null;
-    const preparedFromSheet = month ? loadPreparedBillingFromSheet_(month.key) : null;
-    const validation = validatePreparedBillingPayload_(preparedFromSheet, month && month.key);
-    const normalizedPrepared = normalizePreparedBilling_(preparedFromSheet);
+    const loaded = loadPreparedBillingWithSheetFallback_(month && month.key, { withValidation: true });
+    const validation = loaded && loaded.validation ? loaded.validation : null;
+    const preparedPayload = loaded && loaded.prepared;
+    const normalizedPrepared = normalizePreparedBilling_(preparedPayload);
 
     try {
       billingLogger_.log('[bankExport] generateBankTransferDataFromCache summary=' + JSON.stringify({
         requestedMonth: monthInput || null,
         resolvedMonthKey: month ? month.key : null,
-        hasPrepared: !!preparedFromSheet,
-        preparedBillingJsonLength: preparedFromSheet && Array.isArray(preparedFromSheet.billingJson)
-          ? preparedFromSheet.billingJson.length
+        hasPrepared: !!preparedPayload,
+        preparedBillingJsonLength: preparedPayload && Array.isArray(preparedPayload.billingJson)
+          ? preparedPayload.billingJson.length
           : null,
         validationReason: validation && validation.reason ? validation.reason : null,
         validationOk: validation && validation.hasOwnProperty('ok') ? validation.ok : null

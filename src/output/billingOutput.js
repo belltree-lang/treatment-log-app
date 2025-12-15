@@ -719,6 +719,66 @@ function ensureBillingHistorySheet_() {
   return sheet;
 }
 
+function ensureUnpaidHistorySheet_() {
+  const workbook = ss();
+  let sheet = workbook.getSheetByName(UNPAID_HISTORY_SHEET_NAME);
+  if (!sheet) {
+    sheet = workbook.insertSheet(UNPAID_HISTORY_SHEET_NAME);
+    sheet.getRange(1, 1, 1, 6).setValues([[
+      'patientId',
+      '対象月',
+      '金額',
+      '理由',
+      '備考',
+      '記録日時'
+    ]]);
+  }
+  return sheet;
+}
+
+function appendUnpaidHistoryEntries_(entries) {
+  const sheet = ensureUnpaidHistorySheet_();
+  const lastRow = sheet.getLastRow();
+  const existing = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, 6).getValues()
+    : [];
+  const existingKeys = existing.reduce((set, row) => {
+    const pid = billingNormalizePatientId_(row[0]);
+    const month = String(row[1] || '').trim();
+    const amount = Number(row[2]) || 0;
+    if (pid && month) set[pid + '::' + month + '::' + amount] = true;
+    return set;
+  }, {});
+
+  const rows = (entries || [])
+    .map(entry => ({
+      patientId: billingNormalizePatientId_(entry && entry.patientId),
+      billingMonth: entry && entry.billingMonth ? String(entry.billingMonth).trim() : '',
+      amount: entry && entry.unpaidAmount != null ? Number(entry.unpaidAmount) || 0 : 0,
+      reason: entry && entry.reason ? String(entry.reason).trim() : '',
+      memo: entry && entry.memo ? String(entry.memo).trim() : ''
+    }))
+    .filter(entry => entry.patientId && entry.billingMonth && entry.amount)
+    .filter(entry => !existingKeys[entry.patientId + '::' + entry.billingMonth + '::' + entry.amount]);
+
+  if (!rows.length) {
+    return { added: 0, skipped: entries && entries.length ? entries.length : 0 };
+  }
+
+  const values = rows.map(entry => [
+    entry.patientId,
+    entry.billingMonth,
+    entry.amount,
+    entry.reason || BANK_WITHDRAWAL_UNPAID_HEADER,
+    entry.memo || '',
+    new Date()
+  ]);
+
+  sheet.insertRows(2, values.length);
+  sheet.getRange(2, 1, values.length, values[0].length).setValues(values);
+  return { added: values.length, skipped: (entries || []).length - values.length };
+}
+
 function appendBillingHistoryRows(billingJson, options) {
   const opts = options || {};
   const sheet = ensureBillingHistorySheet_();

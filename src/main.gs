@@ -114,6 +114,8 @@ const BILLING_CACHE_PREFIX = 'billing_prepared_';
 const BILLING_CACHE_TTL_SECONDS = 3600; // 1 hour
 const PREPARED_BILLING_SCHEMA_VERSION = 2;
 const BANK_INFO_SHEET_NAME = '銀行情報';
+const UNPAID_HISTORY_SHEET_NAME = '未回収履歴';
+const BANK_WITHDRAWAL_UNPAID_HEADER = '未回収チェック';
 
 function normalizeBillingMonthKeySafe_(value) {
   const candidates = [];
@@ -809,6 +811,32 @@ function ensureBankInfoSheet_() {
   throw new Error('銀行情報シートが見つかりません。参照専用のテンプレートを用意してください。');
 }
 
+function ensureUnpaidCheckColumn_(sheet, headers) {
+  const targetSheet = sheet;
+  const workingHeaders = Array.isArray(headers) && headers.length
+    ? headers.slice()
+    : (targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getDisplayValues()[0] || []);
+  let col = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
+  if (!col) {
+    const lastCol = targetSheet.getLastColumn();
+    targetSheet.insertColumnAfter(lastCol);
+    col = lastCol + 1;
+    targetSheet.getRange(1, col).setValue(BANK_WITHDRAWAL_UNPAID_HEADER);
+  }
+  try {
+    const range = targetSheet.getRange(2, col, Math.max(targetSheet.getMaxRows() - 1, 1), 1);
+    if (typeof range.insertCheckboxes === 'function') {
+      range.insertCheckboxes();
+    } else {
+      const rule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+      range.setDataValidation(rule);
+    }
+  } catch (err) {
+    console.warn('[billing] Failed to ensure checkbox column for unpaid tracking', err);
+  }
+  return col;
+}
+
 function formatBankWithdrawalSheetName_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const monthText = String(month.month).padStart(2, '0');
@@ -846,6 +874,7 @@ function ensureBankWithdrawalSheet_(billingMonth, options) {
       console.warn('[billing] Failed to remove protection from bank withdrawal sheet', err);
     }
   }
+  ensureUnpaidCheckColumn_(sheet);
   return sheet;
 }
 
@@ -911,6 +940,66 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
 
   sheet.getRange(2, amountCol, rowCount, 1).setValues(newAmountValues);
   return { billingMonth: month.key, updated: rowCount };
+}
+
+function collectUnpaidWithdrawalRows_(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(month);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) {
+    throw new Error('銀行引落シートが見つかりません: ' + sheetName);
+  }
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { billingMonth: month.key, entries: [], checkedRows: 0 };
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const unpaidCol = ensureUnpaidCheckColumn_(sheet, headers);
+  const amountCol = resolveBillingColumn_(
+    headers,
+    ['金額', '請求金額', '引落額', '引落金額'],
+    '金額',
+    { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
+  );
+  const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const effectiveLastCol = sheet.getLastColumn();
+  const values = sheet.getRange(2, 1, lastRow - 1, effectiveLastCol).getValues();
+  const prepared = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true }) || {};
+  const nameToPatientId = buildPatientNameToIdMap_(prepared.patients || {});
+  const entries = [];
+  let checkedRows = 0;
+
+  values.forEach(row => {
+    const isChecked = row[unpaidCol - 1];
+    if (!isChecked) return;
+    checkedRows += 1;
+    const amount = amountCol ? Number(row[amountCol - 1]) || 0 : 0;
+    if (!amount) return;
+    const pid = pidCol
+      ? billingNormalizePatientId_(row[pidCol - 1])
+      : nameToPatientId[normalizeBillingNameKey_(row[nameCol - 1])];
+    if (!pid) return;
+    entries.push({
+      patientId: pid,
+      billingMonth: month.key,
+      unpaidAmount: amount,
+      reason: BANK_WITHDRAWAL_UNPAID_HEADER,
+      memo: ''
+    });
+  });
+
+  return { billingMonth: month.key, entries, checkedRows };
+}
+
+function applyBankWithdrawalUnpaidEntries(billingMonth) {
+  const collected = collectUnpaidWithdrawalRows_(billingMonth);
+  if (!collected.entries.length) {
+    return Object.assign({ added: 0, skipped: 0 }, collected);
+  }
+  const appendResult = appendUnpaidHistoryEntries_(collected.entries);
+  return Object.assign({}, collected, appendResult);
 }
 
 function coerceBillingJsonArray_(raw) {
@@ -1623,6 +1712,21 @@ function billingApplyPaymentResultsFromMenu() {
   return result;
 }
 
+function billingApplyUnpaidFromBankSheetFromMenu() {
+  const month = promptBillingMonthInput_();
+  const result = applyBankWithdrawalUnpaidEntries(month.key);
+  const lines = [
+    '未回収履歴へ反映しました',
+    'チェック済み行: ' + result.checkedRows,
+    '追加件数: ' + (result.added || 0)
+  ];
+  if (result.skipped) {
+    lines.push('スキップ: ' + result.skipped);
+  }
+  SpreadsheetApp.getUi().alert(lines.join('\n'));
+  return result;
+}
+
 function billingApplyPaymentResultPdfFromMenu() {
   const month = promptBillingMonthInput_();
   const fileId = promptBillingResultPdfFileId_();
@@ -1690,6 +1794,7 @@ function onOpen() {
   billingMenu.addItem('請求データ生成（JSON）', 'billingGenerateJsonFromMenu');
   billingMenu.addItem('入金結果PDFの反映（アップロード→解析）', 'billingApplyPaymentResultPdfFromMenu');
   billingMenu.addItem('（管理者向け）履歴チェック', 'billingCheckHistoryFromMenu');
+  billingMenu.addItem('銀行引落の未回収を履歴へ反映', 'billingApplyUnpaidFromBankSheetFromMenu');
   billingMenu.addToUi();
 
   const attendanceMenu = ui.createMenu('勤怠管理');

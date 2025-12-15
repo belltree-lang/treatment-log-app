@@ -1,51 +1,9 @@
 /**
  * ダッシュボードの主要データをまとめて取得し、JSON 形式で返す。
  * エラーが発生した場合は meta.error にメッセージを格納する。
- *
  * @param {Object} [options]
- * @param {Object} [options.patientInfo] - 事前に取得した患者情報を差し込む場合に利用。
- * @param {Object} [options.notes] - 申し送りデータを差し込む場合に利用。
- * @param {Object} [options.aiReports] - AI報告書データを差し込む場合に利用。
- * @param {Object} [options.invoices] - 請求書リンクデータを差し込む場合に利用。
- * @param {Object} [options.treatmentLogs] - 施術録データを差し込む場合に利用。
- * @param {Object} [options.responsible] - 担当者マッピングを差し込む場合に利用。
- * @param {Object} [options.tasksResult] - タスク抽出結果を差し込む場合に利用。
- * @param {Object} [options.visitsResult] - 今日の訪問抽出結果を差し込む場合に利用。
- * @param {Object<string, boolean>} [options.invoiceConfirmations] - 請求書確認フラグを直接指定する場合に利用。
- * @param {Date} [options.now] - テスト用に現在日時を差し替え。
- * @param {string} [options.user] - セッションユーザーを明示的に指定する場合に利用。
  * @return {{tasks: Object[], todayVisits: Object[], patients: Object[], warnings: string[], meta: Object}}
  */
-if (typeof dashboardResolveTimeZone_ !== 'function') {
-  var dashboardResolveTimeZone_ = function() {
-    if (typeof Session !== 'undefined' && Session && typeof Session.getScriptTimeZone === 'function') {
-      const tz = Session.getScriptTimeZone();
-      if (tz) return tz;
-    }
-    if (typeof DEFAULT_TZ !== 'undefined') return DEFAULT_TZ;
-    return 'Asia/Tokyo';
-  };
-}
-
-if (typeof dashboardFormatDate_ !== 'function') {
-  var dashboardFormatDate_ = function(date, tz, format) {
-    const targetFormat = format || (typeof DATE_FORMAT !== 'undefined' ? DATE_FORMAT : 'yyyy/MM/dd');
-    const targetTz = tz || dashboardResolveTimeZone_();
-    if (typeof Utilities !== 'undefined' && Utilities && typeof Utilities.formatDate === 'function') {
-      try { return Utilities.formatDate(date, targetTz, targetFormat); } catch (e) { /* ignore */ }
-    }
-    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-    return date.toISOString();
-  };
-}
-
-if (typeof dashboardNormalizePatientId_ !== 'function') {
-  var dashboardNormalizePatientId_ = function(value) {
-    const raw = value == null ? '' : value;
-    return String(raw).trim();
-  };
-}
-
 function getDashboardData(options) {
   const opts = options || {};
   const meta = {

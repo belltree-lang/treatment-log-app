@@ -10,6 +10,7 @@ function assignResponsibleStaff(options) {
   const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : null);
   const patients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];
+  const setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
 
   const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs({ patientInfo }) : null);
   const lastStaffByPatient = treatment && treatment.lastStaffByPatient ? treatment.lastStaffByPatient : {};
@@ -31,5 +32,5 @@ function assignResponsibleStaff(options) {
     responsible[normalized] = lastStaffByPatient[pid] || null;
   });
 
-  return { responsible, warnings };
+  return { responsible, warnings, setupIncomplete: setupIncomplete || !!(treatment && treatment.setupIncomplete) };
 }

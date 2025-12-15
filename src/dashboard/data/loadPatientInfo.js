@@ -11,19 +11,28 @@ function loadPatientInfoUncached_(_options) {
   const patients = {};
   const nameToId = {};
   const warnings = [];
+  let setupIncomplete = false;
 
   const wb = dashboardGetSpreadsheet_();
+  if (!wb) {
+    const warning = 'スプレッドシートを取得できませんでした';
+    warnings.push(warning);
+    setupIncomplete = true;
+    dashboardWarn_('[loadPatientInfo] spreadsheet unavailable');
+    return { patients, nameToId, warnings, setupIncomplete };
+  }
   const sheetName = typeof DASHBOARD_SHEET_PATIENTS !== 'undefined' ? DASHBOARD_SHEET_PATIENTS : '患者情報';
   const sheet = wb && wb.getSheetByName ? wb.getSheetByName(sheetName) : null;
   if (!sheet) {
     const warning = `${sheetName}シートが見つかりません`;
     warnings.push(warning);
+    setupIncomplete = true;
     dashboardWarn_(`[loadPatientInfo] sheet not found: ${sheetName}`);
-    return { patients, nameToId, warnings };
+    return { patients, nameToId, warnings, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { patients, nameToId, warnings };
+  if (lastRow < 2) return { patients, nameToId, warnings, setupIncomplete };
 
   const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : sheet.getMaxColumns ? sheet.getMaxColumns() : 0;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
@@ -75,5 +84,5 @@ function loadPatientInfoUncached_(_options) {
     };
   }
 
-  return { patients, nameToId, warnings };
+  return { patients, nameToId, warnings, setupIncomplete };
 }

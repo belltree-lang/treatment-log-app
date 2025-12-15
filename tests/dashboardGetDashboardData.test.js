@@ -106,8 +106,28 @@ function testErrorIsCapturedInMeta() {
   assert.ok(result.meta.error && result.meta.error.indexOf('boom') >= 0);
 }
 
+function testWarningsAreDedupedAndSetupFlagged() {
+  const warning = '患者情報シートが見つかりません';
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    patientInfo: { patients: {}, warnings: [warning], setupIncomplete: true },
+    notes: { notes: {}, warnings: [warning] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.strictEqual(result.warnings.length, 1, '同一警告は一意になる');
+  assert.strictEqual(result.warnings[0], warning);
+  assert.strictEqual(result.meta.setupIncomplete, true, 'セットアップ未完了フラグが伝搬する');
+}
+
 (function run() {
   testAggregatesDashboardData();
   testErrorIsCapturedInMeta();
+  testWarningsAreDedupedAndSetupFlagged();
   console.log('dashboardGetDashboardData tests passed');
 })();

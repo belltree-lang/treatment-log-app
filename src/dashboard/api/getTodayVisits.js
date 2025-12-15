@@ -22,6 +22,8 @@ function getTodayVisits(options) {
   const warnings = [];
   if (treatment && Array.isArray(treatment.warnings)) warnings.push.apply(warnings, treatment.warnings);
   if (notesResult && Array.isArray(notesResult.warnings)) warnings.push.apply(warnings, notesResult.warnings);
+  const setupIncomplete = !!(treatment && treatment.setupIncomplete)
+    || !!(notesResult && notesResult.setupIncomplete);
 
   const visits = [];
   logs.forEach(entry => {
@@ -44,7 +46,7 @@ function getTodayVisits(options) {
     return a.dateKey.localeCompare(b.dateKey);
   });
 
-  return { visits, warnings };
+  return { visits, warnings, setupIncomplete };
 }
 
 function resolveHandoverStatus_(dateKey, patientId, notes, tz) {

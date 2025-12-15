@@ -15,7 +15,8 @@ function getDashboardData(options) {
   const cacheOptions = opts.cache === false ? { cache: false } : {};
   const meta = {
     generatedAt: dashboardFormatDate_(new Date(), dashboardResolveTimeZone_(), "yyyy-MM-dd'T'HH:mm:ssXXX") || new Date().toISOString(),
-    user: opts.user || dashboardResolveUser_()
+    user: opts.user || dashboardResolveUser_(),
+    setupIncomplete: false
   };
 
   try {
@@ -48,7 +49,7 @@ function getDashboardData(options) {
       treatmentLogs
     });
 
-    const warnings = collectDashboardWarnings_([
+    const warningState = collectDashboardWarnings_([
       patientInfo,
       notes,
       aiReports,
@@ -59,11 +60,13 @@ function getDashboardData(options) {
       visitsResult
     ]);
 
+    meta.setupIncomplete = warningState.setupIncomplete;
+
     return {
       tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
       todayVisits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
       patients,
-      warnings,
+      warnings: warningState.warnings,
       meta
     };
   } catch (err) {
@@ -130,12 +133,36 @@ function normalizeDashboardNote_(note, patientId) {
 
 function collectDashboardWarnings_(results) {
   const warnings = [];
+  const seen = new Set();
+  let setupIncomplete = false;
+
   (results || []).forEach(entry => {
+    if (entry && entry.setupIncomplete) setupIncomplete = true;
     if (entry && Array.isArray(entry.warnings)) {
-      warnings.push.apply(warnings, entry.warnings);
+      entry.warnings.forEach(warning => {
+        const normalized = normalizeDashboardWarning_(warning);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        warnings.push(normalized);
+        if (isDashboardSetupIncompleteWarning_(normalized)) setupIncomplete = true;
+      });
     }
   });
-  return warnings;
+
+  return { warnings, setupIncomplete };
+}
+
+function normalizeDashboardWarning_(warning) {
+  return String(warning == null ? '' : warning).trim();
+}
+
+function isDashboardSetupIncompleteWarning_(warning) {
+  const normalized = normalizeDashboardWarning_(warning);
+  if (!normalized) return false;
+  if (normalized.indexOf('シートが見つかりません') >= 0) return true;
+  if (normalized.indexOf('スプレッドシートを取得できませんでした') >= 0) return true;
+  if (normalized.indexOf('請求書フォルダが取得できませんでした') >= 0) return true;
+  return false;
 }
 
 function dashboardResolveUser_() {

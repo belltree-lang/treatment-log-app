@@ -32,6 +32,9 @@ function getDashboardData(options) {
     const responsible = opts.responsible || (typeof assignResponsibleStaff === 'function'
       ? assignResponsibleStaff(Object.assign({ patientInfo, treatmentLogs, now: opts.now }, cacheOptions))
       : { responsible: {}, warnings: [] });
+    const unpaidAlertsResult = opts.unpaidAlerts || (typeof loadUnpaidAlerts === 'function'
+      ? loadUnpaidAlerts(Object.assign({ patientInfo, now: opts.now }, cacheOptions))
+      : { alerts: [], warnings: [] });
 
     const tasksResult = opts.tasksResult || (typeof getTasks === 'function' ? getTasks({
       patientInfo,
@@ -62,6 +65,7 @@ function getDashboardData(options) {
       invoices,
       treatmentLogs,
       responsible,
+      unpaidAlertsResult,
       tasksResult,
       visitsResult
     ]);
@@ -72,6 +76,7 @@ function getDashboardData(options) {
       tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
       todayVisits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
       patients,
+      unpaidAlerts: unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [],
       warnings: warningState.warnings,
       meta
     };

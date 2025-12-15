@@ -8,8 +8,10 @@ const configCode = fs.readFileSync(path.join(__dirname, '../src/dashboard/config
 const cacheUtilsCode = fs.readFileSync(path.join(__dirname, '../src/dashboard/utils/cacheUtils.js'), 'utf8');
 const unpaidAlertsCode = fs.readFileSync(path.join(__dirname, '../src/dashboard/data/loadUnpaidAlerts.js'), 'utf8');
 
-function createSheet(rows) {
-  const headers = ['患者ID', '対象月', '金額', '理由', '備考', '記録日時'];
+function createSheet(rows, withNameColumn) {
+  const headers = withNameColumn
+    ? ['患者ID', '患者名', '対象月', '金額', '理由', '備考', '記録日時']
+    : ['患者ID', '対象月', '金額', '理由', '備考', '記録日時'];
   const data = rows || [];
   return {
     getLastRow: () => 1 + data.length,
@@ -80,6 +82,26 @@ function testConsecutiveUnpaidAlertsAreCollected() {
   assert.strictEqual(alert.months.map(m => m.key).join(','), '2024-01,2023-12,2023-11');
 }
 
+function testPatientIdIsResolvedFromName() {
+  const sheet = createSheet([
+    ['', '山田太郎', '2024-01-01', 10000, '', '', '2024-02-05T00:00:00Z']
+  ], true);
+
+  const ctx = createContext(sheet);
+  const nameKey = ctx.dashboardNormalizeNameKey_('山田太郎');
+  const patientInfo = {
+    patients: { P001: { name: '山田太郎' } },
+    nameToId: { [nameKey]: 'P001' },
+    warnings: []
+  };
+
+  const result = ctx.loadUnpaidAlerts({ patientInfo, consecutiveMonths: 1 });
+
+  assert.strictEqual(result.alerts.length, 1, '氏名から患者IDが解決される');
+  assert.strictEqual(result.alerts[0].patientId, 'P001');
+  assert.strictEqual(result.alerts[0].patientName, '山田太郎');
+}
+
 function testMissingSheetProducesWarning() {
   const workbook = { getSheetByName: () => null };
   const context = createContext(null);
@@ -94,5 +116,6 @@ function testMissingSheetProducesWarning() {
 (function run() {
   testConsecutiveUnpaidAlertsAreCollected();
   testMissingSheetProducesWarning();
+  testPatientIdIsResolvedFromName();
   console.log('dashboardLoadUnpaidAlerts tests passed');
 })();

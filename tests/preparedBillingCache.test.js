@@ -273,6 +273,29 @@ function testPreparedBillingSheetFallback() {
   assert.ok(result.validation && result.validation.ok, 'validation result is returned');
 }
 
+function testPreparedBillingSheetFallbackRestoresCache() {
+  let savedPayload = null;
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({ key: String(input).replace(/\D/g, '') || '' }),
+    loadPreparedBilling_: () => null,
+    loadPreparedBillingFromSheet_: () => buildValidPreparedPayload(ctx, {
+      billingMonth: '202501',
+      billingJson: [{ billingMonth: '202501', patientId: 'p1' }]
+    }),
+    normalizePreparedBilling_: payload => payload,
+    validatePreparedBillingPayload_: payload => payload
+      ? { ok: true, billingMonth: payload.billingMonth }
+      : { ok: false, reason: 'missing' },
+    savePreparedBilling_: payload => { savedPayload = payload; },
+    billingLogger_: { log: () => {} }
+  });
+
+  ctx.loadPreparedBillingWithSheetFallback_('2025-01', { withValidation: true });
+
+  assert.ok(savedPayload, 'fallback payload is restored to cache');
+  assert.strictEqual(savedPayload.billingMonth, '202501');
+}
+
 function testInvoiceGenerationUsesSheetWhenCacheMissing() {
   const invoiceCalls = [];
   const ctx = createMainContext({
@@ -353,6 +376,7 @@ function run() {
   testBankExportReportsLedgerIssues();
   testBankExportReportsMissingPreparation();
   testPreparedBillingSheetFallback();
+  testPreparedBillingSheetFallbackRestoresCache();
   testInvoiceGenerationUsesSheetWhenCacheMissing();
   testPrepareBillingDataNormalizesMonthKey();
   testPreparedBillingSheetSaveAndLoad();

@@ -23,6 +23,10 @@ function handleDashboardDoGet_(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+function doGet(e) {
+  return handleDashboardDoGet_(e);
+}
+
 function shouldHandleDashboardRequest_(e) {
   const path = (e && e.pathInfo ? String(e.pathInfo) : '').replace(/^\/+|\/+$/g, '').toLowerCase();
   if (path === 'dashboard' || path === 'getdashboarddata') return true;

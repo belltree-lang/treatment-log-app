@@ -13,7 +13,12 @@ function dashboardGetCache_() {
   }
 }
 
-function dashboardCacheFetch_(key, fetchFn, ttlSeconds) {
+function dashboardCacheFetch_(key, fetchFn, ttlSeconds, options) {
+  const opts = options || {};
+  if (opts.cache === false) {
+    return typeof fetchFn === 'function' ? fetchFn() : null;
+  }
+
   const cache = dashboardGetCache_();
   const fallbackTtl = typeof DASHBOARD_CACHE_TTL_SECONDS !== 'undefined' ? DASHBOARD_CACHE_TTL_SECONDS : 60;
   const ttl = Math.max(5, ttlSeconds || fallbackTtl);

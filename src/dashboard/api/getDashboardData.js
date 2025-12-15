@@ -6,15 +6,16 @@
  */
 function getDashboardData(options) {
   const opts = options || {};
+  const cacheOptions = opts.cache === false ? { cache: false } : {};
   const meta = {
     generatedAt: dashboardFormatDate_(new Date(), dashboardResolveTimeZone_(), "yyyy-MM-dd'T'HH:mm:ssXXX") || new Date().toISOString(),
     user: opts.user || dashboardResolveUser_()
   };
 
   try {
-    const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : { patients: {}, nameToId: {}, warnings: [] });
-    const notes = opts.notes || (typeof loadNotes === 'function' ? loadNotes({ email: meta.user }) : { notes: {}, warnings: [] });
-    const aiReports = opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports() : { reports: {}, warnings: [] });
+    const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo(cacheOptions) : { patients: {}, nameToId: {}, warnings: [] });
+    const notes = opts.notes || (typeof loadNotes === 'function' ? loadNotes(Object.assign({ email: meta.user }, cacheOptions)) : { notes: {}, warnings: [] });
+    const aiReports = opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports(cacheOptions) : { reports: {}, warnings: [] });
     const invoices = opts.invoices || (typeof loadInvoices === 'function' ? loadInvoices({ patientInfo }) : { invoices: {}, warnings: [] });
     const treatmentLogs = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs({ patientInfo }) : { logs: [], warnings: [] });
     const responsible = opts.responsible || (typeof assignResponsibleStaff === 'function' ? assignResponsibleStaff({ patientInfo, treatmentLogs }) : { responsible: {}, warnings: [] });

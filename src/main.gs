@@ -37,7 +37,9 @@ function handleDashboardDoGet_(e) {
   if (!shouldHandleDashboardRequest_(e)) return null;
 
   if (shouldHandleDashboardApi_(e)) {
-    const data = typeof getDashboardData === 'function' ? getDashboardData() : {};
+    const user = dashboardResolveRequestUser_(e);
+    const cacheFlag = dashboardResolveDashboardCacheFlag_(e);
+    const data = typeof getDashboardData === 'function' ? getDashboardData({ user, cache: cacheFlag }) : {};
     return createJsonResponse_(data);
   }
 
@@ -65,6 +67,21 @@ function shouldHandleDashboardApi_(e) {
   if (path === 'getdashboarddata') return true;
   const action = e && e.parameter ? (e.parameter.action || e.parameter.api) : '';
   return String(action || '').toLowerCase() === 'getdashboarddata';
+}
+
+function dashboardResolveRequestUser_(e) {
+  const paramUser = e && e.parameter ? (e.parameter.user || e.parameter.email) : '';
+  if (paramUser) return String(paramUser || '').trim();
+  if (typeof dashboardResolveUser_ === 'function') return dashboardResolveUser_();
+  return '';
+}
+
+function dashboardResolveDashboardCacheFlag_(e) {
+  const raw = e && e.parameter ? e.parameter.cache : undefined;
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const normalized = String(raw).trim().toLowerCase();
+  if (normalized === 'false' || normalized === '0' || normalized === 'off' || normalized === 'no') return false;
+  return true;
 }
 
 function createJsonResponse_(payload) {

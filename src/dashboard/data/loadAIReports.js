@@ -5,11 +5,7 @@
 function loadAIReports(options) {
   const opts = options || {};
   const fetchFn = () => loadAIReportsUncached_();
-  if (opts && opts.cache === false) return fetchFn();
-  if (typeof dashboardCacheFetch_ !== 'function' || typeof dashboardCacheKey_ !== 'function') {
-    return fetchFn();
-  }
-  return dashboardCacheFetch_(dashboardCacheKey_('aiReports:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
+  return dashboardCacheFetch_(dashboardCacheKey_('aiReports:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
 }
 
 function loadAIReportsUncached_() {

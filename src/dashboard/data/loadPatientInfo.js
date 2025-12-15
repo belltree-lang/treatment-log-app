@@ -4,8 +4,7 @@
 function loadPatientInfo(options) {
   const opts = options || {};
   const fetchFn = () => loadPatientInfoUncached_(opts);
-  if (opts && opts.cache === false) return fetchFn();
-  return dashboardCacheFetch_(dashboardCacheKey_('patientInfo:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS);
+  return dashboardCacheFetch_(dashboardCacheKey_('patientInfo:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
 }
 
 function loadPatientInfoUncached_(_options) {

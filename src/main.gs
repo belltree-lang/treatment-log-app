@@ -60,6 +60,19 @@ function ss() {
 }
 
 /**
+ * Resolve the billing spreadsheet, falling back to the active workbook.
+ * Uses the shared resolver when available so configuration stays consistent
+ * with the billing data loaders defined in billingGet.
+ * @return {SpreadsheetApp.Spreadsheet}
+ */
+function billingSs() {
+  if (typeof resolveBillingSpreadsheet_ === 'function') {
+    return resolveBillingSpreadsheet_();
+  }
+  return ss();
+}
+
+/**
  * Resolve source data for billing generation (patients, visits, bank statuses).
  * @param {string|Date|Object} billingMonth - YYYYMM string, Date, or normalized month object.
  * @return {Object} normalized source data including month metadata.
@@ -794,6 +807,10 @@ function buildPreparedBillingPayload_(billingMonth) {
 const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
 const BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER = 'S';
 
+if (typeof BILLING_BANK_SHEET_NAME === 'undefined') {
+  var BILLING_BANK_SHEET_NAME = '銀行情報'; // eslint-disable-line no-var
+}
+
 function formatBankWithdrawalSheetName_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const monthText = String(month.month).padStart(2, '0');
@@ -802,20 +819,47 @@ function formatBankWithdrawalSheetName_(billingMonth) {
 
 function ensureBankWithdrawalSheet_(billingMonth) {
   const workbook = billingSs();
-  const baseSheet = ensureBankInfoSheet_();
   const sheetName = formatBankWithdrawalSheetName_(billingMonth);
-  let sheet = workbook.getSheetByName(sheetName);
+  const resolveBankInfoSheet_ = () => {
+    if (typeof ensureBankInfoSheet_ === 'function') {
+      return ensureBankInfoSheet_();
+    }
+    if (workbook && typeof workbook.getSheetByName === 'function') {
+      const existing = workbook.getSheetByName(BILLING_BANK_SHEET_NAME);
+      if (existing) return existing;
+    }
+    return workbook && typeof workbook.insertSheet === 'function'
+      ? workbook.insertSheet(BILLING_BANK_SHEET_NAME)
+      : null;
+  };
+
+  let sheet = workbook && typeof workbook.getSheetByName === 'function'
+    ? workbook.getSheetByName(sheetName)
+    : null;
   if (!sheet) {
-    sheet = baseSheet.copyTo(workbook);
-    sheet.setName(sheetName);
-    const targetIndex = Math.max(baseSheet.getIndex() + 1, workbook.getNumSheets());
-    workbook.setActiveSheet(sheet);
-    workbook.moveActiveSheet(targetIndex);
-    try {
-      const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET) || [];
-      protections.forEach(protection => protection.remove());
-    } catch (err) {
-      console.warn('[billing] Failed to remove protection from bank withdrawal sheet', err);
+    const baseSheet = resolveBankInfoSheet_();
+    if (baseSheet && typeof baseSheet.copyTo === 'function' && workbook) {
+      sheet = baseSheet.copyTo(workbook);
+      if (sheet && typeof sheet.setName === 'function') sheet.setName(sheetName);
+      const baseIndex = typeof baseSheet.getIndex === 'function' ? baseSheet.getIndex() : 0;
+      const sheetCount = typeof workbook.getNumSheets === 'function' ? workbook.getNumSheets() : 0;
+      const targetIndex = Math.max(baseIndex + 1, sheetCount);
+      if (typeof workbook.setActiveSheet === 'function' && typeof workbook.moveActiveSheet === 'function') {
+        workbook.setActiveSheet(sheet);
+        workbook.moveActiveSheet(targetIndex);
+      }
+      try {
+        const protections = typeof sheet.getProtections === 'function'
+          ? (sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET) || [])
+          : [];
+        protections.forEach(protection => {
+          if (protection && typeof protection.remove === 'function') protection.remove();
+        });
+      } catch (err) {
+        console.warn('[billing] Failed to remove protection from bank withdrawal sheet', err);
+      }
+    } else if (workbook && typeof workbook.insertSheet === 'function') {
+      sheet = workbook.insertSheet(sheetName);
     }
   }
   return sheet;

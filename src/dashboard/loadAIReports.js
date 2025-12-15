@@ -50,14 +50,14 @@ if (typeof dashboardResolveTimeZone_ !== 'function') {
       const tz = Session.getScriptTimeZone();
       if (tz) return tz;
     }
-    if (typeof DASHBOARD_TIME_ZONE !== 'undefined') return DASHBOARD_TIME_ZONE;
+    if (typeof DEFAULT_TZ !== 'undefined') return DEFAULT_TZ;
     return 'Asia/Tokyo';
   };
 }
 
 if (typeof dashboardFormatDate_ !== 'function') {
   var dashboardFormatDate_ = function(date, tz, format) {
-    const targetFormat = format || 'yyyy-MM-dd';
+    const targetFormat = format || (typeof DATE_FORMAT !== 'undefined' ? DATE_FORMAT : 'yyyy/MM/dd');
     const targetTz = tz || dashboardResolveTimeZone_();
     if (typeof Utilities !== 'undefined' && Utilities && typeof Utilities.formatDate === 'function') {
       try { return Utilities.formatDate(date, targetTz, targetFormat); } catch (e) { /* ignore */ }
@@ -65,10 +65,6 @@ if (typeof dashboardFormatDate_ !== 'function') {
     if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
     return date.toISOString();
   };
-}
-
-if (typeof DASHBOARD_CACHE_TTL_SECONDS === 'undefined') {
-  var DASHBOARD_CACHE_TTL_SECONDS = 300;
 }
 
 function loadAIReports(options) {

@@ -120,6 +120,16 @@ function normalizeBillingNameKey_(value) {
   return String(value || '').replace(/\s+/g, '').trim();
 }
 
+function normalizeBillingFullNameKey_(nameKanji, nameKana) {
+  const kanjiKey = normalizeBillingNameKey_(nameKanji);
+  const kanaKey = normalizeBillingNameKey_(nameKana);
+  const combined = [kanjiKey, kanaKey].filter(Boolean).join('::');
+  if (!combined) return '';
+  const numericOnly = combined.replace(/::/g, '');
+  if (/^\d+$/.test(numericOnly)) return '';
+  return combined;
+}
+
 function normalizeKana_(value) {
   return String(value || '')
     .normalize('NFKC')
@@ -419,7 +429,7 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     total += 1;
     const patient = patientMap && patientMap[pid] ? patientMap[pid] : {};
     const nameKanji = item && item.nameKanji ? String(item.nameKanji).trim() : '';
-    const nameKey = normalizeBillingNameKey_(nameKanji);
+    const nameKey = normalizeBillingFullNameKey_(nameKanji, item && item.nameKana);
     const bankLookup = bankInfoByName && nameKey ? bankInfoByName[nameKey] : null;
 
     const pickWithPriority = (resolver, fallbackValue) => {

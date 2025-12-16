@@ -24,6 +24,14 @@ const bankFlowState = {
   targetMonth: ''
 };
 
+const simpleBankState = {
+  loading: false,
+  status: '',
+  error: '',
+  result: null,
+  targetMonth: ''
+};
+
 const BILLING_BURDEN_OPTIONS = [
   { value: 1, label: '1割' },
   { value: 2, label: '2割' },
@@ -97,6 +105,11 @@ function getBankTargetMonth() {
   if (input && input.value) return normalizeYm(input.value);
   const billingInput = qs('billingMonth');
   return normalizeYm(billingInput && billingInput.value ? billingInput.value : '');
+}
+
+function getSimpleBankMonth() {
+  const input = qs('bankWithdrawalMonth');
+  return input && input.value ? normalizeYm(input.value) : '';
 }
 
 function formatYmDisplay(ym) {
@@ -266,6 +279,132 @@ function renderBankFlowSummary() {
     const count = summary && typeof summary.unpaidChecked === 'number' ? summary.unpaidChecked : 0;
     unpaidCountEl.textContent = `${count}件`;
   }
+}
+
+function updateSimpleBankControls() {
+  const monthInput = qs('bankWithdrawalMonth');
+  const generateBtn = qs('simpleBankGenerateBtn');
+  const loading = simpleBankState.loading;
+  const hasMonth = !!(simpleBankState.targetMonth || getSimpleBankMonth());
+
+  if (monthInput) monthInput.disabled = loading;
+  if (generateBtn) {
+    generateBtn.disabled = loading || !hasMonth;
+    generateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
+    generateBtn.title = hasMonth ? '' : '対象月を入力してください';
+  }
+}
+
+function renderSimpleBankSummary() {
+  const ym = simpleBankState.targetMonth || getSimpleBankMonth();
+  const displayYm = ym ? formatYmDisplay(ym) : '未選択';
+  const summary = simpleBankState.result;
+  const currentMonthEl = qs('bankCurrentMonth');
+  const sheetStatusEl = qs('bankSheetStatus');
+  const missingEl = qs('bankUnpaidCount');
+
+  if (currentMonthEl) {
+    currentMonthEl.textContent = displayYm || '未選択';
+  }
+  if (sheetStatusEl) {
+    if (summary && summary.sheetName) {
+      sheetStatusEl.textContent = `${summary.sheetName}（${summary.rows || 0}行）`;
+    } else {
+      sheetStatusEl.textContent = '未生成';
+    }
+  }
+  if (missingEl) {
+    const missingCount = summary && Array.isArray(summary.missingAccounts)
+      ? summary.missingAccounts.length
+      : 0;
+    missingEl.textContent = `${missingCount}件`;
+  }
+}
+
+function renderSimpleBankDetail() {
+  const statusEl = qs('bankFlowStatus');
+  const errorEl = qs('bankFlowError');
+  const detailEl = qs('bankFlowDetail');
+  const summary = simpleBankState.result;
+
+  if (statusEl) {
+    statusEl.textContent = simpleBankState.status || 'まだ実行していません。';
+  }
+
+  if (errorEl) {
+    if (simpleBankState.error) {
+      errorEl.textContent = simpleBankState.error;
+      errorEl.style.display = 'block';
+    } else {
+      errorEl.textContent = '';
+      errorEl.style.display = 'none';
+    }
+  }
+
+  if (detailEl) {
+    const lines = [];
+    if (summary && summary.sheetName) {
+      lines.push(`シート名: ${summary.sheetName}`);
+      lines.push(`行数: ${summary.rows || 0} 行`);
+      lines.push(`金額転記: ${summary.filled || 0} 件`);
+    }
+    if (summary && Array.isArray(summary.missingAccounts) && summary.missingAccounts.length) {
+      lines.push('口座情報なし: ' + summary.missingAccounts.join(', '));
+    }
+    if (lines.length) {
+      detailEl.innerHTML = '<ul><li>' + lines.map(escapeHtml).join('</li><li>') + '</li></ul>';
+      detailEl.style.display = 'block';
+    } else {
+      detailEl.textContent = '銀行処理の結果がここに表示されます。';
+      detailEl.style.display = 'block';
+    }
+  }
+
+  renderSimpleBankSummary();
+}
+
+function setSimpleBankLoading(flag, message) {
+  simpleBankState.loading = !!flag;
+  simpleBankState.status = flag ? (message || '') : simpleBankState.status;
+  if (flag) simpleBankState.error = '';
+  updateSimpleBankControls();
+  renderSimpleBankDetail();
+}
+
+function setSimpleBankError(message, err) {
+  const detail = err && err.message ? err.message : (err != null ? String(err) : '');
+  simpleBankState.error = message ? `${message}: ${detail || ''}` : (detail || '不明なエラー');
+  simpleBankState.loading = false;
+  renderSimpleBankDetail();
+}
+
+function onSimpleBankCompleted(result) {
+  simpleBankState.loading = false;
+  simpleBankState.result = result || null;
+  const missing = result && Array.isArray(result.missingAccounts) ? result.missingAccounts : [];
+  const filledText = result ? `${result.filled || 0}/${result.rows || 0}件` : '';
+  simpleBankState.status = result ? `銀行シートを作成しました（${filledText}）` : '銀行シートを作成しました。';
+  simpleBankState.error = missing.length ? `口座情報が見つからない患者: ${missing.join(', ')}` : '';
+  renderSimpleBankDetail();
+  updateSimpleBankControls();
+}
+
+function handleSimpleBankSheetGeneration() {
+  const ym = getSimpleBankMonth();
+  if (!ym) {
+    alert('対象月を入力してください (YYYY-MM)');
+    return;
+  }
+  simpleBankState.targetMonth = ym;
+  setSimpleBankLoading(true, '銀行シート作成中…');
+  google.script.run
+    .withSuccessHandler(function(result) {
+      onSimpleBankCompleted(result);
+    })
+    .withFailureHandler(function(err) {
+      setSimpleBankError('銀行シート生成に失敗しました', err);
+    })
+    .generateSimpleBankSheet(ym);
 }
 
 function logBillingState(stage, extra) {
@@ -1668,16 +1807,17 @@ function initBillingPage() {
     bankMonthInput.value = input && input.value ? input.value : getDefaultMonth();
   }
   if (bankMonthInput) {
-    bankFlowState.targetMonth = normalizeYm(bankMonthInput.value);
+    simpleBankState.targetMonth = normalizeYm(bankMonthInput.value);
     bankMonthInput.onchange = function () {
-      bankFlowState.targetMonth = normalizeYm(this.value);
-      updateBankControls();
+      simpleBankState.targetMonth = normalizeYm(this.value);
+      updateSimpleBankControls();
+      renderSimpleBankSummary();
     };
   }
   updateBillingControls();
-  updateBankControls();
+  updateSimpleBankControls();
   renderBillingResult();
-  renderBankFlowDetail();
+  renderSimpleBankDetail();
 }
 
 (function bootstrap() {
@@ -1701,9 +1841,6 @@ if (billingGlobal) {
   billingGlobal.handleBillingAggregation = handleBillingAggregation;
   billingGlobal.handleBillingPdfGeneration = handleBillingPdfGeneration;
   billingGlobal.handleBillingSaveEdits = handleBillingSaveEdits;
-  billingGlobal.handleBankFlowAggregation = handleBankFlowAggregation;
-  billingGlobal.handleBankSheetGeneration = handleBankSheetGeneration;
-  billingGlobal.handleBankFinalize = handleBankFinalize;
-  billingGlobal.handleBankUnpaidApply = handleBankUnpaidApply;
+  billingGlobal.handleSimpleBankSheetGeneration = handleSimpleBankSheetGeneration;
 }
 </script>

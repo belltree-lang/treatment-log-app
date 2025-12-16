@@ -837,6 +837,63 @@ function buildPreparedBillingPayload_(billingMonth) {
 const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
 const BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER = 'S';
 
+function generateSimpleBankSheet(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const prepared = prepareBillingData(month.key);
+
+  const workbook = billingSs();
+  const templateSheet = ensureBankInfoSheet_();
+  const sheetName = formatBankWithdrawalSheetName_(month);
+
+  const existing = workbook.getSheetByName(sheetName);
+  if (existing) {
+    workbook.deleteSheet(existing);
+  }
+
+  const copied = templateSheet.copyTo(workbook);
+  copied.setName(sheetName);
+
+  const lastRow = copied.getLastRow();
+  const lastCol = copied.getLastColumn();
+  if (lastRow < 2) {
+    return { billingMonth: month.key, sheetName, rows: 0, filled: 0, missingAccounts: [] };
+  }
+
+  const headers = copied.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const amountCol = resolveBillingColumn_(
+    headers,
+    ['金額', '請求金額', '引落額', '引落金額'],
+    '金額',
+    { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
+  );
+
+  const rowCount = lastRow - 1;
+  const nameValues = copied.getRange(2, nameCol, rowCount, 1).getDisplayValues();
+  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
+  const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
+
+  const missingAccounts = [];
+  const amountValues = nameValues.map(row => {
+    const rawName = row && row[0] ? String(row[0]).trim() : '';
+    const nameKey = normalizeBillingNameKey_(rawName);
+    const pid = nameKey ? nameToPatientId[nameKey] : '';
+    const hasAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid);
+    const amount = hasAmount ? amountByPatientId[pid] : null;
+
+    if (!pid || amount === null || amount === undefined) {
+      if (rawName) missingAccounts.push(rawName);
+      return [''];
+    }
+    return [amount];
+  });
+
+  copied.getRange(2, amountCol, rowCount, 1).setValues(amountValues);
+  const filled = amountValues.filter(v => v && v[0] !== '' && v[0] !== null && v[0] !== undefined).length;
+
+  return { billingMonth: month.key, sheetName, rows: rowCount, filled, missingAccounts };
+}
+
 function ensureBankInfoSheet_() {
   const workbook = billingSs();
   const sheet = workbook && typeof workbook.getSheetByName === 'function'

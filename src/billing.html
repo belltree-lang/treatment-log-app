@@ -113,8 +113,8 @@
       </section>
 
     <section class="card" id="bankWithdrawalFlow">
-      <h2>銀行引落管理</h2>
-      <p class="muted">対象月の請求データ集計から未回収反映まで、手動で完結させるためのフローです。</p>
+      <h2>簡易銀行引落</h2>
+      <p class="muted">銀行情報シートを丸ごとコピーし、名前一致の患者に請求金額をS列へ転記します。</p>
       <div class="bank-flow-grid">
         <div class="bank-actions">
           <div class="bank-action">
@@ -124,20 +124,8 @@
             <p class="field-note">最初に対象月を必ず選択してください。</p>
           </div>
           <div class="bank-action">
-            <button class="btn" id="bankAggregateBtn" type="button" onclick="handleBankFlowAggregation()">請求データ集計</button>
-            <p class="field-note">銀行引落用の請求データを集計します。</p>
-          </div>
-          <div class="bank-action">
-            <button class="btn secondary" id="bankSheetBtn" type="button" onclick="handleBankSheetGeneration()">銀行引落シート生成</button>
-            <p class="field-note">シートを作成・更新します（同月の重複生成を防止）。</p>
-          </div>
-          <div class="bank-action">
-            <button class="btn danger" id="bankUnpaidBtn" type="button" onclick="handleBankUnpaidApply()">未回収反映</button>
-            <p class="field-note">シートの未回収チェック結果を履歴へ反映します。</p>
-          </div>
-          <div class="bank-action">
-            <button class="btn secondary" id="bankFinalizeBtn" type="button" onclick="handleBankFinalize()">確定</button>
-            <p class="field-note">確定（データが揃った状態にするだけ）。</p>
+            <button class="btn secondary" id="simpleBankGenerateBtn" type="button" onclick="handleSimpleBankSheetGeneration()">簡易銀行シート生成</button>
+            <p class="field-note">銀行情報をコピーし、請求額のみ転記します。口座情報がない患者は警告表示のみです。</p>
           </div>
         </div>
         <div class="bank-status-cards">
@@ -150,7 +138,7 @@
             <p class="summary-value" id="bankSheetStatus">未生成</p>
           </div>
           <div class="summary-card">
-            <p class="summary-label">未回収チェック件数</p>
+            <p class="summary-label">口座未登録 / 金額なし</p>
             <p class="summary-value" id="bankUnpaidCount">0件</p>
           </div>
         </div>

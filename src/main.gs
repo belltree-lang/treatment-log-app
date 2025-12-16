@@ -1002,11 +1002,24 @@ function ensureBankWithdrawalSheet_(billingMonth, options) {
   return sheet;
 }
 
+function buildFullNameKey_(nameKanji, nameKana) {
+  const kanjiKey = normalizeBillingNameKey_(nameKanji);
+  const kanaKey = normalizeBillingNameKey_(nameKana);
+  const combined = [kanjiKey, kanaKey].filter(Boolean).join('::');
+  if (!combined) return '';
+  const numericOnly = combined.replace(/::/g, '');
+  if (/^\d+$/.test(numericOnly)) return '';
+  return combined;
+}
+
 function buildPatientNameToIdMap_(patients) {
   const entries = patients && typeof patients === 'object' ? Object.keys(patients) : [];
   return entries.reduce((map, pid) => {
     const patient = patients[pid] || {};
-    const key = normalizeBillingNameKey_(patient.nameKanji || (patient.raw && patient.raw.nameKanji));
+    const key = buildFullNameKey_(
+      patient.nameKanji || (patient.raw && patient.raw.nameKanji),
+      patient.nameKana || (patient.raw && patient.raw.nameKana)
+    );
     const normalizedPid = billingNormalizePatientId_(pid);
     if (key && normalizedPid && !map[key]) {
       map[key] = normalizedPid;
@@ -1040,6 +1053,7 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const lastCol = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const amountCol = resolveBillingColumn_(
     headers,
     ['金額', '請求金額', '引落額', '引落金額'],
@@ -1049,12 +1063,14 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
 
   const rowCount = lastRow - 1;
   const nameValues = sheet.getRange(2, nameCol, rowCount, 1).getDisplayValues();
+  const kanaValues = kanaCol ? sheet.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
   const existingAmountValues = sheet.getRange(2, amountCol, rowCount, 1).getValues();
   const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
 
   const newAmountValues = nameValues.map((row, idx) => {
-    const nameKey = normalizeBillingNameKey_(row && row[0]);
+    const kanaRow = kanaValues[idx] || [];
+    const nameKey = buildFullNameKey_(row && row[0], kanaRow[0]);
     const pid = nameKey ? nameToPatientId[nameKey] : '';
     const resolvedAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid)
       ? amountByPatientId[pid]
@@ -1117,6 +1133,7 @@ function collectUnpaidWithdrawalRows_(billingMonth) {
   const memoCol = resolveBillingColumn_(headers, ['備考', 'メモ', 'コメント', '未回収備考'], '備考', {});
   const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const effectiveLastCol = sheet.getLastColumn();
   const values = sheet.getRange(2, 1, lastRow - 1, effectiveLastCol).getValues();
   const prepared = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true }) || {};
@@ -1134,7 +1151,7 @@ function collectUnpaidWithdrawalRows_(billingMonth) {
     const memo = memoCol ? String(row[memoCol - 1] || '').trim() : '';
     const pid = pidCol
       ? billingNormalizePatientId_(row[pidCol - 1])
-      : nameToPatientId[normalizeBillingNameKey_(row[nameCol - 1])];
+      : nameToPatientId[buildFullNameKey_(row[nameCol - 1], kanaCol ? row[kanaCol - 1] : '')];
     if (!pid) return;
     entries.push({
       patientId: pid,

@@ -332,6 +332,16 @@ function normalizeBillingNameKey_(value) {
   return String(value || '').replace(/\s+/g, '').trim();
 }
 
+function normalizeBillingFullNameKey_(nameKanji, nameKana) {
+  const kanjiKey = normalizeBillingNameKey_(nameKanji);
+  const kanaKey = normalizeBillingNameKey_(nameKana);
+  const combined = [kanjiKey, kanaKey].filter(Boolean).join('::');
+  if (!combined) return '';
+  const numericOnly = combined.replace(/::/g, '');
+  if (/^\d+$/.test(numericOnly)) return '';
+  return combined;
+}
+
 function loadBillingStaffDirectory_() {
   const sheet = billingSs().getSheetByName('スタッフ一覧');
   if (!sheet) return {};
@@ -1164,9 +1174,11 @@ function getBillingBankRecords() {
 function buildBankLookupByKanji_(bankRecords) {
   return (bankRecords || []).reduce((map, rec) => {
     if (!rec) return map;
-    const key = normalizeBillingNameKey_(rec.nameKanji);
-    if (key && !map[key]) {
-      map[key] = rec;
+    const key = normalizeBillingFullNameKey_(rec.nameKanji, rec.nameKana);
+    const fallbackKey = key || normalizeBillingNameKey_(rec.nameKanji);
+    const targetKey = key || fallbackKey;
+    if (targetKey && !map[targetKey]) {
+      map[targetKey] = rec;
     }
     return map;
   }, {});

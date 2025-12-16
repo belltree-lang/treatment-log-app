@@ -203,35 +203,6 @@ const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? P
   share: 47
 };
 
-function resolveBillingSpreadsheet_() {
-  const scriptProps = typeof PropertiesService !== 'undefined'
-    ? PropertiesService.getScriptProperties()
-    : null;
-  const configuredId = (scriptProps && scriptProps.getProperty('SSID'))
-    || (typeof APP !== 'undefined' ? (APP.SSID || '') : '');
-
-  if (configuredId) {
-    try {
-      return SpreadsheetApp.openById(configuredId);
-    } catch (err) {
-      console.warn('[billing] Failed to open SSID from config:', configuredId, err);
-    }
-  }
-
-  if (typeof ss === 'function') {
-    try {
-      const workbook = ss();
-      if (workbook) return workbook;
-    } catch (err2) {
-      console.warn('[billing] Fallback ss() failed', err2);
-    }
-  }
-
-  return SpreadsheetApp.getActiveSpreadsheet();
-}
-
-const billingSs = resolveBillingSpreadsheet_;
-
 const BILLING_PATIENT_RAW_COL_LIMIT = columnLetterToNumber_('BJ');
 const BILLING_TREATMENT_SHEET_NAME = '施術録';
 const BILLING_PAYMENT_RESULT_SHEET_PREFIX = '入金結果_';

@@ -60,7 +60,43 @@ function ss() {
 }
 
 function billingSs() {
+  if (typeof resolveBillingSpreadsheet_ === 'function') {
+    try {
+      const resolved = resolveBillingSpreadsheet_();
+      if (resolved) return resolved;
+    } catch (err) {
+      console.warn('[billing] resolveBillingSpreadsheet_ failed in billingSs', err);
+    }
+  }
+
   return ss();
+}
+
+function resolveBillingSpreadsheet_() {
+  const scriptProps = typeof PropertiesService !== 'undefined'
+    ? PropertiesService.getScriptProperties()
+    : null;
+  const configuredId = (scriptProps && scriptProps.getProperty('SSID'))
+    || (typeof APP !== 'undefined' ? (APP.SSID || '') : '');
+
+  if (configuredId) {
+    try {
+      return SpreadsheetApp.openById(configuredId);
+    } catch (err) {
+      console.warn('[billing] Failed to open SSID from config:', configuredId, err);
+    }
+  }
+
+  if (typeof ss === 'function') {
+    try {
+      const workbook = ss();
+      if (workbook) return workbook;
+    } catch (err2) {
+      console.warn('[billing] Fallback ss() failed', err2);
+    }
+  }
+
+  return SpreadsheetApp.getActiveSpreadsheet();
 }
 
 /**

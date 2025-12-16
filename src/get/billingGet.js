@@ -11,6 +11,15 @@ if (typeof billingLogger_ === 'undefined') {
   billingLogger_ = { log: billingFallbackLog_ }; // eslint-disable-line no-global-assign
 }
 
+if (typeof billingSs === 'undefined') {
+  function billingSs() {
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp.getActiveSpreadsheet) {
+      return SpreadsheetApp.getActiveSpreadsheet();
+    }
+    throw new Error('billingSs is not available');
+  }
+}
+
 const billingUnpaidHistorySheetName_ = typeof UNPAID_HISTORY_SHEET_NAME === 'string'
   ? UNPAID_HISTORY_SHEET_NAME
   : '未回収履歴';

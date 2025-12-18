@@ -423,17 +423,40 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
   };
   const billingMonthKey = billingMonth || (billingJson && billingJson.length ? billingJson[0].billingMonth : '');
 
-  (billingJson || []).forEach(item => {
+  const billedByPatientId = (billingJson || []).reduce((map, item) => {
     const pid = item && item.patientId ? String(item.patientId).trim() : '';
-    if (!pid) return;
+    if (pid && !map[pid]) {
+      map[pid] = item;
+    }
+    return map;
+  }, {});
+
+  const patientsByNameKey = Object.values(patientMap || {}).reduce((map, patient) => {
+    if (!patient) return map;
+    const nameKey = normalizeBillingFullNameKey_(patient.nameKanji, patient.nameKana);
+    if (nameKey && !map[nameKey]) {
+      map[nameKey] = patient;
+    }
+    return map;
+  }, {});
+
+  const bankEntries = Object.values(bankInfoByName || {}).filter(Boolean);
+  const seenNameKeys = new Set();
+
+  bankEntries.forEach(bankEntry => {
+    const nameKey = normalizeBillingFullNameKey_(bankEntry.nameKanji, bankEntry.nameKana);
+    if (!nameKey || seenNameKeys.has(nameKey)) return;
+    seenNameKeys.add(nameKey);
+
+    const patient = patientsByNameKey[nameKey] || {};
+    const pid = patient && patient.patientId ? String(patient.patientId).trim() : '';
+    const item = pid && billedByPatientId[pid] ? billedByPatientId[pid] : null;
+    if (!item) return;
+
     total += 1;
-    const patient = patientMap && patientMap[pid] ? patientMap[pid] : {};
-    const nameKanji = item && item.nameKanji ? String(item.nameKanji).trim() : '';
-    const nameKey = normalizeBillingFullNameKey_(nameKanji, item && item.nameKana);
-    const bankLookup = bankInfoByName && nameKey ? bankInfoByName[nameKey] : null;
 
     const pickWithPriority = (resolver, fallbackValue) => {
-      const sources = [bankLookup, patient, item];
+      const sources = [bankEntry, patient, item];
       for (let i = 0; i < sources.length; i += 1) {
         const source = sources[i];
         if (!source) continue;
@@ -450,8 +473,8 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     const rawBranchCode = pickWithPriority('branchCode', '');
     const branchCode = String(rawBranchCode).replace(/\D/g, '').padStart(3, '0');
     const regulationCode = pickWithPriority('regulationCode', 1);
-    const mergedNameKanji = pickWithPriority('nameKanji', nameKanji);
-    const rawNameKana = pickWithPriority('nameKana', '');
+    const mergedNameKanji = pickWithPriority('nameKanji', bankEntry.nameKanji);
+    const rawNameKana = pickWithPriority('nameKana', bankEntry.nameKana);
     const nameKana = rawNameKana ? normalizeKana_(rawNameKana) : normalizeKana_(mergedNameKanji);
     const rawAccountNumber = pickWithPriority('accountNumber', '');
     const accountNumber = String(rawAccountNumber).replace(/\D/g, '').padStart(7, '0');

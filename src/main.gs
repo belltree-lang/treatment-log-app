@@ -861,6 +861,7 @@ function generateSimpleBankSheet(billingMonth) {
 
   const headers = copied.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const amountCol = resolveBillingColumn_(
     headers,
     ['金額', '請求金額', '引落額', '引落金額'],
@@ -870,16 +871,23 @@ function generateSimpleBankSheet(billingMonth) {
 
   const rowCount = lastRow - 1;
   const nameValues = copied.getRange(2, nameCol, rowCount, 1).getDisplayValues();
+  const kanaValues = kanaCol ? copied.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
   const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
 
   const missingAccounts = [];
-  const amountValues = nameValues.map(row => {
+  const diagnostics = [];
+  const amountValues = nameValues.map((row, idx) => {
     const rawName = row && row[0] ? String(row[0]).trim() : '';
-    const nameKey = normalizeBillingNameKey_(rawName);
-    const pid = nameKey ? nameToPatientId[nameKey] : '';
+    const rawKana = (kanaValues[idx] && kanaValues[idx][0]) ? String(kanaValues[idx][0]).trim() : '';
+    const fullNameKey = buildFullNameKey_(rawName, rawKana);
+    const pid = fullNameKey ? nameToPatientId[fullNameKey] : '';
     const hasAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid);
     const amount = hasAmount ? amountByPatientId[pid] : null;
+
+    if (diagnostics.length < 5) {
+      diagnostics.push({ row: idx + 2, rawName, rawKana, fullNameKey, pid, hasAmount, amount });
+    }
 
     if (!pid || amount === null || amount === undefined) {
       if (rawName) missingAccounts.push(rawName);
@@ -890,6 +898,22 @@ function generateSimpleBankSheet(billingMonth) {
 
   copied.getRange(2, amountCol, rowCount, 1).setValues(amountValues);
   const filled = amountValues.filter(v => v && v[0] !== '' && v[0] !== null && v[0] !== undefined).length;
+
+  if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+    billingLogger_.log('[billing] generateSimpleBankSheet summary=' + JSON.stringify({
+      billingMonth: month.key,
+      sheetName,
+      rowCount,
+      filled,
+      missing: missingAccounts.length,
+      nameCol,
+      kanaCol,
+      amountCol
+    }));
+    if (filled === 0) {
+      billingLogger_.log('[billing] generateSimpleBankSheet diagnostics=' + JSON.stringify(diagnostics));
+    }
+  }
 
   return { billingMonth: month.key, sheetName, rows: rowCount, filled, missingAccounts };
 }

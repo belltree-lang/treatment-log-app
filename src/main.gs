@@ -148,10 +148,19 @@ function calculateBillingRowTotalsServer(row) {
 
 const BILLING_CACHE_PREFIX = 'billing_prepared_';
 const BILLING_CACHE_TTL_SECONDS = 3600; // 1 hour
+const BILLING_CACHE_CHUNK_MARKER = 'chunked:';
+const BILLING_CACHE_MAX_ENTRY_LENGTH = 90000;
+const BILLING_CACHE_CHUNK_SIZE = 90000;
 const PREPARED_BILLING_SCHEMA_VERSION = 2;
 const BANK_INFO_SHEET_NAME = '銀行情報';
 const UNPAID_HISTORY_SHEET_NAME = '未回収履歴';
 const BANK_WITHDRAWAL_UNPAID_HEADER = '未回収チェック';
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.BILLING_CACHE_CHUNK_MARKER = BILLING_CACHE_CHUNK_MARKER;
+  globalThis.BILLING_CACHE_MAX_ENTRY_LENGTH = BILLING_CACHE_MAX_ENTRY_LENGTH;
+  globalThis.BILLING_CACHE_CHUNK_SIZE = BILLING_CACHE_CHUNK_SIZE;
+}
 
 function normalizeBillingMonthKeySafe_(value) {
   const candidates = [];
@@ -183,6 +192,10 @@ function buildBillingCacheKey_(billingMonthKey) {
   const monthKey = String(billingMonthKey || '').trim();
   if (!monthKey) return '';
   return BILLING_CACHE_PREFIX + monthKey;
+}
+
+function buildBillingCacheChunkKey_(baseKey, chunkIndex) {
+  return baseKey + ':chunk:' + chunkIndex;
 }
 
 function getBillingCache_() {
@@ -287,9 +300,21 @@ function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
 function clearBillingCache_(key) {
   if (!key) return;
   const cache = getBillingCache_();
-  if (!cache || typeof cache.remove !== 'function') return;
+  if (!cache) return;
   try {
-    cache.remove(key);
+    const keysToRemove = [key];
+    if (typeof cache.get === 'function') {
+      const cached = cache.get(key);
+      const chunkCount = parseBillingCacheChunkCount_(cached);
+      for (let idx = 1; idx <= chunkCount; idx++) {
+        keysToRemove.push(buildBillingCacheChunkKey_(key, idx));
+      }
+    }
+    if (typeof cache.removeAll === 'function') {
+      cache.removeAll(keysToRemove);
+    } else if (typeof cache.remove === 'function') {
+      keysToRemove.forEach(k => cache.remove(k));
+    }
   } catch (err) {
     console.warn('[billing] Failed to clear prepared cache', err);
   }
@@ -608,7 +633,7 @@ function loadPreparedBilling_(billingMonthKey, options) {
   if (!key) return wrapResult(null, { ok: false, reason: 'cache key missing' });
   const cache = getBillingCache_();
   if (!cache) return wrapResult(null, { ok: false, reason: 'cache unavailable' });
-  const cached = cache.get(key);
+  const cached = loadBillingCachePayload_(cache, key);
   if (!cached) {
     try {
       Logger.log('[billing] loadPreparedBilling_: cache miss for ' + key);
@@ -735,7 +760,19 @@ function savePreparedBilling_(payload) {
   const cache = getBillingCache_();
   if (!cache) return;
   try {
-    cache.put(key, JSON.stringify(payloadToCache), BILLING_CACHE_TTL_SECONDS);
+    const serialized = JSON.stringify(payloadToCache);
+    clearBillingCache_(key);
+    if (serialized.length > BILLING_CACHE_MAX_ENTRY_LENGTH) {
+      const chunkCount = Math.ceil(serialized.length / BILLING_CACHE_CHUNK_SIZE);
+      for (let idx = 0; idx < chunkCount; idx++) {
+        const chunkKey = buildBillingCacheChunkKey_(key, idx + 1);
+        const chunkValue = serialized.slice(idx * BILLING_CACHE_CHUNK_SIZE, (idx + 1) * BILLING_CACHE_CHUNK_SIZE);
+        cache.put(chunkKey, chunkValue, BILLING_CACHE_TTL_SECONDS);
+      }
+      cache.put(key, BILLING_CACHE_CHUNK_MARKER + chunkCount, BILLING_CACHE_TTL_SECONDS);
+    } else {
+      cache.put(key, serialized, BILLING_CACHE_TTL_SECONDS);
+    }
   } catch (err) {
     try {
       if (Logger && typeof Logger.warning === 'function') {
@@ -746,6 +783,35 @@ function savePreparedBilling_(payload) {
     }
     console.warn('[billing] Failed to cache prepared billing', err);
   }
+}
+
+function parseBillingCacheChunkCount_(value) {
+  if (typeof value !== 'string') return 0;
+  if (value.indexOf(BILLING_CACHE_CHUNK_MARKER) !== 0) return 0;
+  const parsed = parseInt(value.slice(BILLING_CACHE_CHUNK_MARKER.length), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function loadBillingCachePayload_(cache, key) {
+  if (!cache || typeof cache.get !== 'function') return null;
+  const cached = cache.get(key);
+  const chunkCount = parseBillingCacheChunkCount_(cached);
+  if (!chunkCount) return cached;
+
+  const chunks = [];
+  for (let idx = 1; idx <= chunkCount; idx++) {
+    const chunkValue = cache.get(buildBillingCacheChunkKey_(key, idx));
+    chunks.push(chunkValue || '');
+  }
+
+  const merged = chunks.join('');
+  if (!merged) return null;
+  try {
+    billingLogger_.log('[billing] loadBillingCachePayload_ merged chunked cache for ' + key + ' chunks=' + chunkCount);
+  } catch (err) {
+    // ignore logging errors
+  }
+  return merged;
 }
 
 function buildPreparedBillingPayload_(billingMonth) {

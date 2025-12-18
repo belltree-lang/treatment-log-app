@@ -511,22 +511,25 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     };
 
     const rawBankCode = pickWithPriority('bankCode', '');
-    const bankCode = String(rawBankCode).replace(/\D/g, '').padStart(4, '0');
+    const bankCodeDigits = String(rawBankCode).replace(/\D/g, '');
+    const bankCode = bankCodeDigits ? bankCodeDigits.padStart(4, '0') : '';
     const rawBranchCode = pickWithPriority('branchCode', '');
-    const branchCode = String(rawBranchCode).replace(/\D/g, '').padStart(3, '0');
+    const branchCodeDigits = String(rawBranchCode).replace(/\D/g, '');
+    const branchCode = branchCodeDigits ? branchCodeDigits.padStart(3, '0') : '';
     const regulationCode = pickWithPriority('regulationCode', 1);
     const mergedNameKanji = pickWithPriority('nameKanji', bankEntry.nameKanji);
     const rawNameKana = pickWithPriority('nameKana', bankEntry.nameKana);
     const nameKana = rawNameKana ? normalizeKana_(rawNameKana) : normalizeKana_(mergedNameKanji);
     const rawAccountNumber = pickWithPriority('accountNumber', '');
-    const accountNumber = String(rawAccountNumber).replace(/\D/g, '').padStart(7, '0');
+    const accountNumberDigits = String(rawAccountNumber).replace(/\D/g, '');
+    const accountNumber = accountNumberDigits ? accountNumberDigits.padStart(7, '0') : '';
     const isNew = normalizeZeroOneFlag_(pickWithPriority('isNew', ''));
     const statusEntry = bankStatuses && pid ? bankStatuses[pid] : null;
     const paidStatus = item && item.paidStatus ? item.paidStatus : (statusEntry && statusEntry.paidStatus ? statusEntry.paidStatus : '');
 
-    const bankCodeInvalid = bankCode.length !== 4;
-    const branchCodeInvalid = branchCode.length !== 3;
-    const accountNumberInvalid = accountNumber.length !== 7;
+    const bankCodeInvalid = !bankCodeDigits || bankCode.length !== 4;
+    const branchCodeInvalid = !branchCodeDigits || branchCode.length !== 3;
+    const accountNumberInvalid = !accountNumberDigits || accountNumber.length !== 7;
 
     if (bankCodeInvalid || branchCodeInvalid || accountNumberInvalid) {
       skipped += 1;

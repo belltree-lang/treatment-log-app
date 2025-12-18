@@ -440,17 +440,59 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     return map;
   }, {});
 
-  const bankEntries = Object.values(bankInfoByName || {}).filter(Boolean);
+  const patientByIdMap = patientMap || {};
+  const bankEntryMap = Object.entries(bankInfoByName || {})
+    .filter(([, entry]) => !!entry)
+    .reduce((map, [nameKey, entry]) => {
+      const normalizedKey = normalizeBillingFullNameKey_(entry.nameKanji, entry.nameKana)
+        || normalizeBillingNameKey_(nameKey);
+      if (normalizedKey && !map[normalizedKey]) {
+        map[normalizedKey] = Object.assign({ _nameKey: normalizedKey }, entry);
+      }
+      return map;
+    }, {});
+
+  const billedByNameKey = (billingJson || []).reduce((map, item) => {
+    const nameKey = normalizeBillingFullNameKey_(item && item.nameKanji, item && item.nameKana);
+    if (nameKey && !map[nameKey]) {
+      map[nameKey] = item;
+    }
+    return map;
+  }, {});
+
+  (billingJson || []).forEach(item => {
+    if (!item) return;
+    const pid = item.patientId ? String(item.patientId).trim() : '';
+    const nameKey = normalizeBillingFullNameKey_(item.nameKanji, item.nameKana)
+      || normalizeBillingNameKey_(pid);
+    if (!nameKey || bankEntryMap[nameKey]) return;
+    const patient = pid && patientByIdMap[pid] ? patientByIdMap[pid] : {};
+    bankEntryMap[nameKey] = Object.assign({ _nameKey: nameKey }, patient, item);
+  });
+
+  const bankEntries = Object.values(bankEntryMap);
   const seenNameKeys = new Set();
 
   bankEntries.forEach(bankEntry => {
-    const nameKey = normalizeBillingFullNameKey_(bankEntry.nameKanji, bankEntry.nameKana);
+    const nameKey = normalizeBillingFullNameKey_(bankEntry.nameKanji, bankEntry.nameKana)
+      || normalizeBillingNameKey_(bankEntry._nameKey);
     if (!nameKey || seenNameKeys.has(nameKey)) return;
     seenNameKeys.add(nameKey);
 
-    const patient = patientsByNameKey[nameKey] || {};
-    const pid = patient && patient.patientId ? String(patient.patientId).trim() : '';
-    const item = pid && billedByPatientId[pid] ? billedByPatientId[pid] : null;
+    const patientIdFromEntry = bankEntry.patientId ? String(bankEntry.patientId).trim() : '';
+    const patient = patientsByNameKey[nameKey]
+      || (patientIdFromEntry && patientByIdMap[patientIdFromEntry])
+      || {};
+    const item = (() => {
+      const pidKey = patient && patient.patientId ? String(patient.patientId).trim() : patientIdFromEntry;
+      if (pidKey && billedByPatientId[pidKey]) {
+        return billedByPatientId[pidKey];
+      }
+      return billedByNameKey[nameKey] || null;
+    })();
+    const pid = item && item.patientId
+      ? String(item.patientId).trim()
+      : (patient && patient.patientId ? String(patient.patientId).trim() : '');
     if (!item) return;
 
     total += 1;

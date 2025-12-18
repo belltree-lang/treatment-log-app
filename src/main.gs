@@ -1041,8 +1041,8 @@ function buildPatientNameToIdMap_(patients) {
   return entries.reduce((map, pid) => {
     const patient = patients[pid] || {};
     const key = buildFullNameKey_(
-      patient.nameKanji || (patient.raw && patient.raw.nameKanji),
-      patient.nameKana || (patient.raw && patient.raw.nameKana)
+      patient.nameKanji || (patient.raw && (patient.raw.nameKanji || patient.raw['氏名'])),
+      patient.nameKana || (patient.raw && (patient.raw.nameKana || patient.raw['フリガナ']))
     );
     const normalizedPid = billingNormalizePatientId_(pid);
     if (key && normalizedPid && !map[key]) {

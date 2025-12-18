@@ -133,19 +133,30 @@ function createBankSheetMock(name, rows = []) {
         return values;
       };
 
-      return {
-        getValues,
-        getDisplayValues: () => getValues(),
-        setValues: values => {
-          for (let r = 0; r < numRows; r++) {
-            const destIndex = row - 1 + r;
-            sheet._rows[destIndex] = sheet._rows[destIndex] || [];
-            for (let c = 0; c < numCols; c++) {
-              sheet._rows[destIndex][col - 1 + c] = values[r][c];
-            }
+      const applyValues = values => {
+        for (let r = 0; r < numRows; r++) {
+          const destIndex = row - 1 + r;
+          sheet._rows[destIndex] = sheet._rows[destIndex] || [];
+          for (let c = 0; c < numCols; c++) {
+            sheet._rows[destIndex][col - 1 + c] = values[r][c];
           }
         }
       };
+
+      return {
+        getValues,
+        getDisplayValues: () => getValues(),
+        setValues: applyValues,
+        setValue: value => applyValues([[value]])
+      };
+    },
+    insertColumnAfter: colIndex => {
+      const insertAt = Math.max(0, colIndex);
+      sheet._rows = sheet._rows.map(row => {
+        const copy = row.slice();
+        copy.splice(insertAt, 0, '');
+        return copy;
+      });
     },
     getProtections: () => [],
     copyTo: workbook => {
@@ -395,6 +406,46 @@ function testPreparedBillingSheetFallbackRestoresCache() {
   assert.strictEqual(savedPayload.billingMonth, '202501');
 }
 
+function testPreparedBillingCacheIsChunkedWhenTooLarge() {
+  const store = {};
+  const cache = {
+    get: key => store[key] || null,
+    put: (key, value) => { store[key] = value; },
+    remove: key => { delete store[key]; },
+    removeAll: keys => { (keys || []).forEach(k => delete store[k]); }
+  };
+
+  const ctx = createMainContext({
+    CacheService: { getScriptCache: () => cache },
+    billingLogger_: { log: () => {} },
+    normalizeBillingMonthKeySafe_: value => String(value || '').replace(/\D/g, ''),
+    normalizePreparedBilling_: payload => payload
+  });
+
+  const chunkLimit = ctx.BILLING_CACHE_MAX_ENTRY_LENGTH || 90000;
+  const chunkMarkerPrefix = ctx.BILLING_CACHE_CHUNK_MARKER || 'chunked:';
+  const largeText = 'X'.repeat(chunkLimit + 5000);
+  const payload = buildValidPreparedPayload(ctx, {
+    billingMonth: '202501',
+    billingJson: [{ patientId: 'P001', memo: largeText }]
+  });
+
+  ctx.savePreparedBilling_(payload);
+
+  const cacheKey = ctx.buildBillingCacheKey_('202501');
+  const chunkMarker = store[cacheKey];
+  const chunkCount = parseInt(String(chunkMarker).slice(chunkMarkerPrefix.length), 10);
+
+  assert.ok(String(chunkMarker || '').startsWith(chunkMarkerPrefix), 'cache uses chunk marker when oversized');
+  assert.ok(chunkCount > 1, 'payload is split into multiple chunks');
+  assert.ok(store[ctx.buildBillingCacheChunkKey_(cacheKey, 1)], 'first chunk is stored');
+
+  const loaded = ctx.loadPreparedBilling_('202501');
+
+  assert.ok(loaded && Array.isArray(loaded.billingJson), 'chunked cache is reconstructed');
+  assert.strictEqual(loaded.billingJson[0].memo.length, largeText.length, 'chunked fields are preserved');
+}
+
 function testInvoiceGenerationUsesSheetWhenCacheMissing() {
   const invoiceCalls = [];
   const ctx = createMainContext({
@@ -482,7 +533,7 @@ function testBankWithdrawalSheetRegeneration() {
   };
 
   const ctx = createMainContext({
-    BILLING_LABELS: { name: ['名前'] },
+    BILLING_LABELS: { name: ['名前'], furigana: ['フリガナ'] },
     billingLogger_: { log: () => {} },
     normalizeBillingMonthInput: () => ({ key: '202404', year: 2024, month: 4 }),
     billingNormalizePatientId_: value => String(value || '').trim(),
@@ -490,11 +541,14 @@ function testBankWithdrawalSheetRegeneration() {
     normalizeMoneyNumber_: value => Number(value) || 0,
     resolveBillingColumn_: (headers, candidates, _label, options) => {
       const normalized = headers.map(header => String(header || '').trim());
-      for (let i = 0; i < candidates.length; i++) {
+      const candidateList = Array.isArray(candidates) ? candidates : [];
+      for (let i = 0; i < candidateList.length; i++) {
         const idx = normalized.indexOf(candidates[i]);
         if (idx >= 0) return idx + 1;
       }
-      return options && options.fallbackLetter ? columnLetterToNumber_(options.fallbackLetter) : 1;
+      if (options && options.fallbackLetter) return columnLetterToNumber_(options.fallbackLetter);
+      if (options && options.fallbackIndex) return options.fallbackIndex;
+      return 0;
     },
     SpreadsheetApp: {
       ProtectionType: { SHEET: 'SHEET' },
@@ -554,6 +608,7 @@ function run() {
   testBankExportReportsMissingPreparation();
   testPreparedBillingSheetFallback();
   testPreparedBillingSheetFallbackRestoresCache();
+  testPreparedBillingCacheIsChunkedWhenTooLarge();
   testInvoiceGenerationUsesSheetWhenCacheMissing();
   testPrepareBillingDataNormalizesMonthKey();
   testPreparedBillingSheetSaveAndLoad();

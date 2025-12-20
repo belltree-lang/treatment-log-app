@@ -26,7 +26,8 @@ const context = {
     })
   },
   SpreadsheetApp: {
-    getActiveSpreadsheet: () => workbook
+    getActiveSpreadsheet: () => workbook,
+    ProtectionType: { SHEET: 'SHEET' }
   },
   Session: {
     getScriptTimeZone: () => 'Asia/Tokyo'
@@ -53,6 +54,7 @@ const { billingParseTreatmentTimestamp_ } = context;
 const { loadBillingStaffDirectory_ } = context;
 const { buildStaffDisplayByPatient_ } = context;
 const { getBillingSourceData } = context;
+const { syncPatientIdToBankInfoSheet_ } = context;
 
 if (typeof normalizeBurdenRateInt_ !== 'function') {
   throw new Error('normalizeBurdenRateInt_ failed to load in the test context');
@@ -604,7 +606,7 @@ function testStaffDirectoryCollapsesPlusAliases() {
   assert.strictEqual(normalized['005'][0], '山田太郎', '患者ごとの担当者名にも反映される');
 }
 
-function testBankSheetPatientIdIsBackfilledFromNames() {
+function testBankSheetPatientIdSyncIsExplicit() {
   const bankHeaders = ['名前', 'フリガナ', '銀行コード', '支店コード', '規定コード', '口座番号', '患者ID'];
   const bankRows = [
     ['山田太郎', 'ヤマダタロウ', '0001', '001', '1', '1234567', ''],
@@ -612,7 +614,9 @@ function testBankSheetPatientIdIsBackfilledFromNames() {
   ];
 
   const bankValues = [bankHeaders.slice(), ...bankRows.map(r => r.slice())];
+  let setValuesCalled = 0;
   const bankSheet = {
+    getName: () => '銀行情報',
     getLastRow: () => bankValues.length,
     getLastColumn: () => bankHeaders.length,
     getMaxColumns: () => bankHeaders.length,
@@ -624,6 +628,7 @@ function testBankSheetPatientIdIsBackfilledFromNames() {
         getDisplayValues: () => slice.map(r => r.map(v => String(v))),
         getValues: () => slice.map(r => r.slice()),
         setValues: values => {
+          setValuesCalled += 1;
           for (let r = 0; r < numRows; r++) {
             bankValues[zeroRow + r] = bankValues[zeroRow + r] || [];
             for (let c = 0; c < numCols; c++) {
@@ -632,7 +637,15 @@ function testBankSheetPatientIdIsBackfilledFromNames() {
           }
         }
       };
-    }
+    },
+    protect: () => ({
+      setDescription: () => {},
+      setWarningOnly: () => {},
+      setDomainEdit: () => {},
+      canDomainEdit: () => false,
+      getEditors: () => [],
+      removeEditors: () => {}
+    })
   };
 
   const patients = [
@@ -641,21 +654,35 @@ function testBankSheetPatientIdIsBackfilledFromNames() {
   ];
 
   const originalBillingSs = context.billingSs;
-  workbook = { getSheetByName: name => (name === '銀行情報' ? bankSheet : null) };
+  const originalGetBillingPatientRecords = context.getBillingPatientRecords;
+  workbook = {
+    getSheetByName: name => (name === '銀行情報' ? bankSheet : null),
+    getProtections: () => []
+  };
   context.billingSs = () => workbook;
+  context.getBillingPatientRecords = () => patients;
 
   const records = context.getBillingBankRecords(patients);
   const pidIndex = bankHeaders.indexOf('患者ID') + 1;
+  const beforeSyncPatientId = bankSheet.getRange(2, pidIndex, 1, 1).getValues()[0][0];
+
+  assert.strictEqual(beforeSyncPatientId, '', '読み取り時は患者IDを自動転記しない');
+  assert.strictEqual(setValuesCalled, 0, 'getBillingBankRecords はシートを書き換えない');
+  assert.strictEqual(records[0].patientId, 'P001', '返却されるレコードには患者IDが付与される');
+
+  const syncResult = syncPatientIdToBankInfoSheet_();
   const firstPatientId = bankSheet.getRange(2, pidIndex, 1, 1).getValues()[0][0];
   const secondPatientId = bankSheet.getRange(3, pidIndex, 1, 1).getValues()[0][0];
   const lookup = context.buildBankLookupByKanji_(records);
 
-  assert.strictEqual(firstPatientId, 'P001', '氏名一致で患者IDが自動転記される');
+  assert.strictEqual(syncResult.updated, 1, '同期で不足していた患者IDが1件補完される');
+  assert.strictEqual(setValuesCalled, 1, '同期時のみシートを書き換える');
+  assert.strictEqual(firstPatientId, 'P001', '氏名一致で患者IDが同期される');
   assert.strictEqual(secondPatientId, 'P002', '既存の患者IDは保持される');
-  assert.strictEqual(records[0].patientId, 'P001', '返却されるレコードにも患者IDが付与される');
   assert.ok(lookup.P001, '患者IDキーで銀行情報を参照できる');
 
   context.billingSs = originalBillingSs;
+  context.getBillingPatientRecords = originalGetBillingPatientRecords;
   workbook = null;
 }
 
@@ -675,7 +702,7 @@ function run() {
   testStaffDirectoryCollapsesPlusAliases();
   testBillingOverridesDeduplicatesLatestRow();
   testBillingOverrideFlagsHighlightPatientInfoOverrides();
-  testBankSheetPatientIdIsBackfilledFromNames();
+  testBankSheetPatientIdSyncIsExplicit();
   console.log('billingGet burden rate tests passed');
 }
 

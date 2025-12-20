@@ -409,6 +409,46 @@ function testUnifiedNameKeyAcrossBankPatientAndBilling() {
   assert.strictEqual(row.accountNumber, '0006789', '口座番号は正規化される');
 }
 
+function testNameKeyNormalizationStripsSeparators() {
+  const context = createExportContext();
+  const { buildBankTransferRowsForBilling_, normalizeBillingFullNameKey_ } = context;
+
+  const billingJson = [{
+    billingMonth: '202504',
+    patientId: '010',
+    nameKanji: '山田太郎',
+    nameKana: 'ヤマダタロウ',
+    billingAmount: 8000
+  }];
+
+  const patientMap = {
+    '010': {
+      patientId: '010',
+      nameKanji: '山田太郎',
+      nameKana: 'ヤマダタロウ',
+      bankCode: '12',
+      branchCode: '34',
+      accountNumber: '567890'
+    }
+  };
+
+  const bankInfoByName = {
+    [normalizeBillingFullNameKey_('山田・太郎', 'ﾔﾏﾀﾞ･ﾀﾛｳ')]: {
+      nameKanji: '山田・太郎',
+      nameKana: 'ﾔﾏﾀﾞ･ﾀﾛｳ',
+      bankCode: '12',
+      branchCode: '34',
+      accountNumber: '567890'
+    }
+  };
+
+  const result = buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, '202504', {});
+
+  assert.strictEqual(result.rows.length, 1, '区切り文字の有無に関わらず突合できる');
+  assert.strictEqual(result.rows[0].nameKanji, '山田太郎', '漢字の区切り文字は正規化で除去される');
+  assert.strictEqual(result.rows[0].nameKana, 'ヤマダタロウ', 'カナの区切り文字も正規化される');
+}
+
 function testBankRowsSkipWhenNormalizedLengthsAreInvalid() {
   const context = createExportContext();
   const { buildBankTransferRowsForBilling_ } = context;

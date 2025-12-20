@@ -604,6 +604,61 @@ function testStaffDirectoryCollapsesPlusAliases() {
   assert.strictEqual(normalized['005'][0], '山田太郎', '患者ごとの担当者名にも反映される');
 }
 
+function testBankSheetPatientIdIsBackfilledFromNames() {
+  const bankHeaders = ['名前', 'フリガナ', '銀行コード', '支店コード', '規定コード', '口座番号', '患者ID'];
+  const bankRows = [
+    ['山田太郎', 'ヤマダタロウ', '0001', '001', '1', '1234567', ''],
+    ['山田花子', 'ヤマダハナコ', '0001', '002', '1', '7654321', 'P002']
+  ];
+
+  const bankValues = [bankHeaders.slice(), ...bankRows.map(r => r.slice())];
+  const bankSheet = {
+    getLastRow: () => bankValues.length,
+    getLastColumn: () => bankHeaders.length,
+    getMaxColumns: () => bankHeaders.length,
+    getRange: (row, col, numRows, numCols) => {
+      const zeroRow = row - 1;
+      const zeroCol = col - 1;
+      const slice = bankValues.slice(zeroRow, zeroRow + numRows).map(r => r.slice(zeroCol, zeroCol + numCols));
+      return {
+        getDisplayValues: () => slice.map(r => r.map(v => String(v))),
+        getValues: () => slice.map(r => r.slice()),
+        setValues: values => {
+          for (let r = 0; r < numRows; r++) {
+            bankValues[zeroRow + r] = bankValues[zeroRow + r] || [];
+            for (let c = 0; c < numCols; c++) {
+              bankValues[zeroRow + r][zeroCol + c] = values[r][c];
+            }
+          }
+        }
+      };
+    }
+  };
+
+  const patients = [
+    { patientId: 'P001', nameKanji: '山田太郎', nameKana: 'ヤマダタロウ' },
+    { patientId: 'P002', nameKanji: '山田花子', nameKana: 'ヤマダハナコ' }
+  ];
+
+  const originalBillingSs = context.billingSs;
+  workbook = { getSheetByName: name => (name === '銀行情報' ? bankSheet : null) };
+  context.billingSs = () => workbook;
+
+  const records = context.getBillingBankRecords(patients);
+  const pidIndex = bankHeaders.indexOf('患者ID') + 1;
+  const firstPatientId = bankSheet.getRange(2, pidIndex, 1, 1).getValues()[0][0];
+  const secondPatientId = bankSheet.getRange(3, pidIndex, 1, 1).getValues()[0][0];
+  const lookup = context.buildBankLookupByKanji_(records);
+
+  assert.strictEqual(firstPatientId, 'P001', '氏名一致で患者IDが自動転記される');
+  assert.strictEqual(secondPatientId, 'P002', '既存の患者IDは保持される');
+  assert.strictEqual(records[0].patientId, 'P001', '返却されるレコードにも患者IDが付与される');
+  assert.ok(lookup.P001, '患者IDキーで銀行情報を参照できる');
+
+  context.billingSs = originalBillingSs;
+  workbook = null;
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
@@ -620,6 +675,7 @@ function run() {
   testStaffDirectoryCollapsesPlusAliases();
   testBillingOverridesDeduplicatesLatestRow();
   testBillingOverrideFlagsHighlightPatientInfoOverrides();
+  testBankSheetPatientIdIsBackfilledFromNames();
   console.log('billingGet burden rate tests passed');
 }
 

@@ -370,6 +370,18 @@ function buildBillingNameKey_(record) {
   return '';
 }
 
+function buildPatientIdLookupByNameKey_(patients) {
+  return (patients || []).reduce((map, patient) => {
+    if (!patient) return map;
+    const pid = billingNormalizePatientId_(patient.patientId);
+    const nameKey = buildBillingNameKey_(patient);
+    if (pid && nameKey && !map[nameKey]) {
+      map[nameKey] = pid;
+    }
+    return map;
+  }, {});
+}
+
 function loadBillingStaffDirectory_() {
   const sheet = billingSs().getSheetByName('スタッフ一覧');
   if (!sheet) return {};
@@ -1156,9 +1168,7 @@ function ensureBankInfoSheet_() {
   return sheet;
 }
 
-function getBillingBankRecords() {
-  // Bank info is a reference-only master without patientId columns; lookups rely on patient names
-  // maintained in the patient information sheet.
+function getBillingBankRecords(patientRecords) {
   const sheet = ensureBankInfoSheet_();
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -1175,18 +1185,31 @@ function getBillingBankRecords() {
   const colAccount = resolveBillingColumn_(headers, ['口座番号', '口座No', '口座NO', 'accountNumber', '口座'], '口座番号', { required: true, fallbackLetter: 'Q' });
   const colIsNew = resolveBillingColumn_(headers, ['新規', '新患', 'isNew', '新規フラグ', '新規区分'], '新規区分', { fallbackLetter: 'U' });
   const colDisabled = resolveBillingColumn_(headers, ['利用停止', '停止', '無効', 'ステータス'], '利用停止', { fallbackLetter: 'T' });
+  const colPatientId = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  return values.map(row => {
+  const patientIdLookup = buildPatientIdLookupByNameKey_(patientRecords);
+  const patientIdRangeValues = colPatientId ? sheet.getRange(2, colPatientId, lastRow - 1, 1).getValues() : null;
+  const pendingPatientIdUpdates = [];
+
+  const records = values.map((row, idx) => {
     const nameKanji = colName ? String(row[colName - 1] || '').trim() : '';
     if (!nameKanji) return null;
     const disabledFlag = colDisabled ? normalizeDisabledFlag_(row[colDisabled - 1]) : 0;
     if (disabledFlag === 2) return null;
     const kanaPrimary = colKana ? String(row[colKana - 1] || '').trim() : '';
     const kanaSecondary = colKanaAlt ? String(row[colKanaAlt - 1] || '').trim() : '';
+    const nameKey = buildBillingNameKey_({ nameKanji, nameKana: kanaPrimary || kanaSecondary });
+    const rawPatientId = colPatientId ? billingNormalizePatientId_(row[colPatientId - 1]) : '';
+    const resolvedPatientId = rawPatientId || (nameKey ? patientIdLookup[nameKey] : '');
+    if (!rawPatientId && resolvedPatientId && colPatientId && patientIdRangeValues) {
+      patientIdRangeValues[idx][0] = resolvedPatientId;
+      pendingPatientIdUpdates.push(idx);
+    }
     const regulationCode = colRegulation ? normalizeMoneyValue_(row[colRegulation - 1]) : 0;
     const isNew = colIsNew ? normalizeZeroOneFlag_(row[colIsNew - 1]) : 0;
     return {
+      patientId: resolvedPatientId,
       nameKanji,
       nameKana: kanaPrimary || kanaSecondary,
       bankCode: colBank ? String(row[colBank - 1] || '').trim() : '',
@@ -1197,11 +1220,23 @@ function getBillingBankRecords() {
       raw: buildPatientRawObject_(headers, row)
     };
   }).filter(Boolean);
+
+  if (pendingPatientIdUpdates.length && colPatientId && patientIdRangeValues && typeof sheet.getRange === 'function') {
+    const targetRange = sheet.getRange(2, colPatientId, lastRow - 1, 1);
+    targetRange.setValues(patientIdRangeValues);
+  }
+
+  return records;
 }
 
 function buildBankLookupByKanji_(bankRecords) {
   return (bankRecords || []).reduce((map, rec) => {
     if (!rec) return map;
+    const patientId = billingNormalizePatientId_(rec.patientId);
+    if (patientId && !map[patientId]) {
+      map[patientId] = rec;
+      return map;
+    }
     const targetKey = buildBillingNameKey_(rec);
     if (targetKey && !map[targetKey]) {
       map[targetKey] = rec;
@@ -1250,10 +1285,10 @@ function getBillingPaymentResultsIfExists_(billingMonth) {
   }
 }
 
-  function getBillingSourceData(billingMonth) {
+function getBillingSourceData(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const patientRecords = getBillingPatientRecords();
-  const bankRecords = getBillingBankRecords();
+  const bankRecords = getBillingBankRecords(patientRecords);
   const patientMap = indexByPatientId_(patientRecords);
   const visitCountsResult = buildVisitCountMap_(month);
   const treatmentVisitCounts = visitCountsResult.counts;

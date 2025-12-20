@@ -1555,28 +1555,59 @@ function extractUnpaidHistoryFromSheet_() {
   }).filter(entry => entry.patientId && entry.billingMonth && entry.unpaidAmount > 0);
 }
 
+const BILLING_HISTORY_HEADER_CANDIDATES = typeof BILLING_HISTORY_HEADERS !== 'undefined'
+  ? BILLING_HISTORY_HEADERS
+  : [
+    'billingMonth',
+    'patientId',
+    'nameKanji',
+    'billingAmount',
+    'carryOverAmount',
+    'grandTotal',
+    'paidAmount',
+    'unpaidAmount',
+    'bankStatus',
+    'updatedAt',
+    'memo',
+    'receiptStatus',
+    'aggregateUntilMonth'
+  ];
+
+function resolveBillingHistoryColumnsFromHeaders_(headers) {
+  const map = {};
+  (headers || []).forEach((label, idx) => {
+    if (BILLING_HISTORY_HEADER_CANDIDATES.indexOf(label) >= 0) {
+      map[label] = idx + 1;
+    }
+  });
+  return map;
+}
+
 function extractLegacyUnpaidHistory_(targetKeyNum) {
   const sheet = billingSs().getSheetByName('請求履歴');
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  const values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  const colCount = Math.max(sheet.getLastColumn(), 11);
+  const headers = sheet.getRange(1, 1, 1, colCount).getDisplayValues()[0];
+  const columns = resolveBillingHistoryColumnsFromHeaders_(headers);
+  const values = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
 
   return values.map(row => {
-    const billingMonth = row[0] ? String(row[0]).trim() : '';
+    const billingMonth = columns.billingMonth ? String(row[columns.billingMonth - 1] || '').trim() : '';
     const entryMonthNum = Number(billingMonth.replace(/\D/g, '')) || 0;
     return {
       billingMonth,
-      patientId: billingNormalizePatientId_(row[1]),
-      nameKanji: row[2] || '',
-      billingAmount: Number(row[3]) || 0,
-      carryOverAmount: Number(row[4]) || 0,
-      grandTotal: Number(row[5]) || 0,
-      paidAmount: Number(row[6]) || 0,
-      unpaidAmount: Number(row[7]) || 0,
-      bankStatus: row[8] || '',
-      updatedAt: billingParseDateFlexible_(row[9]) || null,
-      memo: row[10] || '',
+      patientId: columns.patientId ? billingNormalizePatientId_(row[columns.patientId - 1]) : '',
+      nameKanji: columns.nameKanji ? row[columns.nameKanji - 1] || '' : '',
+      billingAmount: columns.billingAmount ? Number(row[columns.billingAmount - 1]) || 0 : 0,
+      carryOverAmount: columns.carryOverAmount ? Number(row[columns.carryOverAmount - 1]) || 0 : 0,
+      grandTotal: columns.grandTotal ? Number(row[columns.grandTotal - 1]) || 0 : 0,
+      paidAmount: columns.paidAmount ? Number(row[columns.paidAmount - 1]) || 0 : 0,
+      unpaidAmount: columns.unpaidAmount ? Number(row[columns.unpaidAmount - 1]) || 0 : 0,
+      bankStatus: columns.bankStatus ? row[columns.bankStatus - 1] || '' : '',
+      updatedAt: columns.updatedAt ? billingParseDateFlexible_(row[columns.updatedAt - 1]) || null : null,
+      memo: columns.memo ? row[columns.memo - 1] || '' : '',
       entryMonthNum
     };
   }).filter(entry => {

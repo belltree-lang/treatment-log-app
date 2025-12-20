@@ -2185,16 +2185,31 @@ function summarizeBillingHistory_(billingMonth) {
   if (lastRow < 2) {
     return { billingMonth, exists: true, total: 0, statuses: {}, paidTotal: 0, unpaidTotal: 0 };
   }
-  const values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
-  const rows = values.filter(row => row[0] === billingMonth);
+  const colCount = Math.max(sheet.getLastColumn(), 11);
+  const headers = sheet.getRange(1, 1, 1, colCount).getDisplayValues()[0];
+  const columns = typeof resolveBillingHistoryColumnsFromHeaders_ === 'function'
+    ? resolveBillingHistoryColumnsFromHeaders_(headers)
+    : {
+      billingMonth: 1,
+      paidAmount: 7,
+      unpaidAmount: 8,
+      bankStatus: 9
+    };
+  const billingMonthIdx = (columns.billingMonth || 1) - 1;
+  const paidIdx = (columns.paidAmount || 7) - 1;
+  const unpaidIdx = (columns.unpaidAmount || 8) - 1;
+  const bankStatusIdx = (columns.bankStatus || 9) - 1;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
+  const rows = values.filter(row => row[billingMonthIdx] === billingMonth);
   const statuses = {};
   let paidTotal = 0;
   let unpaidTotal = 0;
   rows.forEach(row => {
-    const status = row[8] || '';
+    const status = row[bankStatusIdx] || '';
     statuses[status] = (statuses[status] || 0) + 1;
-    paidTotal += Number(row[6]) || 0;
-    unpaidTotal += Number(row[7]) || 0;
+    paidTotal += Number(row[paidIdx]) || 0;
+    unpaidTotal += Number(row[unpaidIdx]) || 0;
   });
 
   return { billingMonth, exists: true, total: rows.length, statuses, paidTotal, unpaidTotal };

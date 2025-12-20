@@ -270,10 +270,12 @@ function normalizeInvoicePatientIdsForOutput_(patientIds) {
   return unique;
 }
 
-function formatInvoiceFileName_(item) {
+function formatInvoiceFileName_(item, options) {
   const baseName = sanitizeFileName_(item && (item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
   const dateLabel = formatInvoiceDateLabel_();
-  return baseName + '_' + (dateLabel || 'YYYYMMDD') + '_請求書.pdf';
+  const suffix = options && options.fileNameSuffix ? String(options.fileNameSuffix).trim() : '';
+  const base = baseName + '_' + (dateLabel || 'YYYYMMDD') + '_請求書';
+  return base + suffix + '.pdf';
 }
 
 function buildInvoiceTemplateData_(item) {
@@ -295,11 +297,11 @@ function buildInvoiceTemplateData_(item) {
   });
 }
 
-function createInvoicePdfBlob_(item) {
+function createInvoicePdfBlob_(item, options) {
   const template = HtmlService.createTemplateFromFile('invoice_template');
   template.data = buildInvoiceTemplateData_(item || {});
   const html = template.evaluate().setWidth(1240).setHeight(1754);
-  const fileName = formatInvoiceFileName_(item);
+  const fileName = formatInvoiceFileName_(item, options);
   return html.getBlob().getAs(MimeType.PDF).setName(fileName);
 }
 
@@ -428,17 +430,20 @@ function removeExistingInvoiceFiles_(folder, fileName) {
   }
 }
 
-function saveInvoicePdf(item, pdfBlob) {
+function saveInvoicePdf(item, pdfBlob, options) {
   const folder = ensureInvoiceFolderForResponsible_(item);
+  const shouldOverwrite = !(options && options.overwriteExisting === false);
   const fileName = pdfBlob.getName();
-  removeExistingInvoiceFiles_(folder, fileName);
+  if (shouldOverwrite) {
+    removeExistingInvoiceFiles_(folder, fileName);
+  }
   const file = folder.createFile(pdfBlob);
   return { fileId: file.getId(), url: file.getUrl(), name: file.getName() };
 }
 
-function generateInvoicePdf(item) {
-  const blob = createInvoicePdfBlob_(item);
-  return saveInvoicePdf(item, blob);
+function generateInvoicePdf(item, options) {
+  const blob = createInvoicePdfBlob_(item, options);
+  return saveInvoicePdf(item, blob, options);
 }
 
 function generateInvoicePdfs(billingJson, options) {
@@ -447,8 +452,13 @@ function generateInvoicePdfs(billingJson, options) {
   const targets = patientIds.length
     ? (billingJson || []).filter(item => patientIds.indexOf(String(item && item.patientId ? item.patientId : '').trim()) >= 0)
     : (billingJson || []);
+  const isPartialGeneration = patientIds.length > 0;
+  const invoiceFileOptions = {
+    overwriteExisting: !isPartialGeneration,
+    fileNameSuffix: isPartialGeneration ? (options && options.reissueSuffix ? options.reissueSuffix : '_再発行') : ''
+  };
   const files = targets.map(item => {
-    const meta = generateInvoicePdf(item);
+    const meta = generateInvoicePdf(item, invoiceFileOptions);
     return Object.assign({}, meta, { patientId: item && item.patientId, nameKanji: item && item.nameKanji });
   });
   const matchedIds = new Set(files.map(f => String(f.patientId || '').trim()).filter(Boolean));

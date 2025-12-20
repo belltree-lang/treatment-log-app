@@ -240,6 +240,84 @@ function formatBillingMonthCompact_(billingMonth) {
   return '';
 }
 
+function normalizeInvoiceMonthKey_(value) {
+  const digits = (value ? String(value) : '').replace(/\D/g, '');
+  if (digits.length >= 6) return digits.slice(0, 6);
+  return '';
+}
+
+function formatMonthWithReiwaEra_(yyyymm) {
+  const normalized = normalizeInvoiceMonthKey_(yyyymm);
+  if (!normalized) return '';
+  const year = Number(normalized.slice(0, 4));
+  const month = normalized.slice(4, 6);
+  const eraYear = Number.isFinite(year) ? year - 2018 : '';
+  if (!eraYear) return '';
+  return `令和${eraYear}年${month}月`;
+}
+
+function buildInclusiveMonthRange_(fromYm, toYm) {
+  const startKey = normalizeInvoiceMonthKey_(fromYm);
+  const endKey = normalizeInvoiceMonthKey_(toYm);
+  if (!startKey || !endKey) return startKey ? [startKey] : [];
+  const months = [];
+  const startNum = Number(startKey);
+  const endNum = Number(endKey);
+  if (!Number.isFinite(startNum) || !Number.isFinite(endNum) || startNum > endNum) return [startKey];
+
+  let cursorYear = Number(startKey.slice(0, 4));
+  let cursorMonth = Number(startKey.slice(4, 6));
+  while (true) {
+    const ym = String(cursorYear).padStart(4, '0') + String(cursorMonth).padStart(2, '0');
+    months.push(ym);
+    if (ym === endKey) break;
+    cursorMonth += 1;
+    if (cursorMonth > 12) {
+      cursorMonth = 1;
+      cursorYear += 1;
+    }
+    if (months.length > 240) break;
+  }
+  return months;
+}
+
+function formatAggregatedReceiptRemark_(months) {
+  if (!Array.isArray(months) || !months.length) return '';
+  const parts = months.map((ym, idx) => {
+    const label = formatMonthWithReiwaEra_(ym);
+    if (!label) return '';
+    if (idx === 0) return label + '分';
+    const month = normalizeInvoiceMonthKey_(ym).slice(4, 6);
+    return month ? month + '月分' : '';
+  }).filter(Boolean);
+
+  if (!parts.length) return '';
+  return parts.join('・') + '施術代として';
+}
+
+function resolveInvoiceReceiptDisplay_(item) {
+  const rawStatus = item && item.receiptStatus;
+  const status = rawStatus == null ? null : String(rawStatus).trim().toUpperCase();
+  const aggregateUntil = item && item.aggregateUntilMonth;
+  const billingMonth = item && item.billingMonth;
+  const aggregateMonths = aggregateUntil
+    ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
+    : (billingMonth ? [normalizeInvoiceMonthKey_(billingMonth)].filter(Boolean) : []);
+
+  if (status === 'UNPAID' || status === 'HOLD') {
+    return { showReceipt: false, receiptRemark: '', receiptMonths: aggregateMonths };
+  }
+
+  const shouldShow = status === null || status === '' || status === 'AGGREGATE' || !!aggregateUntil;
+  const receiptRemark = shouldShow && aggregateUntil ? formatAggregatedReceiptRemark_(aggregateMonths) : '';
+
+  return {
+    showReceipt: shouldShow,
+    receiptRemark,
+    receiptMonths: aggregateMonths
+  };
+}
+
 function formatInvoiceDateLabel_() {
   try {
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
@@ -290,10 +368,15 @@ function buildInvoiceTemplateData_(item) {
     { label: '交通費', detail: breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回'), amount: breakdown.transportAmount }
   ];
 
+  const receipt = resolveInvoiceReceiptDisplay_(item);
+
   return Object.assign({}, item, {
     monthLabel,
     rows,
-    grandTotal: breakdown.grandTotal
+    grandTotal: breakdown.grandTotal,
+    showReceipt: receipt.showReceipt,
+    receiptRemark: receipt.receiptRemark,
+    receiptMonths: receipt.receiptMonths
   });
 }
 

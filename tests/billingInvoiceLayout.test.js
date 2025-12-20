@@ -108,12 +108,36 @@ function testInvoiceTemplateRecalculatesSelfPaidBreakdown() {
   assert.strictEqual(data.grandTotal, 3366, '合計は再計算された施術料と交通費に基づく');
 }
 
+function testInvoiceTemplateAddsReceiptDecision() {
+  const unpaid = buildInvoiceTemplateData_({
+    billingMonth: '202311',
+    receiptStatus: 'UNPAID'
+  });
+
+  assert.strictEqual(unpaid.showReceipt, false, 'UNPAID の月は領収書を表示しない');
+
+  const aggregated = buildInvoiceTemplateData_({
+    billingMonth: '202311',
+    aggregateUntilMonth: '202312',
+    receiptStatus: 'AGGREGATE'
+  });
+
+  assert.strictEqual(aggregated.showReceipt, true, 'AGGREGATE 指定は領収書を表示対象とする');
+  assert.deepStrictEqual(Array.from(aggregated.receiptMonths || []), ['202311', '202312'], '合算対象の月を保持する');
+  assert.strictEqual(
+    aggregated.receiptRemark,
+    '令和5年11月分・12月分施術代として',
+    '合算領収の但し書きを生成する'
+  );
+}
+
 function run() {
   testInvoiceChargeBreakdown();
   testInvoiceChargeBreakdownUsesCustomTransportPrice();
   testInvoiceHtmlIncludesBreakdown();
   testInvoiceHtmlEscapesUserInput();
   testInvoiceTemplateRecalculatesSelfPaidBreakdown();
+  testInvoiceTemplateAddsReceiptDecision();
   console.log('billingInvoiceLayout tests passed');
 }
 

@@ -1092,6 +1092,13 @@ function ensureBankWithdrawalSheet_(billingMonth, options) {
   return sheet;
 }
 
+function normalizeBillingNameKey_(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
 function buildFullNameKey_(nameKanji, nameKana) {
   const kanjiKey = normalizeBillingNameKey_(nameKanji);
   const kanaKey = normalizeBillingNameKey_(nameKana);

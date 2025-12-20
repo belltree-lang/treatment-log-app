@@ -686,6 +686,76 @@ function testBankSheetPatientIdSyncIsExplicit() {
   workbook = null;
 }
 
+function testBankSheetSyncHandlesAlternateHeaders() {
+  let setValuesCalled = 0;
+  const bankHeaders = ['口座番号', '氏名（漢字）', '氏名（カナ）', '患者ID'];
+  const bankRows = [
+    ['123', '山田太郎', 'ヤマダタロウ', ''],
+    ['456', '', '', '']
+  ];
+  const bankValues = [bankHeaders.slice(), ...bankRows.map(r => r.slice())];
+
+  const bankSheet = {
+    getLastRow: () => bankValues.length,
+    getLastColumn: () => bankHeaders.length,
+    getMaxColumns: () => bankHeaders.length,
+    getRange: (row, col, numRows, numCols) => {
+      const zeroRow = row - 1;
+      const zeroCol = col - 1;
+      const slice = bankValues.slice(zeroRow, zeroRow + numRows).map(r => r.slice(zeroCol, zeroCol + numCols));
+      return {
+        getDisplayValues: () => slice.map(r => r.map(v => String(v))),
+        getValues: () => slice.map(r => r.slice()),
+        setValues: values => {
+          setValuesCalled += 1;
+          for (let r = 0; r < numRows; r++) {
+            bankValues[zeroRow + r] = bankValues[zeroRow + r] || [];
+            for (let c = 0; c < numCols; c++) {
+              bankValues[zeroRow + r][zeroCol + c] = values[r][c];
+            }
+          }
+        }
+      };
+    },
+    protect: () => ({
+      setDescription: () => {},
+      setWarningOnly: () => {},
+      setDomainEdit: () => {},
+      canDomainEdit: () => false,
+      getEditors: () => [],
+      removeEditors: () => {}
+    })
+  };
+
+  const patients = [
+    { patientId: 'P001', nameKanji: '山田太郎', nameKana: 'ヤマダタロウ' }
+  ];
+
+  const originalBillingSs = context.billingSs;
+  const originalGetBillingPatientRecords = context.getBillingPatientRecords;
+  workbook = {
+    getSheetByName: name => (name === '銀行情報' ? bankSheet : null),
+    getProtections: () => []
+  };
+  context.billingSs = () => workbook;
+  context.getBillingPatientRecords = () => patients;
+
+  const syncResult = context.syncPatientIdToBankInfoSheet_();
+  const pidIndex = bankHeaders.indexOf('患者ID') + 1;
+  const firstPatientId = bankSheet.getRange(2, pidIndex, 1, 1).getValues()[0][0];
+  const secondPatientId = bankSheet.getRange(3, pidIndex, 1, 1).getValues()[0][0];
+
+  assert.strictEqual(firstPatientId, 'P001', '別表記の氏名ヘッダでも患者IDが同期される');
+  assert.strictEqual(secondPatientId, '', '氏名が空の行は未解決として扱う');
+  assert.strictEqual(syncResult.updated, 1, '1件の患者IDが補完される');
+  assert.strictEqual(syncResult.unresolved, 1, '氏名なしの行は unresolved に計上される');
+  assert.strictEqual(setValuesCalled, 1, '患者ID列を書き換えた回数が記録される');
+
+  context.billingSs = originalBillingSs;
+  context.getBillingPatientRecords = originalGetBillingPatientRecords;
+  workbook = null;
+}
+
 function run() {
   testFullWidthDigitsAreParsed();
   testAsciiInputsRemainCompatible();
@@ -703,6 +773,7 @@ function run() {
   testBillingOverridesDeduplicatesLatestRow();
   testBillingOverrideFlagsHighlightPatientInfoOverrides();
   testBankSheetPatientIdSyncIsExplicit();
+  testBankSheetSyncHandlesAlternateHeaders();
   console.log('billingGet burden rate tests passed');
 }
 

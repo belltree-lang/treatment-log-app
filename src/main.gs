@@ -430,6 +430,33 @@ function savePreparedBillingMetaJson_(billingMonth, metaPayload) {
   return { billingMonth: monthKey, inserted: rows.length };
 }
 
+function normalizeReceiptStatus_(value) {
+  const status = value == null ? '' : String(value).trim().toUpperCase();
+  const allowed = ['UNPAID', 'AGGREGATE', 'HOLD'];
+  return allowed.indexOf(status) >= 0 ? status : '';
+}
+
+function mergeReceiptSettingsIntoPrepared_(prepared, status, aggregateUntilMonth) {
+  const normalizedStatus = normalizeReceiptStatus_(status);
+  const normalizedAggregate = normalizedStatus === 'AGGREGATE'
+    ? normalizeBillingMonthKeySafe_(aggregateUntilMonth || prepared && prepared.aggregateUntilMonth)
+    : '';
+
+  const payload = Object.assign({}, prepared, {
+    receiptStatus: normalizedStatus,
+    aggregateUntilMonth: normalizedAggregate
+  });
+
+  if (Array.isArray(prepared && prepared.billingJson)) {
+    payload.billingJson = prepared.billingJson.map(row => Object.assign({}, row || {}, {
+      receiptStatus: normalizedStatus,
+      aggregateUntilMonth: normalizedAggregate
+    }));
+  }
+
+  return payload;
+}
+
 function savePreparedBillingJsonRows_(billingMonth, billingJson) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey || !Array.isArray(billingJson)) return { billingMonth: monthKey || '', inserted: 0 };
@@ -817,6 +844,7 @@ function loadBillingCachePayload_(cache, key) {
 function buildPreparedBillingPayload_(billingMonth) {
   const resolvedMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const source = getBillingSourceData(resolvedMonthKey || billingMonth);
+  const existingPrepared = resolvedMonthKey ? loadPreparedBillingFromSheet_(resolvedMonthKey) : null;
   const billingMonthKey = normalizeBillingMonthKeySafe_(
     source.billingMonth || (source.month && source.month.key) || resolvedMonthKey
   );
@@ -878,7 +906,7 @@ function buildPreparedBillingPayload_(billingMonth) {
   if (billingJsonArray.length) {
     billingLogger_.log('[billing] buildPreparedBillingPayload_ firstBillingEntry=' + JSON.stringify(billingJsonArray[0]));
   }
-  return {
+  const payload = {
     schemaVersion: PREPARED_BILLING_SCHEMA_VERSION,
     billingMonth: billingMonthKey || source.billingMonth,
     billingJson: billingJsonArray,
@@ -896,8 +924,13 @@ function buildPreparedBillingPayload_(billingMonth) {
       unpaidHistory: source.unpaidHistory || [],
       visitsByPatient,
       totalsByPatient,
-      bankAccountInfoByPatient
+      bankAccountInfoByPatient,
+      receiptStatus: existingPrepared && existingPrepared.receiptStatus,
+      aggregateUntilMonth: existingPrepared && existingPrepared.aggregateUntilMonth
   };
+  return mergeReceiptSettingsIntoPrepared_(payload,
+    existingPrepared && existingPrepared.receiptStatus,
+    existingPrepared && existingPrepared.aggregateUntilMonth);
 }
 
 const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
@@ -1443,7 +1476,9 @@ function coerceBillingJsonArray_(raw) {
       carryOverLedgerMeta: normalizeMap_(payload.carryOverLedgerMeta),
       carryOverLedgerByPatient: normalizeMap_(payload.carryOverLedgerByPatient),
       unpaidHistory: Array.isArray(payload.unpaidHistory) ? payload.unpaidHistory : [],
-      bankStatuses: normalizeMap_(payload.bankStatuses)
+      bankStatuses: normalizeMap_(payload.bankStatuses),
+      receiptStatus: normalizeReceiptStatus_(payload.receiptStatus),
+      aggregateUntilMonth: normalizeBillingMonthKeySafe_(payload.aggregateUntilMonth)
     };
     const normalizedLength = Array.isArray(normalized.billingJson) ? normalized.billingJson.length : 0;
     billingLogger_.log('[billing] normalizePreparedBilling_ lengths=' + JSON.stringify({
@@ -1474,15 +1509,17 @@ function toClientBillingPayload_(prepared) {
     staffDirectory: normalized.staffDirectory || {},
     staffDisplayByPatient: normalized.staffDisplayByPatient || {},
     billingOverrideFlags: normalized.billingOverrideFlags || {},
-      carryOverByPatient: normalized.carryOverByPatient || {},
-      carryOverLedger: normalized.carryOverLedger || [],
-      carryOverLedgerMeta: normalized.carryOverLedgerMeta || {},
-      carryOverLedgerByPatient: normalized.carryOverLedgerByPatient || {},
-      unpaidHistory: normalized.unpaidHistory || [],
-      visitsByPatient: normalized.visitsByPatient || {},
-      totalsByPatient: normalized.totalsByPatient || {},
-      bankAccountInfoByPatient: normalized.bankAccountInfoByPatient || {},
-    bankStatuses: normalized.bankStatuses || {}
+    carryOverByPatient: normalized.carryOverByPatient || {},
+    carryOverLedger: normalized.carryOverLedger || [],
+    carryOverLedgerMeta: normalized.carryOverLedgerMeta || {},
+    carryOverLedgerByPatient: normalized.carryOverLedgerByPatient || {},
+    unpaidHistory: normalized.unpaidHistory || [],
+    visitsByPatient: normalized.visitsByPatient || {},
+    totalsByPatient: normalized.totalsByPatient || {},
+    bankAccountInfoByPatient: normalized.bankAccountInfoByPatient || {},
+    bankStatuses: normalized.bankStatuses || {},
+    receiptStatus: normalized.receiptStatus || '',
+    aggregateUntilMonth: normalized.aggregateUntilMonth || ''
   };
 }
 
@@ -1989,6 +2026,25 @@ function applyBillingEdits(billingMonth, options) {
 function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   const prepared = applyBillingEdits(billingMonth, options);
   return generatePreparedInvoices_(prepared, options || {});
+}
+
+function updateBillingReceiptStatus(billingMonth, options) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const status = normalizeReceiptStatus_(options && options.receiptStatus);
+  const aggregateUntil = status === 'AGGREGATE'
+    ? normalizeBillingMonthKeySafe_(options && (options.aggregateUntil || options.aggregateUntilMonth))
+    : '';
+
+  const existing = loadPreparedBillingWithSheetFallback_(month.key, { allowInvalid: true, restoreCache: false });
+  let prepared = existing && existing.prepared !== undefined ? existing.prepared : existing;
+  if (!prepared) {
+    prepared = buildPreparedBillingPayload_(month);
+  }
+
+  const merged = mergeReceiptSettingsIntoPrepared_(prepared, status, aggregateUntil);
+  savePreparedBilling_(merged);
+  savePreparedBillingToSheet_(month.key, merged);
+  return toClientBillingPayload_(merged);
 }
 
   // Deprecated (legacy bank transfer export). New specifications do not rely on bank CSV/JSON outputs.

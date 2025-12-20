@@ -136,8 +136,12 @@ const billingNormalizeBurdenRatio_ = typeof normalizeBurdenRatio_ === 'function'
     return null;
   };
 
+const BILLING_PATIENT_ID_LABELS = typeof PATIENT_ID_LABELS !== 'undefined'
+  ? PATIENT_ID_LABELS
+  : ['施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号', 'recNo', 'patientId'];
+
 const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
-  recNo: ['施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号'],
+  recNo: BILLING_PATIENT_ID_LABELS,
   name: ['名前', '氏名', '患者名', 'お名前'],
   hospital: ['病院名', '医療機関', '病院'],
   doctor: ['医師', '主治医', '担当医'],

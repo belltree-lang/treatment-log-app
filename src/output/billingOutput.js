@@ -831,27 +831,53 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
 
 /***** Billing history and payment result utilities (retained for compatibility) *****/
 
+const BILLING_HISTORY_HEADERS = [
+  'billingMonth',
+  'patientId',
+  'nameKanji',
+  'billingAmount',
+  'carryOverAmount',
+  'grandTotal',
+  'paidAmount',
+  'unpaidAmount',
+  'bankStatus',
+  'updatedAt',
+  'memo',
+  'receiptStatus',
+  'aggregateUntilMonth'
+];
+
+function resolveBillingHistoryColumns_(sheet) {
+  const lastCol = Math.max(sheet.getLastColumn(), BILLING_HISTORY_HEADERS.length);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const workingHeaders = headers.slice();
+  const columns = {};
+
+  BILLING_HISTORY_HEADERS.forEach((label) => {
+    let idx = workingHeaders.indexOf(label);
+    if (idx >= 0) {
+      columns[label] = idx + 1;
+      return;
+    }
+    const newIndex = workingHeaders.length + 1;
+    sheet.getRange(1, newIndex).setValue(label);
+    workingHeaders.push(label);
+    columns[label] = newIndex;
+  });
+
+  return { columns, headers: workingHeaders };
+}
+
 function ensureBillingHistorySheet_() {
   const SHEET_NAME = '請求履歴';
   const workbook = ss();
   let sheet = workbook.getSheetByName(SHEET_NAME);
   if (!sheet) {
     sheet = workbook.insertSheet(SHEET_NAME);
-    sheet.getRange(1, 1, 1, 11).setValues([[
-      'billingMonth',
-      'patientId',
-      'nameKanji',
-      'billingAmount',
-      'carryOverAmount',
-      'grandTotal',
-      'paidAmount',
-      'unpaidAmount',
-      'bankStatus',
-      'updatedAt',
-      'memo'
-    ]]);
+    sheet.getRange(1, 1, 1, BILLING_HISTORY_HEADERS.length).setValues([BILLING_HISTORY_HEADERS]);
   }
-  return sheet;
+  const resolved = resolveBillingHistoryColumns_(sheet);
+  return { sheet, columns: resolved.columns, headers: resolved.headers };
 }
 
 function ensureUnpaidHistorySheet_() {
@@ -916,70 +942,151 @@ function appendUnpaidHistoryEntries_(entries) {
 
 function appendBillingHistoryRows(billingJson, options) {
   const opts = options || {};
-  const sheet = ensureBillingHistorySheet_();
+  const ensured = ensureBillingHistorySheet_();
+  const sheet = ensured.sheet;
+  const columns = ensured.columns;
+  const headers = ensured.headers;
+  const colCount = Math.max(sheet.getLastColumn(), headers.length, Math.max.apply(null, Object.values(columns)));
   const billingMonth = opts.billingMonth || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
-  const memo = opts.memo || '';
-  const rows = (billingJson || []).map(item => {
+  const memoProvided = Object.prototype.hasOwnProperty.call(opts, 'memo');
+  const memo = memoProvided ? opts.memo : null;
+
+  const lastRow = sheet.getLastRow();
+  const existingValues = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, colCount).getValues() : [];
+  const keyForRow = (row) => {
+    const month = columns.billingMonth ? String(row[columns.billingMonth - 1] || '').trim() : '';
+    const pid = columns.patientId ? String(row[columns.patientId - 1] || '').trim() : '';
+    return month && pid ? `${month}::${pid}` : '';
+  };
+
+  const workingRowsByKey = existingValues.reduce((map, row) => {
+    const key = keyForRow(row);
+    if (key && !map.has(key)) map.set(key, row);
+    return map;
+  }, new Map());
+
+  const mapped = (billingJson || []).map(item => {
     const billingAmount = item && item.treatmentAmount != null ? item.treatmentAmount : 0;
     const carryOver = item && item.carryOverAmount != null ? item.carryOverAmount : 0;
     const paid = item && item.paidAmount != null ? item.paidAmount : 0;
     const grandTotal = normalizeBillingAmount_(item);
     const unpaid = grandTotal - paid;
-    return [
-      billingMonth,
-      item && item.patientId ? item.patientId : '',
-      item && item.nameKanji ? item.nameKanji : '',
-      billingAmount,
-      carryOver,
-      grandTotal,
-      paid,
-      unpaid,
-      item && item.bankStatus ? item.bankStatus : '',
-      new Date(),
-      memo
-    ];
+    const row = new Array(colCount).fill('');
+    if (columns.billingMonth) row[columns.billingMonth - 1] = billingMonth;
+    if (columns.patientId) row[columns.patientId - 1] = item && item.patientId ? item.patientId : '';
+    if (columns.nameKanji) row[columns.nameKanji - 1] = item && item.nameKanji ? item.nameKanji : '';
+    if (columns.billingAmount) row[columns.billingAmount - 1] = billingAmount;
+    if (columns.carryOverAmount) row[columns.carryOverAmount - 1] = carryOver;
+    if (columns.grandTotal) row[columns.grandTotal - 1] = grandTotal;
+    if (columns.paidAmount) row[columns.paidAmount - 1] = paid;
+    if (columns.unpaidAmount) row[columns.unpaidAmount - 1] = unpaid;
+    if (columns.bankStatus) row[columns.bankStatus - 1] = item && item.bankStatus ? item.bankStatus : '';
+    if (columns.updatedAt) row[columns.updatedAt - 1] = new Date();
+    if (columns.memo && memoProvided) row[columns.memo - 1] = memo || '';
+    if (columns.receiptStatus) row[columns.receiptStatus - 1] = item && item.receiptStatus ? item.receiptStatus : '';
+    if (columns.aggregateUntilMonth) row[columns.aggregateUntilMonth - 1] = item && item.aggregateUntilMonth ? item.aggregateUntilMonth : '';
+
+    return { key: (billingMonth && item && item.patientId) ? `${billingMonth}::${item.patientId}` : keyForRow(row), row };
   });
-  if (rows.length) {
-    sheet.insertRows(2, rows.length);
-    sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+
+  mapped.forEach(entry => {
+    const existingRow = workingRowsByKey.get(entry.key);
+    const mergedRow = existingRow ? existingRow.slice() : new Array(colCount).fill('');
+
+    const applyValue = (label, value) => {
+      const idx = columns[label];
+      if (!idx) return;
+      mergedRow[idx - 1] = value;
+    };
+
+    applyValue('billingMonth', entry.row[columns.billingMonth - 1]);
+    applyValue('patientId', entry.row[columns.patientId - 1]);
+    applyValue('nameKanji', entry.row[columns.nameKanji - 1]);
+    applyValue('billingAmount', entry.row[columns.billingAmount - 1]);
+    applyValue('carryOverAmount', entry.row[columns.carryOverAmount - 1]);
+    applyValue('grandTotal', entry.row[columns.grandTotal - 1]);
+    applyValue('paidAmount', entry.row[columns.paidAmount - 1]);
+    applyValue('unpaidAmount', entry.row[columns.unpaidAmount - 1]);
+    applyValue('bankStatus', entry.row[columns.bankStatus - 1]);
+    applyValue('updatedAt', entry.row[columns.updatedAt - 1]);
+
+    if (columns.memo) {
+      const existingMemo = existingRow ? existingRow[columns.memo - 1] : '';
+      const resolvedMemo = memoProvided ? (memo || '') : existingMemo;
+      mergedRow[columns.memo - 1] = resolvedMemo;
+    }
+
+    if (columns.receiptStatus) {
+      const existingReceiptStatus = existingRow ? existingRow[columns.receiptStatus - 1] : '';
+      const resolvedReceiptStatus = (existingReceiptStatus != null && String(existingReceiptStatus).trim() !== '')
+        ? existingReceiptStatus
+        : entry.row[columns.receiptStatus - 1];
+      mergedRow[columns.receiptStatus - 1] = resolvedReceiptStatus;
+    }
+
+    if (columns.aggregateUntilMonth) {
+      const existingAggregate = existingRow ? existingRow[columns.aggregateUntilMonth - 1] : '';
+      const resolvedAggregate = (existingAggregate != null && String(existingAggregate).trim() !== '')
+        ? existingAggregate
+        : entry.row[columns.aggregateUntilMonth - 1];
+      mergedRow[columns.aggregateUntilMonth - 1] = resolvedAggregate;
+    }
+
+    workingRowsByKey.set(entry.key, mergedRow);
+  });
+
+  const workingRows = Array.from(workingRowsByKey.values());
+  const dataRowCount = Math.max(0, lastRow - 1);
+  const maxRowCount = Math.max(dataRowCount, workingRows.length);
+
+  if (maxRowCount > 0) {
+    sheet.getRange(2, 1, maxRowCount, colCount).clearContent();
   }
-  return { billingMonth, inserted: rows.length };
+  if (workingRows.length) {
+    sheet.getRange(2, 1, workingRows.length, colCount).setValues(workingRows);
+  }
+
+  return { billingMonth, inserted: mapped.length };
 }
 
 function applyPaymentResultsToHistory(billingMonth, bankStatuses) {
-  const sheet = ensureBillingHistorySheet_();
+  const ensured = ensureBillingHistorySheet_();
+  const sheet = ensured.sheet;
+  const columns = ensured.columns;
+  const headers = ensured.headers;
+  const colCount = Math.max(sheet.getLastColumn(), headers.length, Math.max.apply(null, Object.values(columns)));
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { billingMonth, updated: 0 };
-  const data = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  const data = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
   const updates = [];
   const statusMap = bankStatuses || {};
   data.forEach((row, idx) => {
-    if (row[0] !== billingMonth) return;
-    const pid = row[1];
+    if (columns.billingMonth && row[columns.billingMonth - 1] !== billingMonth) return;
+    const pid = columns.patientId ? row[columns.patientId - 1] : '';
     const statusEntry = statusMap[pid];
     if (!statusEntry) return;
     const newRow = row.slice();
     let changed = false;
 
-    if (statusEntry.bankStatus) {
-      newRow[8] = statusEntry.bankStatus;
+    if (columns.bankStatus && statusEntry.bankStatus) {
+      newRow[columns.bankStatus - 1] = statusEntry.bankStatus;
       changed = true;
     }
-    if (statusEntry.paidAmount != null) {
+    if (columns.paidAmount && statusEntry.paidAmount != null) {
       const paid = Number(statusEntry.paidAmount) || 0;
-      newRow[6] = paid;
-      const grandTotal = Number(newRow[5]) || 0;
+      newRow[columns.paidAmount - 1] = paid;
+      const grandTotal = columns.grandTotal ? Number(newRow[columns.grandTotal - 1]) || 0 : 0;
       const unpaid = statusEntry.unpaidAmount != null ? statusEntry.unpaidAmount : grandTotal - paid;
-      newRow[7] = unpaid;
+      if (columns.unpaidAmount) newRow[columns.unpaidAmount - 1] = unpaid;
       changed = true;
     }
 
     if (!changed) return;
-    newRow[9] = new Date();
+    if (columns.updatedAt) newRow[columns.updatedAt - 1] = new Date();
     updates.push({ rowNumber: idx + 2, values: newRow });
   });
   updates.forEach(update => {
-    sheet.getRange(update.rowNumber, 1, 1, update.values.length).setValues([update.values]);
+    sheet.getRange(update.rowNumber, 1, 1, colCount).setValues([update.values]);
   });
   return { billingMonth, updated: updates.length };
 }

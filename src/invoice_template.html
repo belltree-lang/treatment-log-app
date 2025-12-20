@@ -16,7 +16,7 @@
     .meta { text-align: right; color: #475569; font-size: 12px; }
     .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; background: #f8fafc; }
     .section-title { font-weight: 700; margin: 0 0 6px; font-size: 14px; }
-    .info { display: grid; grid-template-columns: 100px 1fr; row-gap: 6px; column-gap: 8px; font-size: 14px; }
+    .info { display: grid; grid-template-columns: 110px 1fr; row-gap: 6px; column-gap: 8px; font-size: 14px; }
     .info .label { color: #475569; }
     table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
     th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; }
@@ -24,6 +24,7 @@
     td.amount { text-align: right; }
     tfoot td { font-weight: 700; background: #edf2f7; }
     .note { color: #475569; font-size: 12px; margin-top: 6px; }
+    .divider { border: 0; border-top: 1px dashed #cbd5e1; margin: 4px 0 2px; }
   </style>
 </head>
 <body>
@@ -50,7 +51,7 @@
     </section>
 
     <section class="card">
-      <h3 class="section-title">ご請求内容</h3>
+      <h3 class="section-title">ご請求内容（当月）</h3>
       <table>
         <thead>
           <tr><th>項目</th><th>詳細</th><th class="amount">金額</th></tr>
@@ -72,6 +73,35 @@
         </tfoot>
       </table>
       <div class="note">前月繰越を含む合計金額です。口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+    </section>
+
+    <hr class="divider">
+
+    <? var receipt = data.previousReceipt || data.receipt || {}; ?>
+    <? var showReceipt = data.receiptVisible !== undefined ? !!data.receiptVisible : (receipt.visible === undefined ? false : !!receipt.visible); ?>
+    <? var receiptAddressee = receipt.addressee || data.nameKanji || ''; ?>
+    <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
+    <? var receiptAmount = receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price; ?>
+    <? var receiptNote = receipt.note || receipt.description || ''; ?>
+
+    <section class="card">
+      <h3 class="section-title">前月分領収書</h3>
+      <? if (showReceipt) { ?>
+        <div class="info">
+          <div class="label">宛名</div>
+          <div><?= receiptAddressee || '―' ?></div>
+          <div class="label">領収日</div>
+          <div><?= receiptDate || '―' ?></div>
+          <div class="label">金額</div>
+          <div><?= formatBillingCurrency_(receiptAmount || 0) ?> 円</div>
+          <div class="label">但し書き</div>
+          <div><?= receiptNote || '―' ?></div>
+          <div class="label">発行者</div>
+          <div>株式会社べるつりー</div>
+        </div>
+      <? } else { ?>
+        <div class="note">前月分は未入金のため、後日合算して請求されます</div>
+      <? } ?>
     </section>
   </div>
 </body>

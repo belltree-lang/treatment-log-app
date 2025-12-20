@@ -138,14 +138,18 @@ const billingNormalizeBurdenRatio_ = typeof normalizeBurdenRatio_ === 'function'
 
 const BILLING_PATIENT_ID_LABELS = typeof PATIENT_ID_LABELS !== 'undefined'
   ? PATIENT_ID_LABELS
-  : ['施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号', 'recNo', 'patientId'];
+  : [
+    '施術録番号', '施術録No', '施術録NO',
+    '記録番号', 'カルテ番号',
+    '患者ID', '患者番号', 'recNo', 'patientId'
+  ];
 
 const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
   recNo: BILLING_PATIENT_ID_LABELS,
-  name: ['名前', '氏名', '患者名', 'お名前'],
+  name: ['名前', '氏名', '氏名（漢字）', '患者名', 'お名前'],
   hospital: ['病院名', '医療機関', '病院'],
   doctor: ['医師', '主治医', '担当医'],
-  furigana: ['ﾌﾘｶﾞﾅ', 'ふりがな', 'フリガナ'],
+  furigana: ['ﾌﾘｶﾞﾅ', 'ふりがな', 'フリガナ', '氏名（カナ）'],
   birth: ['生年月日', '誕生日', '生年', '生年月'],
   consent: ['同意年月日', '同意日', '同意開始日', '同意開始'],
   consentHandout: ['配布', '配布欄', '配布状況', '配布日', '配布（同意書）'],
@@ -1292,13 +1296,18 @@ function syncPatientIdToBankInfoSheet_() {
 
   values.forEach((row, idx) => {
     const nameKanji = colName ? String(row[colName - 1] || '').trim() : '';
-    if (!nameKanji) return;
     const disabledFlag = colDisabled ? normalizeDisabledFlag_(row[colDisabled - 1]) : 0;
     if (disabledFlag === 2) return;
     const kanaPrimary = colKana ? String(row[colKana - 1] || '').trim() : '';
     const kanaSecondary = colKanaAlt ? String(row[colKanaAlt - 1] || '').trim() : '';
     const nameKey = buildBillingNameKey_({ nameKanji, nameKana: kanaPrimary || kanaSecondary });
     const currentPatientId = billingNormalizePatientId_(row[colPatientId - 1]);
+
+    if (!nameKanji && !currentPatientId) {
+      unresolved += 1;
+      return;
+    }
+
     const resolvedPatientId = currentPatientId || (nameKey ? patientIdLookup[nameKey] : '');
     if (!resolvedPatientId) {
       unresolved += 1;

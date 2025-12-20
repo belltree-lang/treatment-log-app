@@ -10,6 +10,8 @@ const billingState = {
   billingOverrideEdits: {},
   previewTotals: {},
   editing: null,
+  invoiceMode: 'bulk',
+  invoicePatientIdsInput: '',
   sort: { field: null, direction: 'asc' }
 };
 
@@ -98,6 +100,7 @@ function updateBillingControls() {
     saveBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     saveBtn.title = disabled && !prepared ? '先に「請求データを集計」を実行してください' : '';
   }
+  updateInvoiceModeControls();
 }
 
 function getBankTargetMonth() {
@@ -110,6 +113,71 @@ function getBankTargetMonth() {
 function getSimpleBankMonth() {
   const input = qs('bankWithdrawalMonth');
   return input && input.value ? normalizeYm(input.value) : '';
+}
+
+function updateInvoiceModeControls() {
+  const loading = billingState.loading;
+  const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
+  const mode = getInvoiceMode();
+  const patientInput = qs('invoicePatientIds');
+  const note = qs('invoicePatientIdsNote');
+  const isPartial = mode === 'partial';
+
+  const radioButtons = Array.from(document.querySelectorAll('input[name="invoiceMode"]'));
+  radioButtons.forEach(btn => {
+    btn.disabled = loading;
+    if (btn.value === mode) {
+      btn.checked = true;
+    }
+  });
+
+  if (patientInput) {
+    patientInput.disabled = loading || !prepared || !isPartial;
+    if (!isPartial && !loading) {
+      patientInput.value = billingState.invoicePatientIdsInput || patientInput.value;
+    }
+  }
+
+  if (note) {
+    note.className = isPartial ? 'field-note warn' : 'field-note';
+  }
+}
+
+function normalizeInvoicePatientIdsInput(text) {
+  if (Array.isArray(text)) {
+    return text
+      .map(v => String(v || '').trim())
+      .filter(Boolean)
+      .filter((v, idx, arr) => arr.indexOf(v) === idx);
+  }
+  return String(text || '')
+    .split(/[\s,、]+/)
+    .map(v => v.trim())
+    .filter(Boolean)
+    .filter((v, idx, arr) => arr.indexOf(v) === idx);
+}
+
+function getInvoiceMode() {
+  const checked = document.querySelector('input[name="invoiceMode"]:checked');
+  if (checked && checked.value === 'partial') return 'partial';
+  return 'bulk';
+}
+
+function getInvoicePatientIdsInput() {
+  const textarea = qs('invoicePatientIds');
+  return textarea && textarea.value ? textarea.value : '';
+}
+
+function handleInvoiceModeToggle(event) {
+  if (event && event.target && event.target.value) {
+    billingState.invoiceMode = event.target.value === 'partial' ? 'partial' : 'bulk';
+  }
+  updateInvoiceModeControls();
+}
+
+function handleInvoicePatientInput(event) {
+  const value = event && event.target ? event.target.value : getInvoicePatientIdsInput();
+  billingState.invoicePatientIdsInput = value;
 }
 
 function formatYmDisplay(ym) {
@@ -1242,11 +1310,27 @@ function handleBillingPdfGeneration() {
     alert('先に「請求データを集計」を実行してください。');
     return;
   }
+
+  const invoiceMode = getInvoiceMode();
+  const invoicePatientIdsText = getInvoicePatientIdsInput();
+  const invoicePatientIds = invoiceMode === 'partial' ? normalizeInvoicePatientIdsInput(invoicePatientIdsText) : [];
+
+  if (invoiceMode === 'partial' && !invoicePatientIds.length) {
+    alert('個別再発行を選択した場合、対象の患者IDを入力してください。');
+    return;
+  }
+
+  billingState.invoiceMode = invoiceMode;
+  billingState.invoicePatientIdsInput = invoicePatientIdsText;
   setBillingLoading(true, 'PDF生成中…');
+  const payload = Object.assign({}, buildBillingSavePayload(), {
+    invoiceMode,
+    invoicePatientIds
+  });
   google.script.run
     .withSuccessHandler(onBillingPdfCompleted)
     .withFailureHandler(onBillingFailed)
-    .applyBillingEditsAndGenerateInvoices(billingState.prepared.billingMonth, buildBillingSavePayload());
+    .applyBillingEditsAndGenerateInvoices(billingState.prepared.billingMonth, payload);
 }
 
 function onBillingPdfCompleted(result) {

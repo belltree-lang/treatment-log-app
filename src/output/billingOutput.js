@@ -254,6 +254,22 @@ function sanitizeFileName_(text) {
   return raw ? raw.replace(/[\\/\r\n]/g, '_') : '請求書';
 }
 
+function normalizeInvoicePatientIdsForOutput_(patientIds) {
+  const source = Array.isArray(patientIds) ? patientIds : String(patientIds || '').split(/[,\s、]+/);
+  const normalized = source
+    .map(id => String(id || '').trim())
+    .filter(Boolean);
+  const seen = new Set();
+  const unique = [];
+  normalized.forEach(id => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      unique.push(id);
+    }
+  });
+  return unique;
+}
+
 function formatInvoiceFileName_(item) {
   const baseName = sanitizeFileName_(item && (item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
   const dateLabel = formatInvoiceDateLabel_();
@@ -427,11 +443,17 @@ function generateInvoicePdf(item) {
 
 function generateInvoicePdfs(billingJson, options) {
   const billingMonth = (options && options.billingMonth) || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
-  const files = (billingJson || []).map(item => {
+  const patientIds = normalizeInvoicePatientIdsForOutput_(options && options.patientIds);
+  const targets = patientIds.length
+    ? (billingJson || []).filter(item => patientIds.indexOf(String(item && item.patientId ? item.patientId : '').trim()) >= 0)
+    : (billingJson || []);
+  const files = targets.map(item => {
     const meta = generateInvoicePdf(item);
     return Object.assign({}, meta, { patientId: item && item.patientId, nameKanji: item && item.nameKanji });
   });
-  return { billingMonth, files };
+  const matchedIds = new Set(files.map(f => String(f.patientId || '').trim()).filter(Boolean));
+  const missingPatientIds = patientIds.filter(id => !matchedIds.has(id));
+  return { billingMonth, files, missingPatientIds, requestedPatientIds: patientIds };
 }
 
 /***** Bank transfer export helpers (legacy; not used in new billing specification) *****/

@@ -1570,19 +1570,51 @@ function generateInvoices(billingMonth, options) {
   }
 }
 
+function normalizeInvoicePatientIdsForGeneration_(patientIds) {
+  const source = Array.isArray(patientIds) ? patientIds : String(patientIds || '').split(/[,\s、]+/);
+  const normalized = source
+    .map(id => String(id || '').trim())
+    .filter(Boolean);
+  const seen = new Set();
+  const unique = [];
+  normalized.forEach(id => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      unique.push(id);
+    }
+  });
+  return unique;
+}
+
+function filterBillingJsonForInvoice_(billingJson, patientIds) {
+  if (!Array.isArray(billingJson)) return [];
+  const targets = normalizeInvoicePatientIdsForGeneration_(patientIds);
+  if (!targets.length) return billingJson;
+  const targetSet = new Set(targets.map(id => String(id).trim()));
+  return billingJson.filter(item => targetSet.has(String(item && item.patientId ? item.patientId : '').trim()));
+}
+
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
   if (!normalized || !normalized.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
-  const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth });
-  const pdfs = generateInvoicePdfs(normalized.billingJson, outputOptions);
+  const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(options && options.invoicePatientIds);
+  const targetBillingRows = filterBillingJsonForInvoice_(normalized.billingJson, targetPatientIds);
+  const matchedIds = new Set(targetBillingRows.map(row => String(row && row.patientId ? row.patientId : '').trim()).filter(Boolean));
+  const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
+
+  const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
+  const pdfs = generateInvoicePdfs(targetBillingRows, outputOptions);
   const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
   const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(normalized) : null;
   return {
     billingMonth: normalized.billingMonth,
     billingJson: normalized.billingJson,
     files: pdfs.files,
+    invoicePatientIds: targetPatientIds,
+    missingInvoicePatientIds: missingPatientIds,
+    invoiceGenerationMode: targetPatientIds.length ? 'partial' : 'bulk',
     bankOutput,
     preparedAt: normalized.preparedAt || null
   };

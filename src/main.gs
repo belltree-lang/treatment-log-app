@@ -925,7 +925,9 @@ function generateSimpleBankSheet(billingMonth) {
     return { billingMonth: month.key, sheetName, rows: 0, filled: 0, missingAccounts: [] };
   }
 
-  const headers = copied.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const amountColumnIndex = columnLetterToNumber_(BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER);
+  const headerColCount = Math.max(lastCol, amountColumnIndex || 0);
+  const headers = copied.getRange(1, 1, 1, headerColCount).getDisplayValues()[0];
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const amountCol = resolveBillingColumn_(

@@ -312,14 +312,18 @@ function resolveInvoiceReceiptDisplay_(item) {
     return { showReceipt: false, receiptRemark: '', receiptMonths: aggregateMonths };
   }
 
-  const shouldShow = status === null || status === ''
-    ? true
-    : (status === 'AGGREGATE' ? hasValidAggregateUntil : hasValidAggregateUntil);
-  const receiptRemark = shouldShow && hasValidAggregateUntil ? formatAggregatedReceiptRemark_(aggregateMonths) : '';
+  if (status === 'AGGREGATE') {
+    const showAggregateReceipt = hasValidAggregateUntil;
+    return {
+      showReceipt: showAggregateReceipt,
+      receiptRemark: showAggregateReceipt ? formatAggregatedReceiptRemark_(aggregateMonths) : '',
+      receiptMonths: aggregateMonths
+    };
+  }
 
   return {
-    showReceipt: shouldShow,
-    receiptRemark,
+    showReceipt: true,
+    receiptRemark: hasValidAggregateUntil ? formatAggregatedReceiptRemark_(aggregateMonths) : '',
     receiptMonths: aggregateMonths
   };
 }

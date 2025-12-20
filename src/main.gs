@@ -927,7 +927,10 @@ function generateSimpleBankSheet(billingMonth) {
 
   const amountColumnIndex = columnLetterToNumber_(BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER);
   const headerColCount = Math.max(lastCol, amountColumnIndex || 0);
-  const headers = copied.getRange(1, 1, 1, headerColCount).getDisplayValues()[0];
+  const initialHeaders = copied.getRange(1, 1, 1, headerColCount).getDisplayValues()[0];
+  const pidCol = ensureBankWithdrawalPatientIdColumn_(copied, initialHeaders);
+  const refreshedHeaderCount = Math.max(copied.getLastColumn(), headerColCount, pidCol || 0);
+  const headers = copied.getRange(1, 1, 1, refreshedHeaderCount).getDisplayValues()[0];
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const amountCol = resolveBillingColumn_(
@@ -939,12 +942,12 @@ function generateSimpleBankSheet(billingMonth) {
   const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
     ? BILLING_LABELS.recNo
     : [];
-  const pidCol = resolveBillingColumn_(headers, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
+  const resolvedPidCol = pidCol || resolveBillingColumn_(headers, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
 
   const rowCount = lastRow - 1;
   const nameValues = copied.getRange(2, nameCol, rowCount, 1).getDisplayValues();
   const kanaValues = kanaCol ? copied.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
-  const pidValues = pidCol ? copied.getRange(2, pidCol, rowCount, 1).getDisplayValues() : [];
+  const pidValues = resolvedPidCol ? copied.getRange(2, resolvedPidCol, rowCount, 1).getDisplayValues() : [];
   const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
 
@@ -961,9 +964,10 @@ function generateSimpleBankSheet(billingMonth) {
     const pid = normalizedPid || (fullNameKey ? nameToPatientId[fullNameKey] : '');
     const hasAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid);
     const amount = hasAmount ? amountByPatientId[pid] : null;
+    const resolvedBy = normalizedPid ? 'patientId' : (fullNameKey ? 'name' : 'none');
 
     if (diagnostics.length < 5) {
-      diagnostics.push({ row: idx + 2, rawName, rawKana, rawPid, normalizedPid, fullNameKey, pid, hasAmount, amount });
+      diagnostics.push({ row: idx + 2, rawName, rawKana, rawPid, normalizedPid, fullNameKey, pid, hasAmount, amount, resolvedBy });
     }
 
     if (!pid || amount === null || amount === undefined) {
@@ -985,7 +989,8 @@ function generateSimpleBankSheet(billingMonth) {
       missing: missingAccounts.length,
       nameCol,
       kanaCol,
-      amountCol
+      amountCol,
+      pidCol: resolvedPidCol
     }));
     if (filled === 0) {
       billingLogger_.log('[billing] generateSimpleBankSheet diagnostics=' + JSON.stringify(diagnostics));
@@ -1099,8 +1104,46 @@ function ensureBankWithdrawalSheet_(billingMonth, options) {
       console.warn('[billing] Failed to remove protection from bank withdrawal sheet', err);
     }
   }
+  ensureBankWithdrawalPatientIdColumn_(sheet);
   ensureUnpaidCheckColumn_(sheet);
   return sheet;
+}
+
+function ensureBankWithdrawalPatientIdColumn_(sheet, headers) {
+  const targetSheet = sheet;
+  const workingHeaders = Array.isArray(headers) && headers.length
+    ? headers.slice()
+    : (targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getDisplayValues()[0] || []);
+  const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
+    ? BILLING_LABELS.recNo
+    : [];
+  let col = resolveBillingColumn_(workingHeaders, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
+  if (col) return col;
+
+  const nameCol = resolveBillingColumn_(workingHeaders, BILLING_LABELS.name, '名前', { fallbackIndex: 1 });
+  const kanaCol = resolveBillingColumn_(workingHeaders, BILLING_LABELS.furigana, 'フリガナ', {});
+  const insertAfter = kanaCol || nameCol || Math.max(targetSheet.getLastColumn(), workingHeaders.length);
+
+  try {
+    if (typeof targetSheet.insertColumnAfter === 'function') {
+      targetSheet.insertColumnAfter(insertAfter);
+    } else if (typeof targetSheet.insertColumnBefore === 'function') {
+      targetSheet.insertColumnBefore(insertAfter + 1);
+    }
+    col = insertAfter + 1;
+    if (typeof targetSheet.getRange === 'function') {
+      const headerCell = targetSheet.getRange(1, col, 1, 1);
+      if (headerCell && typeof headerCell.setValue === 'function') {
+        headerCell.setValue('患者ID');
+      } else if (headerCell && typeof headerCell.setValues === 'function') {
+        headerCell.setValues([['患者ID']]);
+      }
+    }
+  } catch (err) {
+    console.warn('[billing] Failed to ensure patient ID column on bank withdrawal sheet', err);
+  }
+
+  return col;
 }
 
 function normalizeBillingNameKey_(value) {
@@ -1159,7 +1202,9 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   if (lastRow < 2) return { billingMonth: month.key, updated: 0 };
 
   const lastCol = sheet.getLastColumn();
-  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const initialHeaders = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const pidCol = ensureBankWithdrawalPatientIdColumn_(sheet, initialHeaders);
+  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), lastCol, pidCol || 0)).getDisplayValues()[0];
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const amountCol = resolveBillingColumn_(
@@ -1171,12 +1216,12 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
     ? BILLING_LABELS.recNo
     : [];
-  const pidCol = resolveBillingColumn_(headers, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
+  const resolvedPidCol = pidCol || resolveBillingColumn_(headers, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
 
   const rowCount = lastRow - 1;
   const nameValues = sheet.getRange(2, nameCol, rowCount, 1).getDisplayValues();
   const kanaValues = kanaCol ? sheet.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
-  const pidValues = pidCol ? sheet.getRange(2, pidCol, rowCount, 1).getDisplayValues() : [];
+  const pidValues = resolvedPidCol ? sheet.getRange(2, resolvedPidCol, rowCount, 1).getDisplayValues() : [];
   const existingAmountValues = sheet.getRange(2, amountCol, rowCount, 1).getValues();
   const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);

@@ -37,8 +37,23 @@ function createSheet({ headers, rows }) {
               targetRow[zeroCol + c] = values[r][c];
             }
           }
+        },
+        setValue(value) {
+          this.setValues([[value]]);
         }
       };
+    },
+    insertColumnAfter(index) {
+      const insertAt = index;
+      for (let i = 0; i < data.length; i++) {
+        data[i].splice(insertAt, 0, '');
+      }
+    },
+    insertColumnBefore(index) {
+      const insertAt = Math.max(index - 1, 0);
+      for (let i = 0; i < data.length; i++) {
+        data[i].splice(insertAt, 0, '');
+      }
     },
     copyTo(workbook) {
       const clone = createSheet({ headers, rows });
@@ -126,6 +141,55 @@ function createContext() {
 
   assert.deepStrictEqual(amountRange, [[1000], [2000]], '患者ID列を優先して金額を補完する');
   assert.strictEqual(result.filled, 2, '2件の引落額が埋まる');
+})();
+
+(function testPatientIdColumnIsAddedWhenMissing() {
+  const context = createContext();
+  const template = createSheet({
+    headers: ['名前', 'フリガナ', '金額'],
+    rows: [
+      ['山田花子', 'やまだはなこ', '']
+    ]
+  });
+
+  const workbook = {
+    _sheets: [],
+    getSheetByName: name => workbook._sheets.find(s => s.getName && s.getName() === name) || null,
+    deleteSheet: sheet => { workbook._sheets = workbook._sheets.filter(s => s !== sheet); },
+    setActiveSheet: () => {},
+    moveActiveSheet: () => {},
+    getNumSheets: () => workbook._sheets.length,
+    billingLogger_: null
+  };
+
+  context.billingLogger_ = { log: () => {} };
+  context.billingSs = () => workbook;
+  context.ensureBankInfoSheet_ = () => template;
+  context.formatBankWithdrawalSheetName_ = () => '銀行引落_202501';
+  context.prepareBillingData = () => ({
+    billingMonth: '202501',
+    patients: {
+      P003: { nameKanji: '山田花子', nameKana: 'やまだはなこ' }
+    },
+    billingJson: [
+      { patientId: 'P003', grandTotal: 3000 }
+    ]
+  });
+
+  const result = context.generateSimpleBankSheet('202501');
+  const created = workbook._sheets.find(s => s.getName && s.getName() === '銀行引落_202501');
+  const headers = created.getRange(1, 1, 1, created.getLastColumn()).getDisplayValues()[0];
+
+  assert(headers.includes('患者ID'), '患者ID列がテンプレートに追加される');
+  const pidIndex = headers.indexOf('患者ID');
+  const amountIndex = headers.indexOf('金額');
+
+  const pidCell = created.getRange(2, pidIndex + 1, 1, 1).getValues();
+  const amountCell = created.getRange(2, amountIndex + 1, 1, 1).getValues();
+
+  assert.strictEqual(pidCell[0][0], '', '新設列の患者IDセルは空のまま');
+  assert.deepStrictEqual(amountCell, [[3000]], '氏名のみでも金額が補完される');
+  assert.strictEqual(result.filled, 1, '1件の引落額が埋まる');
 })();
 
 console.log('billing bank sheet patientId tests passed');

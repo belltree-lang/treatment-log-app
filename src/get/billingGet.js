@@ -1193,9 +1193,6 @@ function getBillingBankRecords(patientRecords) {
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const patientIdLookup = buildPatientIdLookupByNameKey_(patientRecords);
-  const patientIdRangeValues = colPatientId ? sheet.getRange(2, colPatientId, lastRow - 1, 1).getValues() : null;
-  const pendingPatientIdUpdates = [];
-
   const records = values.map((row, idx) => {
     const nameKanji = colName ? String(row[colName - 1] || '').trim() : '';
     if (!nameKanji) return null;
@@ -1206,10 +1203,6 @@ function getBillingBankRecords(patientRecords) {
     const nameKey = buildBillingNameKey_({ nameKanji, nameKana: kanaPrimary || kanaSecondary });
     const rawPatientId = colPatientId ? billingNormalizePatientId_(row[colPatientId - 1]) : '';
     const resolvedPatientId = rawPatientId || (nameKey ? patientIdLookup[nameKey] : '');
-    if (!rawPatientId && resolvedPatientId && colPatientId && patientIdRangeValues) {
-      patientIdRangeValues[idx][0] = resolvedPatientId;
-      pendingPatientIdUpdates.push(idx);
-    }
     const regulationCode = colRegulation ? normalizeMoneyValue_(row[colRegulation - 1]) : 0;
     const isNew = colIsNew ? normalizeZeroOneFlag_(row[colIsNew - 1]) : 0;
     return {
@@ -1225,12 +1218,115 @@ function getBillingBankRecords(patientRecords) {
     };
   }).filter(Boolean);
 
-  if (pendingPatientIdUpdates.length && colPatientId && patientIdRangeValues && typeof sheet.getRange === 'function') {
-    const targetRange = sheet.getRange(2, colPatientId, lastRow - 1, 1);
-    targetRange.setValues(patientIdRangeValues);
+  return records;
+}
+
+function liftBillingBankProtection_(sheet) {
+  const noop = () => {};
+  if (!sheet || typeof sheet.getName !== 'function') {
+    return { removeProtection: noop, restoreProtection: noop };
   }
 
-  return records;
+  let protection = null;
+  try {
+    const workbook = billingSs();
+    if (workbook && typeof workbook.getProtections === 'function' && typeof SpreadsheetApp !== 'undefined') {
+      const protections = workbook.getProtections(SpreadsheetApp.ProtectionType.SHEET) || [];
+      protection = protections.find(p => {
+        const range = p && typeof p.getRange === 'function' ? p.getRange() : null;
+        return range && typeof range.getSheet === 'function' && range.getSheet().getName() === sheet.getName();
+      }) || null;
+    }
+  } catch (err) {
+    billingLogger_.log('[billing] liftBillingBankProtection_: failed to locate protection', err);
+  }
+
+  const removeProtection = () => {
+    if (!protection || typeof protection.remove !== 'function') return;
+    try {
+      protection.remove();
+    } catch (err) {
+      billingLogger_.log('[billing] liftBillingBankProtection_: failed to remove protection', err);
+    }
+  };
+
+  const restoreProtection = () => {
+    try {
+      ensureBankInfoSheet_();
+    } catch (err) {
+      billingLogger_.log('[billing] liftBillingBankProtection_: failed to restore protection', err);
+    }
+  };
+
+  return { removeProtection, restoreProtection };
+}
+
+function syncPatientIdToBankInfoSheet_() {
+  const sheet = ensureBankInfoSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    billingLogger_.log('[billing] syncPatientIdToBankInfoSheet_: bank sheet is empty');
+    return { updated: 0, unresolved: 0 };
+  }
+
+  const patients = getBillingPatientRecords();
+  const patientIdLookup = buildPatientIdLookupByNameKey_(patients);
+
+  const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+
+  const colName = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const colKana = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', { fallbackLetter: 'B' });
+  const colKanaAlt = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', { fallbackLetter: 'R' });
+  const colPatientId = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者番号']), '患者ID', { required: true });
+  const colDisabled = resolveBillingColumn_(headers, ['利用停止', '停止', '無効', 'ステータス'], '利用停止', { fallbackLetter: 'T' });
+
+  if (!colPatientId) {
+    throw new Error('銀行情報シートに患者ID列が見つかりません');
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const patientIdValues = values.map(row => [row[colPatientId - 1]]);
+  let updated = 0;
+  let unresolved = 0;
+
+  values.forEach((row, idx) => {
+    const nameKanji = colName ? String(row[colName - 1] || '').trim() : '';
+    if (!nameKanji) return;
+    const disabledFlag = colDisabled ? normalizeDisabledFlag_(row[colDisabled - 1]) : 0;
+    if (disabledFlag === 2) return;
+    const kanaPrimary = colKana ? String(row[colKana - 1] || '').trim() : '';
+    const kanaSecondary = colKanaAlt ? String(row[colKanaAlt - 1] || '').trim() : '';
+    const nameKey = buildBillingNameKey_({ nameKanji, nameKana: kanaPrimary || kanaSecondary });
+    const currentPatientId = billingNormalizePatientId_(row[colPatientId - 1]);
+    const resolvedPatientId = currentPatientId || (nameKey ? patientIdLookup[nameKey] : '');
+    if (!resolvedPatientId) {
+      unresolved += 1;
+      return;
+    }
+    if (resolvedPatientId !== currentPatientId) {
+      patientIdValues[idx][0] = resolvedPatientId;
+      updated += 1;
+    }
+  });
+
+  const { removeProtection, restoreProtection } = liftBillingBankProtection_(sheet);
+  try {
+    if (updated > 0) {
+      removeProtection();
+      const targetRange = sheet.getRange(2, colPatientId, lastRow - 1, 1);
+      targetRange.setValues(patientIdValues);
+    }
+  } finally {
+    restoreProtection();
+  }
+
+  billingLogger_.log('[billing] syncPatientIdToBankInfoSheet_: ' + JSON.stringify({
+    updated,
+    unresolved
+  }));
+
+  return { updated, unresolved };
 }
 
 function buildBankLookupByKanji_(bankRecords) {

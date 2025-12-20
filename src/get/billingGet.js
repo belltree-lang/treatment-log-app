@@ -361,10 +361,12 @@ function normalizeBillingFullNameKey_(nameKanji, nameKana) {
  */
 function buildBillingNameKey_(record) {
   if (!record) return '';
-  const fullNameKey = normalizeBillingFullNameKey_(record.nameKanji, record.nameKana);
+  const normalizedKanji = normalizeBillingNameKey_(record.nameKanji);
+  const normalizedKana = normalizeBillingNameKey_(record.nameKana);
+  const fullNameKey = normalizeBillingFullNameKey_(normalizedKanji, normalizedKana);
   if (fullNameKey) return fullNameKey;
 
-  const singleNameKey = normalizeBillingNameKey_(record.nameKanji || record.nameKana);
+  const singleNameKey = normalizeBillingNameKey_(normalizedKanji || normalizedKana);
   if (singleNameKey) return singleNameKey;
 
   const storedKey = normalizeBillingNameKey_(record._nameKey);
@@ -383,9 +385,15 @@ function buildPatientIdLookupByNameKey_(patients) {
     if (!patient) return map;
     const pid = billingNormalizePatientId_(patient.patientId);
     const nameKey = buildBillingNameKey_(patient);
-    if (pid && nameKey && !map[nameKey]) {
-      map[nameKey] = pid;
+    if (!pid || !nameKey) return map;
+
+    const entry = map[nameKey] || { ids: [], duplicated: false, patientId: '' };
+    if (entry.ids.indexOf(pid) === -1) {
+      entry.ids.push(pid);
     }
+    entry.duplicated = entry.ids.length > 1;
+    entry.patientId = entry.duplicated ? '' : entry.ids[0];
+    map[nameKey] = entry;
     return map;
   }, {});
 }
@@ -1206,7 +1214,8 @@ function getBillingBankRecords(patientRecords) {
     const kanaSecondary = colKanaAlt ? String(row[colKanaAlt - 1] || '').trim() : '';
     const nameKey = buildBillingNameKey_({ nameKanji, nameKana: kanaPrimary || kanaSecondary });
     const rawPatientId = colPatientId ? billingNormalizePatientId_(row[colPatientId - 1]) : '';
-    const resolvedPatientId = rawPatientId || (nameKey ? patientIdLookup[nameKey] : '');
+    const lookupEntry = nameKey ? patientIdLookup[nameKey] : null;
+    const resolvedPatientId = rawPatientId || (lookupEntry && !lookupEntry.duplicated ? lookupEntry.patientId : '');
     const regulationCode = colRegulation ? normalizeMoneyValue_(row[colRegulation - 1]) : 0;
     const isNew = colIsNew ? normalizeZeroOneFlag_(row[colIsNew - 1]) : 0;
     return {
@@ -1308,7 +1317,13 @@ function syncPatientIdToBankInfoSheet_() {
       return;
     }
 
-    const resolvedPatientId = currentPatientId || (nameKey ? patientIdLookup[nameKey] : '');
+    const patientIdEntry = nameKey ? patientIdLookup[nameKey] : null;
+    if (!currentPatientId && patientIdEntry && patientIdEntry.duplicated) {
+      unresolved += 1;
+      return;
+    }
+
+    const resolvedPatientId = currentPatientId || (patientIdEntry ? patientIdEntry.patientId : '');
     if (!resolvedPatientId) {
       unresolved += 1;
       return;

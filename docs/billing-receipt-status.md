@@ -111,3 +111,18 @@
   - `updatedBy`（最終更新者メール）列を追加し、GAS 実行ユーザーを保存する。
   - `updatedReason`（自動反映 / 手動追記 / 再計算 など）をオプションで受け取り、`appendBillingHistoryRows` で入れられるようにする。
   - `updatedAt` の更新タイミングを「既存行と差分があったときのみ」に絞り、差分内容（変更フィールドと旧値/新値）を `PreparedBillingMetaJson` の note 欄や別シートでログ化する。
+
+## Issue #701: PreparedBilling と履歴シートの領収ステータス齟齬調査メモ
+- **現行フローの整理**
+  - フロントからの変更は `updateBillingReceiptStatus` → `mergeReceiptSettingsIntoPrepared_` → `savePreparedBillingToSheet_` を経由し、`PreparedBillingJson` 側には常に最新の `receiptStatus` / `aggregateUntilMonth` が保存される。【F:src/main.gs†L491-L524】【F:src/main.gs†L2031-L2047】
+  - 履歴シート更新は `appendBillingHistoryRows` が担うが、同一キーの既存行がある場合は `receiptStatus` / `aggregateUntilMonth` に限り「既存セルが空でないなら新値を無視する」挙動になっている。【F:src/output/billingOutput.js†L1108-L1121】
+- **検証結果**
+  - `UNPAID→AGGREGATE` や `HOLD→''` といった状態変更が `PreparedBillingJson` に乗っていても、履歴側の該当セルが非空なら更新されず、結果として両シートの状態が食い違う。手動編集で履歴を埋めた場合も同様に Prepared 側の再計算が反映されない。【F:src/output/billingOutput.js†L1108-L1121】
+  - `appendBillingHistoryRows` は既存行をマップへコピーしてから新規データをマージするため、`billingJson` から患者が外れた場合でも古い行が残留する（削除されない）。このときも旧い `receiptStatus` が履歴に残り得る。【F:src/output/billingOutput.js†L1043-L1138】
+- **原因整理**
+  - 履歴シートの `receiptStatus` / `aggregateUntilMonth` を「既存値優先」でマージする仕様が、Prepared 側を真とみなしたい場合の整合性を崩している。
+  - Prepared 側は `savePreparedBillingToSheet_` で都度 `preparedAt` / `preparedBy` を更新しているため、同月の複数回保存ではこちらが最新として扱われる一方、履歴シートは一度書かれた値がロックされる構造になっている。【F:src/main.gs†L491-L524】【F:src/output/billingOutput.js†L1108-L1121】
+- **修正方針の選択肢**
+  - Prepared を正とする: `appendBillingHistoryRows` で `receiptStatus` / `aggregateUntilMonth` も常に上書きし、手動調整は別フラグ（例: `manualReceiptStatus`）へ退避する。
+  - 履歴を正とする: 既存値優先を仕様として明文化し、Prepared 側は「初回登録のみ」や「履歴が空のときのみ」反映するものとする。UI から履歴ステータスをリセットする操作（空文字へ戻す）を用意し、再集計時に空セルを Prepared 値で埋める運用を徹底する。
+  - ハイブリッド: 既存値優先を維持しつつ、差分検知で「Prepared と履歴が違う」場合に警告ログやダッシュボードで提示し、どちらを採用するかを明示的に選ばせる。`appendBillingHistoryRows` にオプションフラグを追加して同期挙動を切り替える案もある。

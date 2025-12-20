@@ -15,6 +15,19 @@
 - `UNPAID` / `HOLD` は常に非表示（`showReceipt: false`）。その他のステータスは `null` / 空文字 / `AGGREGATE` / `aggregateUntilMonth` 指定時のみ `true` になる。【F:src/output/billingOutput.js†L298-L318】
 - `aggregateUntilMonth` がある場合のみ備考（`receiptRemark`）が付き、請求月から指定月までを令和表記で連結する。【F:src/output/billingOutput.js†L284-L318】
 
+## 請求月キー正規化と月範囲ビルダーの挙動
+- `normalizeBillingMonthKeySafe_` は引数がオブジェクトの場合、`key` / `billingMonth` / `ym` / `month.key` / `month.ym` / `month` の順に候補を拾う。各候補を `normalizeBillingMonthInput` で厳密変換し、例外時は文字列化してトリムした値でフォールバックする。候補が全て空なら空文字を返す（空入力時の安全な戻り値）。【F:src/main.gs†L165-L189】
+- 未来月や任意の 6 桁数字は `normalizeBillingMonthInput` が弾かないため、そのままキー化される（例: `209912` も通る）。月部分が 1〜12 以外なら例外が発生し、上記フォールバックでトリム済み文字列か空文字になる。【F:src/get/billingGet.js†L236-L271】
+- `buildInclusiveMonthRange_` は開始キー/終了キーを双方 6 桁に正規化し、どちらか欠けた場合は開始キーがあれば単一要素、無ければ空配列で返す。開始 > 終了の逆順指定時は開始キーのみを返す。ループは 240 か月（20 年相当）で強制打ち切り、未来月を含んでいても上限に到達した時点で停止する。【F:src/output/billingOutput.js†L259-L282】
+
+## `aggregateUntilMonth` のフォールバック仕様
+- `updateBillingReceiptStatus` は `receiptStatus` が `AGGREGATE` のときのみ `aggregateUntilMonth` を正規化し、他のステータスでは空文字にリセットする。正規化に失敗すると空文字になり、以降の処理では「集計終了月なし」と同等に扱われる。【F:src/main.gs†L2017-L2035】【F:src/main.gs†L1455-L1493】
+- `resolveInvoiceReceiptDisplay_` は `aggregateUntilMonth` が空や無効だった場合でも、請求月を基点に `receiptMonths` を最低 1 件返す（請求月のみ）。集計終了月が欠落したままでも領収書が表示され得るため、`AGGREGATE` で空に正規化されたケースに警告ログを入れるなら `mergeReceiptSettingsIntoPrepared_` かフロントの入力検証に追記する余地がある。【F:src/output/billingOutput.js†L298-L318】【F:src/main.gs†L433-L458】
+
+## 合算対象月リストの上限ポリシー（Issue 追記案）
+- `buildInclusiveMonthRange_` の while ループは 240 回で break するため、`receiptMonths` の最大長は 240。計算量を抑えつつ「20 年分まで表示すれば十分」という前提で組まれているとみられる。【F:src/output/billingOutput.js†L272-L281】
+- 今後 Issue に記載する方針案: (1) 上限値 240 を仕様として明文化し、これを超える入力には警告ログを出す、(2) 240 を設定値として切り出し、長期請求に備える。パフォーマンス面の懸念が薄ければ (1) で十分だが、超長期データを扱う想定がある場合は (2) を検討する。
+
 ## 領収状態保存の前提（フロント → Apps Script → 履歴）
 1. フロントエンドでステータス／集計終了月が変更されると `handleReceiptStatusChange` / `handleReceiptAggregateChange` が `billingState` を更新し、`persistReceiptStatus` を呼び出す。【F:src/main.js.html†L211-L256】
 2. `persistReceiptStatus` は請求月未選択をブロックし、`AGGREGATE` 以外では `aggregateUntilMonth` を空に初期化した上で Apps Script の `updateBillingReceiptStatus` を実行。成功時にレスポンスでフロントの状態を再同期する。【F:src/main.js.html†L227-L256】

@@ -70,6 +70,21 @@ function normalizeSelfPayItems_(params) {
   return items;
 }
 
+function selectLatestStaffFromHistory_(patientId, staffHistoryByPatient) {
+  const history = staffHistoryByPatient && staffHistoryByPatient[patientId];
+  if (!history || typeof history !== 'object') return null;
+
+  return Object.keys(history).reduce((latest, key) => {
+    const entry = history[key];
+    if (!entry || !(entry.timestamp instanceof Date) || isNaN(entry.timestamp.getTime())) return latest;
+
+    if (!latest) return entry;
+    const latestTime = latest.timestamp instanceof Date ? latest.timestamp.getTime() : 0;
+    const entryTime = entry.timestamp.getTime();
+    return entryTime > latestTime ? entry : latest;
+  }, null);
+}
+
 function normalizeBillingSource_(source) {
   if (!source || typeof source !== 'object') {
     throw new Error('請求生成の入力が不正です');
@@ -83,6 +98,7 @@ function normalizeBillingSource_(source) {
   const staffByPatient = source.staffByPatient || {};
   const staffDirectory = source.staffDirectory || {};
   const staffDisplayByPatient = source.staffDisplayByPatient || {};
+  const staffHistoryByPatient = source.staffHistoryByPatient || {};
   const bankStatuses = source.bankStatuses || {};
   const carryOverByPatient = source.carryOverByPatient || {};
   billingLogger_.log('[billing] patients keys=' + JSON.stringify(Object.keys(patientMap)));
@@ -93,6 +109,7 @@ function normalizeBillingSource_(source) {
     staffByPatient,
     staffDirectory,
     staffDisplayByPatient,
+    staffHistoryByPatient,
     bankStatuses,
     carryOverByPatient
   };
@@ -257,6 +274,7 @@ function generateBillingJsonFromSource(sourceData) {
     staffByPatient,
     staffDirectory,
     staffDisplayByPatient,
+    staffHistoryByPatient,
     bankStatuses,
     carryOverByPatient
   } = normalizeBillingSource_(sourceData);
@@ -283,13 +301,14 @@ function generateBillingJsonFromSource(sourceData) {
         carryOverAmount: patient.carryOverAmount
       });
     }
-    const staffEmails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : (staffByPatient[pid] ? [staffByPatient[pid]] : []);
-    const resolvedStaffNames = Array.isArray(staffDisplayByPatient[pid]) ? staffDisplayByPatient[pid] : [];
-    const responsibleNames = resolvedStaffNames.length
-      ? resolvedStaffNames
-      : staffEmails.map(email => billingResolveStaffDisplayName_(email, staffDirectory)).filter(Boolean);
-    const responsibleEmail = staffEmails.length ? staffEmails[0] : '';
-    const responsibleName = responsibleNames.join('・');
+    const latestStaffEntry = selectLatestStaffFromHistory_(pid, staffHistoryByPatient);
+    const responsibleEmail = latestStaffEntry && (latestStaffEntry.email || latestStaffEntry.key)
+      ? latestStaffEntry.email || latestStaffEntry.key || ''
+      : '';
+    const responsibleName = responsibleEmail
+      ? billingResolveStaffDisplayName_(responsibleEmail, staffDirectory) || ''
+      : '';
+    const responsibleNames = responsibleName ? [responsibleName] : [];
     const carryOverFromPatient = normalizeMoneyNumber_(patient.carryOverAmount);
     const carryOverFromHistory = normalizeMoneyNumber_(carryOverByPatient[pid]);
     const manualUnitPrice = normalizeMoneyNumber_(patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice);

@@ -30,12 +30,18 @@
   .controls{ display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
   label{ display:flex; flex-direction:column; gap:6px; font-size:0.9rem; color:var(--muted); }
   input,select{ padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:1rem; background:#fff; color:inherit; }
+  textarea{ padding:10px 12px; border:1px solid var(--border); border-radius:10px; font-size:1rem; background:#fff; color:inherit; resize:vertical; min-height:96px; }
     .btn{ appearance:none; border:0; border-radius:10px; padding:10px 14px; background:var(--brand); color:#fff; cursor:pointer; font-weight:700; transition:transform .15s ease, box-shadow .15s ease; }
     .btn:hover{ transform:translateY(-1px); box-shadow:0 10px 24px rgba(37,99,235,0.18); }
     .btn:disabled{ opacity:0.6; cursor:not-allowed; box-shadow:none; transform:none; }
   .btn.secondary{ background:#e5e7eb; color:#111827; box-shadow:none; }
   .btn.danger{ background:var(--danger); }
   .btn.small{ padding:8px 12px; font-size:0.9rem; }
+  .generation-options{ display:flex; flex-direction:column; gap:10px; padding:12px; border:1px dashed var(--border); border-radius:12px; background:#f8fafc; }
+  .mode-options{ display:flex; gap:10px; flex-wrap:wrap; }
+  .pill-input{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--border); border-radius:999px; background:#fff; cursor:pointer; }
+  .pill-input input{ accent-color:var(--brand); }
+  .patient-id-input{ display:flex; flex-direction:column; gap:6px; }
   table{ width:100%; border-collapse:collapse; margin-top:10px; font-size:0.9rem; }
   th,td{ border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
   th{ background:#f3f4f6; }
@@ -109,6 +115,24 @@
             <div id="carryOverLedgerStatus" class="pill neutral" style="display:none"></div>
           </div>
           <div id="billingError" class="alert danger" style="display:none"></div>
+        </div>
+        <div class="generation-options">
+          <p class="muted" style="margin:0">PDF生成モード</p>
+          <div class="mode-options" role="group" aria-label="請求書PDFの生成モード">
+            <label class="pill-input">
+              <input type="radio" name="invoiceMode" value="bulk" checked onchange="handleInvoiceModeToggle(event)" />
+              <span>一括発行（全患者）</span>
+            </label>
+            <label class="pill-input">
+              <input type="radio" name="invoiceMode" value="partial" onchange="handleInvoiceModeToggle(event)" />
+              <span>個別再発行（患者ID指定）</span>
+            </label>
+          </div>
+          <label class="patient-id-input" for="invoicePatientIds">
+            <span>個別再発行の対象患者ID（カンマ・改行区切り）</span>
+            <textarea id="invoicePatientIds" placeholder="例: P001, P005&#10;または改行区切りで入力" oninput="handleInvoicePatientInput(event)"></textarea>
+            <p class="field-note" id="invoicePatientIdsNote">個別再発行を選んだ場合のみ必須です。入力したIDのみPDFを生成します。</p>
+          </label>
         </div>
       </section>
 

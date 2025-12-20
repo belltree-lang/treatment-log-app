@@ -289,7 +289,9 @@ function generateBillingJsonFromSource(sourceData) {
       ? resolvedStaffNames
       : staffEmails.map(email => billingResolveStaffDisplayName_(email, staffDirectory)).filter(Boolean);
     const responsibleEmail = staffEmails.length ? staffEmails[0] : '';
-    const responsibleName = responsibleNames.join('・');
+    const responsibleName = responsibleNames.length
+      ? responsibleNames[0]
+      : (responsibleEmail || '');
     const carryOverFromPatient = normalizeMoneyNumber_(patient.carryOverAmount);
     const carryOverFromHistory = normalizeMoneyNumber_(carryOverByPatient[pid]);
     const manualUnitPrice = normalizeMoneyNumber_(patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice);

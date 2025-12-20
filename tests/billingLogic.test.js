@@ -73,6 +73,32 @@ function testPaidStatusIsIncludedInBillingJson() {
   assert.strictEqual(billingJson[0].bankStatus, 'OK', '従来の入金ステータスも維持される');
 }
 
+function testResponsibleNameUsesLatestVisitOnly() {
+  const source = {
+    billingMonth: '202512',
+    patients: {
+      '999': {
+        nameKanji: '担当確認',
+        burdenRate: 1,
+        insuranceType: '鍼灸',
+        unitPrice: 1000
+      }
+    },
+    treatmentVisitCounts: { '999': 2 },
+    staffByPatient: { '999': ['late@example.com', 'early@example.com'] },
+    staffDirectory: {
+      'late@example.com': '最終担当',
+      'early@example.com': '過去担当'
+    },
+    staffDisplayByPatient: { '999': ['最終担当', '過去担当'] },
+    bankStatuses: {}
+  };
+
+  const billingJson = generateBillingJsonFromSource(source);
+  assert.strictEqual(billingJson[0].responsibleName, '最終担当', '請求書フォルダの担当者は最終訪問スタッフのみ');
+  assert.deepStrictEqual(billingJson[0].responsibleNames, ['最終担当', '過去担当'], '担当履歴は配列で保持される');
+}
+
 function testCarryOverIncludesUnpaidHistory() {
   const source = {
     billingMonth: '202503',
@@ -254,6 +280,7 @@ function run() {
   testMassageBillingExclusion();
   testBillingAmountRoundsToNearestTen();
   testPaidStatusIsIncludedInBillingJson();
+  testResponsibleNameUsesLatestVisitOnly();
   testCarryOverIncludesUnpaidHistory();
   testMedicalSubsidyExcludesBillingEntries();
   testCustomTransportUnitPriceIsUsed();

@@ -300,16 +300,22 @@ function resolveInvoiceReceiptDisplay_(item) {
   const status = rawStatus == null ? null : String(rawStatus).trim().toUpperCase();
   const aggregateUntil = item && item.aggregateUntilMonth;
   const billingMonth = item && item.billingMonth;
-  const aggregateMonths = aggregateUntil
+  const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
+  const normalizedAggregateUntil = normalizeInvoiceMonthKey_(aggregateUntil);
+  const hasValidAggregateUntil = !!normalizedBillingMonth && !!normalizedAggregateUntil
+    && Number(normalizedAggregateUntil) >= Number(normalizedBillingMonth);
+  const aggregateMonths = hasValidAggregateUntil
     ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
-    : (billingMonth ? [normalizeInvoiceMonthKey_(billingMonth)].filter(Boolean) : []);
+    : (normalizedBillingMonth ? [normalizedBillingMonth] : []);
 
   if (status === 'UNPAID' || status === 'HOLD') {
     return { showReceipt: false, receiptRemark: '', receiptMonths: aggregateMonths };
   }
 
-  const shouldShow = status === null || status === '' || status === 'AGGREGATE' || !!aggregateUntil;
-  const receiptRemark = shouldShow && aggregateUntil ? formatAggregatedReceiptRemark_(aggregateMonths) : '';
+  const shouldShow = status === null || status === ''
+    ? true
+    : (status === 'AGGREGATE' ? hasValidAggregateUntil : hasValidAggregateUntil);
+  const receiptRemark = shouldShow && hasValidAggregateUntil ? formatAggregatedReceiptRemark_(aggregateMonths) : '';
 
   return {
     showReceipt: shouldShow,

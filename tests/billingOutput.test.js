@@ -195,6 +195,52 @@ function testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice() {
   assert.strictEqual(breakdown.grandTotal, 500, '繰越のみが合計に残る');
 }
 
+function testAggregateReceiptIsHiddenUntilEndMonthIsValid() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { resolveInvoiceReceiptDisplay_, formatAggregatedReceiptRemark_ } = context;
+
+  const pendingAggregate = resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    receiptStatus: 'AGGREGATE',
+    aggregateUntilMonth: ''
+  });
+
+  assert.deepStrictEqual(Array.from(pendingAggregate.receiptMonths || []), ['202501'], '集計終了月なしは請求月のみを返す');
+  assert.strictEqual(pendingAggregate.showReceipt, false, '合算成立前は領収書を非表示にする');
+  assert.strictEqual(pendingAggregate.receiptRemark, '', '合算成立前は備考が付与されない');
+
+  const invalidAggregate = resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    receiptStatus: 'AGGREGATE',
+    aggregateUntilMonth: '20241234'
+  });
+
+  assert.deepStrictEqual(Array.from(invalidAggregate.receiptMonths || []), ['202501'], '無効な終了月はフォールバックして請求月のみになる');
+  assert.strictEqual(invalidAggregate.showReceipt, false, '無効な終了月では領収書を表示しない');
+  assert.strictEqual(invalidAggregate.receiptRemark, '', '無効な終了月では備考を生成しない');
+
+  const validAggregate = resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    receiptStatus: 'AGGREGATE',
+    aggregateUntilMonth: '202503'
+  });
+
+  assert.deepStrictEqual(
+    Array.from(validAggregate.receiptMonths || []),
+    ['202501', '202502', '202503'],
+    '合算が成立すると範囲内の月が返る'
+  );
+  assert.strictEqual(validAggregate.showReceipt, true, '合算成立後は領収書を表示する');
+  assert.strictEqual(
+    validAggregate.receiptRemark,
+    formatAggregatedReceiptRemark_(validAggregate.receiptMonths),
+    '合算成立後は備考が生成される'
+  );
+}
+
 function testSelfPaidInvoiceDoesNotRoundManualUnitPrice() {
   const context = createContext();
   vm.createContext(context);
@@ -535,6 +581,7 @@ function run() {
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
+  testAggregateReceiptIsHiddenUntilEndMonthIsValid();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testInsuranceBillingIsRoundedToNearestTen();
   testWelfareBillingStillAddsTransport();

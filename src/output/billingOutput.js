@@ -119,7 +119,7 @@ function normalizeBillingAmount_(item) {
 function normalizeBillingNameKey_(value) {
   return String(value || '')
     .normalize('NFKC')
-    .replace(/\s+/g, '')
+    .replace(/[\s\u3000・･．.ー－ｰ−‐-]+/g, '')
     .trim();
 }
 

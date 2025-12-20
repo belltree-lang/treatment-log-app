@@ -12,6 +12,9 @@ const billingState = {
   editing: null,
   invoiceMode: 'bulk',
   invoicePatientIdsInput: '',
+  receiptStatus: '',
+  aggregateUntilMonth: '',
+  receiptSaving: false,
   sort: { field: null, direction: 'asc' }
 };
 
@@ -101,6 +104,7 @@ function updateBillingControls() {
     saveBtn.title = disabled && !prepared ? '先に「請求データを集計」を実行してください' : '';
   }
   updateInvoiceModeControls();
+  renderReceiptControls();
 }
 
 function getBankTargetMonth() {
@@ -143,6 +147,30 @@ function updateInvoiceModeControls() {
   }
 }
 
+function renderReceiptControls() {
+  const statusSelect = qs('receiptStatus');
+  const aggregateInput = qs('receiptAggregateUntil');
+  const display = qs('receiptAggregateDisplay');
+  const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
+  const loading = billingState.loading || billingState.receiptSaving;
+  const status = billingState.receiptStatus || '';
+  const aggregate = billingState.aggregateUntilMonth || '';
+
+  if (statusSelect) {
+    statusSelect.value = status || '';
+    statusSelect.disabled = !prepared || loading;
+  }
+
+  if (aggregateInput) {
+    aggregateInput.value = aggregate ? `${aggregate.slice(0, 4)}-${aggregate.slice(4, 6)}` : '';
+    aggregateInput.disabled = !prepared || loading || status !== 'AGGREGATE';
+  }
+
+  if (display) {
+    display.textContent = aggregate ? formatYmDisplay(aggregate) : '—';
+  }
+}
+
 function normalizeInvoicePatientIdsInput(text) {
   if (Array.isArray(text)) {
     return text
@@ -178,6 +206,54 @@ function handleInvoiceModeToggle(event) {
 function handleInvoicePatientInput(event) {
   const value = event && event.target ? event.target.value : getInvoicePatientIdsInput();
   billingState.invoicePatientIdsInput = value;
+}
+
+function handleReceiptStatusChange(event) {
+  const value = event && event.target ? event.target.value : '';
+  const status = String(value || '').trim().toUpperCase();
+  billingState.receiptStatus = status;
+  renderReceiptControls();
+  persistReceiptStatus();
+}
+
+function handleReceiptAggregateChange(event) {
+  const value = event && event.target ? event.target.value : '';
+  const ym = normalizeYm(value);
+  billingState.aggregateUntilMonth = ym;
+  renderReceiptControls();
+  persistReceiptStatus();
+}
+
+function persistReceiptStatus() {
+  if (!billingState.prepared || !billingState.prepared.billingMonth) {
+    alert('先に「請求データを集計」を実行してください。');
+    return;
+  }
+  const status = billingState.receiptStatus || '';
+  const aggregateUntil = status === 'AGGREGATE' ? billingState.aggregateUntilMonth : '';
+  billingState.aggregateUntilMonth = aggregateUntil;
+  billingState.receiptSaving = true;
+  updateBillingControls();
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
+      billingState.result = normalized;
+      billingState.prepared = normalized;
+      syncReceiptStateFromPayload(normalized);
+      billingState.receiptSaving = false;
+      renderBillingResult();
+    })
+    .withFailureHandler(function(err) {
+      billingState.receiptSaving = false;
+      const message = err && err.message ? err.message : '領収状態の保存に失敗しました';
+      setBillingError(message, err);
+      renderBillingResult();
+    })
+    .updateBillingReceiptStatus(billingState.prepared.billingMonth, {
+      receiptStatus: status,
+      aggregateUntil
+    });
 }
 
 function formatYmDisplay(ym) {
@@ -1140,8 +1216,26 @@ function normalizeBillingResultPayload(raw) {
       (withDefaults.month && withDefaults.month.key) ||
       fallbackBillingMonth ||
       '';
+    const receiptStatus = (withDefaults && withDefaults.receiptStatus)
+      ? String(withDefaults.receiptStatus).trim().toUpperCase()
+      : '';
+    const aggregateUntilMonth = normalizeYm(withDefaults && withDefaults.aggregateUntilMonth
+      ? String(withDefaults.aggregateUntilMonth)
+      : '');
     const enrichedRows = mergePatientMetaIntoRows(billingJson, withDefaults.patients || {});
-    return Object.assign({}, withDefaults, { billingMonth: resolvedBillingMonth, billingJson: enrichedRows });
+    const merged = Object.assign({}, withDefaults, {
+      billingMonth: resolvedBillingMonth,
+      billingJson: enrichedRows,
+      receiptStatus,
+      aggregateUntilMonth
+    });
+    if (Array.isArray(merged.billingJson)) {
+      merged.billingJson = merged.billingJson.map(row => Object.assign({}, row || {}, {
+        receiptStatus,
+        aggregateUntilMonth
+      }));
+    }
+    return merged;
   }
 
   function parseMaybeJson(value) {
@@ -1266,6 +1360,13 @@ function normalizeBillingResultPayload(raw) {
   return normalizeBillingPayload(Object.assign({}, result, { billingJson }));
 }
 
+function syncReceiptStateFromPayload(payload) {
+  const status = payload && payload.receiptStatus ? String(payload.receiptStatus).trim().toUpperCase() : '';
+  const aggregate = payload && payload.aggregateUntilMonth ? normalizeYm(payload.aggregateUntilMonth) : '';
+  billingState.receiptStatus = status;
+  billingState.aggregateUntilMonth = aggregate;
+}
+
 function handleBillingAggregation() {
   const ym = normalizeYm(qs('billingMonth').value);
   if (!ym) {
@@ -1292,6 +1393,7 @@ function onBillingPrepared(result) {
     const normalized = normalizeBillingResultPayload(result);
     billingState.result = normalized;
     billingState.prepared = normalized;
+    syncReceiptStateFromPayload(normalized);
     billingState.loading = false;
     billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
     billingState.errorMessage = '';
@@ -1338,6 +1440,7 @@ function onBillingPdfCompleted(result) {
     const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
     billingState.result = normalized;
     billingState.prepared = normalized;
+    syncReceiptStateFromPayload(normalized);
     billingState.loading = false;
     billingState.statusMessage = 'PDF生成と担当者フォルダへの保存が完了しました';
     billingState.errorMessage = '';
@@ -1369,6 +1472,7 @@ function onBillingSaveCompleted(result) {
     billingState.result = nextResult;
     billingState.prepared = nextResult;
   }
+  syncReceiptStateFromPayload(nextResult);
   billingState.loading = false;
   billingState.statusMessage = '保存が完了しました';
   billingState.errorMessage = '';

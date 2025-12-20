@@ -578,7 +578,9 @@ function testBankWithdrawalSheetRegeneration() {
   assert.ok(firstSheet, '初回生成で月次シートが作成される');
   const firstValues = firstSheet.getRange(1, 1, firstSheet.getLastRow(), firstSheet.getLastColumn()).getValues();
   assert.strictEqual(firstValues.length, 2, 'テンプレート行数を引き継ぐ');
-  assert.strictEqual(firstValues[1][1], 1000, '請求金額が金額列に出力される');
+  const firstAmountIndex = firstValues[0].indexOf('金額');
+  assert.ok(firstAmountIndex >= 0, '金額列が存在する');
+  assert.strictEqual(firstValues[1][firstAmountIndex], 1000, '請求金額が金額列に出力される');
 
   // Add a new account to the template and alter the existing monthly sheet to ensure it is refreshed.
   bankTemplate.getRange(3, 1, 1, 3).setValues([['新規 花子', '', '5678']]);
@@ -589,8 +591,10 @@ function testBankWithdrawalSheetRegeneration() {
   const refreshedSheet = workbook.getSheetByName('銀行引落_2024-04');
   const refreshedValues = refreshedSheet.getRange(1, 1, refreshedSheet.getLastRow(), refreshedSheet.getLastColumn()).getValues();
   assert.strictEqual(refreshedValues.length, 3, 'テンプレートの新規行が再生成で反映される');
-  assert.strictEqual(refreshedValues[1][1], 1000, '既存利用者の金額は再生成後も正しく計算される');
-  assert.strictEqual(refreshedValues[2][1], 2000, '再生成で新規利用者の金額も反映される');
+  const refreshedAmountIndex = refreshedValues[0].indexOf('金額');
+  assert.ok(refreshedAmountIndex >= 0, '再生成後も金額列が存在する');
+  assert.strictEqual(refreshedValues[1][refreshedAmountIndex], 1000, '既存利用者の金額は再生成後も正しく計算される');
+  assert.strictEqual(refreshedValues[2][refreshedAmountIndex], 2000, '再生成で新規利用者の金額も反映される');
 
   const templateValues = bankTemplate.getRange(1, 1, bankTemplate.getLastRow(), bankTemplate.getLastColumn()).getValues();
   assert.strictEqual(templateValues[1][1], '', '銀行情報シートは参照専用で金額が書き換わらない');

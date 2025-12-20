@@ -936,10 +936,15 @@ function generateSimpleBankSheet(billingMonth) {
     '金額',
     { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
   );
+  const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
+    ? BILLING_LABELS.recNo
+    : [];
+  const pidCol = resolveBillingColumn_(headers, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
 
   const rowCount = lastRow - 1;
   const nameValues = copied.getRange(2, nameCol, rowCount, 1).getDisplayValues();
   const kanaValues = kanaCol ? copied.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
+  const pidValues = pidCol ? copied.getRange(2, pidCol, rowCount, 1).getDisplayValues() : [];
   const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
 
@@ -948,13 +953,17 @@ function generateSimpleBankSheet(billingMonth) {
   const amountValues = nameValues.map((row, idx) => {
     const rawName = row && row[0] ? String(row[0]).trim() : '';
     const rawKana = (kanaValues[idx] && kanaValues[idx][0]) ? String(kanaValues[idx][0]).trim() : '';
+    const rawPid = pidValues[idx] && pidValues[idx][0];
+    const normalizedPid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(rawPid)
+      : (rawPid ? String(rawPid).trim() : '');
     const fullNameKey = buildFullNameKey_(rawName, rawKana);
-    const pid = fullNameKey ? nameToPatientId[fullNameKey] : '';
+    const pid = normalizedPid || (fullNameKey ? nameToPatientId[fullNameKey] : '');
     const hasAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid);
     const amount = hasAmount ? amountByPatientId[pid] : null;
 
     if (diagnostics.length < 5) {
-      diagnostics.push({ row: idx + 2, rawName, rawKana, fullNameKey, pid, hasAmount, amount });
+      diagnostics.push({ row: idx + 2, rawName, rawKana, rawPid, normalizedPid, fullNameKey, pid, hasAmount, amount });
     }
 
     if (!pid || amount === null || amount === undefined) {
@@ -1159,18 +1168,27 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
     '金額',
     { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
   );
+  const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
+    ? BILLING_LABELS.recNo
+    : [];
+  const pidCol = resolveBillingColumn_(headers, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
 
   const rowCount = lastRow - 1;
   const nameValues = sheet.getRange(2, nameCol, rowCount, 1).getDisplayValues();
   const kanaValues = kanaCol ? sheet.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
+  const pidValues = pidCol ? sheet.getRange(2, pidCol, rowCount, 1).getDisplayValues() : [];
   const existingAmountValues = sheet.getRange(2, amountCol, rowCount, 1).getValues();
   const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
 
   const newAmountValues = nameValues.map((row, idx) => {
     const kanaRow = kanaValues[idx] || [];
+    const rawPid = pidValues[idx] && pidValues[idx][0];
+    const normalizedPid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(rawPid)
+      : (rawPid ? String(rawPid).trim() : '');
     const nameKey = buildFullNameKey_(row && row[0], kanaRow[0]);
-    const pid = nameKey ? nameToPatientId[nameKey] : '';
+    const pid = normalizedPid || (nameKey ? nameToPatientId[nameKey] : '');
     const resolvedAmount = pid && Object.prototype.hasOwnProperty.call(amountByPatientId, pid)
       ? amountByPatientId[pid]
       : null;

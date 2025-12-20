@@ -302,32 +302,46 @@ function resolveInvoiceReceiptDisplay_(item) {
   const billingMonth = item && item.billingMonth;
   const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
   const normalizedAggregateUntil = normalizeInvoiceMonthKey_(aggregateUntil);
-  const hasValidAggregateUntil = !!normalizedBillingMonth && !!normalizedAggregateUntil
+  const hasValidBillingMonth = !!normalizedBillingMonth;
+  const hasValidAggregateUntil = hasValidBillingMonth && !!normalizedAggregateUntil
     && Number(normalizedAggregateUntil) >= Number(normalizedBillingMonth);
-  const aggregateMonths = hasValidAggregateUntil
+  const receiptMonths = hasValidAggregateUntil
     ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
     : (normalizedBillingMonth ? [normalizedBillingMonth] : []);
+  const aggregationApplied = hasValidAggregateUntil;
+
+  if (!hasValidBillingMonth) {
+    return { showReceipt: false, receiptRemark: '', receiptMonths };
+  }
 
   if (status === 'UNPAID' || status === 'HOLD') {
-    return { showReceipt: false, receiptRemark: '', receiptMonths: aggregateMonths };
+    return { showReceipt: false, receiptRemark: '', receiptMonths };
   }
 
   if (status === 'AGGREGATE') {
-    if (!hasValidAggregateUntil) {
-      return { showReceipt: false, receiptRemark: '', receiptMonths: aggregateMonths };
+    if (!aggregationApplied) {
+      return { showReceipt: false, receiptRemark: '', receiptMonths };
     }
 
     return {
       showReceipt: true,
-      receiptRemark: formatAggregatedReceiptRemark_(aggregateMonths),
-      receiptMonths: aggregateMonths
+      receiptRemark: formatAggregatedReceiptRemark_(receiptMonths),
+      receiptMonths
+    };
+  }
+
+  if (aggregationApplied) {
+    return {
+      showReceipt: true,
+      receiptRemark: formatAggregatedReceiptRemark_(receiptMonths),
+      receiptMonths
     };
   }
 
   return {
     showReceipt: true,
     receiptRemark: '',
-    receiptMonths: aggregateMonths
+    receiptMonths
   };
 }
 

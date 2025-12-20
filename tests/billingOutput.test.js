@@ -241,6 +241,26 @@ function testAggregateReceiptIsHiddenUntilEndMonthIsValid() {
   );
 }
 
+function testPaidInvoiceAlwaysShowsReceipt() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { resolveInvoiceReceiptDisplay_ } = context;
+
+  const defaultStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: null });
+  assert.strictEqual(defaultStatus.showReceipt, true, 'ステータス未指定でも領収書を表示する');
+  assert.deepStrictEqual(
+    Array.from(defaultStatus.receiptMonths || []),
+    ['202501'],
+    '請求月の領収書を作成する'
+  );
+
+  const paidStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: 'PAID' });
+  assert.strictEqual(paidStatus.showReceipt, true, '通常入金は必ず領収書を表示する');
+  assert.strictEqual(paidStatus.receiptRemark, '', '合算指定がなければ備考は空');
+}
+
 function testSelfPaidInvoiceDoesNotRoundManualUnitPrice() {
   const context = createContext();
   vm.createContext(context);
@@ -582,6 +602,7 @@ function run() {
   testFullWidthInputsAreNormalized();
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
   testAggregateReceiptIsHiddenUntilEndMonthIsValid();
+  testPaidInvoiceAlwaysShowsReceipt();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testInsuranceBillingIsRoundedToNearestTen();
   testWelfareBillingStillAddsTransport();

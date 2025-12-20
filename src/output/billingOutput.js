@@ -313,17 +313,20 @@ function resolveInvoiceReceiptDisplay_(item) {
   }
 
   if (status === 'AGGREGATE') {
-    const showAggregateReceipt = hasValidAggregateUntil;
+    if (!hasValidAggregateUntil) {
+      return { showReceipt: false, receiptRemark: '', receiptMonths: aggregateMonths };
+    }
+
     return {
-      showReceipt: showAggregateReceipt,
-      receiptRemark: showAggregateReceipt ? formatAggregatedReceiptRemark_(aggregateMonths) : '',
+      showReceipt: true,
+      receiptRemark: formatAggregatedReceiptRemark_(aggregateMonths),
       receiptMonths: aggregateMonths
     };
   }
 
   return {
     showReceipt: true,
-    receiptRemark: hasValidAggregateUntil ? formatAggregatedReceiptRemark_(aggregateMonths) : '',
+    receiptRemark: '',
     receiptMonths: aggregateMonths
   };
 }

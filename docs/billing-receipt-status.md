@@ -47,3 +47,28 @@
 - **Apps Script 互換層**: 本関数は GAS 固有 API を使わないため、GS スタブは不要。将来的に `formatAggregatedReceiptRemark_` のロケール依存が問題化した際は `Session.getScriptTimeZone` などのスタブを追加する余地がある。
 
 以上を Issue に転記すれば、領収書表示ロジックの仕様とテストカバレッジ要求を共有できます。
+
+## 真偽の優先順位と整合性チェックシナリオ
+- **真偽の優先順位**:
+  - `savePreparedBillingToSheet_` は `PreparedBillingMeta` / `PreparedBillingMetaJson` / `PreparedBillingJson` の 3 シートへ「集計済みペイロード」を月単位で保存する。`preparedAt` は保存時刻に強制され、`preparedBy` も GAS の実行ユーザーが差し込まれるため、同月で複数回保存した場合はこちらが最新の正とみなされる。【F:src/main.gs†L491-L524】
+  - `appendBillingHistoryRows` は履歴シートを月×患者 ID キーでマージ更新する。既存行があればレコードを上書き/補完するが、`receiptStatus` と `aggregateUntilMonth` は既存値を優先して保持する。【F:src/output/billingOutput.js†L1049-L1137】
+  - 従って「集計結果の真実」は `savePreparedBillingToSheet_` 側にあり、履歴はそれを写経するが、一度書かれた領収関連セルはデフォルトでは履歴を手動で修正しない限り上書きされないという解釈になる。
+- **整合性チェックシナリオ（Issue へ貼り付け可）**:
+  - 同一月に対し `savePreparedBillingToSheet_` が複数回走ったとき、`appendBillingHistoryRows` が最新の `receiptStatus` / `aggregateUntilMonth` を反映できているか。
+  - 履歴シートに手動変更が入った場合（例: `receiptStatus` を直接編集）、次回の `appendBillingHistoryRows` で準備済みデータと食い違いが起きていないか。
+  - `billingMonth` と `patientId` キーが一致しないゴミ行がある場合に、`appendBillingHistoryRows` が意図せず残存データを参照しないか。
+  - `PreparedBillingJson` の行削除（該当患者が請求対象から外れたケース）後に `appendBillingHistoryRows` が古い履歴行をクリアできているか（`clearContent` で上書きされる想定だが、キーが欠けた行が残らないか）。
+
+## 既存値優先ロジックで領収状態を上書きできない懸念
+- `appendBillingHistoryRows` は `receiptStatus` / `aggregateUntilMonth` に限り「既存セルが空でない場合はそのまま残す」ロジック。つまり `UNPAID→AGGREGATE` や `HOLD→''` のような変更が準備済みデータ側に入っても、履歴シートでは反映されず保持される。【F:src/output/billingOutput.js†L1109-L1133】
+- 以下の確認項目をテストや手動チェックに追加する:
+  - 既存履歴に `receiptStatus: UNPAID` が入った状態で `billingJson` が空文字ステータスを返した場合、履歴は更新されず前回値が残ることを確認する（仕様なら OK、上書きしたいならロジック変更を検討）。
+  - `aggregateUntilMonth` を `202503→''` に戻したケースで、履歴が旧値を保持していないか。
+  - 履歴行が存在しない新規患者では、準備済みデータの `receiptStatus` / `aggregateUntilMonth` がそのまま入ることを確認する。
+
+## 監査用メタデータの要否
+- `savePreparedBillingToSheet_` は `preparedAt` / `preparedBy` / `schemaVersion` をメタシートへ保存するが、`appendBillingHistoryRows` 側で「誰が履歴を書き換えたか」は `updatedAt`（現在時刻）しか残らない。【F:src/main.gs†L491-L520】【F:src/output/billingOutput.js†L1019-L1046】【F:src/output/billingOutput.js†L1088-L1113】
+- 履歴シートが監査対象なら、以下の差分記録を Issue に追記する余地がある:
+  - `updatedBy`（最終更新者メール）列を追加し、GAS 実行ユーザーを保存する。
+  - `updatedReason`（自動反映 / 手動追記 / 再計算 など）をオプションで受け取り、`appendBillingHistoryRows` で入れられるようにする。
+  - `updatedAt` の更新タイミングを「既存行と差分があったときのみ」に絞り、差分内容（変更フィールドと旧値/新値）を `PreparedBillingMetaJson` の note 欄や別シートでログ化する。

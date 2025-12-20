@@ -1503,6 +1503,7 @@ function getBillingSourceData(billingMonth) {
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
     bankStatuses: getBillingPaymentResultsIfExists_(month),
     staffByPatient: visitCountsResult.staffByPatient || {},
+    staffHistoryByPatient: visitCountsResult.staffHistoryByPatient || {},
     staffDirectory,
       staffDisplayByPatient,
       unpaidHistory,

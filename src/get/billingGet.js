@@ -329,7 +329,10 @@ function buildPatientRawObject_(headers, rowValues) {
 }
 
 function normalizeBillingNameKey_(value) {
-  return String(value || '').replace(/\s+/g, '').trim();
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, '')
+    .trim();
 }
 
 function normalizeBillingFullNameKey_(nameKanji, nameKana) {
@@ -340,6 +343,31 @@ function normalizeBillingFullNameKey_(nameKanji, nameKana) {
   const numericOnly = combined.replace(/::/g, '');
   if (/^\d+$/.test(numericOnly)) return '';
   return combined;
+}
+
+/**
+ * 氏名に紐づく統一キーを生成する。
+ * - 正式キー: 漢字・カナの双方（存在する方のみ）を NFKC 正規化・空白除去して `kanji::kana` 形式で連結
+ * - フォールバック: 正式キーが取れない場合は漢字/カナのいずれか単体を同じ正規化で利用
+ * - 最後の手段として patientId を空白除去して利用（全て空の場合は空文字）
+ */
+function buildBillingNameKey_(record) {
+  if (!record) return '';
+  const fullNameKey = normalizeBillingFullNameKey_(record.nameKanji, record.nameKana);
+  if (fullNameKey) return fullNameKey;
+
+  const singleNameKey = normalizeBillingNameKey_(record.nameKanji || record.nameKana);
+  if (singleNameKey) return singleNameKey;
+
+  const storedKey = normalizeBillingNameKey_(record._nameKey);
+  if (storedKey) return storedKey;
+
+  if (record.patientId != null) {
+    const patientIdKey = normalizeBillingNameKey_(record.patientId);
+    if (patientIdKey) return patientIdKey;
+  }
+
+  return '';
 }
 
 function loadBillingStaffDirectory_() {
@@ -1174,9 +1202,7 @@ function getBillingBankRecords() {
 function buildBankLookupByKanji_(bankRecords) {
   return (bankRecords || []).reduce((map, rec) => {
     if (!rec) return map;
-    const key = normalizeBillingFullNameKey_(rec.nameKanji, rec.nameKana);
-    const fallbackKey = key || normalizeBillingNameKey_(rec.nameKanji);
-    const targetKey = key || fallbackKey;
+    const targetKey = buildBillingNameKey_(rec);
     if (targetKey && !map[targetKey]) {
       map[targetKey] = rec;
     }

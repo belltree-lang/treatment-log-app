@@ -364,6 +364,51 @@ function testBankCodesAreNormalizedBeforeValidation() {
   assert.strictEqual(row.accountNumber, '0006789', '口座番号は数字のみ・左ゼロ埋めで7桁になる');
 }
 
+function testUnifiedNameKeyAcrossBankPatientAndBilling() {
+  const context = createExportContext();
+  const { buildBankTransferRowsForBilling_, normalizeBillingFullNameKey_ } = context;
+
+  const billingJson = [{
+    billingMonth: '202503',
+    patientId: '0005',
+    nameKanji: '山田　太郎',
+    nameKana: 'ヤマダ タロウ',
+    billingAmount: 5000
+  }];
+
+  const patientMap = {
+    '0005': {
+      patientId: '0005',
+      nameKanji: '山田太郎',
+      nameKana: 'ヤマダタロウ'
+    }
+  };
+
+  const bankInfoByName = {
+    [normalizeBillingFullNameKey_('山田太郎', 'ﾔﾏﾀﾞﾀﾛｳ')]: {
+      nameKanji: '山田太郎',
+      nameKana: 'ﾔﾏﾀﾞﾀﾛｳ',
+      bankCode: '12 3',
+      branchCode: '45',
+      accountNumber: '6789'
+    }
+  };
+
+  const result = buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMap, '202503', {});
+
+  assert.strictEqual(result.total, 1, '銀行データ・患者マスタ・billingJson を統一キーで突合する');
+  assert.strictEqual(result.skipped, 0, '統一キーで突合したデータはスキップされない');
+  assert.strictEqual(result.rows.length, 1, '突合に成功したデータから行が生成される');
+
+  const row = result.rows[0];
+  assert.strictEqual(row.patientId, '0005', '患者ID は billingJson から引き継がれる');
+  assert.strictEqual(row.nameKanji, '山田太郎', '氏名（漢字）は正規化された銀行情報が使われる');
+  assert.strictEqual(row.nameKana, 'ヤマダタロウ', '氏名（カナ）は正規化後の値が使われる');
+  assert.strictEqual(row.bankCode, '0123', '銀行コードは統一キーでマージした情報から取得される');
+  assert.strictEqual(row.branchCode, '045', '支店コードは正規化される');
+  assert.strictEqual(row.accountNumber, '0006789', '口座番号は正規化される');
+}
+
 function testBankRowsSkipWhenNormalizedLengthsAreInvalid() {
   const context = createExportContext();
   const { buildBankTransferRowsForBilling_ } = context;
@@ -460,6 +505,7 @@ function run() {
   testBankExportRejectsInvalidBillingJsonShape();
   testBankExportReturnsEmptyWhenNoRows();
   testBankCodesAreNormalizedBeforeValidation();
+  testUnifiedNameKeyAcrossBankPatientAndBilling();
   testBankRowsSkipWhenNormalizedLengthsAreInvalid();
   testNameKanaFallsBackToKanjiWhenEmpty();
   testNameKanaIsNormalizedToFullWidth();

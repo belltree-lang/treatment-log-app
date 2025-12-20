@@ -117,7 +117,10 @@ function normalizeBillingAmount_(item) {
 }
 
 function normalizeBillingNameKey_(value) {
-  return String(value || '').replace(/\s+/g, '').trim();
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, '')
+    .trim();
 }
 
 function normalizeBillingFullNameKey_(nameKanji, nameKana) {
@@ -128,6 +131,31 @@ function normalizeBillingFullNameKey_(nameKanji, nameKana) {
   const numericOnly = combined.replace(/::/g, '');
   if (/^\d+$/.test(numericOnly)) return '';
   return combined;
+}
+
+/**
+ * 氏名に紐づく統一キーを生成する。
+ * - 正式キー: 漢字・カナを NFKC 正規化 + 空白除去し `kanji::kana` 形式で連結
+ * - フォールバック: どちらか一方のみの氏名がある場合はその値を同じ手順で正規化
+ * - 最終手段: patientId を空白除去したものをキーとして返す
+ */
+function buildBillingNameKey_(record) {
+  if (!record) return '';
+  const fullNameKey = normalizeBillingFullNameKey_(record.nameKanji, record.nameKana);
+  if (fullNameKey) return fullNameKey;
+
+  const singleNameKey = normalizeBillingNameKey_(record.nameKanji || record.nameKana);
+  if (singleNameKey) return singleNameKey;
+
+  const storedKey = normalizeBillingNameKey_(record._nameKey);
+  if (storedKey) return storedKey;
+
+  if (record.patientId != null) {
+    const patientIdKey = normalizeBillingNameKey_(record.patientId);
+    if (patientIdKey) return patientIdKey;
+  }
+
+  return '';
 }
 
 function normalizeKana_(value) {
@@ -433,7 +461,7 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
 
   const patientsByNameKey = Object.values(patientMap || {}).reduce((map, patient) => {
     if (!patient) return map;
-    const nameKey = normalizeBillingFullNameKey_(patient.nameKanji, patient.nameKana);
+    const nameKey = buildBillingNameKey_(patient);
     if (nameKey && !map[nameKey]) {
       map[nameKey] = patient;
     }
@@ -444,8 +472,7 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
   const bankEntryMap = Object.entries(bankInfoByName || {})
     .filter(([, entry]) => !!entry)
     .reduce((map, [nameKey, entry]) => {
-      const normalizedKey = normalizeBillingFullNameKey_(entry.nameKanji, entry.nameKana)
-        || normalizeBillingNameKey_(nameKey);
+      const normalizedKey = buildBillingNameKey_(Object.assign({ _nameKey: nameKey }, entry));
       if (normalizedKey && !map[normalizedKey]) {
         map[normalizedKey] = Object.assign({ _nameKey: normalizedKey }, entry);
       }
@@ -453,7 +480,7 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
     }, {});
 
   const billedByNameKey = (billingJson || []).reduce((map, item) => {
-    const nameKey = normalizeBillingFullNameKey_(item && item.nameKanji, item && item.nameKana);
+    const nameKey = buildBillingNameKey_(item);
     if (nameKey && !map[nameKey]) {
       map[nameKey] = item;
     }
@@ -463,8 +490,7 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
   (billingJson || []).forEach(item => {
     if (!item) return;
     const pid = item.patientId ? String(item.patientId).trim() : '';
-    const nameKey = normalizeBillingFullNameKey_(item.nameKanji, item.nameKana)
-      || normalizeBillingNameKey_(pid);
+    const nameKey = buildBillingNameKey_(item);
     if (!nameKey || bankEntryMap[nameKey]) return;
     const patient = pid && patientByIdMap[pid] ? patientByIdMap[pid] : {};
     bankEntryMap[nameKey] = Object.assign({ _nameKey: nameKey }, patient, item);
@@ -474,8 +500,7 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
   const seenNameKeys = new Set();
 
   bankEntries.forEach(bankEntry => {
-    const nameKey = normalizeBillingFullNameKey_(bankEntry.nameKanji, bankEntry.nameKana)
-      || normalizeBillingNameKey_(bankEntry._nameKey);
+    const nameKey = buildBillingNameKey_(bankEntry);
     if (!nameKey || seenNameKeys.has(nameKey)) return;
     seenNameKeys.add(nameKey);
 

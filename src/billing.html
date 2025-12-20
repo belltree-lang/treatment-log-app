@@ -116,20 +116,6 @@
         </div>
         <div id="billingError" class="alert danger" style="display:none"></div>
       </div>
-      <div class="controls" aria-label="領収管理">
-        <label>領収状態
-          <select id="receiptStatus" onchange="handleReceiptStatusChange(event)">
-            <option value="">（デフォルト）</option>
-            <option value="UNPAID">UNPAID</option>
-            <option value="AGGREGATE">AGGREGATE</option>
-            <option value="HOLD">HOLD</option>
-          </select>
-        </label>
-        <label>ここまで合算する月
-          <input type="month" id="receiptAggregateUntil" onchange="handleReceiptAggregateChange(event)" />
-          <span class="muted field-note">${' '}合算月: <span id="receiptAggregateDisplay">—</span></span>
-        </label>
-      </div>
       <div class="generation-options">
         <p class="muted" style="margin:0">PDF生成モード</p>
           <div class="mode-options" role="group" aria-label="請求書PDFの生成モード">

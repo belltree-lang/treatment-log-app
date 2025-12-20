@@ -1106,19 +1106,11 @@ function appendBillingHistoryRows(billingJson, options) {
     }
 
     if (columns.receiptStatus) {
-      const existingReceiptStatus = existingRow ? existingRow[columns.receiptStatus - 1] : '';
-      const resolvedReceiptStatus = (existingReceiptStatus != null && String(existingReceiptStatus).trim() !== '')
-        ? existingReceiptStatus
-        : entry.row[columns.receiptStatus - 1];
-      mergedRow[columns.receiptStatus - 1] = resolvedReceiptStatus;
+      mergedRow[columns.receiptStatus - 1] = entry.row[columns.receiptStatus - 1];
     }
 
     if (columns.aggregateUntilMonth) {
-      const existingAggregate = existingRow ? existingRow[columns.aggregateUntilMonth - 1] : '';
-      const resolvedAggregate = (existingAggregate != null && String(existingAggregate).trim() !== '')
-        ? existingAggregate
-        : entry.row[columns.aggregateUntilMonth - 1];
-      mergedRow[columns.aggregateUntilMonth - 1] = resolvedAggregate;
+      mergedRow[columns.aggregateUntilMonth - 1] = entry.row[columns.aggregateUntilMonth - 1];
     }
 
     workingRowsByKey.set(entry.key, mergedRow);

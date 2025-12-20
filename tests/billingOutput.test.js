@@ -47,6 +47,63 @@ function createExportContext(overrides = {}) {
   return context;
 }
 
+class FakeSheet {
+  constructor(headers, rows = []) {
+    this.values = [headers.slice(), ...rows];
+  }
+
+  getLastRow() {
+    return this.values.length;
+  }
+
+  getLastColumn() {
+    return this.values[0] ? this.values[0].length : 0;
+  }
+
+  getRange(row, col, numRows = 1, numCols = 1) {
+    const startRow = row - 1;
+    const startCol = col - 1;
+    const endRow = startRow + numRows;
+    const endCol = startCol + numCols;
+
+    const ensureSize = () => {
+      while (this.values.length < endRow) {
+        this.values.push(new Array(this.getLastColumn() || endCol).fill(''));
+      }
+      this.values.forEach(r => {
+        while (r.length < endCol) r.push('');
+      });
+    };
+
+    const slice = () => this.values
+      .slice(startRow, endRow)
+      .map(r => r.slice(startCol, endCol));
+
+    return {
+      getDisplayValues: () => slice(),
+      getValues: () => slice(),
+      setValues: (vals) => {
+        ensureSize();
+        vals.forEach((r, i) => {
+          this.values[startRow + i].splice(startCol, numCols, ...r);
+        });
+      },
+      setValue: (value) => {
+        ensureSize();
+        this.values[startRow][startCol] = value;
+      },
+      clearContent: () => {
+        ensureSize();
+        for (let r = startRow; r < endRow; r += 1) {
+          for (let c = startCol; c < endCol; c += 1) {
+            this.values[r][c] = '';
+          }
+        }
+      }
+    };
+  }
+}
+
 function createFakeFile(mimeType, tracker) {
   const blobTracker = tracker || { getAsCalled: false, setNameCalledWith: null };
   const blob = {
@@ -255,6 +312,65 @@ function testSelfPaidInvoiceDoesNotRoundManualUnitPrice() {
 
   assert.strictEqual(breakdown.treatmentAmount, 3333, '自費の手動単価は四捨五入せずに計上する');
   assert.strictEqual(breakdown.grandTotal, 3366, '施術料と交通費の合計をそのまま出力する');
+}
+
+function testReceiptStatusIsOverwrittenInHistory() {
+  const context = createExportContext({
+    ss: () => ({
+      getSheetByName: name => (name === '請求履歴' ? sheet : null),
+      insertSheet: () => sheet
+    })
+  });
+
+  const existingRow = [
+    '202501',
+    '001',
+    '山田太郎',
+    1000,
+    0,
+    1000,
+    500,
+    500,
+    'OK',
+    new Date('2025-02-01'),
+    '初期メモ',
+    'UNPAID',
+    '202503'
+  ];
+
+  const headers = context.BILLING_HISTORY_HEADERS || [
+    'billingMonth',
+    'patientId',
+    'nameKanji',
+    'billingAmount',
+    'carryOverAmount',
+    'grandTotal',
+    'paidAmount',
+    'unpaidAmount',
+    'bankStatus',
+    'updatedAt',
+    'memo',
+    'receiptStatus',
+    'aggregateUntilMonth'
+  ];
+
+  const sheet = new FakeSheet(headers, [existingRow]);
+
+  context.appendBillingHistoryRows([
+    {
+      billingMonth: '202501',
+      patientId: '001',
+      nameKanji: '山田太郎',
+      receiptStatus: 'AGGREGATE',
+      aggregateUntilMonth: ''
+    }
+  ], { billingMonth: '202501' });
+
+  const { columns } = context.resolveBillingHistoryColumns_(sheet);
+  const row = sheet.values[1];
+
+  assert.strictEqual(row[columns.receiptStatus - 1], 'AGGREGATE', '既存の領収ステータスを上書きする');
+  assert.strictEqual(row[columns.aggregateUntilMonth - 1], '', '集計終了月のリセットも反映される');
 }
 
 function testInsuranceBillingIsRoundedToNearestTen() {
@@ -583,6 +699,7 @@ function run() {
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
   testAggregateReceiptIsHiddenUntilEndMonthIsValid();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
+  testReceiptStatusIsOverwrittenInHistory();
   testInsuranceBillingIsRoundedToNearestTen();
   testWelfareBillingStillAddsTransport();
   testMassageBillingDoesNotChargeTransport();

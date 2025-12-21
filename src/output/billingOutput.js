@@ -368,10 +368,15 @@ function isPreviousReceiptSettled_(item) {
   const amount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const rawStatus = item && item.receiptStatus;
   const status = rawStatus == null ? null : String(rawStatus).trim().toUpperCase();
+  const rawBankStatus = item && item.bankStatus;
+  const bankStatus = rawBankStatus == null ? null : String(rawBankStatus).trim().toUpperCase();
+  const hasPreviousReceiptAmount = Number.isFinite(amount) && amount > 0;
+
+  if (hasPreviousReceiptAmount || bankStatus === 'OK') return true;
 
   if (status === 'HOLD') return false;
 
-  return Number.isFinite(amount) && amount > 0;
+  return hasPreviousReceiptAmount;
 }
 
 function buildInvoicePreviousReceipt_(item, display) {

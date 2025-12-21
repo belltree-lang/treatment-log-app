@@ -278,11 +278,23 @@ function testPreviousReceiptVisibilityFollowsReceiptDecision() {
 
   const { buildInvoiceTemplateData_ } = context;
 
-  const payable = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'PAID' });
+  const payable = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'PAID', hasPreviousPrepared: true });
   assert.strictEqual(payable.previousReceipt.visible, true, '領収表示時は前月領収書も表示する');
 
-  const onHold = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'HOLD' });
+  const onHold = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'HOLD', hasPreviousPrepared: true });
   assert.strictEqual(onHold.previousReceipt.visible, false, '未回収チェックがある場合は前月領収書も非表示');
+}
+
+function testPreviousReceiptIsHiddenWhenPreviousPreparedMissing() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { buildInvoiceTemplateData_ } = context;
+
+  const data = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'PAID', hasPreviousPrepared: false });
+
+  assert.strictEqual(data.previousReceipt.visible, false, '前月請求が未生成なら前月領収書を非表示にする');
 }
 
 function testSelfPaidInvoiceDoesNotRoundManualUnitPrice() {
@@ -704,6 +716,7 @@ function run() {
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
   testReceiptVisibilityReliesOnUnpaidStatusOnly();
   testPreviousReceiptVisibilityFollowsReceiptDecision();
+  testPreviousReceiptIsHiddenWhenPreviousPreparedMissing();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testReceiptStatusIsOverwrittenInHistory();
   testInsuranceBillingUsesYenRounding();

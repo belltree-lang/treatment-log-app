@@ -307,7 +307,8 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
 }
 
 function resolveInvoiceReceiptDisplay_(item) {
-  const isUnpaidChecked = !!(item && item.unpaidChecked);
+  const status = item && item.receiptStatus ? String(item.receiptStatus).trim().toUpperCase() : '';
+  const isUnpaidChecked = !!(item && (item.unpaidChecked || status === 'UNPAID' || status === 'HOLD'));
   const billingMonth = item && item.billingMonth;
   const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
   const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths);
@@ -433,6 +434,7 @@ function buildInvoiceTemplateData_(item) {
   const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
   const visits = breakdown.visits || 0;
   const unitPrice = breakdown.treatmentUnitPrice || 0;
+  const hasPreviousPrepared = !!(item && item.hasPreviousPrepared);
   const normalizedPreviousReceiptAmount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
@@ -459,6 +461,10 @@ function buildInvoiceTemplateData_(item) {
     previousReceipt.visible = previousReceipt.visible === undefined
       ? !!(receipt && receipt.showReceipt)
       : previousReceipt.visible;
+
+    if (!hasPreviousPrepared) {
+      previousReceipt.visible = false;
+    }
   }
 
   return Object.assign({}, item, {

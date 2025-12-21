@@ -345,6 +345,26 @@ function resolveInvoiceReceiptDisplay_(item) {
   };
 }
 
+function buildInvoicePreviousReceipt_(item, display) {
+  const receiptDisplay = display || resolveInvoiceReceiptDisplay_(item);
+  const addressee = item && item.nameKanji ? String(item.nameKanji).trim() : '';
+  const date = formatInvoiceDateLabel_();
+  const amountSource = item && item.total != null
+    ? item.total
+    : (item && item.grandTotal != null ? item.grandTotal : item && item.billingAmount);
+  const amount = normalizeInvoiceMoney_(amountSource);
+  const note = receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '';
+
+  return {
+    visible: !!(receiptDisplay && receiptDisplay.showReceipt),
+    addressee,
+    date,
+    amount: Number.isFinite(amount) ? amount : 0,
+    note,
+    receiptMonths: receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : []
+  };
+}
+
 function formatInvoiceDateLabel_() {
   try {
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
@@ -396,6 +416,7 @@ function buildInvoiceTemplateData_(item) {
   ];
 
   const receipt = resolveInvoiceReceiptDisplay_(item);
+  const previousReceipt = buildInvoicePreviousReceipt_(item, receipt);
 
   return Object.assign({}, item, {
     monthLabel,
@@ -403,7 +424,9 @@ function buildInvoiceTemplateData_(item) {
     grandTotal: breakdown.grandTotal,
     showReceipt: receipt.showReceipt,
     receiptRemark: receipt.receiptRemark,
-    receiptMonths: receipt.receiptMonths
+    receiptMonths: receipt.receiptMonths,
+    receiptVisible: receipt.showReceipt,
+    previousReceipt
   });
 }
 

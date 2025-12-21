@@ -556,20 +556,15 @@ function applyReceiptRulesFromUnpaidCheck_(prepared) {
         ? normalizeBillingMonthKeySafe_(aggregateSource)
         : '';
 
-      let entryStatus = rowStatus;
-      let aggregateUntilMonth = baseAggregate;
-      let receiptMonths = normalizeReceiptMonthKeys_(rowPayload.receiptMonths);
-
-      if (pid && currentUnpaid.has(pid)) {
-        entryStatus = 'HOLD';
-        aggregateUntilMonth = '';
-        receiptMonths = [];
-      }
+      const isUnpaidChecked = pid && currentUnpaid.has(pid);
+      const aggregateUntilMonth = isUnpaidChecked ? '' : baseAggregate;
+      const receiptMonths = isUnpaidChecked ? [] : normalizeReceiptMonthKeys_(rowPayload.receiptMonths);
 
       return Object.assign({}, rowPayload, {
-        receiptStatus: entryStatus,
+        receiptStatus: rowStatus,
         aggregateUntilMonth,
-        receiptMonths
+        receiptMonths,
+        unpaidChecked: !!isUnpaidChecked
       });
     });
 

@@ -552,13 +552,9 @@ function attachPreviousReceiptAmounts_(prepared) {
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return prepared;
 
-  const loaded = typeof loadPreparedBillingWithSheetFallback_ === 'function'
-    ? loadPreparedBillingWithSheetFallback_(previousMonthKey, { withValidation: true })
-    : null;
-  const previousPrepared = loaded && loaded.prepared !== undefined ? loaded.prepared : loaded;
-  const normalizedPrevious = normalizePreparedBilling_(previousPrepared || {});
-  const hasPreviousPrepared = !!(normalizedPrevious && Array.isArray(normalizedPrevious.billingJson) && normalizedPrevious.billingJson.length);
-  const previousAmounts = buildBillingAmountByPatientId_(normalizedPrevious && normalizedPrevious.billingJson);
+  const previousReceipt = collectPreviousReceiptAmountsFromBankSheet_(previousMonthKey, prepared);
+  const hasPreviousPrepared = !!(previousReceipt && previousReceipt.hasSheet);
+  const previousAmounts = previousReceipt && previousReceipt.amounts;
 
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
@@ -574,6 +570,53 @@ function attachPreviousReceiptAmounts_(prepared) {
   });
 
   return Object.assign({}, prepared, { billingJson: enrichedJson, hasPreviousPrepared });
+}
+
+function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return { hasSheet: false, amounts: {} };
+
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(monthKey);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) return { hasSheet: false, amounts: {} };
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { hasSheet: true, amounts: {} };
+
+  const amountColIndex = columnLetterToNumber_(BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER);
+  const headerCount = Math.max(sheet.getLastColumn(), amountColIndex || 0);
+  const headers = sheet.getRange(1, 1, 1, headerCount).getDisplayValues()[0];
+  const amountCol = resolveBillingColumn_(
+    headers,
+    ['金額', '請求金額', '引落額', '引落金額'],
+    '金額',
+    { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
+  );
+  const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
+  const values = sheet.getRange(2, 1, lastRow - 1, headerCount).getValues();
+
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients || {});
+  const amounts = {};
+
+  values.forEach(row => {
+    const resolvedPid = pidCol
+      ? normalizePid(row[pidCol - 1])
+      : nameToPatientId[buildFullNameKey_(row[nameCol - 1], kanaCol ? row[kanaCol - 1] : '')];
+    if (!resolvedPid) return;
+
+    const amount = amountCol ? Number(row[amountCol - 1]) || 0 : 0;
+    if (!amount) return;
+
+    amounts[resolvedPid] = (amounts[resolvedPid] || 0) + amount;
+  });
+
+  return { hasSheet: true, amounts };
 }
 
 function collectBankWithdrawalAmountsByPatientCached_(billingMonth, prepared, cache) {

@@ -620,12 +620,6 @@ function normalizeMoneyNumber(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
-function roundToNearestTen(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return 0;
-  return Math.round(num / 10) * 10;
-}
-
 function normalizeVisitCount(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) && value > 0 ? value : 0;
@@ -891,7 +885,7 @@ function calculateBillingRowTotalsLocal(row) {
   const burdenMultiplier = isSelfPaid ? 1 : (Number.isFinite(burdenRate) && burdenRate > 0 ? burdenRate / 10 : 0);
   const treatmentAmount = isSelfPaid
     ? treatmentAmountFull
-    : roundToNearestTen(treatmentAmountFull * burdenMultiplier);
+    : treatmentAmountFull * burdenMultiplier;
   const transportAmount = hasManualTransport
     ? normalizedManualTransport
     : hasChargeablePrice && visitCount > 0

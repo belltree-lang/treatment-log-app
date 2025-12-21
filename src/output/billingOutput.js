@@ -8,12 +8,6 @@ const TRANSPORT_PRICE = (typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
 const INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 const INVOICE_UNIT_PRICE_FALLBACK = (typeof BILLING_UNIT_PRICE !== 'undefined') ? BILLING_UNIT_PRICE : 4170;
 
-function roundToNearestTen_(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return 0;
-  return Math.round(num);
-}
-
 function escapeHtml_(value) {
   return String(value || '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;',
@@ -588,7 +582,7 @@ function calculateInvoiceChargeBreakdown_(params) {
       : (insuranceType === '自費' ? 1 : (burdenRateInt > 0 ? burdenRateInt / 10 : 0)));
   const treatmentAmount = isSelfPaid
     ? treatmentAmountFull
-    : roundToNearestTen_(treatmentAmountFull * burdenMultiplier);
+    : treatmentAmountFull * burdenMultiplier;
   const transportAmount = (manualTransportInput !== '' && manualTransportInput !== null && manualTransportInput !== undefined
     && Number.isFinite(manualTransportAmount))
     ? manualTransportAmount

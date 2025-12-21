@@ -317,7 +317,7 @@ function resolveInvoiceReceiptDisplay_(item) {
     ? explicitReceiptMonths
     : normalizeReceiptMonths_([], normalizedBillingMonth);
 
-  const showReceipt = hasPreviousPrepared && !isUnpaidChecked;
+  const showReceipt = hasPreviousPrepared && isUnpaidChecked;
 
   return {
     showReceipt,

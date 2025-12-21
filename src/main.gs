@@ -564,13 +564,6 @@ function applyReceiptRulesFromUnpaidCheck_(prepared) {
         entryStatus = 'HOLD';
         aggregateUntilMonth = '';
         receiptMonths = [];
-      } else if (pid) {
-        const unpaidStreak = buildUnpaidStreakMonthsForPatient_(pid, unpaidHistory);
-        if (unpaidStreak.length > 0) {
-          entryStatus = 'AGGREGATE';
-          aggregateUntilMonth = billingMonthKey;
-          receiptMonths = normalizeReceiptMonthKeys_(unpaidStreak.concat([billingMonthKey]));
-        }
       }
 
       return Object.assign({}, rowPayload, {

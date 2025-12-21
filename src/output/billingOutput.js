@@ -309,52 +309,16 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
 function resolveInvoiceReceiptDisplay_(item) {
   const rawStatus = item && item.receiptStatus;
   const status = rawStatus == null ? null : String(rawStatus).trim().toUpperCase();
-  const aggregateUntil = item && item.aggregateUntilMonth;
   const billingMonth = item && item.billingMonth;
   const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
-  const normalizedAggregateUntil = normalizeInvoiceMonthKey_(aggregateUntil);
-  const hasValidBillingMonth = !!normalizedBillingMonth;
-  const hasValidAggregateUntil = hasValidBillingMonth && !!normalizedAggregateUntil
-    && Number(normalizedAggregateUntil) >= Number(normalizedBillingMonth);
   const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths);
-  const breakdownMonths = normalizeReceiptMonths_((item && item.receiptMonthBreakdown || [])
-    .map(entry => entry && entry.month));
   const hasExplicitMonths = explicitReceiptMonths.length > 0;
   const receiptMonths = hasExplicitMonths
     ? explicitReceiptMonths
-    : (breakdownMonths.length
-      ? breakdownMonths
-      : (hasValidAggregateUntil
-        ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
-        : normalizeReceiptMonths_([], normalizedBillingMonth)));
-  const aggregationApplied = hasValidAggregateUntil || (hasExplicitMonths && receiptMonths.length > 1);
-
-  if (!hasValidBillingMonth && !hasExplicitMonths) {
-    return { showReceipt: false, receiptRemark: '', receiptMonths };
-  }
+    : normalizeReceiptMonths_([], normalizedBillingMonth);
 
   if (status === 'UNPAID' || status === 'HOLD') {
     return { showReceipt: false, receiptRemark: '', receiptMonths };
-  }
-
-  if (status === 'AGGREGATE') {
-    if (!aggregationApplied && !hasExplicitMonths) {
-      return { showReceipt: false, receiptRemark: '', receiptMonths };
-    }
-
-    return {
-      showReceipt: true,
-      receiptRemark: formatAggregatedReceiptRemark_(receiptMonths),
-      receiptMonths
-    };
-  }
-
-  if (aggregationApplied) {
-    return {
-      showReceipt: true,
-      receiptRemark: formatAggregatedReceiptRemark_(receiptMonths),
-      receiptMonths
-    };
   }
 
   return {
@@ -365,16 +329,7 @@ function resolveInvoiceReceiptDisplay_(item) {
 }
 
 function isPreviousReceiptSettled_(item) {
-  const amount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
-  const rawStatus = item && item.receiptStatus;
-  const status = rawStatus == null ? null : String(rawStatus).trim().toUpperCase();
-  const hasPreviousReceiptAmount = Number.isFinite(amount) && amount > 0;
-
-  if (hasPreviousReceiptAmount) return true;
-
-  if (status === 'HOLD') return false;
-
-  return hasPreviousReceiptAmount;
+  return true;
 }
 
 function buildInvoicePreviousReceipt_(item, display) {
@@ -502,13 +457,9 @@ function buildInvoiceTemplateData_(item) {
   }
 
   if (previousReceipt) {
-    const settled = isPreviousReceiptSettled_(item);
-
-    if (!settled) {
-      previousReceipt.visible = false;
-    } else if (previousReceipt.visible === undefined) {
-      previousReceipt.visible = !!(receipt && receipt.showReceipt);
-    }
+    previousReceipt.visible = previousReceipt.visible === undefined
+      ? !!(receipt && receipt.showReceipt)
+      : previousReceipt.visible;
   }
 
   return Object.assign({}, item, {

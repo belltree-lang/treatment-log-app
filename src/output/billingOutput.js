@@ -1060,7 +1060,8 @@ const BILLING_HISTORY_HEADERS = [
   'updatedAt',
   'memo',
   'receiptStatus',
-  'aggregateUntilMonth'
+  'aggregateUntilMonth',
+  'previousReceiptAmount'
 ];
 
 function resolveBillingHistoryColumns_(sheet) {
@@ -1225,6 +1226,7 @@ function appendBillingHistoryRows(billingJson, options) {
     applyValue('unpaidAmount', entry.row[columns.unpaidAmount - 1]);
     applyValue('bankStatus', entry.row[columns.bankStatus - 1]);
     applyValue('updatedAt', entry.row[columns.updatedAt - 1]);
+    applyValue('previousReceiptAmount', entry.row[columns.previousReceiptAmount - 1]);
 
     if (columns.memo) {
       const existingMemo = existingRow ? existingRow[columns.memo - 1] : '';
@@ -1286,6 +1288,12 @@ function applyPaymentResultsToHistory(billingMonth, bankStatuses) {
       const grandTotal = columns.grandTotal ? Number(newRow[columns.grandTotal - 1]) || 0 : 0;
       const unpaid = statusEntry.unpaidAmount != null ? statusEntry.unpaidAmount : grandTotal - paid;
       if (columns.unpaidAmount) newRow[columns.unpaidAmount - 1] = unpaid;
+      changed = true;
+    }
+
+    if (columns.previousReceiptAmount && statusEntry.bankStatus === 'OK') {
+      const grandTotal = columns.grandTotal ? Number(newRow[columns.grandTotal - 1]) || 0 : 0;
+      newRow[columns.previousReceiptAmount - 1] = grandTotal;
       changed = true;
     }
 

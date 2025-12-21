@@ -457,6 +457,22 @@ function mergeReceiptSettingsIntoPrepared_(prepared, status, aggregateUntilMonth
   return payload;
 }
 
+function applyReceiptRulesFromUnpaidCheck_(prepared) {
+  const billingMonth = prepared && prepared.billingMonth;
+  if (!billingMonth || typeof summarizeBankWithdrawalSheet_ !== 'function') return prepared;
+
+  try {
+    const summary = summarizeBankWithdrawalSheet_(billingMonth);
+    if (summary && summary.unpaidChecked > 0) {
+      return mergeReceiptSettingsIntoPrepared_(prepared, 'HOLD', prepared.aggregateUntilMonth);
+    }
+  } catch (err) {
+    console.warn('[billing] Failed to resolve unpaid check summary for receipt rules', err);
+  }
+
+  return prepared;
+}
+
 function savePreparedBillingJsonRows_(billingMonth, billingJson) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey || !Array.isArray(billingJson)) return { billingMonth: monthKey || '', inserted: 0 };
@@ -1633,27 +1649,28 @@ function filterBillingJsonForInvoice_(billingJson, patientIds) {
 
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
-  if (!normalized || !normalized.billingJson) {
+  const receiptApplied = applyReceiptRulesFromUnpaidCheck_(normalized);
+  if (!receiptApplied || !receiptApplied.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
   const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(options && options.invoicePatientIds);
-  const targetBillingRows = filterBillingJsonForInvoice_(normalized.billingJson, targetPatientIds);
+  const targetBillingRows = filterBillingJsonForInvoice_(receiptApplied.billingJson, targetPatientIds);
   const matchedIds = new Set(targetBillingRows.map(row => String(row && row.patientId ? row.patientId : '').trim()).filter(Boolean));
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
-  const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
+  const outputOptions = Object.assign({}, options, { billingMonth: receiptApplied.billingMonth, patientIds: targetPatientIds });
   const pdfs = generateInvoicePdfs(targetBillingRows, outputOptions);
   const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
-  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(normalized) : null;
+  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(receiptApplied) : null;
   return {
-    billingMonth: normalized.billingMonth,
-    billingJson: normalized.billingJson,
+    billingMonth: receiptApplied.billingMonth,
+    billingJson: receiptApplied.billingJson,
     files: pdfs.files,
     invoicePatientIds: targetPatientIds,
     missingInvoicePatientIds: missingPatientIds,
     invoiceGenerationMode: targetPatientIds.length ? 'partial' : 'bulk',
     bankOutput,
-    preparedAt: normalized.preparedAt || null
+    preparedAt: receiptApplied.preparedAt || null
   };
 }
 

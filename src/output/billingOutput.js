@@ -345,6 +345,16 @@ function resolveInvoiceReceiptDisplay_(item) {
   };
 }
 
+function isPreviousReceiptSettled_(item) {
+  const amount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
+  const rawStatus = item && item.receiptStatus;
+  const status = rawStatus == null ? null : String(rawStatus).trim().toUpperCase();
+
+  if (status === 'HOLD') return false;
+
+  return Number.isFinite(amount) && amount > 0;
+}
+
 function buildInvoicePreviousReceipt_(item, display) {
   const receiptDisplay = display || resolveInvoiceReceiptDisplay_(item);
   const addressee = item && item.nameKanji ? String(item.nameKanji).trim() : '';
@@ -422,8 +432,14 @@ function buildInvoiceTemplateData_(item) {
     ? item.previousReceipt
     : buildInvoicePreviousReceipt_(item, receipt);
 
-  if (previousReceipt && previousReceipt.visible === undefined) {
-    previousReceipt.visible = !!(receipt && receipt.showReceipt);
+  if (previousReceipt) {
+    const settled = isPreviousReceiptSettled_(item);
+
+    if (!settled) {
+      previousReceipt.visible = false;
+    } else if (previousReceipt.visible === undefined) {
+      previousReceipt.visible = !!(receipt && receipt.showReceipt);
+    }
   }
 
   return Object.assign({}, item, {

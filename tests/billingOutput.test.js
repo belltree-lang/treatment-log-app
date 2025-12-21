@@ -318,7 +318,7 @@ function testPaidInvoiceAlwaysShowsReceipt() {
   assert.strictEqual(paidStatus.receiptRemark, '', '合算指定がなければ備考は空');
 }
 
-function testPreviousReceiptIsShownWhenAmountOrBankStatusOk() {
+function testPreviousReceiptIsShownOnlyWhenAmountExists() {
   const context = createContext();
   vm.createContext(context);
   vm.runInContext(billingOutputCode, context);
@@ -328,10 +328,7 @@ function testPreviousReceiptIsShownWhenAmountOrBankStatusOk() {
   const settledByAmount = isPreviousReceiptSettled_({ previousReceiptAmount: 1200, receiptStatus: 'HOLD' });
   assert.strictEqual(settledByAmount, true, '前月領収額がある場合はHOLDでも表示する');
 
-  const settledByBankStatus = isPreviousReceiptSettled_({ bankStatus: 'OK', receiptStatus: 'HOLD' });
-  assert.strictEqual(settledByBankStatus, true, '請求履歴の入金ステータスがOKなら表示する');
-
-  const unsettled = isPreviousReceiptSettled_({ receiptStatus: 'HOLD', bankStatus: 'NG' });
+  const unsettled = isPreviousReceiptSettled_({ receiptStatus: 'HOLD' });
   assert.strictEqual(unsettled, false, '入金済み情報がないHOLDは非表示のまま');
 }
 
@@ -754,7 +751,7 @@ function run() {
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
   testAggregateReceiptIsHiddenUntilEndMonthIsValid();
   testPaidInvoiceAlwaysShowsReceipt();
-  testPreviousReceiptIsShownWhenAmountOrBankStatusOk();
+  testPreviousReceiptIsShownOnlyWhenAmountExists();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testReceiptStatusIsOverwrittenInHistory();
   testInsuranceBillingUsesYenRounding();

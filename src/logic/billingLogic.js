@@ -27,12 +27,6 @@ const billingResolveStaffDisplayName_ = typeof resolveStaffDisplayName_ === 'fun
     return parts[0] || normalized;
   };
 
-function roundToNearestTen_(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return 0;
-  return Math.round(num);
-}
-
 function normalizeBurdenMultiplier_(burdenRate, insuranceType) {
   const type = String(insuranceType || '').trim();
   if (type === '自費') return 1;
@@ -230,7 +224,7 @@ function calculateBillingAmounts_(params) {
   const selfPayTotal = selfPayItems.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
   const billingAmount = isSelfPaid
     ? treatmentAmount
-    : roundToNearestTen_(treatmentAmount * burdenMultiplier);
+    : treatmentAmount * burdenMultiplier;
   const total = treatmentAmount + resolvedTransportAmount;
   const grandTotal = billingAmount + resolvedTransportAmount + carryOverAmount + selfPayTotal;
 

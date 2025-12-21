@@ -594,8 +594,8 @@ function attachPreviousReceiptAmounts_(prepared) {
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return prepared;
 
-  const amountByPatient = collectBankWithdrawalAmountsByPatient_(previousMonthKey, prepared);
-  if (!Object.keys(amountByPatient).length) return prepared;
+  const bankAmountCache = {};
+  const previousAmounts = collectBankWithdrawalAmountsByPatientCached_(previousMonthKey, prepared, bankAmountCache);
 
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
@@ -603,11 +603,58 @@ function attachPreviousReceiptAmounts_(prepared) {
 
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
-    if (!pid || !Object.prototype.hasOwnProperty.call(amountByPatient, pid)) return entry;
-    return Object.assign({}, entry, { previousReceiptAmount: amountByPatient[pid] });
+    const previousReceiptAmount = (pid && previousAmounts && Object.prototype.hasOwnProperty.call(previousAmounts, pid))
+      ? previousAmounts[pid]
+      : entry && entry.previousReceiptAmount;
+    const receiptMonthBreakdown = buildReceiptMonthBreakdownForEntry_(
+      pid,
+      entry && entry.receiptMonths,
+      prepared,
+      bankAmountCache
+    );
+
+    return Object.assign({}, entry, {
+      previousReceiptAmount,
+      receiptMonthBreakdown
+    });
   });
 
   return Object.assign({}, prepared, { billingJson: enrichedJson });
+}
+
+function collectBankWithdrawalAmountsByPatientCached_(billingMonth, prepared, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return {};
+  const store = cache || {};
+  if (!store[monthKey]) {
+    store[monthKey] = collectBankWithdrawalAmountsByPatient_(monthKey, prepared);
+  }
+  return store[monthKey];
+}
+
+function buildReceiptMonthBreakdownForEntry_(patientId, months, prepared, cache) {
+  const pid = patientId ? String(patientId).trim() : '';
+  if (!pid || !Array.isArray(months) || !months.length) return [];
+
+  const seen = new Set();
+  const breakdown = [];
+  const store = cache || {};
+
+  months.forEach(month => {
+    const monthKey = normalizeBillingMonthKeySafe_(month);
+    if (!monthKey || seen.has(monthKey)) return;
+    seen.add(monthKey);
+
+    const amountByPatient = collectBankWithdrawalAmountsByPatientCached_(monthKey, prepared, store);
+    if (amountByPatient && Object.prototype.hasOwnProperty.call(amountByPatient, pid)) {
+      const amount = amountByPatient[pid];
+      if (Number.isFinite(amount)) {
+        breakdown.push({ month: monthKey, amount });
+      }
+    }
+  });
+
+  return breakdown;
 }
 
 function collectBankWithdrawalAmountsByPatient_(billingMonth, prepared) {

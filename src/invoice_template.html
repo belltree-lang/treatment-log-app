@@ -23,6 +23,9 @@
     th { background: #e5f0ff; font-weight: 700; }
     td.amount { text-align: right; }
     tfoot td { font-weight: 700; background: #edf2f7; }
+    .subtable { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+    .subtable th, .subtable td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; }
+    .subtable th.amount, .subtable td.amount { text-align: right; }
     .note { color: #475569; font-size: 12px; margin-top: 6px; }
     .divider { border: 0; border-top: 1px dashed #cbd5e1; margin: 4px 0 2px; }
   </style>
@@ -94,6 +97,8 @@
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptAmount = receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price; ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
+    <? var receiptBreakdown = receipt.breakdown || []; ?>
+    <? var hasReceiptBreakdown = Array.isArray(receiptBreakdown) && receiptBreakdown.length > 0; ?>
 
     <section class="card">
       <h3 class="section-title">前月分領収書</h3>
@@ -110,6 +115,22 @@
           <div class="label">発行者</div>
           <div>株式会社べるつりー</div>
         </div>
+        <? if (hasReceiptBreakdown) { ?>
+          <div class="note">未回収期間の内訳</div>
+          <table class="subtable">
+            <thead>
+              <tr><th>年月</th><th class="amount">金額</th></tr>
+            </thead>
+            <tbody>
+              <? receiptBreakdown.forEach(function(entry) { ?>
+                <tr>
+                  <td><?= normalizeBillingMonthLabel_(entry.month) || entry.month || '―' ?></td>
+                  <td class="amount"><?= formatBillingCurrency_(entry.amount || 0) ?> 円</td>
+                </tr>
+              <? }); ?>
+            </tbody>
+          </table>
+        <? } ?>
       <? } else { ?>
         <div class="note">前月分は未入金のため、後日合算して請求されます</div>
       <? } ?>

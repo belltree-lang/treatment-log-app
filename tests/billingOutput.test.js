@@ -252,53 +252,7 @@ function testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice() {
   assert.strictEqual(breakdown.grandTotal, 500, '繰越のみが合計に残る');
 }
 
-function testAggregateReceiptIsHiddenUntilEndMonthIsValid() {
-  const context = createContext();
-  vm.createContext(context);
-  vm.runInContext(billingOutputCode, context);
-
-  const { resolveInvoiceReceiptDisplay_, formatAggregatedReceiptRemark_ } = context;
-
-  const pendingAggregate = resolveInvoiceReceiptDisplay_({
-    billingMonth: '202501',
-    receiptStatus: 'AGGREGATE',
-    aggregateUntilMonth: ''
-  });
-
-  assert.deepStrictEqual(Array.from(pendingAggregate.receiptMonths || []), ['202501'], '集計終了月なしは請求月のみを返す');
-  assert.strictEqual(pendingAggregate.showReceipt, false, '合算成立前は領収書を非表示にする');
-  assert.strictEqual(pendingAggregate.receiptRemark, '', '合算成立前は備考が付与されない');
-
-  const invalidAggregate = resolveInvoiceReceiptDisplay_({
-    billingMonth: '202501',
-    receiptStatus: 'AGGREGATE',
-    aggregateUntilMonth: '20241234'
-  });
-
-  assert.deepStrictEqual(Array.from(invalidAggregate.receiptMonths || []), ['202501'], '無効な終了月はフォールバックして請求月のみになる');
-  assert.strictEqual(invalidAggregate.showReceipt, false, '無効な終了月では領収書を表示しない');
-  assert.strictEqual(invalidAggregate.receiptRemark, '', '無効な終了月では備考を生成しない');
-
-  const validAggregate = resolveInvoiceReceiptDisplay_({
-    billingMonth: '202501',
-    receiptStatus: 'AGGREGATE',
-    aggregateUntilMonth: '202503'
-  });
-
-  assert.deepStrictEqual(
-    Array.from(validAggregate.receiptMonths || []),
-    ['202501', '202502', '202503'],
-    '合算が成立すると範囲内の月が返る'
-  );
-  assert.strictEqual(validAggregate.showReceipt, true, '合算成立後は領収書を表示する');
-  assert.strictEqual(
-    validAggregate.receiptRemark,
-    formatAggregatedReceiptRemark_(validAggregate.receiptMonths),
-    '合算成立後は備考が生成される'
-  );
-}
-
-function testPaidInvoiceAlwaysShowsReceipt() {
+function testReceiptVisibilityReliesOnUnpaidStatusOnly() {
   const context = createContext();
   vm.createContext(context);
   vm.runInContext(billingOutputCode, context);
@@ -307,29 +261,28 @@ function testPaidInvoiceAlwaysShowsReceipt() {
 
   const defaultStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: null });
   assert.strictEqual(defaultStatus.showReceipt, true, 'ステータス未指定でも領収書を表示する');
-  assert.deepStrictEqual(
-    Array.from(defaultStatus.receiptMonths || []),
-    ['202501'],
-    '請求月の領収書を作成する'
-  );
+  assert.deepStrictEqual(Array.from(defaultStatus.receiptMonths || []), ['202501'], '請求月の領収書を作成する');
 
   const paidStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: 'PAID' });
   assert.strictEqual(paidStatus.showReceipt, true, '通常入金は必ず領収書を表示する');
-  assert.strictEqual(paidStatus.receiptRemark, '', '合算指定がなければ備考は空');
+  assert.strictEqual(paidStatus.receiptRemark, '', '判定条件は未回収チェックのみ');
+
+  const unpaidStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: 'UNPAID' });
+  assert.strictEqual(unpaidStatus.showReceipt, false, '未回収チェックがある場合のみ非表示にする');
 }
 
-function testPreviousReceiptIsShownOnlyWhenAmountExists() {
+function testPreviousReceiptVisibilityFollowsReceiptDecision() {
   const context = createContext();
   vm.createContext(context);
   vm.runInContext(billingOutputCode, context);
 
-  const { isPreviousReceiptSettled_ } = context;
+  const { buildInvoiceTemplateData_ } = context;
 
-  const settledByAmount = isPreviousReceiptSettled_({ previousReceiptAmount: 1200, receiptStatus: 'HOLD' });
-  assert.strictEqual(settledByAmount, true, '前月領収額がある場合はHOLDでも表示する');
+  const payable = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'PAID' });
+  assert.strictEqual(payable.previousReceipt.visible, true, '領収表示時は前月領収書も表示する');
 
-  const unsettled = isPreviousReceiptSettled_({ receiptStatus: 'HOLD' });
-  assert.strictEqual(unsettled, false, '入金済み情報がないHOLDは非表示のまま');
+  const onHold = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'HOLD' });
+  assert.strictEqual(onHold.previousReceipt.visible, false, '未回収チェックがある場合は前月領収書も非表示');
 }
 
 function testSelfPaidInvoiceDoesNotRoundManualUnitPrice() {
@@ -749,9 +702,8 @@ function run() {
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
-  testAggregateReceiptIsHiddenUntilEndMonthIsValid();
-  testPaidInvoiceAlwaysShowsReceipt();
-  testPreviousReceiptIsShownOnlyWhenAmountExists();
+  testReceiptVisibilityReliesOnUnpaidStatusOnly();
+  testPreviousReceiptVisibilityFollowsReceiptDecision();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testReceiptStatusIsOverwrittenInHistory();
   testInsuranceBillingUsesYenRounding();

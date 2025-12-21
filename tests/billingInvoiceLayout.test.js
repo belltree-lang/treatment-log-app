@@ -116,19 +116,10 @@ function testInvoiceTemplateAddsReceiptDecision() {
 
   assert.strictEqual(unpaid.showReceipt, false, 'UNPAID の月は領収書を表示しない');
 
-  const aggregated = buildInvoiceTemplateData_({
-    billingMonth: '202311',
-    aggregateUntilMonth: '202312',
-    receiptStatus: 'AGGREGATE'
-  });
-
-  assert.strictEqual(aggregated.showReceipt, true, 'AGGREGATE 指定は領収書を表示対象とする');
-  assert.deepStrictEqual(Array.from(aggregated.receiptMonths || []), ['202311', '202312'], '合算対象の月を保持する');
-  assert.strictEqual(
-    aggregated.receiptRemark,
-    '令和5年11月分・12月分施術代として',
-    '合算領収の但し書きを生成する'
-  );
+  const payable = buildInvoiceTemplateData_({ billingMonth: '202311', receiptStatus: 'PAID' });
+  assert.strictEqual(payable.showReceipt, true, '未回収チェックが無ければ領収書を表示する');
+  assert.deepStrictEqual(Array.from(payable.receiptMonths || []), ['202311'], '領収対象月は請求月のみを保持する');
+  assert.strictEqual(payable.receiptRemark, '', '備考は付与しない');
 }
 
 function run() {

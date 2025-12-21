@@ -322,13 +322,13 @@ function resolveInvoiceReceiptDisplay_(item) {
   const hasValidBillingMonth = !!normalizedBillingMonth;
   const hasValidAggregateUntil = hasValidBillingMonth && !!normalizedAggregateUntil
     && Number(normalizedAggregateUntil) >= Number(normalizedBillingMonth);
-  const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, normalizedBillingMonth);
+  const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths);
   const hasExplicitMonths = explicitReceiptMonths.length > 0;
   const receiptMonths = hasExplicitMonths
     ? explicitReceiptMonths
     : (hasValidAggregateUntil
       ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
-      : (normalizedBillingMonth ? [normalizedBillingMonth] : []));
+      : normalizeReceiptMonths_([], normalizedBillingMonth));
   const aggregationApplied = hasValidAggregateUntil || (hasExplicitMonths && receiptMonths.length > 1);
 
   if (!hasValidBillingMonth && !hasExplicitMonths) {

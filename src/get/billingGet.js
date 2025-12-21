@@ -1588,9 +1588,23 @@ function extractLegacyUnpaidHistory_(targetKeyNum) {
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  const colCount = Math.max(sheet.getLastColumn(), 11);
-  const headers = sheet.getRange(1, 1, 1, colCount).getDisplayValues()[0];
+  const lastColumn = typeof sheet.getLastColumn === 'function' ? sheet.getLastColumn() : 0;
+  const colCount = Math.max(lastColumn || 0, 11);
+  const headerRange = sheet.getRange(1, 1, 1, colCount);
+  const headers = headerRange && typeof headerRange.getDisplayValues === 'function'
+    ? headerRange.getDisplayValues()[0]
+    : headerRange && typeof headerRange.getValues === 'function'
+      ? headerRange.getValues()[0]
+      : [];
   const columns = resolveBillingHistoryColumnsFromHeaders_(headers);
+
+  if (!columns.billingMonth) {
+    BILLING_HISTORY_HEADER_CANDIDATES.forEach((label, idx) => {
+      if (!columns[label] && idx < colCount) {
+        columns[label] = idx + 1;
+      }
+    });
+  }
   const values = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
 
   return values.map(row => {

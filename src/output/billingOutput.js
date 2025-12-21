@@ -349,9 +349,11 @@ function buildInvoicePreviousReceipt_(item, display) {
   const receiptDisplay = display || resolveInvoiceReceiptDisplay_(item);
   const addressee = item && item.nameKanji ? String(item.nameKanji).trim() : '';
   const date = formatInvoiceDateLabel_();
-  const amountSource = item && item.total != null
-    ? item.total
-    : (item && item.grandTotal != null ? item.grandTotal : item && item.billingAmount);
+  const amountSource = item && item.previousReceiptAmount != null
+    ? item.previousReceiptAmount
+    : (item && item.total != null
+      ? item.total
+      : (item && item.grandTotal != null ? item.grandTotal : item && item.billingAmount));
   const amount = normalizeInvoiceMoney_(amountSource);
   const note = receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '';
 

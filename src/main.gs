@@ -457,6 +457,15 @@ function mergeReceiptSettingsIntoPrepared_(prepared, status, aggregateUntilMonth
   return payload;
 }
 
+function resolvePreviousBillingMonthKey_(billingMonth) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  if (!month || !month.key) return '';
+  const prevDate = new Date(month.year, month.month - 2, 1);
+  const year = String(prevDate.getFullYear()).padStart(4, '0');
+  const monthText = String(prevDate.getMonth() + 1).padStart(2, '0');
+  return year + monthText;
+}
+
 function applyReceiptRulesFromUnpaidCheck_(prepared) {
   const billingMonth = prepared && prepared.billingMonth;
   if (!billingMonth || typeof summarizeBankWithdrawalSheet_ !== 'function') return prepared;
@@ -507,6 +516,77 @@ function applyReceiptRulesFromUnpaidCheck_(prepared) {
   }
 
   return prepared;
+}
+
+function attachPreviousReceiptAmounts_(prepared) {
+  const monthKey = prepared && prepared.billingMonth;
+  if (!monthKey || !Array.isArray(prepared && prepared.billingJson)) return prepared;
+
+  const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
+  if (!previousMonthKey) return prepared;
+
+  const amountByPatient = collectBankWithdrawalAmountsByPatient_(previousMonthKey, prepared);
+  if (!Object.keys(amountByPatient).length) return prepared;
+
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+
+  const enrichedJson = prepared.billingJson.map(entry => {
+    const pid = normalizePid(entry && entry.patientId);
+    if (!pid || !Object.prototype.hasOwnProperty.call(amountByPatient, pid)) return entry;
+    return Object.assign({}, entry, { previousReceiptAmount: amountByPatient[pid] });
+  });
+
+  return Object.assign({}, prepared, { billingJson: enrichedJson });
+}
+
+function collectBankWithdrawalAmountsByPatient_(billingMonth, prepared) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return {};
+
+  const month = normalizeBillingMonthInput(monthKey);
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(month);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) return {};
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return {};
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const unpaidCol = ensureUnpaidCheckColumn_(sheet, headers);
+  const amountCol = resolveBillingColumn_(
+    headers,
+    ['金額', '請求金額', '引落額', '引落金額'],
+    '金額',
+    { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
+  );
+  const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients || {});
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+  const amounts = {};
+
+  values.forEach(row => {
+    if (unpaidCol && row[unpaidCol - 1]) return;
+    const amount = amountCol ? Number(row[amountCol - 1]) || 0 : 0;
+    if (!amount) return;
+
+    const resolvedPid = pidCol
+      ? normalizePid(row[pidCol - 1])
+      : nameToPatientId[buildFullNameKey_(row[nameCol - 1], kanaCol ? row[kanaCol - 1] : '')];
+
+    if (!resolvedPid) return;
+    amounts[resolvedPid] = (amounts[resolvedPid] || 0) + amount;
+  });
+
+  return amounts;
 }
 
 function resolveUnpaidCheckedPatientIds_(billingMonth, prepared) {
@@ -1725,11 +1805,12 @@ function filterBillingJsonForInvoice_(billingJson, patientIds) {
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
   const receiptApplied = applyReceiptRulesFromUnpaidCheck_(normalized);
-  if (!receiptApplied || !receiptApplied.billingJson) {
+  const receiptEnriched = attachPreviousReceiptAmounts_(receiptApplied);
+  if (!receiptEnriched || !receiptEnriched.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
   const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(options && options.invoicePatientIds);
-  const targetBillingRows = filterBillingJsonForInvoice_(receiptApplied.billingJson, targetPatientIds);
+  const targetBillingRows = filterBillingJsonForInvoice_(receiptEnriched.billingJson, targetPatientIds);
   const matchedIds = new Set(targetBillingRows.map(row => String(row && row.patientId ? row.patientId : '').trim()).filter(Boolean));
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
@@ -1739,7 +1820,7 @@ function generatePreparedInvoices_(prepared, options) {
   const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(receiptApplied) : null;
   return {
     billingMonth: receiptApplied.billingMonth,
-    billingJson: receiptApplied.billingJson,
+    billingJson: receiptEnriched.billingJson,
     files: pdfs.files,
     invoicePatientIds: targetPatientIds,
     missingInvoicePatientIds: missingPatientIds,

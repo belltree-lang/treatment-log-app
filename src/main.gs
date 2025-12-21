@@ -455,16 +455,21 @@ function mergeReceiptSettingsIntoPrepared_(prepared, status, aggregateUntilMonth
   }
 
   return payload;
-}
+  }
 
-function resolvePreviousBillingMonthKey_(billingMonth) {
-  const month = normalizeBillingMonthInput(billingMonth);
-  if (!month || !month.key) return '';
-  const prevDate = new Date(month.year, month.month - 2, 1);
-  const year = String(prevDate.getFullYear()).padStart(4, '0');
-  const monthText = String(prevDate.getMonth() + 1).padStart(2, '0');
-  return year + monthText;
-}
+  function resolvePreviousBillingMonthKey_(billingMonth) {
+    const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+    if (!monthKey) return '';
+
+    const yearNum = Number(monthKey.slice(0, 4));
+    const monthNum = Number(monthKey.slice(4, 6));
+    if (!Number.isFinite(yearNum) || !Number.isFinite(monthNum)) return '';
+
+    const prevDate = new Date(yearNum, monthNum - 2, 1);
+    const prevYear = String(prevDate.getFullYear()).padStart(4, '0');
+    const monthText = String(prevDate.getMonth() + 1).padStart(2, '0');
+    return prevYear + monthText;
+  }
 
 function normalizeReceiptMonthKeys_(months) {
   if (!Array.isArray(months)) return [];

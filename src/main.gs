@@ -553,7 +553,7 @@ function attachPreviousReceiptAmounts_(prepared) {
   if (!previousMonthKey) return prepared;
 
   const previousReceipt = collectPreviousReceiptAmountsFromBankSheet_(previousMonthKey, prepared);
-  const hasPreviousPrepared = !!(previousReceipt && previousReceipt.hasSheet);
+  const hasPreviousReceiptSheet = !!(previousReceipt && previousReceipt.hasSheet);
   const previousAmounts = previousReceipt && previousReceipt.amounts;
 
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
@@ -569,7 +569,11 @@ function attachPreviousReceiptAmounts_(prepared) {
     return Object.assign({}, entry, { previousReceiptAmount });
   });
 
-  return Object.assign({}, prepared, { billingJson: enrichedJson, hasPreviousPrepared });
+  return Object.assign({}, prepared, {
+    billingJson: enrichedJson,
+    hasPreviousPrepared: hasPreviousReceiptSheet,
+    hasPreviousReceiptSheet
+  });
 }
 
 function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
@@ -587,12 +591,7 @@ function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
   const amountColIndex = columnLetterToNumber_(BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER);
   const headerCount = Math.max(sheet.getLastColumn(), amountColIndex || 0);
   const headers = sheet.getRange(1, 1, 1, headerCount).getDisplayValues()[0];
-  const amountCol = resolveBillingColumn_(
-    headers,
-    ['金額', '請求金額', '引落額', '引落金額'],
-    '金額',
-    { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
-  );
+  const amountCol = columnLetterToNumber_(BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER);
   const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});

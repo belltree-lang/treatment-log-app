@@ -323,12 +323,16 @@ function resolveInvoiceReceiptDisplay_(item) {
   const hasValidAggregateUntil = hasValidBillingMonth && !!normalizedAggregateUntil
     && Number(normalizedAggregateUntil) >= Number(normalizedBillingMonth);
   const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths);
+  const breakdownMonths = normalizeReceiptMonths_((item && item.receiptMonthBreakdown || [])
+    .map(entry => entry && entry.month));
   const hasExplicitMonths = explicitReceiptMonths.length > 0;
   const receiptMonths = hasExplicitMonths
     ? explicitReceiptMonths
-    : (hasValidAggregateUntil
-      ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
-      : normalizeReceiptMonths_([], normalizedBillingMonth));
+    : (breakdownMonths.length
+      ? breakdownMonths
+      : (hasValidAggregateUntil
+        ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
+        : normalizeReceiptMonths_([], normalizedBillingMonth)));
   const aggregationApplied = hasValidAggregateUntil || (hasExplicitMonths && receiptMonths.length > 1);
 
   if (!hasValidBillingMonth && !hasExplicitMonths) {
@@ -379,7 +383,8 @@ function isPreviousReceiptSettled_(item) {
 function buildInvoicePreviousReceipt_(item, display) {
   const receiptDisplay = display || resolveInvoiceReceiptDisplay_(item);
   const addressee = item && item.nameKanji ? String(item.nameKanji).trim() : '';
-  const date = formatInvoiceDateLabel_();
+  const receiptMonths = receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [];
+  const date = formatReceiptSettlementDate_(receiptMonths, formatInvoiceDateLabel_());
   const amount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const note = receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '';
   const breakdown = resolveReceiptMonthBreakdown_(item, receiptDisplay && receiptDisplay.receiptMonths);
@@ -393,6 +398,28 @@ function buildInvoicePreviousReceipt_(item, display) {
     receiptMonths: receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [],
     breakdown
   };
+}
+
+function formatReceiptSettlementDate_(receiptMonths, fallbackDate) {
+  const months = Array.isArray(receiptMonths) ? receiptMonths : [];
+  const lastMonth = months.length ? normalizeInvoiceMonthKey_(months[months.length - 1]) : '';
+
+  if (lastMonth) {
+    const year = Number(lastMonth.slice(0, 4));
+    const month = Number(lastMonth.slice(4, 6));
+    if (Number.isFinite(year) && Number.isFinite(month)) {
+      const settlementDate = new Date(year, month, 0);
+      try {
+        const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+        return Utilities.formatDate(settlementDate, tz, 'yyyyMMdd');
+      } catch (e) {
+        // ignore and fall through
+      }
+      return settlementDate.toISOString().slice(0, 10).replace(/-/g, '');
+    }
+  }
+
+  return fallbackDate || '';
 }
 
 function resolveReceiptMonthBreakdown_(item, receiptMonths) {

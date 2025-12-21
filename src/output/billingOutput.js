@@ -382,6 +382,7 @@ function buildInvoicePreviousReceipt_(item, display) {
   const date = formatInvoiceDateLabel_();
   const amount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const note = receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '';
+  const breakdown = resolveReceiptMonthBreakdown_(item, receiptDisplay && receiptDisplay.receiptMonths);
 
   return {
     visible: !!(receiptDisplay && receiptDisplay.showReceipt),
@@ -389,8 +390,25 @@ function buildInvoicePreviousReceipt_(item, display) {
     date,
     amount: Number.isFinite(amount) ? amount : 0,
     note,
-    receiptMonths: receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : []
+    receiptMonths: receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [],
+    breakdown
   };
+}
+
+function resolveReceiptMonthBreakdown_(item, receiptMonths) {
+  const precomputed = item && Array.isArray(item.receiptMonthBreakdown) ? item.receiptMonthBreakdown : [];
+  if (precomputed.length) return precomputed;
+
+  try {
+    return buildReceiptMonthBreakdownForEntry_(
+      item && item.patientId,
+      receiptMonths || (item && item.receiptMonths) || [],
+      item,
+      {}
+    );
+  } catch (e) {
+    return [];
+  }
 }
 
 function formatInvoiceDateLabel_() {
@@ -445,8 +463,12 @@ function buildInvoiceTemplateData_(item) {
 
   const receipt = resolveInvoiceReceiptDisplay_(item);
   const previousReceipt = item && item.previousReceipt
-    ? item.previousReceipt
+    ? Object.assign({}, item.previousReceipt)
     : buildInvoicePreviousReceipt_(item, receipt);
+
+  if (previousReceipt && !previousReceipt.breakdown) {
+    previousReceipt.breakdown = resolveReceiptMonthBreakdown_(item, receipt && receipt.receiptMonths);
+  }
 
   if (previousReceipt) {
     const settled = isPreviousReceiptSettled_(item);

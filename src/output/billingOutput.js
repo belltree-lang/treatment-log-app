@@ -307,23 +307,32 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
 }
 
 function resolveInvoiceReceiptDisplay_(item) {
-  const isUnpaidChecked = !!(item && item.unpaidChecked);
   const hasPreviousPrepared = !!(item && item.hasPreviousPrepared);
-  const billingMonth = item && item.billingMonth;
-  const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
-  const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths);
-  const hasExplicitMonths = explicitReceiptMonths.length > 0;
-  const receiptMonths = hasExplicitMonths
-    ? explicitReceiptMonths
-    : normalizeReceiptMonths_([], normalizedBillingMonth);
+  const previousMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
+  const receiptMonths = previousMonth
+    ? normalizeReceiptMonths_([previousMonth])
+    : [];
 
-  const showReceipt = hasPreviousPrepared && isUnpaidChecked;
+  const showReceipt = hasPreviousPrepared && receiptMonths.length > 0;
 
   return {
     showReceipt,
     receiptRemark: '',
     receiptMonths
   };
+}
+
+function resolvePreviousBillingMonthKey_(billingMonth) {
+  const key = normalizeInvoiceMonthKey_(billingMonth);
+  if (!key) return '';
+
+  const year = Number(key.slice(0, 4));
+  const month = Number(key.slice(4, 6));
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return '';
+
+  const previousMonth = month === 1 ? 12 : month - 1;
+  const previousYear = month === 1 ? year - 1 : year;
+  return String(previousYear).padStart(4, '0') + String(previousMonth).padStart(2, '0');
 }
 
 function isPreviousReceiptSettled_(item) {

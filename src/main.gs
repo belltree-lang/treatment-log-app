@@ -524,55 +524,20 @@ function buildUnpaidStreakMonthsForPatient_(patientId, unpaidHistory) {
 
 function applyReceiptRulesFromUnpaidCheck_(prepared) {
   const billingMonth = prepared && prepared.billingMonth;
-  if (!billingMonth || typeof summarizeBankWithdrawalSheet_ !== 'function') return prepared;
+  if (!billingMonth || !Array.isArray(prepared && prepared.billingJson)) return prepared;
 
   try {
-    const unpaidHistory = collectUnpaidCheckHistoryByMonth_(billingMonth, prepared, 12);
-    const hasRelevantUnpaid = unpaidHistory.some(entry => entry.unpaidPatients && entry.unpaidPatients.size > 0);
-
-    if (!hasRelevantUnpaid || !Array.isArray(prepared && prepared.billingJson)) {
-      return prepared;
-    }
-
-    const currentUnpaid = unpaidHistory[0] && unpaidHistory[0].unpaidPatients
-      ? unpaidHistory[0].unpaidPatients
-      : new Set();
-
-    const normalizedBaseStatus = normalizeReceiptStatus_(prepared.receiptStatus);
-    const normalizedBaseAggregate = normalizedBaseStatus === 'AGGREGATE'
-      ? normalizeBillingMonthKeySafe_(prepared.aggregateUntilMonth)
-      : '';
+    const unpaidPatients = resolveUnpaidCheckedPatientIds_(billingMonth, prepared);
     const normalizePid = typeof billingNormalizePatientId_ === 'function'
       ? billingNormalizePatientId_
       : value => String(value || '').trim();
-    const billingMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
 
     const nextBillingJson = prepared.billingJson.map(row => {
-      const rowPayload = row || {};
-      const pid = normalizePid(rowPayload.patientId);
-      const rowStatus = normalizeReceiptStatus_(rowPayload.receiptStatus) || normalizedBaseStatus;
-      const aggregateSource = rowPayload.aggregateUntilMonth || normalizedBaseAggregate || prepared.aggregateUntilMonth;
-      const baseAggregate = rowStatus === 'AGGREGATE'
-        ? normalizeBillingMonthKeySafe_(aggregateSource)
-        : '';
-
-      const isUnpaidChecked = pid && currentUnpaid.has(pid);
-      const aggregateUntilMonth = isUnpaidChecked ? '' : baseAggregate;
-      const receiptMonths = isUnpaidChecked ? [] : normalizeReceiptMonthKeys_(rowPayload.receiptMonths);
-
-      return Object.assign({}, rowPayload, {
-        receiptStatus: rowStatus,
-        aggregateUntilMonth,
-        receiptMonths,
-        unpaidChecked: !!isUnpaidChecked
-      });
+      const pid = normalizePid(row && row.patientId);
+      return Object.assign({}, row, { unpaidChecked: !!(pid && unpaidPatients && unpaidPatients.has(pid)) });
     });
 
-    return Object.assign({}, prepared, {
-      billingJson: nextBillingJson,
-      receiptStatus: normalizedBaseStatus,
-      aggregateUntilMonth: normalizedBaseAggregate
-    });
+    return Object.assign({}, prepared, { billingJson: nextBillingJson });
   } catch (err) {
     console.warn('[billing] Failed to resolve unpaid check summary for receipt rules', err);
   }
@@ -605,10 +570,7 @@ function attachPreviousReceiptAmounts_(prepared) {
       ? previousAmounts[pid]
       : 0;
 
-    return Object.assign({}, entry, {
-      previousReceiptAmount,
-      receiptMonthBreakdown: []
-    });
+    return Object.assign({}, entry, { previousReceiptAmount });
   });
 
   return Object.assign({}, prepared, { billingJson: enrichedJson, hasPreviousPrepared });

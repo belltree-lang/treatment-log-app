@@ -307,8 +307,8 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
 }
 
 function resolveInvoiceReceiptDisplay_(item) {
-  const status = item && item.receiptStatus ? String(item.receiptStatus).trim().toUpperCase() : '';
-  const isUnpaidChecked = !!(item && (item.unpaidChecked || status === 'UNPAID' || status === 'HOLD'));
+  const isUnpaidChecked = !!(item && item.unpaidChecked);
+  const hasPreviousPrepared = !!(item && item.hasPreviousPrepared);
   const billingMonth = item && item.billingMonth;
   const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
   const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths);
@@ -317,12 +317,10 @@ function resolveInvoiceReceiptDisplay_(item) {
     ? explicitReceiptMonths
     : normalizeReceiptMonths_([], normalizedBillingMonth);
 
-  if (isUnpaidChecked) {
-    return { showReceipt: false, receiptRemark: '', receiptMonths };
-  }
+  const showReceipt = hasPreviousPrepared && !isUnpaidChecked;
 
   return {
-    showReceipt: true,
+    showReceipt,
     receiptRemark: '',
     receiptMonths
   };

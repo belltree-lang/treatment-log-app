@@ -466,20 +466,72 @@ function resolvePreviousBillingMonthKey_(billingMonth) {
   return year + monthText;
 }
 
+function normalizeReceiptMonthKeys_(months) {
+  if (!Array.isArray(months)) return [];
+  const seen = new Set();
+  const normalized = [];
+  months.forEach(month => {
+    const normalizedMonth = normalizeBillingMonthKeySafe_(month);
+    if (!normalizedMonth || seen.has(normalizedMonth)) return;
+    seen.add(normalizedMonth);
+    normalized.push(normalizedMonth);
+  });
+  return normalized;
+}
+
+function collectUnpaidCheckHistoryByMonth_(billingMonth, prepared, maxMonths) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return [];
+
+  const monthsToInspect = Number.isFinite(maxMonths) && maxMonths > 0 ? maxMonths : 12;
+  let cursorKey = monthKey;
+  const history = [];
+
+  for (let i = 0; i < monthsToInspect && cursorKey; i += 1) {
+    history.push({
+      monthKey: cursorKey,
+      unpaidPatients: resolveUnpaidCheckedPatientIds_(cursorKey, prepared)
+    });
+    cursorKey = resolvePreviousBillingMonthKey_(cursorKey);
+  }
+
+  return history;
+}
+
+function buildUnpaidStreakMonthsForPatient_(patientId, unpaidHistory) {
+  if (!patientId || !Array.isArray(unpaidHistory)) return [];
+  const streak = [];
+
+  for (let i = 1; i < unpaidHistory.length; i += 1) {
+    const entry = unpaidHistory[i];
+    if (!entry || !entry.unpaidPatients) break;
+    if (entry.unpaidPatients.has(patientId)) {
+      streak.push(entry.monthKey);
+    } else if (streak.length > 0) {
+      break;
+    } else {
+      break;
+    }
+  }
+
+  return normalizeReceiptMonthKeys_(streak.reverse());
+}
+
 function applyReceiptRulesFromUnpaidCheck_(prepared) {
   const billingMonth = prepared && prepared.billingMonth;
   if (!billingMonth || typeof summarizeBankWithdrawalSheet_ !== 'function') return prepared;
 
   try {
-    const summary = summarizeBankWithdrawalSheet_(billingMonth);
-    if (!summary || summary.unpaidChecked <= 0 || !Array.isArray(prepared && prepared.billingJson)) {
+    const unpaidHistory = collectUnpaidCheckHistoryByMonth_(billingMonth, prepared, 12);
+    const hasRelevantUnpaid = unpaidHistory.some(entry => entry.unpaidPatients && entry.unpaidPatients.size > 0);
+
+    if (!hasRelevantUnpaid || !Array.isArray(prepared && prepared.billingJson)) {
       return prepared;
     }
 
-    const unpaidPatients = resolveUnpaidCheckedPatientIds_(billingMonth, prepared);
-    if (!unpaidPatients || unpaidPatients.size === 0) {
-      return prepared;
-    }
+    const currentUnpaid = unpaidHistory[0] && unpaidHistory[0].unpaidPatients
+      ? unpaidHistory[0].unpaidPatients
+      : new Set();
 
     const normalizedBaseStatus = normalizeReceiptStatus_(prepared.receiptStatus);
     const normalizedBaseAggregate = normalizedBaseStatus === 'AGGREGATE'
@@ -488,21 +540,38 @@ function applyReceiptRulesFromUnpaidCheck_(prepared) {
     const normalizePid = typeof billingNormalizePatientId_ === 'function'
       ? billingNormalizePatientId_
       : value => String(value || '').trim();
+    const billingMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
 
     const nextBillingJson = prepared.billingJson.map(row => {
       const rowPayload = row || {};
       const pid = normalizePid(rowPayload.patientId);
-      const shouldHold = pid && unpaidPatients.has(pid);
-      const entryStatus = shouldHold
-        ? 'HOLD'
-        : (normalizeReceiptStatus_(rowPayload.receiptStatus) || normalizedBaseStatus);
+      const rowStatus = normalizeReceiptStatus_(rowPayload.receiptStatus) || normalizedBaseStatus;
       const aggregateSource = rowPayload.aggregateUntilMonth || normalizedBaseAggregate || prepared.aggregateUntilMonth;
-      const aggregateUntilMonth = entryStatus === 'AGGREGATE'
+      const baseAggregate = rowStatus === 'AGGREGATE'
         ? normalizeBillingMonthKeySafe_(aggregateSource)
         : '';
+
+      let entryStatus = rowStatus;
+      let aggregateUntilMonth = baseAggregate;
+      let receiptMonths = normalizeReceiptMonthKeys_(rowPayload.receiptMonths);
+
+      if (pid && currentUnpaid.has(pid)) {
+        entryStatus = 'HOLD';
+        aggregateUntilMonth = '';
+        receiptMonths = [];
+      } else if (pid) {
+        const unpaidStreak = buildUnpaidStreakMonthsForPatient_(pid, unpaidHistory);
+        if (unpaidStreak.length > 0) {
+          entryStatus = 'AGGREGATE';
+          aggregateUntilMonth = billingMonthKey;
+          receiptMonths = normalizeReceiptMonthKeys_(unpaidStreak.concat([billingMonthKey]));
+        }
+      }
+
       return Object.assign({}, rowPayload, {
         receiptStatus: entryStatus,
-        aggregateUntilMonth
+        aggregateUntilMonth,
+        receiptMonths
       });
     });
 

@@ -307,16 +307,14 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
 }
 
 function resolveInvoiceReceiptDisplay_(item) {
-  const hasPreviousReceiptSheet = !!(item && (item.hasPreviousReceiptSheet || item.hasPreviousPrepared));
+  const hasPreviousReceiptSheet = !!(item && item.hasPreviousReceiptSheet);
   const previousMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
   const receiptMonths = previousMonth
     ? normalizeReceiptMonths_([previousMonth])
     : [];
 
-  const showReceipt = hasPreviousReceiptSheet && receiptMonths.length > 0;
-
   return {
-    showReceipt,
+    visible: hasPreviousReceiptSheet,
     receiptRemark: '',
     receiptMonths
   };
@@ -349,7 +347,7 @@ function buildInvoicePreviousReceipt_(item, display) {
   const breakdown = resolveReceiptMonthBreakdown_(item, receiptDisplay && receiptDisplay.receiptMonths);
 
   return {
-    visible: !!(receiptDisplay && receiptDisplay.showReceipt),
+    visible: !!(receiptDisplay && receiptDisplay.visible),
     addressee,
     date,
     amount: Number.isFinite(amount) ? amount : 0,
@@ -441,7 +439,7 @@ function buildInvoiceTemplateData_(item) {
   const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
   const visits = breakdown.visits || 0;
   const unitPrice = breakdown.treatmentUnitPrice || 0;
-  const hasPreviousReceiptSheet = !!(item && (item.hasPreviousReceiptSheet || item.hasPreviousPrepared));
+  const hasPreviousReceiptSheet = !!(item && item.hasPreviousReceiptSheet);
   const normalizedPreviousReceiptAmount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
@@ -465,23 +463,13 @@ function buildInvoiceTemplateData_(item) {
   }
 
   if (previousReceipt) {
-    previousReceipt.visible = previousReceipt.visible === undefined
-      ? !!(receipt && receipt.showReceipt)
-      : previousReceipt.visible;
-
-    if (!hasPreviousReceiptSheet) {
-      previousReceipt.visible = false;
-    }
+    previousReceipt.visible = !!(receipt && receipt.visible && hasPreviousReceiptSheet);
   }
 
   return Object.assign({}, item, {
     monthLabel,
     rows,
     grandTotal: breakdown.grandTotal,
-    showReceipt: receipt.showReceipt,
-    receiptRemark: receipt.receiptRemark,
-    receiptMonths: receipt.receiptMonths,
-    receiptVisible: receipt.showReceipt,
     previousReceipt
   });
 }

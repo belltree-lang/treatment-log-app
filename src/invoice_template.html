@@ -82,16 +82,7 @@
 
     <? var receipt = data.previousReceipt || data.receipt || {}; ?>
     <?
-      var showReceipt = null;
-      if (receipt.visible !== undefined) {
-        showReceipt = !!receipt.visible;
-      } else if (data.receiptVisible !== undefined) {
-        showReceipt = !!data.receiptVisible;
-      } else if (data.showReceipt !== undefined) {
-        showReceipt = !!data.showReceipt;
-      } else {
-        showReceipt = false;
-      }
+      var showReceipt = !!receipt.visible;
     ?>
     <? var receiptAddressee = receipt.addressee || data.nameKanji || ''; ?>
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>

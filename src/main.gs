@@ -566,12 +566,11 @@ function attachPreviousReceiptAmounts_(prepared) {
       ? previousAmounts[pid]
       : 0;
 
-    return Object.assign({}, entry, { previousReceiptAmount });
+    return Object.assign({}, entry, { previousReceiptAmount, hasPreviousReceiptSheet });
   });
 
   return Object.assign({}, prepared, {
     billingJson: enrichedJson,
-    hasPreviousPrepared: hasPreviousReceiptSheet,
     hasPreviousReceiptSheet
   });
 }

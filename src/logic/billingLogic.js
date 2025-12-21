@@ -30,7 +30,7 @@ const billingResolveStaffDisplayName_ = typeof resolveStaffDisplayName_ === 'fun
 function roundToNearestTen_(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return 0;
-  return Math.round(num / 10) * 10;
+  return Math.round(num);
 }
 
 function normalizeBurdenMultiplier_(burdenRate, insuranceType) {

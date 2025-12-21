@@ -11,7 +11,7 @@ const INVOICE_UNIT_PRICE_FALLBACK = (typeof BILLING_UNIT_PRICE !== 'undefined') 
 function roundToNearestTen_(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return 0;
-  return Math.round(num / 10) * 10;
+  return Math.round(num);
 }
 
 function escapeHtml_(value) {

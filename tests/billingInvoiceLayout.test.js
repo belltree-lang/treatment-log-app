@@ -36,9 +36,9 @@ function testInvoiceChargeBreakdown() {
   });
 
   assert.strictEqual(breakdown.treatmentUnitPrice, 417, '1割の単価が417円に設定される');
-  assert.strictEqual(breakdown.treatmentAmount, 3340, '施術料が10円単位で四捨五入される');
+  assert.strictEqual(breakdown.treatmentAmount, 3336, '施術料が円単位で計算される');
   assert.strictEqual(breakdown.transportAmount, 264, '交通費は33円×回数で算定される');
-  assert.strictEqual(breakdown.grandTotal, 4604, '合計は繰越+施術料+交通費の和となる');
+  assert.strictEqual(breakdown.grandTotal, 4600, '合計は繰越+施術料+交通費の和となる');
 }
 
 function testInvoiceChargeBreakdownUsesCustomTransportPrice() {
@@ -53,7 +53,7 @@ function testInvoiceChargeBreakdownUsesCustomTransportPrice() {
   });
 
   assert.strictEqual(breakdown.transportAmount, 200, '交通費が上書き単価で算出される');
-  assert.strictEqual(breakdown.grandTotal, 3540, '合計にも上書き単価の交通費が反映される');
+  assert.strictEqual(breakdown.grandTotal, 3536, '合計にも上書き単価の交通費が反映される');
 }
 
 function testInvoiceHtmlIncludesBreakdown() {
@@ -70,10 +70,10 @@ function testInvoiceHtmlIncludesBreakdown() {
   assert(html.includes('2025年12月 ご請求書'), '請求月の見出しが含まれる');
   assert(html.includes('前月繰越: 1,000円'), '繰越内訳が含まれる');
   assert(html.includes('施術料（417円 × 8回）'), '施術料の内訳が含まれる');
-  assert(html.includes('施術料（417円 × 8回）: 3,340円'), '施術料の金額が含まれる');
+  assert(html.includes('施術料（417円 × 8回）: 3,336円'), '施術料の金額が含まれる');
   assert(html.includes('交通費（33円 × 8回）'), '交通費の内訳が含まれる');
   assert(html.includes('交通費（33円 × 8回）: 264円'), '交通費の金額が含まれる');
-  assert(html.includes('4,604円'), '合計金額がカンマ区切りで表示される');
+  assert(html.includes('4,600円'), '合計金額がカンマ区切りで表示される');
   assert(html.includes('べるつりー訪問鍼灸マッサージ'), 'タイトルが含まれる');
 }
 

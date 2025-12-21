@@ -592,8 +592,12 @@ function attachPreviousReceiptAmounts_(prepared) {
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return prepared;
 
-  const bankAmountCache = {};
-  const previousAmounts = collectBankWithdrawalAmountsByPatientCached_(previousMonthKey, prepared, bankAmountCache);
+  const loaded = typeof loadPreparedBillingWithSheetFallback_ === 'function'
+    ? loadPreparedBillingWithSheetFallback_(previousMonthKey, { withValidation: true })
+    : null;
+  const previousPrepared = loaded && loaded.prepared !== undefined ? loaded.prepared : loaded;
+  const normalizedPrevious = normalizePreparedBilling_(previousPrepared || {});
+  const previousAmounts = buildBillingAmountByPatientId_(normalizedPrevious && normalizedPrevious.billingJson);
 
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
@@ -603,17 +607,11 @@ function attachPreviousReceiptAmounts_(prepared) {
     const pid = normalizePid(entry && entry.patientId);
     const previousReceiptAmount = (pid && previousAmounts && Object.prototype.hasOwnProperty.call(previousAmounts, pid))
       ? previousAmounts[pid]
-      : entry && entry.previousReceiptAmount;
-    const receiptMonthBreakdown = buildReceiptMonthBreakdownForEntry_(
-      pid,
-      entry && entry.receiptMonths,
-      prepared,
-      bankAmountCache
-    );
+      : 0;
 
     return Object.assign({}, entry, {
       previousReceiptAmount,
-      receiptMonthBreakdown
+      receiptMonthBreakdown: []
     });
   });
 

@@ -376,7 +376,7 @@ function formatReceiptSettlementDate_(receiptMonths, fallbackDate) {
 
 function resolveReceiptMonthBreakdown_(item, receiptMonths) {
   const precomputed = item && Array.isArray(item.receiptMonthBreakdown) ? item.receiptMonthBreakdown : [];
-  if (precomputed.length) return precomputed;
+  if (item && item.hasOwnProperty('receiptMonthBreakdown')) return precomputed;
 
   try {
     return buildReceiptMonthBreakdownForEntry_(
@@ -1249,12 +1249,6 @@ function applyPaymentResultsToHistory(billingMonth, bankStatuses) {
       const grandTotal = columns.grandTotal ? Number(newRow[columns.grandTotal - 1]) || 0 : 0;
       const unpaid = statusEntry.unpaidAmount != null ? statusEntry.unpaidAmount : grandTotal - paid;
       if (columns.unpaidAmount) newRow[columns.unpaidAmount - 1] = unpaid;
-      changed = true;
-    }
-
-    if (columns.previousReceiptAmount && statusEntry.bankStatus === 'OK') {
-      const grandTotal = columns.grandTotal ? Number(newRow[columns.grandTotal - 1]) || 0 : 0;
-      newRow[columns.previousReceiptAmount - 1] = grandTotal;
       changed = true;
     }
 

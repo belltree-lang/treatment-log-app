@@ -402,7 +402,7 @@ function formatReceiptSettlementDate_(receiptMonths, fallbackDate) {
     const year = Number(lastMonth.slice(0, 4));
     const month = Number(lastMonth.slice(4, 6));
     if (Number.isFinite(year) && Number.isFinite(month)) {
-      const settlementDate = new Date(year, month, 0);
+      const settlementDate = new Date(year, month, 20);
       try {
         const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
         return Utilities.formatDate(settlementDate, tz, 'yyyyMMdd');
@@ -476,6 +476,7 @@ function buildInvoiceTemplateData_(item) {
   const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
   const visits = breakdown.visits || 0;
   const unitPrice = breakdown.treatmentUnitPrice || 0;
+  const normalizedPreviousReceiptAmount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
@@ -483,9 +484,15 @@ function buildInvoiceTemplateData_(item) {
   ];
 
   const receipt = resolveInvoiceReceiptDisplay_(item);
+  const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt);
   const previousReceipt = item && item.previousReceipt
-    ? Object.assign({}, item.previousReceipt)
-    : buildInvoicePreviousReceipt_(item, receipt);
+    ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
+    : basePreviousReceipt;
+
+  if (previousReceipt) {
+    const amount = Number.isFinite(normalizedPreviousReceiptAmount) ? normalizedPreviousReceiptAmount : 0;
+    previousReceipt.amount = amount;
+  }
 
   if (previousReceipt && !previousReceipt.breakdown) {
     previousReceipt.breakdown = resolveReceiptMonthBreakdown_(item, receipt && receipt.receiptMonths);

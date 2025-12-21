@@ -402,14 +402,14 @@ function formatReceiptSettlementDate_(receiptMonths, fallbackDate) {
     const year = Number(lastMonth.slice(0, 4));
     const month = Number(lastMonth.slice(4, 6));
     if (Number.isFinite(year) && Number.isFinite(month)) {
-      const settlementDate = new Date(year, month, 20);
+      const settlementDate = new Date(year, month - 1, 20);
       try {
         const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
-        return Utilities.formatDate(settlementDate, tz, 'yyyyMMdd');
+        return Utilities.formatDate(settlementDate, tz, 'yyyy-MM-20');
       } catch (e) {
         // ignore and fall through
       }
-      return settlementDate.toISOString().slice(0, 10).replace(/-/g, '');
+      return settlementDate.toISOString().slice(0, 10);
     }
   }
 

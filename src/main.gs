@@ -592,6 +592,7 @@ function attachPreviousReceiptAmounts_(prepared) {
     : null;
   const previousPrepared = loaded && loaded.prepared !== undefined ? loaded.prepared : loaded;
   const normalizedPrevious = normalizePreparedBilling_(previousPrepared || {});
+  const hasPreviousPrepared = !!(normalizedPrevious && Array.isArray(normalizedPrevious.billingJson) && normalizedPrevious.billingJson.length);
   const previousAmounts = buildBillingAmountByPatientId_(normalizedPrevious && normalizedPrevious.billingJson);
 
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
@@ -610,7 +611,7 @@ function attachPreviousReceiptAmounts_(prepared) {
     });
   });
 
-  return Object.assign({}, prepared, { billingJson: enrichedJson });
+  return Object.assign({}, prepared, { billingJson: enrichedJson, hasPreviousPrepared });
 }
 
 function collectBankWithdrawalAmountsByPatientCached_(billingMonth, prepared, cache) {

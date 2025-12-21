@@ -295,6 +295,23 @@ function formatAggregatedReceiptRemark_(months) {
   return parts.join('・') + '施術代として';
 }
 
+function normalizeReceiptMonths_(months, fallbackMonth) {
+  const list = Array.isArray(months) ? months : [];
+  const seen = new Set();
+  const normalized = list.map(value => normalizeInvoiceMonthKey_(value)).filter(Boolean).filter(ym => {
+    if (seen.has(ym)) return false;
+    seen.add(ym);
+    return true;
+  });
+
+  if (!normalized.length && fallbackMonth) {
+    const normalizedFallback = normalizeInvoiceMonthKey_(fallbackMonth);
+    if (normalizedFallback) normalized.push(normalizedFallback);
+  }
+
+  return normalized;
+}
+
 function resolveInvoiceReceiptDisplay_(item) {
   const rawStatus = item && item.receiptStatus;
   const status = rawStatus == null ? null : String(rawStatus).trim().toUpperCase();
@@ -305,12 +322,16 @@ function resolveInvoiceReceiptDisplay_(item) {
   const hasValidBillingMonth = !!normalizedBillingMonth;
   const hasValidAggregateUntil = hasValidBillingMonth && !!normalizedAggregateUntil
     && Number(normalizedAggregateUntil) >= Number(normalizedBillingMonth);
-  const receiptMonths = hasValidAggregateUntil
-    ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
-    : (normalizedBillingMonth ? [normalizedBillingMonth] : []);
-  const aggregationApplied = hasValidAggregateUntil;
+  const explicitReceiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, normalizedBillingMonth);
+  const hasExplicitMonths = explicitReceiptMonths.length > 0;
+  const receiptMonths = hasExplicitMonths
+    ? explicitReceiptMonths
+    : (hasValidAggregateUntil
+      ? buildInclusiveMonthRange_(billingMonth, aggregateUntil)
+      : (normalizedBillingMonth ? [normalizedBillingMonth] : []));
+  const aggregationApplied = hasValidAggregateUntil || (hasExplicitMonths && receiptMonths.length > 1);
 
-  if (!hasValidBillingMonth) {
+  if (!hasValidBillingMonth && !hasExplicitMonths) {
     return { showReceipt: false, receiptRemark: '', receiptMonths };
   }
 
@@ -319,7 +340,7 @@ function resolveInvoiceReceiptDisplay_(item) {
   }
 
   if (status === 'AGGREGATE') {
-    if (!aggregationApplied) {
+    if (!aggregationApplied && !hasExplicitMonths) {
       return { showReceipt: false, receiptRemark: '', receiptMonths };
     }
 

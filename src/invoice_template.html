@@ -78,7 +78,18 @@
     <hr class="divider">
 
     <? var receipt = data.previousReceipt || data.receipt || {}; ?>
-    <? var showReceipt = data.receiptVisible !== undefined ? !!data.receiptVisible : (receipt.visible === undefined ? false : !!receipt.visible); ?>
+    <?
+      var showReceipt = null;
+      if (data.receiptVisible !== undefined) {
+        showReceipt = !!data.receiptVisible;
+      } else if (receipt.visible !== undefined) {
+        showReceipt = !!receipt.visible;
+      } else if (data.showReceipt !== undefined) {
+        showReceipt = !!data.showReceipt;
+      } else {
+        showReceipt = false;
+      }
+    ?>
     <? var receiptAddressee = receipt.addressee || data.nameKanji || ''; ?>
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptAmount = receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price; ?>

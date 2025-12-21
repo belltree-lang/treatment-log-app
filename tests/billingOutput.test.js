@@ -259,16 +259,12 @@ function testReceiptVisibilityReliesOnUnpaidStatusOnly() {
 
   const { resolveInvoiceReceiptDisplay_ } = context;
 
-  const defaultStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: null });
-  assert.strictEqual(defaultStatus.showReceipt, true, 'ステータス未指定でも領収書を表示する');
-  assert.deepStrictEqual(Array.from(defaultStatus.receiptMonths || []), ['202501'], '請求月の領収書を作成する');
+  const defaultStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', hasPreviousPrepared: true });
+  assert.strictEqual(defaultStatus.showReceipt, true, '銀行引落シートがあれば前月領収書を表示する');
+  assert.deepStrictEqual(Array.from(defaultStatus.receiptMonths || []), ['202412'], '前月の領収書を作成する');
 
-  const paidStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: 'PAID' });
-  assert.strictEqual(paidStatus.showReceipt, true, '通常入金は必ず領収書を表示する');
-  assert.strictEqual(paidStatus.receiptRemark, '', '判定条件は未回収チェックのみ');
-
-  const unpaidStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', receiptStatus: 'UNPAID' });
-  assert.strictEqual(unpaidStatus.showReceipt, false, '未回収チェックがある場合のみ非表示にする');
+  const withoutPreviousSheet = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', hasPreviousPrepared: false });
+  assert.strictEqual(withoutPreviousSheet.showReceipt, false, '銀行引落シートが無ければ前月領収書を非表示にする');
 }
 
 function testPreviousReceiptVisibilityFollowsReceiptDecision() {
@@ -279,10 +275,10 @@ function testPreviousReceiptVisibilityFollowsReceiptDecision() {
   const { buildInvoiceTemplateData_ } = context;
 
   const payable = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'PAID', hasPreviousPrepared: true });
-  assert.strictEqual(payable.previousReceipt.visible, true, '領収表示時は前月領収書も表示する');
+  assert.strictEqual(payable.previousReceipt.visible, true, '銀行引落シートがあれば前月領収書も表示する');
 
   const onHold = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'HOLD', hasPreviousPrepared: true });
-  assert.strictEqual(onHold.previousReceipt.visible, false, '未回収チェックがある場合は前月領収書も非表示');
+  assert.strictEqual(onHold.previousReceipt.visible, true, '領収ステータスに依存せず表示する');
 }
 
 function testPreviousReceiptIsHiddenWhenPreviousPreparedMissing() {

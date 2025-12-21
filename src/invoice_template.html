@@ -80,10 +80,10 @@
     <? var receipt = data.previousReceipt || data.receipt || {}; ?>
     <?
       var showReceipt = null;
-      if (data.receiptVisible !== undefined) {
-        showReceipt = !!data.receiptVisible;
-      } else if (receipt.visible !== undefined) {
+      if (receipt.visible !== undefined) {
         showReceipt = !!receipt.visible;
+      } else if (data.receiptVisible !== undefined) {
+        showReceipt = !!data.receiptVisible;
       } else if (data.showReceipt !== undefined) {
         showReceipt = !!data.showReceipt;
       } else {

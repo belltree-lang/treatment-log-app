@@ -463,14 +463,89 @@ function applyReceiptRulesFromUnpaidCheck_(prepared) {
 
   try {
     const summary = summarizeBankWithdrawalSheet_(billingMonth);
-    if (summary && summary.unpaidChecked > 0) {
-      return mergeReceiptSettingsIntoPrepared_(prepared, 'HOLD', prepared.aggregateUntilMonth);
+    if (!summary || summary.unpaidChecked <= 0 || !Array.isArray(prepared && prepared.billingJson)) {
+      return prepared;
     }
+
+    const unpaidPatients = resolveUnpaidCheckedPatientIds_(billingMonth, prepared);
+    if (!unpaidPatients || unpaidPatients.size === 0) {
+      return prepared;
+    }
+
+    const normalizedBaseStatus = normalizeReceiptStatus_(prepared.receiptStatus);
+    const normalizedBaseAggregate = normalizedBaseStatus === 'AGGREGATE'
+      ? normalizeBillingMonthKeySafe_(prepared.aggregateUntilMonth)
+      : '';
+    const normalizePid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_
+      : value => String(value || '').trim();
+
+    const nextBillingJson = prepared.billingJson.map(row => {
+      const rowPayload = row || {};
+      const pid = normalizePid(rowPayload.patientId);
+      const shouldHold = pid && unpaidPatients.has(pid);
+      const entryStatus = shouldHold
+        ? 'HOLD'
+        : (normalizeReceiptStatus_(rowPayload.receiptStatus) || normalizedBaseStatus);
+      const aggregateSource = rowPayload.aggregateUntilMonth || normalizedBaseAggregate || prepared.aggregateUntilMonth;
+      const aggregateUntilMonth = entryStatus === 'AGGREGATE'
+        ? normalizeBillingMonthKeySafe_(aggregateSource)
+        : '';
+      return Object.assign({}, rowPayload, {
+        receiptStatus: entryStatus,
+        aggregateUntilMonth
+      });
+    });
+
+    return Object.assign({}, prepared, {
+      billingJson: nextBillingJson,
+      receiptStatus: normalizedBaseStatus,
+      aggregateUntilMonth: normalizedBaseAggregate
+    });
   } catch (err) {
     console.warn('[billing] Failed to resolve unpaid check summary for receipt rules', err);
   }
 
   return prepared;
+}
+
+function resolveUnpaidCheckedPatientIds_(billingMonth, prepared) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(month);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) return new Set();
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return new Set();
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const unpaidCol = ensureUnpaidCheckColumn_(sheet, headers);
+  const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients || {});
+  const unpaidPatients = new Set();
+
+  values.forEach(row => {
+    const isChecked = row[unpaidCol - 1];
+    if (!isChecked) return;
+
+    const resolvedPid = pidCol
+      ? normalizePid(row[pidCol - 1])
+      : nameToPatientId[buildFullNameKey_(row[nameCol - 1], kanaCol ? row[kanaCol - 1] : '')];
+
+    if (resolvedPid) {
+      unpaidPatients.add(resolvedPid);
+    }
+  });
+
+  return unpaidPatients;
 }
 
 function savePreparedBillingJsonRows_(billingMonth, billingJson) {

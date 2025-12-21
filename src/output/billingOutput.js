@@ -420,6 +420,10 @@ function buildInvoiceTemplateData_(item) {
     ? item.previousReceipt
     : buildInvoicePreviousReceipt_(item, receipt);
 
+  if (previousReceipt && previousReceipt.visible === undefined) {
+    previousReceipt.visible = !!(receipt && receipt.showReceipt);
+  }
+
   return Object.assign({}, item, {
     monthLabel,
     rows,

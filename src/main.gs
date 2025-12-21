@@ -732,7 +732,8 @@ function logBankWithdrawalAmountMismatches_(billingMonthKey, bankAmounts, prepar
     const mismatch = {
       patientId: pid,
       billedAmount,
-      bankWithdrawalAmount: bankAmount
+      bankWithdrawalAmount: bankAmount,
+      diff: bankAmount - billedAmount
     };
     if (patientName) mismatch.name = patientName;
     mismatches.push(mismatch);

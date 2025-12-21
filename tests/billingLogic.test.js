@@ -45,7 +45,7 @@ function testMassageBillingExclusion() {
   assert.strictEqual(result.grandTotal, 2000, '繰越額のみが合計に残る');
 }
 
-function testBillingAmountRoundsToNearestTen() {
+function testBillingAmountUsesYenRounding() {
   const result = calculateBillingAmounts_({
     visitCount: 6,
     insuranceType: '鍼灸',
@@ -56,7 +56,7 @@ function testBillingAmountRoundsToNearestTen() {
 
   assert.strictEqual(result.visits, 6, '施術回数が正しく反映される');
   assert.strictEqual(result.unitPrice, 4170, '単価がデフォルト料金で設定される');
-  assert.strictEqual(result.billingAmount, 7510, '請求額は10円単位に四捨五入される');
+  assert.strictEqual(result.billingAmount, 7506, '請求額は円単位で計算される');
 }
 
 function testPaidStatusIsIncludedInBillingJson() {
@@ -91,7 +91,7 @@ function testCarryOverIncludesUnpaidHistory() {
   const billingJson = generateBillingJsonFromSource(source);
   assert.strictEqual(billingJson[0].carryOverAmount, 2000, '患者シートの繰越と未回収が合算される');
   assert.strictEqual(billingJson[0].carryOverFromHistory, 1500, '未回収分が別途保持される');
-  assert.strictEqual(billingJson[0].grandTotal, 4566, '合計には繰越を含めた金額が反映される');
+  assert.strictEqual(billingJson[0].grandTotal, 4568, '合計には繰越を含めた金額が反映される');
 }
 
 function testMedicalSubsidyExcludesBillingEntries() {
@@ -132,7 +132,7 @@ function testCustomTransportUnitPriceIsUsed() {
   });
 
   assert.strictEqual(result.transportAmount, 100, '交通費が上書き単価で計算される');
-  assert.strictEqual(result.grandTotal, 2600, '合計も上書き単価を反映する');
+  assert.strictEqual(result.grandTotal, 2602, '合計も上書き単価を反映する');
 }
 
 function testMedicalAssistanceNormalizationIsStrict() {
@@ -211,7 +211,7 @@ function testSelfPaidManualPriceIsNotRounded() {
   });
 
   assert.strictEqual(result.treatmentAmount, 3333, '自費の手動単価はそのまま乗算される');
-  assert.strictEqual(result.billingAmount, 3333, '自費では10円単位に丸めず請求する');
+  assert.strictEqual(result.billingAmount, 3333, '自費では丸めずに請求する');
   assert.strictEqual(result.grandTotal, 3366, '施術料と交通費を合算した金額が保持される');
 }
 
@@ -252,7 +252,7 @@ function testInvoiceUnitPriceResolutionPriority() {
 function run() {
   testBurdenRateDigitConversion();
   testMassageBillingExclusion();
-  testBillingAmountRoundsToNearestTen();
+  testBillingAmountUsesYenRounding();
   testPaidStatusIsIncludedInBillingJson();
   testCarryOverIncludesUnpaidHistory();
   testMedicalSubsidyExcludesBillingEntries();

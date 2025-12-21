@@ -393,7 +393,7 @@ function testReceiptStatusIsOverwrittenInHistory() {
   assert.strictEqual(row[columns.aggregateUntilMonth - 1], '', '集計終了月のリセットも反映される');
 }
 
-function testInsuranceBillingIsRoundedToNearestTen() {
+function testInsuranceBillingUsesYenRounding() {
   const context = createContext();
   vm.createContext(context);
   vm.runInContext(billingOutputCode, context);
@@ -405,9 +405,27 @@ function testInsuranceBillingIsRoundedToNearestTen() {
     carryOverAmount: 0
   });
 
-  assert.strictEqual(breakdown.treatmentAmount, 2920, '施術料は10円単位で四捨五入される');
+  assert.strictEqual(breakdown.treatmentAmount, 2919, '施術料は円単位で計算される');
   assert.strictEqual(breakdown.transportAmount, 231, '交通費は回数分計上される');
-  assert.strictEqual(breakdown.grandTotal, 3151, '合計も四捨五入後の施術料を利用する');
+  assert.strictEqual(breakdown.grandTotal, 3150, '合計も円単位で計算された施術料を利用する');
+}
+
+function testTwoTenthBurdenKeepsYenPrecision() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const breakdown = context.calculateInvoiceChargeBreakdown_({
+    insuranceType: '鍼灸',
+    burdenRate: 2,
+    unitPrice: 4170,
+    visitCount: 6,
+    carryOverAmount: 0
+  });
+
+  assert.strictEqual(breakdown.treatmentAmount, 5004, '2割負担でも円単位で計算される');
+  assert.strictEqual(breakdown.transportAmount, 198, '交通費は回数分計上される');
+  assert.strictEqual(breakdown.grandTotal, 5202, '施術料と交通費の合計が正しく算出される');
 }
 
 function testWelfareBillingStillAddsTransport() {
@@ -455,8 +473,8 @@ function testCarryOverHistoryIsIncluded() {
     carryOverFromHistory: 200
   });
 
-  assert.strictEqual(breakdown.treatmentAmount, 420, '施術料は四捨五入後の負担額で計算される');
-  assert.strictEqual(breakdown.grandTotal, 1153, '未回収分も繰越に合算される');
+  assert.strictEqual(breakdown.treatmentAmount, 417, '施術料は円単位の負担額で計算される');
+  assert.strictEqual(breakdown.grandTotal, 1150, '未回収分も繰越に合算される');
 }
 
 function testBankExportRejectsNullPreparedPayload() {
@@ -721,7 +739,8 @@ function run() {
   testPaidInvoiceAlwaysShowsReceipt();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testReceiptStatusIsOverwrittenInHistory();
-  testInsuranceBillingIsRoundedToNearestTen();
+  testInsuranceBillingUsesYenRounding();
+  testTwoTenthBurdenKeepsYenPrecision();
   testWelfareBillingStillAddsTransport();
   testMassageBillingDoesNotChargeTransport();
   testCarryOverHistoryIsIncluded();

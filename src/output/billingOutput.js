@@ -416,7 +416,9 @@ function buildInvoiceTemplateData_(item) {
   ];
 
   const receipt = resolveInvoiceReceiptDisplay_(item);
-  const previousReceipt = buildInvoicePreviousReceipt_(item, receipt);
+  const previousReceipt = item && item.previousReceipt
+    ? item.previousReceipt
+    : buildInvoicePreviousReceipt_(item, receipt);
 
   return Object.assign({}, item, {
     monthLabel,

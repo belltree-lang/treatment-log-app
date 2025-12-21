@@ -6,11 +6,11 @@
 | receiptStatus | aggregateUntilMonth | 請求月 (`billingMonth`) | showReceipt | receiptRemark | receiptMonths の例 |
 | --- | --- | --- | --- | --- | --- |
 | `null` / 空文字 | 未指定 | `202501` | `true` | 空文字 | `["202501"]` |
-| `AGGREGATE` | `202503` | `202501` | `true` | `令和7年1月分・03月分施術代として`（`formatAggregatedReceiptRemark_` により範囲表記） | `["202501","202502","202503"]` |
+| `AGGREGATE` | `202503` | `202501` | `true` | `令和7年1月分・03月分施術料金として`（`formatAggregatedReceiptRemark_` により範囲表記） | `["202501","202502","202503"]` |
 | `AGGREGATE` | 未指定 | `202501` | `true` | 空文字 | `["202501"]` |
 | `UNPAID` または `HOLD` | 任意 | `202501`（例） | `false` | 空文字 | `aggregateUntilMonth` があれば範囲、無ければ `["202501"]` |
 | 上記以外（例: `PAID`） | 未指定 | `202501` | `false` | 空文字 | `["202501"]` |
-| 上記以外（例: `PAID`） | `202503` | `202501` | `true`（`aggregateUntilMonth` が指定されていれば強制表示） | `令和7年1月分・03月分施術代として` | `["202501","202502","202503"]` |
+| 上記以外（例: `PAID`） | `202503` | `202501` | `true`（`aggregateUntilMonth` が指定されていれば強制表示） | `令和7年1月分・03月分施術料金として` | `["202501","202502","202503"]` |
 
 - `UNPAID` / `HOLD` は常に非表示（`showReceipt: false`）。その他のステータスは `null` / 空文字 / `AGGREGATE` / `aggregateUntilMonth` 指定時のみ `true` になる。【F:src/output/billingOutput.js†L298-L318】
 - `aggregateUntilMonth` がある場合のみ備考（`receiptRemark`）が付き、請求月から指定月までを令和表記で連結する。【F:src/output/billingOutput.js†L284-L318】
@@ -23,10 +23,10 @@
 | `null` / 空文字 | 未指定 | `receiptStatus: ''`（正規化）、`aggregateUntilMonth: ''` | `true` | `''` | `['202501']` | 「未指定は表示するが備考なし」の基準ケース |
 | `UNPAID` | 未指定/指定 | `status: 'UNPAID'` | `false` | `''` | `['202501']` or `['202501','202502']` など | 支払待ちは常に非表示。合算指定があっても備考は付けない |
 | `HOLD` | 未指定/指定 | `status: 'HOLD'` | `false` | `''` | `['202501']` or `['202501','202502']` など | 保留も非表示で固定 |
-| `AGGREGATE` | `202503`（請求月 202501） | `status: 'AGGREGATE'`、`aggregateUntilMonth: '202503'` | `true` | `令和7年1月分・03月分施術代として` | `['202501','202502','202503']` | 月範囲を令和表記（開始は年付、以降は月のみ）で連結 |
+| `AGGREGATE` | `202503`（請求月 202501） | `status: 'AGGREGATE'`、`aggregateUntilMonth: '202503'` | `true` | `令和7年1月分・03月分施術料金として` | `['202501','202502','202503']` | 月範囲を令和表記（開始は年付、以降は月のみ）で連結 |
 | `AGGREGATE` | 未指定/空文字 | `status: 'AGGREGATE'`、`aggregateUntilMonth: ''` | `true` | `''` | `['202501']` | 集計終了月が無くても領収書は表示、備考は空 |
 | `PAID` / その他 | 未指定 | `status: 'PAID'` | `false` | `''` | `['202501']` | 合算無しの通常ステータスは非表示 |
-| `PAID` / その他 | `202503`（請求月 202501） | `status: 'PAID'`、`aggregateUntilMonth: '202503'` | `true` | `令和7年1月分・03月分施術代として` | `['202501','202502','202503']` | 合算指定があればステータスに関わらず表示し備考を付ける |
+| `PAID` / その他 | `202503`（請求月 202501） | `status: 'PAID'`、`aggregateUntilMonth: '202503'` | `true` | `令和7年1月分・03月分施術料金として` | `['202501','202502','202503']` | 合算指定があればステータスに関わらず表示し備考を付ける |
 
 上記表は `resolveInvoiceReceiptDisplay_` と `formatAggregatedReceiptRemark_` の現行挙動に沿った期待値であり、今後のテストケース作成時の基準とする。【F:src/output/billingOutput.js†L284-L318】
 
@@ -48,10 +48,10 @@
 - **空ステータス**: `{ billingMonth: '202501', receiptStatus: null, aggregateUntilMonth: null }` → `showReceipt: true`、`receiptRemark: ''`、`receiptMonths: ['202501']`。
 - **UNPAID**: `{ billingMonth: '202501', receiptStatus: 'UNPAID', aggregateUntilMonth: '202503' }` → `showReceipt: false`、`receiptRemark: ''`、`receiptMonths: ['202501','202502','202503']`。
 - **HOLD**: `{ billingMonth: '202501', receiptStatus: 'HOLD', aggregateUntilMonth: null }` → `showReceipt: false`、`receiptRemark: ''`、`receiptMonths: ['202501']`。
-- **AGGREGATE + 正常月**: `{ billingMonth: '202501', receiptStatus: 'AGGREGATE', aggregateUntilMonth: '202503' }` → `showReceipt: true`、`receiptRemark: '令和7年1月分・03月分施術代として'`、`receiptMonths: ['202501','202502','202503']`。
+- **AGGREGATE + 正常月**: `{ billingMonth: '202501', receiptStatus: 'AGGREGATE', aggregateUntilMonth: '202503' }` → `showReceipt: true`、`receiptRemark: '令和7年1月分・03月分施術料金として'`、`receiptMonths: ['202501','202502','202503']`。
 - **AGGREGATE + 終了月欠落**: `{ billingMonth: '202501', receiptStatus: 'AGGREGATE', aggregateUntilMonth: '' }` → `showReceipt: true`、`receiptRemark: ''`、`receiptMonths: ['202501']`。
 - **PAID + 合算無し**: `{ billingMonth: '202501', receiptStatus: 'PAID', aggregateUntilMonth: null }` → `showReceipt: false`、`receiptRemark: ''`、`receiptMonths: ['202501']`。
-- **PAID + 合算指定**: `{ billingMonth: '202501', receiptStatus: 'PAID', aggregateUntilMonth: '202503' }` → `showReceipt: true`、`receiptRemark: '令和7年1月分・03月分施術代として'`、`receiptMonths: ['202501','202502','202503']`。
+- **PAID + 合算指定**: `{ billingMonth: '202501', receiptStatus: 'PAID', aggregateUntilMonth: '202503' }` → `showReceipt: true`、`receiptRemark: '令和7年1月分・03月分施術料金として'`、`receiptMonths: ['202501','202502','202503']`。
 - **無効な aggregateUntilMonth**: `{ billingMonth: '202501', receiptStatus: 'AGGREGATE', aggregateUntilMonth: '20241234' }` → `aggregateUntilMonth` を無効として扱い、`showReceipt: true`、`receiptRemark: ''`、`receiptMonths: ['202501']`（バリデーション後のフォールバックを確認）。
 
 ## 請求月キー正規化と月範囲ビルダーの挙動

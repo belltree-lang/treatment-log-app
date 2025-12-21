@@ -286,7 +286,7 @@ function formatAggregatedReceiptRemark_(months) {
   }).filter(Boolean);
 
   if (!parts.length) return '';
-  return parts.join('・') + '施術代として';
+  return parts.join('・') + '施術料金として';
 }
 
 function normalizeReceiptMonths_(months, fallbackMonth) {

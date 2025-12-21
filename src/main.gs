@@ -655,7 +655,49 @@ function collectBankWithdrawalAmountsByPatient_(billingMonth, prepared) {
     amounts[resolvedPid] = (amounts[resolvedPid] || 0) + amount;
   });
 
+  logBankWithdrawalAmountMismatches_(monthKey, amounts, prepared);
   return amounts;
+}
+
+function logBankWithdrawalAmountMismatches_(billingMonthKey, bankAmounts, prepared) {
+  if (!bankAmounts || !Object.keys(bankAmounts).length) return;
+  if (typeof billingLogger_ === 'undefined' || !billingLogger_ || typeof billingLogger_.log !== 'function') return;
+
+  const loaded = typeof loadPreparedBillingWithSheetFallback_ === 'function'
+    ? loadPreparedBillingWithSheetFallback_(billingMonthKey, { withValidation: false, allowInvalid: true })
+    : null;
+  const loadedPrepared = loaded && loaded.prepared !== undefined ? loaded.prepared : loaded;
+  const normalized = normalizePreparedBilling_(loadedPrepared || prepared);
+  if (!normalized || !Array.isArray(normalized.billingJson)) return;
+
+  const billingAmounts = buildBillingAmountByPatientId_(normalized.billingJson);
+  if (!billingAmounts || !Object.keys(billingAmounts).length) return;
+
+  const mismatches = [];
+
+  Object.keys(bankAmounts).forEach(pid => {
+    if (!Object.prototype.hasOwnProperty.call(billingAmounts, pid)) return;
+    const billedAmount = billingAmounts[pid];
+    const bankAmount = bankAmounts[pid];
+    if (billedAmount === bankAmount) return;
+    const patient = normalized.patients && normalized.patients[pid] ? normalized.patients[pid] : {};
+    const patientName = patient.nameKanji || patient.nameKana || (patient.raw && (patient.raw.nameKanji || patient.raw.nameKana));
+    const mismatch = {
+      patientId: pid,
+      billedAmount,
+      bankWithdrawalAmount: bankAmount
+    };
+    if (patientName) mismatch.name = patientName;
+    mismatches.push(mismatch);
+  });
+
+  if (mismatches.length) {
+    billingLogger_.log('[billing][warn] 請求計算金額と銀行引落金額に不一致があります summary=' + JSON.stringify({
+      billingMonth: billingMonthKey,
+      mismatchesCount: mismatches.length,
+      mismatches
+    }));
+  }
 }
 
 function resolveUnpaidCheckedPatientIds_(billingMonth, prepared) {

@@ -526,10 +526,12 @@ function attachPreviousReceiptAmounts_(prepared) {
   const monthKey = prepared && prepared.billingMonth;
   if (!monthKey || !Array.isArray(prepared && prepared.billingJson)) return prepared;
 
-  const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
-  if (!previousMonthKey) return prepared;
+  const receiptAnchorMonth = normalizeBillingMonthKeySafe_(
+    (prepared && prepared.aggregateUntilMonth) || resolvePreviousBillingMonthKey_(monthKey)
+  );
+  if (!receiptAnchorMonth) return prepared;
 
-  const previousReceipt = collectPreviousReceiptAmountsFromBankSheet_(previousMonthKey, prepared);
+  const previousReceipt = collectPreviousReceiptAmountsFromBankSheet_(receiptAnchorMonth, prepared);
   const hasPreviousReceiptSheet = !!(previousReceipt && previousReceipt.hasSheet);
   const previousAmounts = previousReceipt && previousReceipt.amounts;
 
@@ -543,7 +545,7 @@ function attachPreviousReceiptAmounts_(prepared) {
       ? previousAmounts[pid]
       : 0;
     const receiptMonths = hasPreviousReceiptSheet
-      ? buildReceiptMonthsFromUnpaidHistory_(pid, previousMonthKey, prepared)
+      ? buildReceiptMonthsFromUnpaidHistory_(pid, receiptAnchorMonth, prepared)
       : [];
 
     return Object.assign({}, entry, { previousReceiptAmount, hasPreviousReceiptSheet, receiptMonths });

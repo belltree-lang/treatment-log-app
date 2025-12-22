@@ -308,14 +308,13 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
 
 function resolveInvoiceReceiptDisplay_(item) {
   const hasPreviousReceiptSheet = !!(item && item.hasPreviousReceiptSheet);
-  const previousMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
-  const receiptMonths = previousMonth
-    ? normalizeReceiptMonths_([previousMonth])
-    : [];
+  const fallbackMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
+  const receiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth);
+  const receiptRemark = formatAggregatedReceiptRemark_(receiptMonths);
 
   return {
     visible: hasPreviousReceiptSheet,
-    receiptRemark: '',
+    receiptRemark,
     receiptMonths
   };
 }

@@ -306,14 +306,30 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
   return normalized;
 }
 
+function resolveHasPreviousReceiptSheet_(item) {
+  if (!item) return false;
+  if (Object.prototype.hasOwnProperty.call(item, 'hasPreviousReceiptSheet')) {
+    return !!item.hasPreviousReceiptSheet;
+  }
+  if (Object.prototype.hasOwnProperty.call(item, 'hasPreviousPrepared')) {
+    return !!item.hasPreviousPrepared;
+  }
+  return true;
+}
+
 function resolveInvoiceReceiptDisplay_(item) {
-  const hasPreviousReceiptSheet = !!(item && item.hasPreviousReceiptSheet);
+  const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const fallbackMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
   const receiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth);
-  const receiptRemark = formatAggregatedReceiptRemark_(receiptMonths);
+  const receiptRemark = receiptMonths.length > 1
+    ? formatAggregatedReceiptRemark_(receiptMonths)
+    : '';
+  const receiptStatus = item && item.receiptStatus ? String(item.receiptStatus).toUpperCase() : '';
+  const showReceipt = hasPreviousReceiptSheet && receiptStatus !== 'UNPAID';
 
   return {
-    visible: hasPreviousReceiptSheet,
+    visible: showReceipt,
+    showReceipt,
     receiptRemark,
     receiptMonths
   };
@@ -408,6 +424,18 @@ function sanitizeFileName_(text) {
   return raw ? raw.replace(/[\\/\r\n]/g, '_') : '請求書';
 }
 
+function formatInvoiceChargeMonthLabel_(receiptMonths, fallbackMonthLabel) {
+  const months = Array.isArray(receiptMonths)
+    ? receiptMonths.map(normalizeInvoiceMonthKey_).filter(Boolean)
+    : [];
+  if (!months.length) return fallbackMonthLabel || '';
+  const sorted = months.slice().sort();
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  if (first === last) return normalizeBillingMonthLabel_(first);
+  return normalizeBillingMonthLabel_(first) + '〜' + normalizeBillingMonthLabel_(last);
+}
+
 function normalizeInvoicePatientIdsForOutput_(patientIds) {
   const source = Array.isArray(patientIds) ? patientIds : String(patientIds || '').split(/[,\s、]+/);
   const normalized = source
@@ -438,7 +466,7 @@ function buildInvoiceTemplateData_(item) {
   const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
   const visits = breakdown.visits || 0;
   const unitPrice = breakdown.treatmentUnitPrice || 0;
-  const hasPreviousReceiptSheet = !!(item && item.hasPreviousReceiptSheet);
+  const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const normalizedPreviousReceiptAmount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
@@ -447,6 +475,7 @@ function buildInvoiceTemplateData_(item) {
   ];
 
   const receipt = resolveInvoiceReceiptDisplay_(item);
+  const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
   const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt);
   const previousReceipt = item && item.previousReceipt
     ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
@@ -465,8 +494,20 @@ function buildInvoiceTemplateData_(item) {
     previousReceipt.visible = !!(receipt && receipt.visible && hasPreviousReceiptSheet);
   }
 
+  const isAggregateInvoice = (receiptMonths && receiptMonths.length > 1)
+    || (Number.isFinite(normalizedPreviousReceiptAmount) && normalizedPreviousReceiptAmount > 0);
+  const chargeMonthLabel = isAggregateInvoice
+    ? formatInvoiceChargeMonthLabel_(receiptMonths, monthLabel)
+    : monthLabel;
+
   return Object.assign({}, item, {
     monthLabel,
+    chargeMonthLabel,
+    isAggregateInvoice,
+    invoiceMode: isAggregateInvoice ? 'aggregate' : 'standard',
+    receiptMonths,
+    receiptRemark: (receipt && receipt.receiptRemark) || '',
+    showReceipt: !!(receipt && receipt.visible),
     rows,
     grandTotal: breakdown.grandTotal,
     previousReceipt

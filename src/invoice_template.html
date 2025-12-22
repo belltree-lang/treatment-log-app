@@ -33,12 +33,14 @@
 <body>
   <div class="wrapper">
     <header class="header">
+      <? var isAggregateInvoice = data.isAggregateInvoice || data.invoiceMode === 'aggregate'; ?>
+      <? var chargeMonthLabel = data.chargeMonthLabel || data.monthLabel; ?>
       <div>
         <div class="brand">べるつりー訪問鍼灸マッサージ</div>
-        <div class="note">月次請求書</div>
+        <div class="note"><?= isAggregateInvoice ? '合算／未回収考慮モード' : '月次請求書' ?></div>
       </div>
       <div class="meta">
-        <div>請求月: <?= data.monthLabel ?></div>
+        <div><?= isAggregateInvoice ? '請求対象: ' : '請求月: ' ?><?= chargeMonthLabel ?></div>
         <div>発行日: <?= Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Tokyo', 'yyyy年MM月dd日') ?></div>
       </div>
     </header>
@@ -50,11 +52,13 @@
         <div><?= data.nameKanji ?></div>
         <div class="label">保険区分</div>
         <div><?= data.insuranceType || '―' ?> / <?= data.burdenRate ? data.burdenRate + '割' : '―' ?></div>
+        <div class="label">対象期間</div>
+        <div><?= chargeMonthLabel || '―' ?></div>
       </div>
     </section>
 
     <section class="card">
-      <h3 class="section-title">ご請求内容（当月）</h3>
+      <h3 class="section-title">ご請求内容（<?= isAggregateInvoice ? '未回収合算' : '当月' ?>）</h3>
       <table>
         <thead>
           <tr><th>項目</th><th>詳細</th><th class="amount">金額</th></tr>
@@ -75,7 +79,7 @@
           </tr>
         </tfoot>
       </table>
-      <div class="note">前月繰越を含む合計金額です。口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+      <div class="note"><?= isAggregateInvoice ? '未回収期間を含めた合計金額です。' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
     </section>
 
     <hr class="divider">

@@ -484,6 +484,44 @@ function normalizeReceiptMonthKeys_(months) {
   return normalized;
 }
 
+function buildReceiptMonthsFromUnpaidHistory_(patientId, anchorMonthKey, prepared) {
+  const monthKey = normalizeBillingMonthKeySafe_(anchorMonthKey);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+
+  if (!monthKey || !pid) return [];
+
+  const unpaidHistory = Array.isArray(prepared && prepared.unpaidHistory)
+    ? prepared.unpaidHistory
+    : [];
+
+  const unpaidSetByPatient = unpaidHistory.reduce((map, entry) => {
+    const entryPid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(entry && entry.patientId)
+      : String(entry && entry.patientId || '').trim();
+    const entryMonth = normalizeBillingMonthKeySafe_(entry && entry.billingMonth);
+    if (!entryPid || !entryMonth) return map;
+    if (!map[entryPid]) map[entryPid] = new Set();
+    map[entryPid].add(entryMonth);
+    return map;
+  }, {});
+
+  const targetUnpaidMonths = unpaidSetByPatient[pid] || new Set();
+  const months = [];
+  let cursor = monthKey;
+  let guard = 0;
+
+  while (cursor && guard < 48) {
+    months.push(cursor);
+    if (!targetUnpaidMonths.has(cursor)) break;
+    cursor = resolvePreviousBillingMonthKey_(cursor);
+    guard += 1;
+  }
+
+  return months.reverse();
+}
+
 function attachPreviousReceiptAmounts_(prepared) {
   const monthKey = prepared && prepared.billingMonth;
   if (!monthKey || !Array.isArray(prepared && prepared.billingJson)) return prepared;
@@ -504,8 +542,11 @@ function attachPreviousReceiptAmounts_(prepared) {
     const previousReceiptAmount = (pid && previousAmounts && Object.prototype.hasOwnProperty.call(previousAmounts, pid))
       ? previousAmounts[pid]
       : 0;
+    const receiptMonths = hasPreviousReceiptSheet
+      ? buildReceiptMonthsFromUnpaidHistory_(pid, previousMonthKey, prepared)
+      : [];
 
-    return Object.assign({}, entry, { previousReceiptAmount, hasPreviousReceiptSheet });
+    return Object.assign({}, entry, { previousReceiptAmount, hasPreviousReceiptSheet, receiptMonths });
   });
 
   return Object.assign({}, prepared, {

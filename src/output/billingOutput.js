@@ -925,10 +925,16 @@ function exportBankTransferRows_(billingMonth, rowObjects, bankStatuses) {
   function logPreparedBankPayloadStatus_(prepared) {
     const requiredKeys = ['billingJson', 'visitsByPatient', 'totalsByPatient', 'carryOverByPatient', 'unpaidHistory', 'bankAccountInfoByPatient'];
     const normalized = normalizePreparedBilling_(prepared) || {};
+    const preparedWithUnpaidHistory = Object.assign({}, normalized, {
+      unpaidHistory: Array.isArray(normalized.unpaidHistory) ? normalized.unpaidHistory : []
+    });
     const missing = requiredKeys.filter(key => {
-      const value = normalized[key];
+      const value = preparedWithUnpaidHistory[key];
       if (key === 'billingJson') {
         return !Array.isArray(value) || value.length === 0;
+      }
+      if (key === 'unpaidHistory') {
+        return !Array.isArray(value);
       }
       if (Array.isArray(value)) return value.length === 0;
       return !value || (typeof value === 'object' && Object.keys(value).length === 0);

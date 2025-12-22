@@ -267,6 +267,30 @@ function testReceiptVisibilityReliesOnUnpaidStatusOnly() {
   assert.strictEqual(withoutPreviousSheet.showReceipt, false, '銀行引落シートが無ければ前月領収書を非表示にする');
 }
 
+function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { buildInvoiceTemplateData_ } = context;
+
+  const aggregate = buildInvoiceTemplateData_({
+    billingMonth: '202502',
+    receiptMonths: ['202412', '202501', '202502'],
+    hasPreviousReceiptSheet: true,
+    previousReceiptAmount: 1500
+  });
+
+  assert.strictEqual(aggregate.isAggregateInvoice, true, '未回収や合算対象があれば合算モードになる');
+  assert.strictEqual(aggregate.invoiceMode, 'aggregate', 'モード名を保持する');
+  assert.strictEqual(aggregate.chargeMonthLabel, '2024年12月〜2025年02月', '対象月は範囲表示になる');
+
+  const standard = buildInvoiceTemplateData_({ billingMonth: '202502', hasPreviousPrepared: false });
+  assert.strictEqual(standard.isAggregateInvoice, false, '未回収が無ければ通常モード');
+  assert.strictEqual(standard.invoiceMode, 'standard', '通常モードを示す');
+  assert.strictEqual(standard.chargeMonthLabel, '2025年02月', '請求月のみを表示する');
+}
+
 function testPreviousReceiptVisibilityFollowsReceiptDecision() {
   const context = createContext();
   vm.createContext(context);
@@ -711,6 +735,7 @@ function run() {
   testFullWidthInputsAreNormalized();
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
   testReceiptVisibilityReliesOnUnpaidStatusOnly();
+  testInvoiceTemplateSwitchesAggregateModeForUnpaid();
   testPreviousReceiptVisibilityFollowsReceiptDecision();
   testPreviousReceiptIsHiddenWhenPreviousPreparedMissing();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();

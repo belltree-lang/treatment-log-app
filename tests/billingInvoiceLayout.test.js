@@ -118,7 +118,7 @@ function testInvoiceTemplateAddsReceiptDecision() {
 
   const payable = buildInvoiceTemplateData_({ billingMonth: '202311', receiptStatus: 'PAID' });
   assert.strictEqual(payable.showReceipt, true, '未回収チェックが無ければ領収書を表示する');
-  assert.deepStrictEqual(Array.from(payable.receiptMonths || []), ['202311'], '領収対象月は請求月のみを保持する');
+  assert.deepStrictEqual(Array.from(payable.receiptMonths || []), ['202310'], '領収対象月は前月を指す');
   assert.strictEqual(payable.receiptRemark, '', '備考は付与しない');
 }
 

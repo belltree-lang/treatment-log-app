@@ -484,7 +484,7 @@ function normalizeReceiptMonthKeys_(months) {
   return normalized;
 }
 
-function buildReceiptMonthsFromUnpaidHistory_(patientId, anchorMonthKey, prepared) {
+function buildReceiptMonthsFromBankUnpaid_(patientId, anchorMonthKey, prepared) {
   const monthKey = normalizeBillingMonthKeySafe_(anchorMonthKey);
   const pid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(patientId)
@@ -492,34 +492,67 @@ function buildReceiptMonthsFromUnpaidHistory_(patientId, anchorMonthKey, prepare
 
   if (!monthKey || !pid) return [];
 
-  const unpaidHistory = Array.isArray(prepared && prepared.unpaidHistory)
-    ? prepared.unpaidHistory
-    : [];
-
-  const unpaidSetByPatient = unpaidHistory.reduce((map, entry) => {
-    const entryPid = typeof billingNormalizePatientId_ === 'function'
-      ? billingNormalizePatientId_(entry && entry.patientId)
-      : String(entry && entry.patientId || '').trim();
-    const entryMonth = normalizeBillingMonthKeySafe_(entry && entry.billingMonth);
-    if (!entryPid || !entryMonth) return map;
-    if (!map[entryPid]) map[entryPid] = new Set();
-    map[entryPid].add(entryMonth);
-    return map;
-  }, {});
-
-  const targetUnpaidMonths = unpaidSetByPatient[pid] || new Set();
+  const workbook = billingSs();
   const months = [];
   let cursor = monthKey;
   let guard = 0;
 
   while (cursor && guard < 48) {
+    const sheet = workbook.getSheetByName(formatBankWithdrawalSheetName_(cursor));
+    if (!sheet) break;
+
     months.push(cursor);
-    if (!targetUnpaidMonths.has(cursor)) break;
+
+    const isChecked = isPatientCheckedUnpaidInBankWithdrawalSheet_(pid, cursor, prepared);
+    if (!isChecked) break;
     cursor = resolvePreviousBillingMonthKey_(cursor);
     guard += 1;
   }
 
   return months.reverse();
+}
+
+function isPatientCheckedUnpaidInBankWithdrawalSheet_(patientId, billingMonth, prepared) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+
+  if (!monthKey || !pid) return false;
+
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(monthKey);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) return false;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
+  if (!unpaidCol) return false;
+  const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients || {});
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+
+  for (let i = 0; i < values.length; i += 1) {
+    const row = values[i];
+    if (!row[unpaidCol - 1]) continue;
+
+    const resolvedPid = pidCol
+      ? normalizePid(row[pidCol - 1])
+      : nameToPatientId[buildFullNameKey_(row[nameCol - 1], kanaCol ? row[kanaCol - 1] : '')];
+
+    if (resolvedPid && resolvedPid === pid) return true;
+  }
+
+  return false;
 }
 
 function attachPreviousReceiptAmounts_(prepared) {
@@ -543,7 +576,7 @@ function attachPreviousReceiptAmounts_(prepared) {
       ? previousAmounts[pid]
       : 0;
     const receiptMonths = hasPreviousReceiptSheet
-      ? buildReceiptMonthsFromUnpaidHistory_(pid, previousMonthKey, prepared)
+      ? buildReceiptMonthsFromBankUnpaid_(pid, previousMonthKey, prepared)
       : [];
 
     return Object.assign({}, entry, { previousReceiptAmount, hasPreviousReceiptSheet, receiptMonths });
@@ -647,7 +680,7 @@ function collectBankWithdrawalAmountsByPatient_(billingMonth, prepared) {
 
   const lastCol = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
-  const unpaidCol = ensureUnpaidCheckColumn_(sheet, headers);
+  const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
   const amountCol = resolveBillingColumn_(
     headers,
     ['金額', '請求金額', '引落額', '引落金額'],

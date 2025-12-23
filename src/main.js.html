@@ -119,6 +119,15 @@ function getSimpleBankMonth() {
   return input && input.value ? normalizeYm(input.value) : '';
 }
 
+function hasFinalizedBillingRows() {
+  const rows = billingState.prepared && billingState.prepared.billingJson;
+  return Array.isArray(rows) && rows.some(isBillingRowFinalized);
+}
+
+function isReceiptEditingLocked() {
+  return hasFinalizedBillingRows();
+}
+
 function updateInvoiceModeControls() {
   const loading = billingState.loading;
   const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
@@ -155,15 +164,18 @@ function renderReceiptControls() {
   const loading = billingState.loading || billingState.receiptSaving;
   const status = billingState.receiptStatus || '';
   const aggregate = billingState.aggregateUntilMonth || '';
+  const locked = isReceiptEditingLocked();
 
   if (statusSelect) {
     statusSelect.value = status || '';
-    statusSelect.disabled = !prepared || loading;
+    statusSelect.disabled = !prepared || loading || locked;
+    statusSelect.title = locked ? '確定済みの請求が含まれているため変更できません' : '';
   }
 
   if (aggregateInput) {
     aggregateInput.value = aggregate ? `${aggregate.slice(0, 4)}-${aggregate.slice(4, 6)}` : '';
-    aggregateInput.disabled = !prepared || loading || status !== 'AGGREGATE';
+    aggregateInput.disabled = !prepared || loading || status !== 'AGGREGATE' || locked;
+    aggregateInput.title = locked ? '確定済みの請求が含まれているため変更できません' : '';
   }
 
   if (display) {
@@ -209,6 +221,11 @@ function handleInvoicePatientInput(event) {
 }
 
 function handleReceiptStatusChange(event) {
+  if (isReceiptEditingLocked()) {
+    renderReceiptControls();
+    alert('請求が確定済みのため領収状態を変更できません。');
+    return;
+  }
   const value = event && event.target ? event.target.value : '';
   const status = String(value || '').trim().toUpperCase();
   billingState.receiptStatus = status;
@@ -217,6 +234,11 @@ function handleReceiptStatusChange(event) {
 }
 
 function handleReceiptAggregateChange(event) {
+  if (isReceiptEditingLocked()) {
+    renderReceiptControls();
+    alert('請求が確定済みのため合算終了月を変更できません。');
+    return;
+  }
   const value = event && event.target ? event.target.value : '';
   const ym = normalizeYm(value);
   billingState.aggregateUntilMonth = ym;
@@ -225,6 +247,11 @@ function handleReceiptAggregateChange(event) {
 }
 
 function persistReceiptStatus() {
+  if (isReceiptEditingLocked()) {
+    renderReceiptControls();
+    alert('請求が確定済みのため領収状態を変更できません。');
+    return;
+  }
   if (!billingState.prepared || !billingState.prepared.billingMonth) {
     alert('先に「請求データを集計」を実行してください。');
     return;
@@ -722,6 +749,16 @@ function getResponsibleDisplay(item) {
 function formatPaidStatus(item) {
   if (!item) return '';
   return item.paidStatus || item.bankStatus || '';
+}
+
+function isBillingRowFinalized(item) {
+  const flag = item && item.billingFinalized;
+  return flag === true || flag === 'true' || flag === 1 || flag === '1';
+}
+
+function renderFinalizedBadge(item) {
+  if (!isBillingRowFinalized(item)) return '';
+  return ' <span class="pill finalized" title="この請求は確定済みです">確定済み</span>';
 }
 
 function maskAccountNumber(value) {
@@ -1868,10 +1905,13 @@ function renderBillingResult() {
   rows.forEach(item => {
     try {
       const safeItem = item && typeof item === 'object' ? item : {};
+      const finalized = isBillingRowFinalized(safeItem);
+      const rowClass = finalized ? ' class="finalized-row"' : '';
+      const nameWithBadge = `${safeItem.nameKanji || ''}${renderFinalizedBadge(safeItem)}`;
       bodyRows.push(`
-      <tr>
+      <tr${rowClass}>
         <td>${safeItem.patientId || ''}</td>
-        <td>${safeItem.nameKanji || ''}</td>
+        <td>${nameWithBadge}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
         <td>${renderEditableCell(safeItem, 'medicalAssistance')}</td>
         <td>${renderEditableCell(safeItem, 'payerType')}</td>

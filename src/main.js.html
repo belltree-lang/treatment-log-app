@@ -798,6 +798,12 @@ function normalizeReceiptStatus(status) {
   return String(status || '').trim().toUpperCase();
 }
 
+function normalizeAggregateStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (!normalized) return '';
+  return normalized;
+}
+
 function isBillingRowFinalized(item) {
   const flag = item && item.billingFinalized;
   return flag === true || flag === 'true' || flag === 1 || flag === '1';
@@ -811,6 +817,41 @@ function getFinalizationDetailParts(item) {
 
 function getFinalizationDetailText(item) {
   return getFinalizationDetailParts(item).join(' / ');
+}
+
+function resolveAggregateTargetMonths(item) {
+  const fromTargets = Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [];
+  const fromReceipts = Array.isArray(item && item.receiptMonths) ? item.receiptMonths : [];
+  return fromTargets.length ? fromTargets : fromReceipts;
+}
+
+function renderAggregateStatusBadge(item) {
+  const status = normalizeAggregateStatus(item && item.aggregateStatus);
+  const targetMonths = resolveAggregateTargetMonths(item);
+  const targetLabel = targetMonths
+    .map(formatYmDisplay)
+    .filter(Boolean)
+    .join('・');
+
+  if (status === 'scheduled') {
+    const title = '銀行シートで未回収/合算フラグがONのため、この月の請求はスキップされます';
+    const sub = targetLabel ? `<span class="receipt-badge-sub">対象: ${escapeHtml(targetLabel)}</span>` : '';
+    return ` <span class="receipt-badge-group"><span class="receipt-badge aggregate" title="${escapeHtml(title)}">合算待ち</span>${sub}</span>`;
+  }
+
+  if (status === 'confirmed') {
+    const titleLines = ['未回収分をこの月の請求に合算しています'];
+    if (targetLabel) titleLines.push(`${targetLabel} 請求分`);
+    const sub = targetLabel ? `<span class="receipt-badge-sub">${escapeHtml(targetLabel)} 合算</span>` : '';
+    return ` <span class="receipt-badge-group"><span class="receipt-badge finalized" title="${escapeHtml(titleLines.join(' / '))}">合算計上</span>${sub}</span>`;
+  }
+
+  if (item && item.skipInvoice) {
+    const title = 'この患者は合算待ちなどの理由で請求生成の対象外です';
+    return ` <span class="receipt-badge-group"><span class="receipt-badge aggregate" title="${escapeHtml(title)}">請求スキップ</span></span>`;
+  }
+
+  return '';
 }
 
 function renderReceiptStatusBadge(item) {
@@ -850,6 +891,14 @@ function renderReceiptStatusBadge(item) {
   const badgeClass = finalized ? 'receipt-badge finalized' : 'receipt-badge aggregate';
   const label = finalized ? '合算確定' : '合算予定';
   return ` <span class="receipt-badge-group"><span class="${badgeClass}" title="${escapeHtml(titleLines.join(' / '))}">${label}</span>${subText}</span>`;
+}
+
+function renderStatusBadges(item) {
+  const badges = [
+    renderAggregateStatusBadge(item),
+    renderReceiptStatusBadge(item)
+  ];
+  return badges.filter(Boolean).join('');
 }
 
 function maskAccountNumber(value) {
@@ -946,6 +995,18 @@ function calculateBillingSummary(rows) {
     acc.totalGrandTotal += Number(row.grandTotal) || 0;
     return acc;
   }, { totalVisits: 0, totalGrandTotal: 0 });
+}
+
+function calculateAggregateStatusCounts(rows) {
+  return (rows || []).reduce((acc, row) => {
+    if (!row || typeof row !== 'object') return acc;
+    const aggregateStatus = normalizeAggregateStatus(row.aggregateStatus);
+    if (aggregateStatus === 'scheduled') acc.scheduled += 1;
+    if (aggregateStatus === 'confirmed') acc.confirmed += 1;
+    if (row.skipInvoice) acc.skipped += 1;
+    if (isBillingRowFinalized(row)) acc.finalized += 1;
+    return acc;
+  }, { scheduled: 0, confirmed: 0, skipped: 0, finalized: 0 });
 }
 
 function toggleBillingSort(field) {
@@ -1872,17 +1933,32 @@ function renderBillingSummary(rows) {
     return;
   }
   const summary = calculateBillingSummary(rows);
+  const aggregate = calculateAggregateStatusCounts(rows);
+  const cards = [
+    { label: '総施術回数', value: `${summary.totalVisits.toLocaleString()} 回` },
+    { label: '請求合計金額', value: formatCurrency(summary.totalGrandTotal) }
+  ];
+
+  if (aggregate.confirmed) {
+    cards.push({ label: '今回の合算計上', value: `${aggregate.confirmed} 件` });
+  }
+
+  const skippedCount = (aggregate.skipped || 0) + (aggregate.scheduled || 0);
+  if (skippedCount) {
+    cards.push({ label: '合算待ち（請求スキップ）', value: `${skippedCount} 件` });
+  }
+
+  if (aggregate.finalized) {
+    cards.push({ label: '確定済み行', value: `${aggregate.finalized} 件` });
+  }
+
   box.style.display = '';
-  box.innerHTML = `
+  box.innerHTML = cards.map(card => `
     <div class="summary-card">
-      <p class="summary-label">総施術回数</p>
-      <p class="summary-value">${summary.totalVisits.toLocaleString()} 回</p>
+      <p class="summary-label">${card.label}</p>
+      <p class="summary-value">${card.value}</p>
     </div>
-    <div class="summary-card">
-      <p class="summary-label">請求合計金額</p>
-      <p class="summary-value">${formatCurrency(summary.totalGrandTotal)}</p>
-    </div>
-  `;
+  `).join('');
 }
 
 function renderBillingResult() {
@@ -2058,7 +2134,7 @@ function renderBillingResult() {
       const safeItem = item && typeof item === 'object' ? item : {};
       const finalized = isBillingRowFinalized(safeItem);
       const rowClass = finalized ? ' class="finalized-row"' : '';
-      const nameWithBadge = `${safeItem.nameKanji || ''}${renderReceiptStatusBadge(safeItem)}`;
+      const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
       bodyRows.push(`
       <tr${rowClass}>
         <td>${safeItem.patientId || ''}</td>

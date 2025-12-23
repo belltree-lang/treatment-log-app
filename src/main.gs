@@ -818,7 +818,6 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared) {
   if (!normalized || !monthKey || !Array.isArray(normalized.billingJson)) return normalized || prepared;
 
   const bankFlagsByPatient = normalized.bankFlagsByPatient || {};
-  const aggregateUntilMonth = normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
 
   const transformed = normalized.billingJson.map(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
@@ -838,6 +837,8 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared) {
       });
     }
 
+    const aggregateUntilMonth = normalizeBillingMonthKeySafe_(entry && entry.aggregateUntilMonth)
+      || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
     const aggregateMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth);
     if (!aggregateMonths.length) return entry;
 
@@ -2220,6 +2221,40 @@ function normalizeAggregateInvoiceMonths_(months, prepared, billingMonth) {
   return typeof normalizeAggregateMonthsForInvoice_ === 'function'
     ? normalizeAggregateMonthsForInvoice_(source, billingMonth)
     : source;
+}
+
+function finalizeAggregateInvoiceState_(prepared, billingMonth, patientId) {
+  const normalizedPrepared = normalizePreparedBilling_(prepared);
+  const billingMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+
+  if (!normalizedPrepared || !billingMonthKey || !pid || !Array.isArray(normalizedPrepared.billingJson)) return null;
+
+  const index = normalizedPrepared.billingJson.findIndex(row => billingNormalizePatientId_(row && row.patientId) === pid);
+  if (index < 0) return null;
+
+  const targetEntry = normalizedPrepared.billingJson[index] || {};
+  const existingAggregateUntil = normalizeBillingMonthKeySafe_(
+    targetEntry.aggregateUntilMonth || normalizedPrepared.aggregateUntilMonth
+  );
+  const existingNum = Number(existingAggregateUntil) || 0;
+  const targetNum = Number(billingMonthKey) || 0;
+  const resolvedAggregateUntil = targetNum > existingNum ? billingMonthKey : existingAggregateUntil;
+  const currentReceiptStatus = normalizeReceiptStatus_(targetEntry.receiptStatus || normalizedPrepared.receiptStatus);
+  const needsReceiptStatusUpdate = currentReceiptStatus !== 'AGGREGATE';
+  const needsAggregateUpdate = resolvedAggregateUntil && resolvedAggregateUntil !== existingAggregateUntil;
+
+  if (!needsReceiptStatusUpdate && !needsAggregateUpdate) return null;
+
+  const updatedEntry = Object.assign({}, targetEntry, {
+    receiptStatus: 'AGGREGATE',
+    aggregateUntilMonth: resolvedAggregateUntil
+  });
+
+  const updatedBillingJson = normalizedPrepared.billingJson.slice();
+  updatedBillingJson[index] = updatedEntry;
+
+  return Object.assign({}, normalizedPrepared, { billingJson: updatedBillingJson });
 }
 
 function generateAggregatedInvoice(billingMonth, options) {

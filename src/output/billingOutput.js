@@ -507,12 +507,62 @@ function buildInvoiceWatermark_(item) {
 
 function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const billingMonth = item && item.billingMonth;
+  const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
   const monthLabel = normalizeBillingMonthLabel_(billingMonth);
   const aggregateLabel = monthLabel ? `${monthLabel}（合算）` : '合算請求';
   const amount = normalizeBillingAmount_(item);
   const watermark = buildInvoiceWatermark_(item);
   const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
   const aggregateRemark = formatAggregateInvoiceRemark_(months);
+  const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(item && item.patientId)
+    : String(item && item.patientId || '').trim();
+  const hasBillingMonthInAggregate = normalizedBillingMonth
+    ? months.some(month => normalizeInvoiceMonthKey_(month) === normalizedBillingMonth)
+    : false;
+  const representativeMonthKey = hasBillingMonthInAggregate
+    ? normalizedBillingMonth
+    : (months.length ? months[months.length - 1] : normalizedBillingMonth);
+  const normalizedRepresentativeMonth = normalizeInvoiceMonthKey_(representativeMonthKey);
+  const aggregateInvoiceDetails = months.map(month => {
+    const monthKey = normalizeInvoiceMonthKey_(month);
+    if (!monthKey || !normalizedPatientId) return null;
+    if (monthKey === normalizedBillingMonth) {
+      return buildAggregateInvoiceDetailForMonth_(Object.assign({}, item, { billingMonth: monthKey }), normalizedRepresentativeMonth);
+    }
+
+    if (typeof loadPreparedBillingWithSheetFallback_ !== 'function') return null;
+
+    try {
+      const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
+      const prepared = loaded && loaded.prepared !== undefined ? loaded.prepared : loaded;
+      const normalized = typeof normalizePreparedBilling_ === 'function'
+        ? normalizePreparedBilling_(prepared)
+        : prepared;
+      const entry = normalized && Array.isArray(normalized.billingJson)
+        ? normalized.billingJson.find(row => {
+          const pid = typeof billingNormalizePatientId_ === 'function'
+            ? billingNormalizePatientId_(row && row.patientId)
+            : String(row && row.patientId || '').trim();
+          return pid && pid === normalizedPatientId;
+        })
+        : null;
+      if (!entry) return null;
+      return buildAggregateInvoiceDetailForMonth_(Object.assign({}, entry, { billingMonth: monthKey }), normalizedRepresentativeMonth);
+    } catch (e) {
+      return null;
+    }
+  }).filter(Boolean);
+  const representativeInvoiceDetail = normalizedRepresentativeMonth
+    ? aggregateInvoiceDetails.find(detail => normalizeInvoiceMonthKey_(detail && detail.month) === normalizedRepresentativeMonth) || null
+    : (aggregateInvoiceDetails.length ? aggregateInvoiceDetails[aggregateInvoiceDetails.length - 1] : null);
+  const aggregateSummaryRows = aggregateInvoiceDetails.map(detail => ({
+    month: detail && detail.month,
+    monthLabel: detail && detail.monthLabel,
+    treatmentAmount: detail && detail.treatmentAmount,
+    transportAmount: detail && detail.transportAmount,
+    subtotal: detail ? (detail.treatmentAmount + detail.transportAmount) : 0
+  }));
 
   return Object.assign({}, item, {
     monthLabel: aggregateLabel,
@@ -523,6 +573,10 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     receiptMonths: months,
     receiptRemark: aggregateRemark,
     aggregateRemark,
+    aggregateInvoiceDetails,
+    aggregateSummaryRows,
+    representativeMonth: normalizedRepresentativeMonth,
+    representativeInvoiceDetail,
     showReceipt: false,
     forceHideReceipt: true,
     rows: [
@@ -531,6 +585,42 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     grandTotal: amount,
     previousReceipt: { visible: false }
   });
+}
+
+function buildAggregateInvoiceDetailForMonth_(entry, representativeMonthKey) {
+  const monthKey = normalizeInvoiceMonthKey_(entry && (entry.billingMonth || entry.month));
+  if (!monthKey) return null;
+
+  const normalizedRepresentativeMonth = normalizeInvoiceMonthKey_(representativeMonthKey);
+  const isRepresentativeMonth = normalizedRepresentativeMonth ? monthKey === normalizedRepresentativeMonth : true;
+  const breakdownParams = Object.assign({}, entry, { billingMonth: monthKey });
+  if (!isRepresentativeMonth) {
+    breakdownParams.carryOverAmount = 0;
+    breakdownParams.carryOverFromHistory = 0;
+  }
+
+  const breakdown = calculateInvoiceChargeBreakdown_(breakdownParams);
+  const visits = breakdown.visits || 0;
+  const unitPrice = breakdown.treatmentUnitPrice || 0;
+  const transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
+
+  const rows = [];
+  if (isRepresentativeMonth) {
+    rows.push({ label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(entry) });
+  }
+  rows.push(
+    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
+    { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
+  );
+
+  return {
+    month: monthKey,
+    monthLabel: normalizeBillingMonthLabel_(monthKey),
+    rows,
+    grandTotal: breakdown.grandTotal,
+    treatmentAmount: breakdown.treatmentAmount,
+    transportAmount: breakdown.transportAmount
+  };
 }
 
 function buildInvoiceTemplateData_(item) {

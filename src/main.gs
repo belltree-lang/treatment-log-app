@@ -2211,6 +2211,47 @@ function generateInvoicesFromCache(billingMonth, options) {
   return generatePreparedInvoices_(prepared, options);
 }
 
+function normalizeAggregateInvoiceMonths_(months, prepared, billingMonth) {
+  const aggregateUntilMonth = prepared && prepared.aggregateUntilMonth ? prepared.aggregateUntilMonth : '';
+  const source = []
+    .concat(months || [])
+    .concat(aggregateUntilMonth ? [aggregateUntilMonth] : [])
+    .concat(billingMonth ? [billingMonth] : []);
+  return typeof normalizeAggregateMonthsForInvoice_ === 'function'
+    ? normalizeAggregateMonthsForInvoice_(source, billingMonth)
+    : source;
+}
+
+function generateAggregatedInvoice(billingMonth, options) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const opts = options || {};
+  const patientId = billingNormalizePatientId_(opts.patientId);
+  if (!patientId) {
+    throw new Error('患者IDを指定してください');
+  }
+
+  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true, restoreCache: true });
+  const validation = loaded && loaded.validation ? loaded.validation : null;
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
+  if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
+    throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
+  }
+
+  const entry = (prepared.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === patientId);
+  if (!entry) {
+    throw new Error('対象患者の請求データが見つかりません');
+  }
+
+  const mergedMonths = []
+    .concat(opts.aggregateMonths || [])
+    .concat(entry.aggregateMonths || [])
+    .concat(entry.receiptMonths || []);
+  const aggregateMonths = normalizeAggregateInvoiceMonths_(mergedMonths, prepared, month.key);
+
+  const file = generateAggregateInvoicePdf(entry, { aggregateMonths, billingMonth: month.key });
+  return { billingMonth: month.key, patientId, aggregateMonths, file };
+}
+
 function normalizeBillingEditBurden_(value) {
   if (value === null || value === undefined) return null;
   const raw = String(value).trim();

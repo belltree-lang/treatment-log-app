@@ -80,6 +80,9 @@
         </tfoot>
       </table>
       <div class="note"><?= isAggregateInvoice ? '未回収期間を含めた合計金額です。' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+      <? if (data.aggregateRemark) { ?>
+        <div class="note"><strong>備考:</strong> <?= data.aggregateRemark ?></div>
+      <? } ?>
     </section>
 
     <hr class="divider">
@@ -95,9 +98,10 @@
     <? var receiptBreakdown = receipt.breakdown || []; ?>
     <? var hasReceiptBreakdown = Array.isArray(receiptBreakdown) && receiptBreakdown.length > 0; ?>
 
-    <section class="card">
-      <h3 class="section-title">前月分領収書</h3>
-      <? if (showReceipt) { ?>
+    <? if (!data.forceHideReceipt) { ?>
+      <section class="card">
+        <h3 class="section-title">前月分領収書</h3>
+        <? if (showReceipt) { ?>
         <div class="info">
           <div class="label">宛名</div>
           <div><?= receiptAddressee || '―' ?></div>
@@ -127,9 +131,10 @@
           </table>
         <? } ?>
       <? } else { ?>
-        <div class="note">前月分は未入金のため、後日合算して請求されます</div>
-      <? } ?>
-    </section>
+          <div class="note">前月分は未入金のため、後日合算して請求されます</div>
+        <? } ?>
+      </section>
+    <? } ?>
   </div>
 </body>
 </html>

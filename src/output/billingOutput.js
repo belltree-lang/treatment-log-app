@@ -464,6 +464,68 @@ function formatInvoiceFileName_(item, options) {
   return base + suffix + '.pdf';
 }
 
+function formatAggregateInvoiceFileName_(item, billingMonthLabel) {
+  const addressee = sanitizeFileName_(item && (item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
+  const monthLabel = sanitizeFileName_(billingMonthLabel || formatBillingMonthForFile_(item && item.billingMonth));
+  return `${INVOICE_FILE_PREFIX}_${addressee}_${monthLabel}（合算）.pdf`;
+}
+
+function normalizeAggregateMonthsForInvoice_(months, billingMonth) {
+  const monthList = Array.isArray(months) ? months : [];
+  const normalized = monthList
+    .map(normalizeInvoiceMonthKey_)
+    .filter(Boolean);
+  if (!normalized.length && billingMonth) {
+    const fallback = normalizeInvoiceMonthKey_(billingMonth);
+    if (fallback) normalized.push(fallback);
+  }
+  const unique = [];
+  const seen = new Set();
+  normalized.forEach(ym => {
+    if (!seen.has(ym)) {
+      seen.add(ym);
+      unique.push(ym);
+    }
+  });
+  return unique.sort();
+}
+
+function formatAggregateInvoiceRemark_(months) {
+  if (!Array.isArray(months) || !months.length) return '';
+  const labels = months
+    .map(ym => normalizeInvoiceMonthKey_(ym))
+    .filter(Boolean)
+    .map(ym => String(ym).slice(4, 6) + '月');
+  if (!labels.length) return '';
+  return labels.join('・') + '分 施術料金として';
+}
+
+function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
+  const billingMonth = item && item.billingMonth;
+  const monthLabel = normalizeBillingMonthLabel_(billingMonth);
+  const aggregateLabel = monthLabel ? `${monthLabel}（合算）` : '合算請求';
+  const amount = normalizeBillingAmount_(item);
+  const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
+  const aggregateRemark = formatAggregateInvoiceRemark_(months);
+
+  return Object.assign({}, item, {
+    monthLabel: aggregateLabel,
+    chargeMonthLabel: aggregateLabel,
+    isAggregateInvoice: true,
+    invoiceMode: 'aggregate',
+    receiptMonths: months,
+    receiptRemark: aggregateRemark,
+    aggregateRemark,
+    showReceipt: false,
+    forceHideReceipt: true,
+    rows: [
+      { label: '合算請求額', detail: aggregateRemark, amount }
+    ],
+    grandTotal: amount,
+    previousReceipt: { visible: false }
+  });
+}
+
 function buildInvoiceTemplateData_(item) {
   const billingMonth = item && item.billingMonth;
   const monthLabel = normalizeBillingMonthLabel_(billingMonth);
@@ -523,6 +585,19 @@ function createInvoicePdfBlob_(item, options) {
   template.data = buildInvoiceTemplateData_(item || {});
   const html = template.evaluate().setWidth(1240).setHeight(1754);
   const fileName = formatInvoiceFileName_(item, options);
+  return html.getBlob().getAs(MimeType.PDF).setName(fileName);
+}
+
+function createAggregateInvoicePdfBlob_(item, options) {
+  const months = options && options.aggregateMonths ? options.aggregateMonths : (item && item.receiptMonths);
+  const template = HtmlService.createTemplateFromFile('invoice_template');
+  const templateData = buildAggregateInvoiceTemplateData_(item || {}, months);
+  template.data = templateData;
+  const html = template.evaluate().setWidth(1240).setHeight(1754);
+  const fileName = formatAggregateInvoiceFileName_(
+    item,
+    templateData && templateData.monthLabel ? templateData.monthLabel.replace(/請求書?\s*/g, '') : ''
+  );
   return html.getBlob().getAs(MimeType.PDF).setName(fileName);
 }
 
@@ -664,6 +739,11 @@ function saveInvoicePdf(item, pdfBlob, options) {
 
 function generateInvoicePdf(item, options) {
   const blob = createInvoicePdfBlob_(item, options);
+  return saveInvoicePdf(item, blob, options);
+}
+
+function generateAggregateInvoicePdf(item, options) {
+  const blob = createAggregateInvoicePdfBlob_(item, options);
   return saveInvoicePdf(item, blob, options);
 }
 

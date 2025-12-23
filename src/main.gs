@@ -1772,15 +1772,32 @@ function coerceBillingJsonArray_(raw) {
     const rawLength = Array.isArray(payload && payload.billingJson) ? payload.billingJson.length : 0;
     if (!payload) return null;
     const normalizeMap_ = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+    const normalizeBankFlags_ = flags => ({
+      ae: !!(flags && flags.ae),
+      af: !!(flags && flags.af)
+    });
+    const bankFlagsByPatient = normalizeMap_(payload.bankFlagsByPatient);
+    const billingJson = coerceBillingJsonArray_(payload.billingJson).map(entry => {
+      const pid = typeof billingNormalizePatientId_ === 'function'
+        ? billingNormalizePatientId_(entry && entry.patientId)
+        : String(entry && entry.patientId ? entry.patientId : '').trim();
+      const bankFlags = pid && bankFlagsByPatient && Object.prototype.hasOwnProperty.call(bankFlagsByPatient, pid)
+        ? bankFlagsByPatient[pid]
+        : null;
+      return Object.assign({}, entry || {}, {
+        bankFlags: normalizeBankFlags_(bankFlags)
+      });
+    });
     const schemaVersion = Number(payload.schemaVersion);
     const normalized = {
       schemaVersion: Number.isFinite(schemaVersion) ? schemaVersion : null,
       billingMonth: payload.billingMonth || '',
       preparedAt: payload.preparedAt || null,
-      billingJson: coerceBillingJsonArray_(payload.billingJson),
+      billingJson,
       patients: normalizeMap_(payload.patients),
       bankInfoByName: normalizeMap_(payload.bankInfoByName),
       bankAccountInfoByPatient: normalizeMap_(payload.bankAccountInfoByPatient),
+      bankFlagsByPatient,
       visitsByPatient: normalizeMap_(payload.visitsByPatient),
       totalsByPatient: normalizeMap_(payload.totalsByPatient),
       staffByPatient: normalizeMap_(payload.staffByPatient),

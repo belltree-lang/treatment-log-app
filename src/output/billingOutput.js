@@ -500,11 +500,17 @@ function formatAggregateInvoiceRemark_(months) {
   return labels.join('・') + '分 施術料金として';
 }
 
+function buildInvoiceWatermark_(item) {
+  const finalized = !!(item && item.billingFinalized);
+  return finalized ? { text: '確定済み' } : null;
+}
+
 function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const billingMonth = item && item.billingMonth;
   const monthLabel = normalizeBillingMonthLabel_(billingMonth);
   const aggregateLabel = monthLabel ? `${monthLabel}（合算）` : '合算請求';
   const amount = normalizeBillingAmount_(item);
+  const watermark = buildInvoiceWatermark_(item);
   const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
   const aggregateRemark = formatAggregateInvoiceRemark_(months);
 
@@ -513,6 +519,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     chargeMonthLabel: aggregateLabel,
     isAggregateInvoice: true,
     invoiceMode: 'aggregate',
+    watermark,
     receiptMonths: months,
     receiptRemark: aggregateRemark,
     aggregateRemark,
@@ -532,6 +539,7 @@ function buildInvoiceTemplateData_(item) {
   const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
   const visits = breakdown.visits || 0;
   const unitPrice = breakdown.treatmentUnitPrice || 0;
+  const watermark = buildInvoiceWatermark_(item);
   const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const normalizedPreviousReceiptAmount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const rows = [
@@ -571,6 +579,7 @@ function buildInvoiceTemplateData_(item) {
     chargeMonthLabel,
     isAggregateInvoice,
     invoiceMode: isAggregateInvoice ? 'aggregate' : 'standard',
+    watermark,
     receiptMonths,
     receiptRemark: (receipt && receipt.receiptRemark) || '',
     showReceipt: !!(receipt && receipt.visible),

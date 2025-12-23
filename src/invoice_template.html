@@ -28,9 +28,30 @@
     .subtable th.amount, .subtable td.amount { text-align: right; }
     .note { color: #475569; font-size: 12px; margin-top: 6px; }
     .divider { border: 0; border-top: 1px dashed #cbd5e1; margin: 4px 0 2px; }
+    .watermark {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 120px;
+      font-weight: 700;
+      color: #cbd5e1;
+      opacity: 0.22;
+      transform: rotate(-45deg);
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+      z-index: 0;
+    }
+    .wrapper { position: relative; z-index: 1; }
   </style>
 </head>
 <body>
+  <? var watermark = data && data.watermark; ?>
+  <? if (watermark && watermark.text) { ?>
+    <div class="watermark"><?= watermark.text ?></div>
+  <? } ?>
   <div class="wrapper">
     <header class="header">
       <? var isAggregateInvoice = data.isAggregateInvoice || data.invoiceMode === 'aggregate'; ?>

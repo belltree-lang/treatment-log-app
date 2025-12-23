@@ -826,6 +826,9 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared) {
     const bankFlags = bankFlagsByPatient[pid] || {};
     const isAggregateOngoing = !!(bankFlags.ae || bankFlags.af);
     if (isAggregateOngoing) {
+      // 'scheduled' means the aggregate invoice should be auto-generated (instead of a
+      // standard invoice) once invoice generation runs. The amounts remain zeroed here
+      // so the aggregate PDF can reconstruct totals across months without double billing.
       return Object.assign({}, entry, {
         aggregateStatus: 'scheduled',
         skipInvoice: true,
@@ -2293,7 +2296,49 @@ function generatePreparedInvoices_(prepared, options) {
     (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
     targetPatientIds
   );
-  const matchedIds = new Set(targetBillingRows.map(row => String(row && row.patientId ? row.patientId : '').trim()).filter(Boolean));
+  // 'scheduled' represents the confirmed state that allows automatic aggregate invoice
+  // generation. Entries flagged here skipped standard invoices earlier and are now
+  // eligible for aggregate PDFs without additional manual triggers.
+  const aggregateTargets = (receiptEnriched.billingJson || []).filter(row => row && row.skipInvoice && row.aggregateStatus === 'scheduled');
+  const aggregateFiles = aggregateTargets.map(entry => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    if (!pid) return null;
+
+    const baseEntry = (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid) || entry;
+    const aggregateUntilMonth = normalizeBillingMonthKeySafe_(baseEntry.aggregateUntilMonth || normalized.aggregateUntilMonth);
+    const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(normalized.billingMonth, pid, aggregateUntilMonth);
+    const aggregateMonths = normalizeAggregateInvoiceMonths_(
+      aggregateSourceMonths.concat([normalized.billingMonth]),
+      normalized,
+      normalized.billingMonth
+    );
+    const uniqueAggregateMonths = Array.from(new Set(aggregateMonths));
+    const aggregateTotal = uniqueAggregateMonths.reduce((sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(
+      ym,
+      pid,
+      ym === normalized.billingMonth ? baseEntry : null
+    ), 0);
+    const aggregateRemark = formatAggregateBillingRemark_(uniqueAggregateMonths);
+    const aggregateEntry = Object.assign({}, baseEntry, {
+      billingMonth: normalized.billingMonth,
+      receiptMonths: uniqueAggregateMonths,
+      aggregateRemark,
+      billingAmount: aggregateTotal,
+      transportAmount: 0,
+      total: aggregateTotal,
+      grandTotal: aggregateTotal,
+      aggregateTargetMonths: uniqueAggregateMonths
+    });
+
+    const meta = generateAggregateInvoicePdf(aggregateEntry, { aggregateMonths: uniqueAggregateMonths, billingMonth: normalized.billingMonth });
+    return Object.assign({}, meta, { patientId: aggregateEntry.patientId, nameKanji: aggregateEntry.nameKanji });
+  }).filter(Boolean);
+  const matchedIds = new Set(
+    targetBillingRows
+      .concat(aggregateFiles.map(file => ({ patientId: file && file.patientId })))
+      .map(row => String(row && row.patientId ? row.patientId : '').trim())
+      .filter(Boolean)
+  );
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
   const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
@@ -2303,7 +2348,7 @@ function generatePreparedInvoices_(prepared, options) {
   return {
     billingMonth: normalized.billingMonth,
     billingJson: receiptEnriched.billingJson,
-    files: pdfs.files,
+    files: pdfs.files.concat(aggregateFiles),
     invoicePatientIds: targetPatientIds,
     missingInvoicePatientIds: missingPatientIds,
     invoiceGenerationMode: targetPatientIds.length ? 'partial' : 'bulk',

@@ -77,4 +77,75 @@ function createContext(preparedByMonth) {
   assert.strictEqual(entry.grandTotal, 0);
 })();
 
+(function testAggregateInvoicePdfGeneratedForScheduledEntries() {
+  const preparedByMonth = {
+    '202404': {
+      billingMonth: '202404',
+      billingJson: [{ patientId: 'P99', billingMonth: '202404', grandTotal: 4000 }],
+      bankFlagsByPatient: { P99: { ae: true, af: false } }
+    },
+    '202405': {
+      billingMonth: '202405',
+      billingJson: [{ patientId: 'P99', billingMonth: '202405', grandTotal: 5000, aggregateUntilMonth: '202403' }],
+      bankFlagsByPatient: { P99: { ae: true, af: false } }
+    }
+  };
+
+  const aggregateCalls = [];
+  const ctx = {
+    console: { log: () => {}, warn: () => {} },
+    preparedByMonth,
+    CacheService: { getScriptCache: () => ({}) },
+    normalizeMoneyNumber_: value => Number(value) || 0,
+    billingLogger_: { log: () => {} },
+    normalizePreparedBilling_: payload => payload,
+    attachPreviousReceiptAmounts_: payload => payload,
+    normalizeBillingMonthKeySafe_: value => String(value || '').trim(),
+    billingNormalizePatientId_: pid => (pid ? String(pid).trim() : ''),
+    loadPreparedBillingWithSheetFallback_: monthKey => preparedByMonth[monthKey] || null,
+    exportBankTransferDataForPrepared_: () => null,
+    generateInvoicePdfs: () => ({ billingMonth: '202405', files: [], missingPatientIds: [] }),
+    generateAggregateInvoicePdf: (entry, opts) => {
+      aggregateCalls.push({ entry, opts });
+      return { fileId: 'agg', patientId: entry && entry.patientId, nameKanji: entry && entry.nameKanji };
+    }
+  };
+
+  ctx.normalizeBillingMonthInput = value => ({
+    key: String(value || ''),
+    year: Number(String(value || '').slice(0, 4)) || 2024,
+    month: Number(String(value || '').slice(4, 6)) || 1
+  });
+  ctx.resolvePreviousBillingMonthKey_ = billingMonth => {
+    const normalized = ctx.normalizeBillingMonthKeySafe_(billingMonth);
+    if (!normalized) return '';
+    const year = Number(normalized.slice(0, 4));
+    const month = Number(normalized.slice(4, 6));
+    const prevMonth = month === 1 ? 12 : month - 1;
+    const prevYear = month === 1 ? year - 1 : year;
+    return String(prevYear).padStart(4, '0') + String(prevMonth).padStart(2, '0');
+  };
+
+  vm.createContext(ctx);
+  vm.runInContext(mainCode, ctx);
+
+  ctx.loadPreparedBillingWithSheetFallback_ = monthKey => preparedByMonth[monthKey] || null;
+  ctx.attachPreviousReceiptAmounts_ = payload => payload;
+  ctx.exportBankTransferDataForPrepared_ = () => null;
+  ctx.generateInvoicePdfs = () => ({ billingMonth: '202405', files: [], missingPatientIds: [] });
+  ctx.generateAggregateInvoicePdf = (entry, opts) => {
+    aggregateCalls.push({ entry, opts });
+    return { fileId: 'agg', patientId: entry && entry.patientId, nameKanji: entry && entry.nameKanji };
+  };
+
+  const result = ctx.generatePreparedInvoices_(preparedByMonth['202405']);
+
+  assert.ok(result && Array.isArray(result.files), 'invoice generation returns files');
+  // Aggregate invoices should be auto-generated for the confirmed "scheduled" state.
+  assert.strictEqual(aggregateCalls.length, 1, 'aggregate invoice is generated for scheduled entries');
+  const aggregateMonths = aggregateCalls[0] && aggregateCalls[0].opts && aggregateCalls[0].opts.aggregateMonths;
+  assert.deepStrictEqual(Array.from(new Set(aggregateMonths)), ['202404', '202405']);
+  assert.strictEqual(aggregateCalls[0].entry && aggregateCalls[0].entry.grandTotal, 9000);
+})();
+
 console.log('aggregate billing from bank flags tests passed');

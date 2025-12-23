@@ -155,6 +155,7 @@ const PREPARED_BILLING_SCHEMA_VERSION = 2;
 const BANK_INFO_SHEET_NAME = '銀行情報';
 const UNPAID_HISTORY_SHEET_NAME = '未回収履歴';
 const BANK_WITHDRAWAL_UNPAID_HEADER = '未回収チェック';
+const BANK_WITHDRAWAL_AGGREGATE_HEADER = '合算';
 
 if (typeof globalThis !== 'undefined') {
   globalThis.BILLING_CACHE_CHUNK_MARKER = BILLING_CACHE_CHUNK_MARKER;
@@ -1303,32 +1304,105 @@ function ensureBankInfoSheet_() {
 }
 
 function ensureUnpaidCheckColumn_(sheet, headers) {
+  const ensured = ensureBankWithdrawalFlagColumns_(sheet, headers);
+  return ensured.unpaidCol;
+}
+
+function ensureBankWithdrawalFlagColumns_(sheet, headers) {
   const targetSheet = sheet;
   const workingHeaders = Array.isArray(headers) && headers.length
     ? headers.slice()
     : (targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getDisplayValues()[0] || []);
-  let col = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
-  if (!col) {
+
+  let unpaidCol = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
+  if (!unpaidCol) {
     const lastCol = targetSheet.getLastColumn();
     targetSheet.insertColumnAfter(lastCol);
-    col = lastCol + 1;
-    targetSheet.getRange(1, col).setValue(BANK_WITHDRAWAL_UNPAID_HEADER);
+    unpaidCol = lastCol + 1;
+    targetSheet.getRange(1, unpaidCol).setValue(BANK_WITHDRAWAL_UNPAID_HEADER);
   }
+
+  let aggregateCol = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
+  if (!aggregateCol) {
+    try {
+      targetSheet.insertColumnAfter(unpaidCol);
+      aggregateCol = unpaidCol + 1;
+      targetSheet.getRange(1, aggregateCol).setValue(BANK_WITHDRAWAL_AGGREGATE_HEADER);
+    } catch (err) {
+      console.warn('[billing] Failed to insert aggregate column on bank withdrawal sheet', err);
+    }
+  }
+
   try {
     const maxRows = typeof targetSheet.getMaxRows === 'function'
       ? targetSheet.getMaxRows()
       : targetSheet.getLastRow();
-    const range = targetSheet.getRange(2, col, Math.max((maxRows || 0) - 1, 1), 1);
-    if (typeof range.insertCheckboxes === 'function') {
-      range.insertCheckboxes();
+    const unpaidRange = targetSheet.getRange(2, unpaidCol, Math.max((maxRows || 0) - 1, 1), 1);
+    const aggregateRange = aggregateCol
+      ? targetSheet.getRange(2, aggregateCol, Math.max((maxRows || 0) - 1, 1), 1)
+      : null;
+
+    if (unpaidRange && typeof unpaidRange.insertCheckboxes === 'function') {
+      unpaidRange.insertCheckboxes();
     } else if (SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function') {
-      const rule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
-      range.setDataValidation(rule);
+      const unpaidRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+      unpaidRange.setDataValidation(unpaidRule);
+    }
+
+    if (aggregateRange) {
+      if (typeof aggregateRange.insertCheckboxes === 'function') {
+        aggregateRange.insertCheckboxes();
+      } else if (SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function') {
+        const aggregateCheckboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+        aggregateRange.setDataValidation(aggregateCheckboxRule);
+      }
+      if (SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function') {
+        const aggregateBuilder = SpreadsheetApp.newDataValidation();
+        if (typeof aggregateBuilder.requireCheckbox === 'function') {
+          aggregateBuilder.requireCheckbox();
+        }
+        if (typeof aggregateBuilder.requireFormulaSatisfied === 'function') {
+          const rowScopedUnpaid = `INDIRECT(ADDRESS(ROW(), ${unpaidCol}))`;
+          aggregateBuilder.requireFormulaSatisfied(`${rowScopedUnpaid}=TRUE`);
+        }
+        aggregateBuilder.setAllowInvalid(false);
+        aggregateBuilder.setHelpText('未回収チェックがONのときのみチェックできます');
+        const aggregateRule = aggregateBuilder.build();
+        aggregateRange.setDataValidation(aggregateRule);
+      }
     }
   } catch (err) {
-    console.warn('[billing] Failed to ensure checkbox column for unpaid tracking', err);
+    console.warn('[billing] Failed to ensure checkbox columns for bank withdrawal flags', err);
   }
-  return col;
+
+  enforceBankWithdrawalAggregateConstraint_(targetSheet, unpaidCol, aggregateCol);
+
+  return { unpaidCol, aggregateCol };
+}
+
+function enforceBankWithdrawalAggregateConstraint_(sheet, unpaidCol, aggregateCol) {
+  if (!sheet || !unpaidCol || !aggregateCol) return;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const rowCount = lastRow - 1;
+  const unpaidValues = sheet.getRange(2, unpaidCol, rowCount, 1).getValues();
+  const aggregateRange = sheet.getRange(2, aggregateCol, rowCount, 1);
+  const aggregateValues = aggregateRange.getValues();
+
+  let needsUpdate = false;
+  for (let i = 0; i < rowCount; i++) {
+    const unpaid = !!(unpaidValues[i] && unpaidValues[i][0]);
+    const aggregate = aggregateValues[i] && aggregateValues[i][0];
+    if (!unpaid && aggregate) {
+      aggregateValues[i][0] = false;
+      needsUpdate = true;
+    }
+  }
+
+  if (needsUpdate) {
+    aggregateRange.setValues(aggregateValues);
+  }
 }
 
 function formatBankWithdrawalSheetName_(billingMonth) {

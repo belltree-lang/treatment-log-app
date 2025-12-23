@@ -325,7 +325,11 @@ function resolveInvoiceReceiptDisplay_(item) {
     ? formatAggregatedReceiptRemark_(receiptMonths)
     : '';
   const receiptStatus = item && item.receiptStatus ? String(item.receiptStatus).toUpperCase() : '';
-  const showReceipt = hasPreviousReceiptSheet && receiptStatus !== 'UNPAID';
+  const bankFlags = item && item.bankFlags;
+  const unpaidFlag = bankFlags && (bankFlags.ae || bankFlags.AE);
+  const aggregateFlag = bankFlags && (bankFlags.af || bankFlags.AF);
+  const hasBankRestriction = !!(unpaidFlag || aggregateFlag);
+  const showReceipt = hasPreviousReceiptSheet && receiptStatus !== 'UNPAID' && !hasBankRestriction;
 
   return {
     visible: showReceipt,

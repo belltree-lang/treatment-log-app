@@ -22,6 +22,7 @@ function buildValidPreparedPayload(ctx, overrides = {}) {
     staffDirectory: {},
     staffDisplayByPatient: {},
     billingOverrideFlags: {},
+    bankFlagsByPatient: {},
     carryOverByPatient: {},
     bankAccountInfoByPatient: {}
   }, overrides);

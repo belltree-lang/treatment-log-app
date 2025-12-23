@@ -1135,6 +1135,9 @@ function buildPreparedBillingPayload_(billingMonth) {
     };
   });
   const patientMap = source.patients || source.patientMap || {};
+  const bankFlagsByPatient = getBankFlagsByPatient_(billingMonthKey || source.billingMonth || billingMonth, {
+    patients: patientMap
+  });
   const bankAccountInfoByPatient = Object.keys(patientMap || {}).reduce((map, pid) => {
     const patient = patientMap[pid] || {};
     map[pid] = {
@@ -1176,16 +1179,17 @@ function buildPreparedBillingPayload_(billingMonth) {
     staffDirectory: source.staffDirectory || {},
     staffDisplayByPatient: source.staffDisplayByPatient || {},
     billingOverrideFlags: source.billingOverrideFlags || {},
-      carryOverByPatient: source.carryOverByPatient || {},
-      carryOverLedger: source.carryOverLedger || [],
-      carryOverLedgerMeta: source.carryOverLedgerMeta || {},
-      carryOverLedgerByPatient: source.carryOverLedgerByPatient || {},
-      unpaidHistory: source.unpaidHistory || [],
-      visitsByPatient,
-      totalsByPatient,
-      bankAccountInfoByPatient,
-      receiptStatus: existingPrepared && existingPrepared.receiptStatus,
-      aggregateUntilMonth: existingPrepared && existingPrepared.aggregateUntilMonth
+    bankFlagsByPatient,
+    carryOverByPatient: source.carryOverByPatient || {},
+    carryOverLedger: source.carryOverLedger || [],
+    carryOverLedgerMeta: source.carryOverLedgerMeta || {},
+    carryOverLedgerByPatient: source.carryOverLedgerByPatient || {},
+    unpaidHistory: source.unpaidHistory || [],
+    visitsByPatient,
+    totalsByPatient,
+    bankAccountInfoByPatient,
+    receiptStatus: existingPrepared && existingPrepared.receiptStatus,
+    aggregateUntilMonth: existingPrepared && existingPrepared.aggregateUntilMonth
   };
   return mergeReceiptSettingsIntoPrepared_(payload,
     existingPrepared && existingPrepared.receiptStatus,
@@ -1471,6 +1475,59 @@ function buildPatientNameToIdMap_(patients) {
   }, {});
 }
 
+function normalizeBankFlagValue_(value) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  const num = Number(value);
+  if (Number.isFinite(num)) return num !== 0;
+  const normalized = String(value || '').trim();
+  if (!normalized) return false;
+  const lowered = normalized.toLowerCase();
+  if (lowered === 'true' || lowered === 'yes' || lowered === 'on') return true;
+  if (lowered === 'false' || lowered === 'no' || lowered === 'off') return false;
+  return lowered === '1' || normalized === '✓' || normalized === '✔' || normalized === '☑' || normalized === '◯';
+}
+
+function getBankFlagsByPatient_(billingMonth, prepared) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(month);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) return {};
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return {};
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
+  const aggregateCol = resolveBillingColumn_(headers, ['合算'], '合算', {});
+  const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
+  const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
+
+  const effectiveLastCol = sheet.getLastColumn();
+  const values = sheet.getRange(2, 1, lastRow - 1, effectiveLastCol).getValues();
+  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
+  const flagsByPatient = {};
+
+  values.forEach(row => {
+    const rawPid = pidCol ? row[pidCol - 1] : '';
+    const normalizedPid = billingNormalizePatientId_(rawPid);
+    const pid = normalizedPid || (nameCol
+      ? nameToPatientId[buildFullNameKey_(row[nameCol - 1], kanaCol ? row[kanaCol - 1] : '')]
+      : '');
+    if (!pid) return;
+
+    const current = flagsByPatient[pid] || { ae: false, af: false };
+    const ae = unpaidCol ? normalizeBankFlagValue_(row[unpaidCol - 1]) : false;
+    const af = aggregateCol ? normalizeBankFlagValue_(row[aggregateCol - 1]) : false;
+    flagsByPatient[pid] = { ae: current.ae || ae, af: current.af || af };
+  });
+
+  return flagsByPatient;
+}
+
 function buildBillingAmountByPatientId_(billingJson) {
   const amounts = {};
   (billingJson || []).forEach(entry => {
@@ -1730,6 +1787,7 @@ function coerceBillingJsonArray_(raw) {
       staffDirectory: normalizeMap_(payload.staffDirectory),
       staffDisplayByPatient: normalizeMap_(payload.staffDisplayByPatient),
       billingOverrideFlags: normalizeMap_(payload.billingOverrideFlags),
+      bankFlagsByPatient: normalizeMap_(payload.bankFlagsByPatient),
       carryOverByPatient: normalizeMap_(payload.carryOverByPatient),
       carryOverLedger: Array.isArray(payload.carryOverLedger) ? payload.carryOverLedger : [],
       carryOverLedgerMeta: normalizeMap_(payload.carryOverLedgerMeta),
@@ -1768,6 +1826,7 @@ function toClientBillingPayload_(prepared) {
     staffDirectory: normalized.staffDirectory || {},
     staffDisplayByPatient: normalized.staffDisplayByPatient || {},
     billingOverrideFlags: normalized.billingOverrideFlags || {},
+    bankFlagsByPatient: normalized.bankFlagsByPatient || {},
     carryOverByPatient: normalized.carryOverByPatient || {},
     carryOverLedger: normalized.carryOverLedger || [],
     carryOverLedgerMeta: normalized.carryOverLedgerMeta || {},

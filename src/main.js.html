@@ -83,19 +83,26 @@ function updateBillingControls() {
   const saveBtn = qs('billingSaveBtn');
   const loading = billingState.loading;
   const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
+  const finalizedLocked = hasFinalizedBillingRows();
 
   if (monthInput) {
     monthInput.disabled = loading;
   }
   if (aggregateBtn) {
-    aggregateBtn.disabled = loading;
+    const disabled = loading || finalizedLocked;
+    aggregateBtn.disabled = disabled;
     aggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
+    aggregateBtn.title = disabled && finalizedLocked ? '確定済みの請求が含まれているため再集計できません' : '';
   }
   if (pdfBtn) {
-    const disabled = loading || !prepared;
+    const disabled = loading || !prepared || finalizedLocked;
     pdfBtn.disabled = disabled;
     pdfBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
-    pdfBtn.title = disabled && !prepared ? '先に「請求データを集計」を実行してください' : '';
+    pdfBtn.title = disabled
+      ? (!prepared
+        ? '先に「請求データを集計」を実行してください'
+        : (finalizedLocked ? '確定済みの請求が含まれているためPDF生成できません' : ''))
+      : '';
   }
   if (saveBtn) {
     const disabled = loading || !prepared;
@@ -105,6 +112,7 @@ function updateBillingControls() {
   }
   updateInvoiceModeControls();
   renderReceiptControls();
+  renderFinalizedLockNotice();
 }
 
 function getBankTargetMonth() {
@@ -119,11 +127,26 @@ function getSimpleBankMonth() {
   return input && input.value ? normalizeYm(input.value) : '';
 }
 
-const BILLING_FINALIZED_ALERT_MESSAGE = 'この請求は確定済みのため操作できません';
+const BILLING_FINALIZED_LOCK_MESSAGE = '確定済み（合算確定）の請求が含まれているため、再集計とPDF再生成はできません。';
+
+function renderFinalizedLockNotice() {
+  const note = qs('finalizedLockNote');
+  if (!note) return;
+  const hasPreparedMonth = !!(billingState.prepared && billingState.prepared.billingMonth);
+  const locked = hasPreparedMonth && hasFinalizedBillingRows();
+  if (!locked) {
+    note.style.display = 'none';
+    note.textContent = '';
+    return;
+  }
+  note.style.display = '';
+  note.textContent = BILLING_FINALIZED_LOCK_MESSAGE;
+  note.innerHTML = `${escapeHtml(BILLING_FINALIZED_LOCK_MESSAGE)}<small>確定解除しない限り、再集計やPDFの再生成は行えません。</small>`;
+}
 
 function shouldBlockFinalizedBillingOperation() {
   if (!hasFinalizedBillingRows()) return false;
-  alert(BILLING_FINALIZED_ALERT_MESSAGE);
+  renderFinalizedLockNotice();
   return true;
 }
 
@@ -231,7 +254,6 @@ function handleInvoicePatientInput(event) {
 function handleReceiptStatusChange(event) {
   if (isReceiptEditingLocked()) {
     renderReceiptControls();
-    alert(BILLING_FINALIZED_ALERT_MESSAGE);
     return;
   }
   const value = event && event.target ? event.target.value : '';
@@ -244,7 +266,6 @@ function handleReceiptStatusChange(event) {
 function handleReceiptAggregateChange(event) {
   if (isReceiptEditingLocked()) {
     renderReceiptControls();
-    alert(BILLING_FINALIZED_ALERT_MESSAGE);
     return;
   }
   const value = event && event.target ? event.target.value : '';
@@ -257,7 +278,6 @@ function handleReceiptAggregateChange(event) {
 function persistReceiptStatus() {
   if (isReceiptEditingLocked()) {
     renderReceiptControls();
-    alert(BILLING_FINALIZED_ALERT_MESSAGE);
     return;
   }
   if (!billingState.prepared || !billingState.prepared.billingMonth) {
@@ -1971,7 +1991,8 @@ function renderBillingResult() {
     })();
 
     if (finalized) {
-      return wrapWithOverrideBadge(display, item.patientId, field, alignRight);
+      const locked = `<span class="locked-text" title="確定済みのため編集不可" aria-disabled="true">${display}</span>`;
+      return wrapWithOverrideBadge(locked, item.patientId, field, alignRight);
     }
 
     const view = `<button type="button" class="${viewClass}" ${baseAttrs} aria-label="${field} を編集">${display}</button>`;
@@ -1984,10 +2005,11 @@ function renderBillingResult() {
       const detailText = escapeHtml(getFinalizationDetailText(item));
       const source = item.finalizationSource ? String(item.finalizationSource).trim() : '';
       const sourceLabel = source ? ` (${escapeHtml(source)})` : '';
+      const lockNote = '<div class="finalized-lock-note">確定済みのため再集計・PDF再生成はできません<small>解除しない限り内容を編集できません</small></div>';
       if (detailText) {
-        return `<div class="muted">確定済み${sourceLabel}<br><small>${detailText}</small></div>`;
+        return `<div class="muted">確定済み${sourceLabel}<br><small>${detailText}</small>${lockNote}</div>`;
       }
-      return `<div class="muted">確定済み${sourceLabel}</div>`;
+      return `<div class="muted">確定済み${sourceLabel}${lockNote}</div>`;
     }
 
     const disabled = billingState.loading || !billingState.prepared || !billingState.prepared.billingMonth;

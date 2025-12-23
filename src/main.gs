@@ -1360,20 +1360,6 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers) {
         const aggregateCheckboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
         aggregateRange.setDataValidation(aggregateCheckboxRule);
       }
-      if (SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function') {
-        const aggregateBuilder = SpreadsheetApp.newDataValidation();
-        if (typeof aggregateBuilder.requireCheckbox === 'function') {
-          aggregateBuilder.requireCheckbox();
-        }
-        if (typeof aggregateBuilder.requireFormulaSatisfied === 'function') {
-          const rowScopedUnpaid = `INDIRECT(ADDRESS(ROW(), ${unpaidCol}))`;
-          aggregateBuilder.requireFormulaSatisfied(`${rowScopedUnpaid}=TRUE`);
-        }
-        aggregateBuilder.setAllowInvalid(false);
-        aggregateBuilder.setHelpText('未回収チェックがONのときのみチェックできます');
-        const aggregateRule = aggregateBuilder.build();
-        aggregateRange.setDataValidation(aggregateRule);
-      }
     }
   } catch (err) {
     console.warn('[billing] Failed to ensure checkbox columns for bank withdrawal flags', err);

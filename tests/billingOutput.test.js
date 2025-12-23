@@ -252,7 +252,7 @@ function testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice() {
   assert.strictEqual(breakdown.grandTotal, 500, '繰越のみが合計に残る');
 }
 
-function testReceiptVisibilityReliesOnUnpaidStatusOnly() {
+function testReceiptVisibilityRespectsBankFlagsAndStatus() {
   const context = createContext();
   vm.createContext(context);
   vm.runInContext(billingOutputCode, context);
@@ -265,6 +265,27 @@ function testReceiptVisibilityReliesOnUnpaidStatusOnly() {
 
   const withoutPreviousSheet = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', hasPreviousPrepared: false });
   assert.strictEqual(withoutPreviousSheet.showReceipt, false, '銀行引落シートが無ければ前月領収書を非表示にする');
+
+  const withUnpaidFlag = resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    hasPreviousPrepared: true,
+    bankFlags: { ae: true, af: false }
+  });
+  assert.strictEqual(withUnpaidFlag.showReceipt, false, '未回収フラグがONのときは領収書を非表示にする');
+
+  const withAggregateFlag = resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    hasPreviousPrepared: true,
+    bankFlags: { ae: false, af: true }
+  });
+  assert.strictEqual(withAggregateFlag.showReceipt, false, '合算フラグがONのときは領収書を非表示にする');
+
+  const bankFlagsCleared = resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    hasPreviousPrepared: true,
+    bankFlags: { ae: false, af: false }
+  });
+  assert.strictEqual(bankFlagsCleared.showReceipt, true, '両方OFFなら従来どおり領収書を表示する');
 }
 
 function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {
@@ -734,7 +755,7 @@ function run() {
   testCustomUnitPriceForSelfPaidInvoice();
   testFullWidthInputsAreNormalized();
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
-  testReceiptVisibilityReliesOnUnpaidStatusOnly();
+  testReceiptVisibilityRespectsBankFlagsAndStatus();
   testInvoiceTemplateSwitchesAggregateModeForUnpaid();
   testPreviousReceiptVisibilityFollowsReceiptDecision();
   testPreviousReceiptIsHiddenWhenPreviousPreparedMissing();

@@ -1245,15 +1245,65 @@ function loadBillingCachePayload_(cache, key) {
   return merged;
 }
 
+function isBillingEntryFinalized_(entry) {
+  const flag = entry && entry.billingFinalized;
+  return flag === true || flag === 'true' || flag === 1 || flag === '1';
+}
+
+function extractFinalizedBillingEntries_(prepared) {
+  const normalized = normalizePreparedBilling_(prepared);
+  if (!normalized || !Array.isArray(normalized.billingJson)) return {};
+  return normalized.billingJson.reduce((map, entry) => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    if (!pid || !isBillingEntryFinalized_(entry)) return map;
+    map[pid] = Object.assign({}, entry);
+    return map;
+  }, {});
+}
+
+function mergeFinalizedBillingEntries_(billingJson, finalizedEntries) {
+  const baseList = Array.isArray(billingJson) ? billingJson : [];
+  const finalizedMap = finalizedEntries && typeof finalizedEntries === 'object' ? finalizedEntries : {};
+  const merged = baseList.map(entry => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    const finalized = pid && Object.prototype.hasOwnProperty.call(finalizedMap, pid)
+      ? finalizedMap[pid]
+      : null;
+    return finalized ? Object.assign({}, finalized) : entry;
+  });
+  const existingPids = new Set(
+    merged.map(entry => billingNormalizePatientId_(entry && entry.patientId)).filter(Boolean)
+  );
+  Object.keys(finalizedMap).forEach(pid => {
+    if (existingPids.has(pid)) return;
+    merged.push(Object.assign({}, finalizedMap[pid]));
+  });
+  return merged;
+}
+
+function getActiveUserEmail_() {
+  try {
+    const active = Session.getActiveUser && Session.getActiveUser();
+    if (active && typeof active.getEmail === 'function') {
+      return active.getEmail() || '';
+    }
+  } catch (err) {
+    // ignore
+  }
+  return '';
+}
+
 function buildPreparedBillingPayload_(billingMonth) {
   const resolvedMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const source = getBillingSourceData(resolvedMonthKey || billingMonth);
   const existingPrepared = resolvedMonthKey ? loadPreparedBillingFromSheet_(resolvedMonthKey) : null;
+  const normalizedExistingPrepared = normalizePreparedBilling_(existingPrepared);
   const billingMonthKey = normalizeBillingMonthKeySafe_(
     source.billingMonth || (source.month && source.month.key) || resolvedMonthKey
   );
   const billingJson = generateBillingJsonFromSource(source);
-  const billingJsonArray = Array.isArray(billingJson) ? billingJson : [];
+  const finalizedEntries = extractFinalizedBillingEntries_(normalizedExistingPrepared);
+  const billingJsonArray = mergeFinalizedBillingEntries_(billingJson, finalizedEntries);
   const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
   const visitCountKeys = Object.keys(visitCounts || {});
   const normalizeNumber_ = value => {
@@ -1280,7 +1330,7 @@ function buildPreparedBillingPayload_(billingMonth) {
     };
   });
   const patientMap = source.patients || source.patientMap || {};
-  const bankFlagsByPatient = getBankFlagsByPatient_(billingMonthKey || source.billingMonth || billingMonth, {
+  let bankFlagsByPatient = getBankFlagsByPatient_(billingMonthKey || source.billingMonth || billingMonth, {
     patients: patientMap
   });
   const bankAccountInfoByPatient = Object.keys(patientMap || {}).reduce((map, pid) => {
@@ -1296,6 +1346,15 @@ function buildPreparedBillingPayload_(billingMonth) {
     };
     return map;
   }, {});
+  if (finalizedEntries && normalizedExistingPrepared && normalizedExistingPrepared.bankFlagsByPatient) {
+    const finalizedIds = Object.keys(finalizedEntries);
+    const existingFlags = normalizedExistingPrepared.bankFlagsByPatient;
+    finalizedIds.forEach(pid => {
+      if (Object.prototype.hasOwnProperty.call(existingFlags, pid)) {
+        bankFlagsByPatient[pid] = existingFlags[pid];
+      }
+    });
+  }
   const zeroVisitSamples = visitCountKeys
     .filter(pid => {
       const entry = visitCounts[pid];
@@ -1333,12 +1392,12 @@ function buildPreparedBillingPayload_(billingMonth) {
     visitsByPatient,
     totalsByPatient,
     bankAccountInfoByPatient,
-    receiptStatus: existingPrepared && existingPrepared.receiptStatus,
-    aggregateUntilMonth: existingPrepared && existingPrepared.aggregateUntilMonth
+    receiptStatus: normalizedExistingPrepared && normalizedExistingPrepared.receiptStatus,
+    aggregateUntilMonth: normalizedExistingPrepared && normalizedExistingPrepared.aggregateUntilMonth
   };
   return mergeReceiptSettingsIntoPrepared_(payload,
-    existingPrepared && existingPrepared.receiptStatus,
-    existingPrepared && existingPrepared.aggregateUntilMonth);
+    normalizedExistingPrepared && normalizedExistingPrepared.receiptStatus,
+    normalizedExistingPrepared && normalizedExistingPrepared.aggregateUntilMonth);
 }
 
 const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
@@ -2618,6 +2677,46 @@ function applyBillingOverrideEdits_(billingMonthKey, edits) {
     }
   });
   return { updated: updatedCount };
+}
+
+function finalizeBillingEntry(billingMonth, patientId) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!month || !pid) {
+    throw new Error('請求月と患者IDを指定してください');
+  }
+
+  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true });
+  const validation = loaded && loaded.validation ? loaded.validation : null;
+  if (validation && validation.ok === false) {
+    throw new Error('請求データが正しくありません。先に再集計を実行してください。');
+  }
+
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
+  if (!prepared || !Array.isArray(prepared.billingJson)) {
+    throw new Error('請求データが見つかりません。先に「請求データを集計」を実行してください。');
+  }
+
+  const index = prepared.billingJson.findIndex(row => billingNormalizePatientId_(row && row.patientId) === pid);
+  if (index < 0) {
+    throw new Error('指定された患者IDの請求データが見つかりません。');
+  }
+
+  const target = prepared.billingJson[index] || {};
+  const updatedEntry = Object.assign({}, target, {
+    billingFinalized: true,
+    finalizedAt: new Date().toISOString(),
+    finalizedBy: getActiveUserEmail_(),
+    finalizationSource: 'manual'
+  });
+  const updatedBillingJson = prepared.billingJson.slice();
+  updatedBillingJson[index] = updatedEntry;
+  const updatedPrepared = Object.assign({}, prepared, { billingJson: updatedBillingJson });
+
+  savePreparedBilling_(updatedPrepared);
+  savePreparedBillingToSheet_(month.key, updatedPrepared);
+
+  return toClientBillingPayload_(updatedPrepared);
 }
 
 function applyBillingEdits(billingMonth, options) {

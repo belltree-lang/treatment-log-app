@@ -288,6 +288,18 @@ function formatYmDisplay(ym) {
   return ym.slice(0, 4) + '-' + ym.slice(4);
 }
 
+function formatDateTimeDisplay(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+
 function getBankSheetSummary() {
   if (bankFlowState.sheet && bankFlowState.sheet.sheetSummary) return bankFlowState.sheet.sheetSummary;
   if (bankFlowState.finalized && bankFlowState.finalized.sheetSummary) return bankFlowState.finalized.sheetSummary;
@@ -727,8 +739,11 @@ function getMergedBillingRows() {
   return baseRows.map(row => {
     try {
       const baseRow = row && typeof row === 'object' ? row : {};
-      const edits = billingState.edits[baseRow.patientId] || {};
-      const calculated = (billingState.previewTotals && billingState.previewTotals[baseRow.patientId]) || {};
+      const finalized = isBillingRowFinalized(baseRow);
+      const edits = finalized ? {} : billingState.edits[baseRow.patientId] || {};
+      const calculated = finalized
+        ? {}
+        : (billingState.previewTotals && billingState.previewTotals[baseRow.patientId]) || {};
       return Object.assign({}, baseRow, edits, calculated);
     } catch (err) {
       console.error('Failed to merge billing row', err, row);
@@ -1515,6 +1530,32 @@ function onBillingSaveCompleted(result) {
   renderBillingResult();
 }
 
+function handleBillingFinalize(patientId) {
+  if (!billingState.prepared || !billingState.prepared.billingMonth) {
+    alert('先に「請求データを集計」を実行してください。');
+    return;
+  }
+  const pid = String(patientId || '').trim();
+  if (!pid) return;
+  if (!confirm('この患者の請求を確定します。確定解除はできません。')) return;
+
+  setBillingLoading(true, '確定処理中…');
+  google.script.run
+    .withSuccessHandler(function(result) {
+      const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
+      billingState.result = normalized;
+      billingState.prepared = normalized;
+      syncReceiptStateFromPayload(normalized);
+      billingState.loading = false;
+      billingState.statusMessage = '請求を確定しました';
+      billingState.errorMessage = '';
+      resetBillingEdits();
+      renderBillingResult();
+    })
+    .withFailureHandler(onBillingFailed)
+    .finalizeBillingEntry(billingState.prepared.billingMonth, pid);
+}
+
 function handleBankFlowAggregation() {
   const ym = getBankTargetMonth();
   if (!ym) {
@@ -1812,7 +1853,8 @@ function renderBillingResult() {
     { key: 'grandTotal', label: '合計', sortable: true },
     { key: 'paidStatus', label: '領収状態', sortable: false },
     { key: 'bankInfo', label: '口座情報', sortable: false },
-    { key: 'isNew', label: '新規', sortable: false }
+    { key: 'isNew', label: '新規', sortable: false },
+    { key: 'finalize', label: '確定', sortable: false }
   ];
 
   const columnCount = header.length;
@@ -1828,7 +1870,11 @@ function renderBillingResult() {
   }
 
   function renderEditableCell(item, field, alignRight) {
-    const editing = billingState.editing && billingState.editing.patientId === item.patientId && billingState.editing.field === field;
+    const finalized = isBillingRowFinalized(item);
+    const editing = !finalized
+      && billingState.editing
+      && billingState.editing.patientId === item.patientId
+      && billingState.editing.field === field;
     const baseAttrs = `data-edit-field="${field}" data-edit-patient="${item.patientId}"`;
     const editClass = alignRight ? 'cell-edit inline-editor right' : 'cell-edit inline-editor';
     const viewClass = alignRight ? 'cell-edit right' : 'cell-edit';
@@ -1897,8 +1943,35 @@ function renderBillingResult() {
           return item[field] || '';
       }
     })();
+
+    if (finalized) {
+      return wrapWithOverrideBadge(display, item.patientId, field, alignRight);
+    }
+
     const view = `<button type="button" class="${viewClass}" ${baseAttrs} aria-label="${field} を編集">${display}</button>`;
     return wrapWithOverrideBadge(view, item.patientId, field, alignRight);
+  }
+
+  function renderFinalizeAction(item) {
+    const finalized = isBillingRowFinalized(item);
+    if (finalized) {
+      const timestamp = formatDateTimeDisplay(item.finalizedAt);
+      const actor = item.finalizedBy ? String(item.finalizedBy).trim() : '';
+      const source = item.finalizationSource ? String(item.finalizationSource).trim() : '';
+      const detailParts = [timestamp, actor].filter(Boolean);
+      const detailText = detailParts.length ? escapeHtml(detailParts.join(' / ')) : '';
+      const sourceLabel = source ? ` (${escapeHtml(source)})` : '';
+      if (detailText) {
+        return `<div class="muted">確定済み${sourceLabel}<br><small>${detailText}</small></div>`;
+      }
+      return `<div class="muted">確定済み${sourceLabel}</div>`;
+    }
+
+    const disabled = billingState.loading || !billingState.prepared || !billingState.prepared.billingMonth;
+    const title = disabled
+      ? '先に「請求データを集計」を実行してください'
+      : '確定すると再集計や自動上書きの対象外になります';
+    return `<button type="button" class="btn small finalize-btn" data-finalize-patient="${item.patientId}" ${disabled ? 'disabled' : ''} title="${title}">確定</button>`;
   }
 
   const bodyRows = [];
@@ -1925,6 +1998,7 @@ function renderBillingResult() {
         <td>${formatPaidStatus(safeItem) || '—'}</td>
         <td>${formatBankInfo(safeItem) || '—'}</td>
         <td>${formatNewFlag(safeItem) || ''}</td>
+        <td>${renderFinalizeAction(safeItem)}</td>
       </tr>`);
     } catch (err) {
       console.error('Failed to render billing row', err, item);
@@ -1945,6 +2019,7 @@ function renderBillingResult() {
   box.innerHTML = tableHtml;
   attachBillingEditHandlers();
   attachBillingSortHandlers();
+  attachBillingFinalizeHandlers();
 }
 
 function renderBillingActionFooter(hasRows) {
@@ -2007,6 +2082,17 @@ function attachBillingEditHandlers() {
   });
 }
 
+function attachBillingFinalizeHandlers() {
+  const box = qs('billingResult');
+  if (!box) return;
+  box.querySelectorAll('button.finalize-btn').forEach(btn => {
+    btn.onclick = function () {
+      const pid = this.getAttribute('data-finalize-patient');
+      handleBillingFinalize(pid);
+    };
+  });
+}
+
 function attachBillingSortHandlers() {
   const box = qs('billingResult');
   if (!box) return;
@@ -2063,6 +2149,7 @@ if (billingGlobal) {
   billingGlobal.handleBillingAggregation = handleBillingAggregation;
   billingGlobal.handleBillingPdfGeneration = handleBillingPdfGeneration;
   billingGlobal.handleBillingSaveEdits = handleBillingSaveEdits;
+  billingGlobal.handleBillingFinalize = handleBillingFinalize;
   billingGlobal.handleSimpleBankSheetGeneration = handleSimpleBankSheetGeneration;
 }
 </script>

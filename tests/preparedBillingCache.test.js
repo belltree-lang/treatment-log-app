@@ -333,6 +333,23 @@ function testBankExportReturnsEmptyForZeroBilling() {
   }, /破損しています/);
 }
 
+function testBankFlagsAreMergedIntoBillingJson() {
+  const ctx = createMainContext();
+  const normalized = ctx.normalizePreparedBilling_({
+    billingMonth: '202501',
+    billingJson: [
+      { patientId: 'P001', billingMonth: '202501' },
+      { patientId: 'P002', billingMonth: '202501' }
+    ],
+    bankFlagsByPatient: {
+      P001: { ae: true, af: false }
+    }
+  });
+
+  assert.deepStrictEqual(normalized.billingJson[0].bankFlags, { ae: true, af: false }, 'bankFlagsは準備データからコピーされる');
+  assert.deepStrictEqual(normalized.billingJson[1].bankFlags, { ae: false, af: false }, 'bankFlagsが無い患者はfalseで初期化される');
+}
+
 function testBankExportReportsLedgerIssues() {
   let ctx;
   ctx = createMainContext({
@@ -608,6 +625,7 @@ function run() {
   testBankExportPassesWhenArrayProvided();
   testBankExportAcceptsYmObject();
   testBankExportReturnsEmptyForZeroBilling();
+  testBankFlagsAreMergedIntoBillingJson();
   testBankExportReportsLedgerIssues();
   testBankExportReportsMissingPreparation();
   testPreparedBillingSheetFallback();

@@ -487,6 +487,7 @@ function testBankExportUsesNormalizedBillingJsonWhenMissingFromPayload() {
   const normalizedBillingJson = [{ billingMonth: '202501', patientId: 'P001', nameKanji: '正規化済み' }];
   const bankInfoByName = { normalized: { bankCode: '0001', branchCode: '002', accountNumber: '1234567' } };
   const patients = { P001: { bankCode: '0001', branchCode: '002', accountNumber: '1234567' } };
+  const bankFlagsByPatient = { P001: { ae: true, af: false } };
   const buildCalls = [];
   const exportCalls = [];
 
@@ -496,7 +497,8 @@ function testBankExportUsesNormalizedBillingJsonWhenMissingFromPayload() {
       billingJson: normalizedBillingJson,
       bankInfoByName,
       patients,
-      bankStatuses: {}
+      bankStatuses: {},
+      bankFlagsByPatient
     }, payload),
     logPreparedBankPayloadStatus_: () => {}
   });
@@ -513,7 +515,12 @@ function testBankExportUsesNormalizedBillingJsonWhenMissingFromPayload() {
   const result = context.exportBankTransferDataForPrepared_({ billingMonth: '202501' });
 
   assert.strictEqual(buildCalls.length, 1, '正規化済みの billingJson で銀行CSV構築に進む');
-  assert.deepStrictEqual(buildCalls[0].billingJson, normalizedBillingJson, 'billingJson は正規化結果がそのまま渡される');
+  assert.deepStrictEqual(buildCalls[0].billingJson, [{
+    billingMonth: '202501',
+    patientId: 'P001',
+    nameKanji: '正規化済み',
+    bankFlags: { ae: true, af: false }
+  }], 'billingJson は bankFlags を付与した上で渡される');
   assert.strictEqual(exportCalls.length, 1, 'エクスポート処理まで到達する');
   assert.strictEqual(result.rows.length, 1, '正規化済みデータから行が生成される');
 }

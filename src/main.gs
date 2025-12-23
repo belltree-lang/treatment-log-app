@@ -717,6 +717,149 @@ function collectBankWithdrawalAmountsByPatient_(billingMonth, prepared) {
   return amounts;
 }
 
+function resolveBillingAmountForEntry_(entry) {
+  if (!entry) return 0;
+  const carryOverTotal = normalizeMoneyNumber_(entry.carryOverAmount)
+    + normalizeMoneyNumber_(entry.carryOverFromHistory);
+
+  if (entry.grandTotal != null && entry.grandTotal !== '') {
+    return normalizeMoneyNumber_(entry.grandTotal);
+  }
+
+  if (entry.total != null && entry.total !== '') {
+    return normalizeMoneyNumber_(entry.total) + carryOverTotal;
+  }
+
+  const billingAmount = normalizeMoneyNumber_(entry.billingAmount);
+  const transportAmount = normalizeMoneyNumber_(entry.transportAmount);
+
+  if (entry.billingAmount != null || entry.transportAmount != null || carryOverTotal) {
+    return billingAmount + transportAmount + carryOverTotal;
+  }
+
+  return 0;
+}
+
+function resolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return 0;
+
+  if (fallbackEntry) {
+    return resolveBillingAmountForEntry_(fallbackEntry);
+  }
+
+  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
+  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  if (!normalized || !Array.isArray(normalized.billingJson)) return 0;
+
+  const found = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
+  return resolveBillingAmountForEntry_(found);
+}
+
+function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggregateUntilMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return [];
+
+  const limitNum = Number(normalizeBillingMonthKeySafe_(aggregateUntilMonth)) || 0;
+  const months = [];
+  let cursor = resolvePreviousBillingMonthKey_(monthKey);
+
+  while (cursor) {
+    const cursorKey = normalizeBillingMonthKeySafe_(cursor);
+    if (!cursorKey) break;
+    const cursorNum = Number(cursorKey);
+    if (limitNum && cursorNum <= limitNum) break;
+
+    const loaded = loadPreparedBillingWithSheetFallback_(cursorKey, { withValidation: false, allowInvalid: true, restoreCache: false });
+    const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+    if (!normalized || !normalized.billingJson || !normalized.bankFlagsByPatient) break;
+
+    const flags = normalized.bankFlagsByPatient[pid];
+    if (flags && (flags.ae || flags.af)) {
+      months.unshift(normalized.billingMonth || cursorKey);
+      cursor = resolvePreviousBillingMonthKey_(normalized.billingMonth || cursorKey);
+      continue;
+    }
+    break;
+  }
+
+  return months;
+}
+
+function formatAggregateBillingRemark_(months) {
+  const normalized = (Array.isArray(months) ? months : [])
+    .map(value => normalizeBillingMonthKeySafe_(value))
+    .filter(Boolean);
+  const seen = new Set();
+  const unique = [];
+  normalized.forEach(ym => {
+    if (!seen.has(ym)) {
+      seen.add(ym);
+      unique.push(ym);
+    }
+  });
+
+  if (!unique.length) return '';
+
+  const labels = unique.map((ym, idx) => {
+    const year = ym.slice(0, 4);
+    const month = ym.slice(4, 6);
+    return idx === 0 ? `${year}年${month}月分` : `${month}月分`;
+  });
+
+  return labels.join('・') + ' 合算請求';
+}
+
+function applyAggregateInvoiceRulesFromBankFlags_(prepared) {
+  const normalized = normalizePreparedBilling_(prepared);
+  const monthKey = normalizeBillingMonthKeySafe_(normalized && normalized.billingMonth);
+  if (!normalized || !monthKey || !Array.isArray(normalized.billingJson)) return normalized || prepared;
+
+  const bankFlagsByPatient = normalized.bankFlagsByPatient || {};
+  const aggregateUntilMonth = normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
+
+  const transformed = normalized.billingJson.map(entry => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    if (!pid) return entry;
+
+    const bankFlags = bankFlagsByPatient[pid] || {};
+    const isAggregateOngoing = !!(bankFlags.ae || bankFlags.af);
+    if (isAggregateOngoing) {
+      return Object.assign({}, entry, {
+        aggregateStatus: 'scheduled',
+        skipInvoice: true,
+        billingAmount: 0,
+        transportAmount: 0,
+        total: 0,
+        grandTotal: 0,
+        receiptMonths: []
+      });
+    }
+
+    const aggregateMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth);
+    if (!aggregateMonths.length) return entry;
+
+    const targetMonths = aggregateMonths.concat([monthKey]);
+    const aggregateTotal = targetMonths.reduce((sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, ym === monthKey ? entry : null), 0);
+    const aggregateRemark = formatAggregateBillingRemark_(targetMonths);
+
+    return Object.assign({}, entry, {
+      aggregateStatus: 'confirmed',
+      aggregateRemark,
+      receiptMonths: targetMonths,
+      billingAmount: aggregateTotal,
+      transportAmount: 0,
+      total: aggregateTotal,
+      grandTotal: aggregateTotal,
+      aggregateTargetMonths: targetMonths
+    });
+  });
+
+  return Object.assign({}, normalized, { billingJson: transformed });
+}
+
 function savePreparedBillingJsonRows_(billingMonth, billingJson) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey || !Array.isArray(billingJson)) return { billingMonth: monthKey || '', inserted: 0 };
@@ -2028,19 +2171,23 @@ function filterBillingJsonForInvoice_(billingJson, patientIds) {
 
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
-  const receiptEnriched = attachPreviousReceiptAmounts_(normalized);
+  const aggregateApplied = applyAggregateInvoiceRulesFromBankFlags_(normalized);
+  const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied);
   if (!receiptEnriched || !receiptEnriched.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
   const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(options && options.invoicePatientIds);
-  const targetBillingRows = filterBillingJsonForInvoice_(receiptEnriched.billingJson, targetPatientIds);
+  const targetBillingRows = filterBillingJsonForInvoice_(
+    (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
+    targetPatientIds
+  );
   const matchedIds = new Set(targetBillingRows.map(row => String(row && row.patientId ? row.patientId : '').trim()).filter(Boolean));
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
   const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
   const pdfs = generateInvoicePdfs(targetBillingRows, outputOptions);
   const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
-  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(normalized) : null;
+  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(aggregateApplied) : null;
   return {
     billingMonth: normalized.billingMonth,
     billingJson: receiptEnriched.billingJson,

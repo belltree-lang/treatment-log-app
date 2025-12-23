@@ -808,12 +808,17 @@ function renderReceiptStatusBadge(item) {
 
   const subText = (() => {
     if (finalized) {
+      const finalizedNote = 'この月は合算請求が確定しています';
       const detail = getFinalizationDetailText(item);
+      const subLines = [finalizedNote];
       if (detail) {
         titleLines.push(detail);
-        return `<span class="receipt-badge-sub">${escapeHtml(detail)}</span>`;
+        subLines.push(detail);
       }
-      return '';
+      return subLines
+        .filter(Boolean)
+        .map(line => `<span class="receipt-badge-sub">${escapeHtml(line)}</span>`)
+        .join('');
     }
     if (aggregateLabel) {
       titleLines.push(`${aggregateLabel}までの合算を予定`);

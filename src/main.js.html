@@ -119,6 +119,14 @@ function getSimpleBankMonth() {
   return input && input.value ? normalizeYm(input.value) : '';
 }
 
+const BILLING_FINALIZED_ALERT_MESSAGE = 'この請求は確定済みのため操作できません';
+
+function shouldBlockFinalizedBillingOperation() {
+  if (!hasFinalizedBillingRows()) return false;
+  alert(BILLING_FINALIZED_ALERT_MESSAGE);
+  return true;
+}
+
 function hasFinalizedBillingRows() {
   const rows = billingState.prepared && billingState.prepared.billingJson;
   return Array.isArray(rows) && rows.some(isBillingRowFinalized);
@@ -223,7 +231,7 @@ function handleInvoicePatientInput(event) {
 function handleReceiptStatusChange(event) {
   if (isReceiptEditingLocked()) {
     renderReceiptControls();
-    alert('請求が確定済みのため領収状態を変更できません。');
+    alert(BILLING_FINALIZED_ALERT_MESSAGE);
     return;
   }
   const value = event && event.target ? event.target.value : '';
@@ -236,7 +244,7 @@ function handleReceiptStatusChange(event) {
 function handleReceiptAggregateChange(event) {
   if (isReceiptEditingLocked()) {
     renderReceiptControls();
-    alert('請求が確定済みのため合算終了月を変更できません。');
+    alert(BILLING_FINALIZED_ALERT_MESSAGE);
     return;
   }
   const value = event && event.target ? event.target.value : '';
@@ -249,7 +257,7 @@ function handleReceiptAggregateChange(event) {
 function persistReceiptStatus() {
   if (isReceiptEditingLocked()) {
     renderReceiptControls();
-    alert('請求が確定済みのため領収状態を変更できません。');
+    alert(BILLING_FINALIZED_ALERT_MESSAGE);
     return;
   }
   if (!billingState.prepared || !billingState.prepared.billingMonth) {
@@ -1429,6 +1437,7 @@ function syncReceiptStateFromPayload(payload) {
 }
 
 function handleBillingAggregation() {
+  if (shouldBlockFinalizedBillingOperation()) return;
   const ym = normalizeYm(qs('billingMonth').value);
   if (!ym) {
     alert('請求月を入力してください (YYYY-MM)');
@@ -1473,6 +1482,8 @@ function handleBillingPdfGeneration() {
     alert('先に「請求データを集計」を実行してください。');
     return;
   }
+
+  if (shouldBlockFinalizedBillingOperation()) return;
 
   const invoiceMode = getInvoiceMode();
   const invoicePatientIdsText = getInvoicePatientIdsInput();

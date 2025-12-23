@@ -1293,6 +1293,58 @@ function getActiveUserEmail_() {
   return '';
 }
 
+function normalizeEmailKeySafe_(email) {
+  return String(email || '')
+    .trim()
+    .toLowerCase();
+}
+
+function getBillingAdminEmails_() {
+  try {
+    const scriptProps = typeof PropertiesService !== 'undefined'
+      ? PropertiesService.getScriptProperties()
+      : null;
+    const configured = scriptProps && scriptProps.getProperty('BILLING_ADMIN_EMAILS');
+    if (configured && typeof configured === 'string') {
+      return configured
+        .split(/[\s,]+/)
+        .map(normalizeEmailKeySafe_)
+        .filter(Boolean);
+    }
+  } catch (err) {
+    // ignore property read errors
+  }
+
+  try {
+    if (typeof APP !== 'undefined' && APP.BILLING_ADMIN_EMAILS) {
+      const appValue = APP.BILLING_ADMIN_EMAILS;
+      if (Array.isArray(appValue)) {
+        return appValue.map(normalizeEmailKeySafe_).filter(Boolean);
+      }
+      if (typeof appValue === 'string') {
+        return appValue
+          .split(/[\s,]+/)
+          .map(normalizeEmailKeySafe_)
+          .filter(Boolean);
+      }
+    }
+  } catch (err) {
+    // ignore app config errors
+  }
+
+  return [];
+}
+
+function assertBillingAdmin_() {
+  const email = normalizeEmailKeySafe_(getActiveUserEmail_());
+  const admins = getBillingAdminEmails_().map(normalizeEmailKeySafe_).filter(Boolean);
+  const isAdmin = email && admins.indexOf(email) !== -1;
+  if (!isAdmin) {
+    throw new Error('この操作は管理者のみ実行できます');
+  }
+  return email;
+}
+
 function buildPreparedBillingPayload_(billingMonth) {
   const resolvedMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const source = getBillingSourceData(resolvedMonthKey || billingMonth);
@@ -2709,6 +2761,45 @@ function finalizeBillingEntry(billingMonth, patientId) {
     finalizedBy: getActiveUserEmail_(),
     finalizationSource: 'manual'
   });
+  const updatedBillingJson = prepared.billingJson.slice();
+  updatedBillingJson[index] = updatedEntry;
+  const updatedPrepared = Object.assign({}, prepared, { billingJson: updatedBillingJson });
+
+  savePreparedBilling_(updatedPrepared);
+  savePreparedBillingToSheet_(month.key, updatedPrepared);
+
+  return toClientBillingPayload_(updatedPrepared);
+}
+
+function unfinalizeBillingEntry(billingMonth, patientId) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!month || !pid) {
+    throw new Error('請求月と患者IDを指定してください');
+  }
+
+  const adminEmail = assertBillingAdmin_();
+
+  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { allowInvalid: true });
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  if (!prepared || !Array.isArray(prepared.billingJson)) {
+    throw new Error('請求データが見つかりません。先に「請求データを集計」を実行してください。');
+  }
+
+  const index = prepared.billingJson.findIndex(row => billingNormalizePatientId_(row && row.patientId) === pid);
+  if (index < 0) {
+    throw new Error('指定された患者IDの請求データが見つかりません。');
+  }
+
+  const target = prepared.billingJson[index] || {};
+  const updatedEntry = Object.assign({}, target);
+  delete updatedEntry.billingFinalized;
+  delete updatedEntry.finalizedAt;
+  delete updatedEntry.finalizedBy;
+  delete updatedEntry.finalizationSource;
+  updatedEntry.unfinalizedAt = new Date().toISOString();
+  updatedEntry.unfinalizedBy = adminEmail;
+
   const updatedBillingJson = prepared.billingJson.slice();
   updatedBillingJson[index] = updatedEntry;
   const updatedPrepared = Object.assign({}, prepared, { billingJson: updatedBillingJson });

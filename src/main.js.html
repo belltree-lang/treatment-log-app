@@ -771,9 +771,24 @@ function isBillingRowFinalized(item) {
   return flag === true || flag === 'true' || flag === 1 || flag === '1';
 }
 
+function getFinalizationDetailParts(item) {
+  const timestamp = formatDateTimeDisplay(item && item.finalizedAt);
+  const actor = item && item.finalizedBy ? String(item.finalizedBy).trim() : '';
+  return [timestamp, actor].filter(Boolean);
+}
+
+function getFinalizationDetailText(item) {
+  return getFinalizationDetailParts(item).join(' / ');
+}
+
 function renderFinalizedBadge(item) {
   if (!isBillingRowFinalized(item)) return '';
-  return ' <span class="pill finalized" title="この請求は確定済みです">確定済み</span>';
+  const detail = getFinalizationDetailText(item);
+  const title = detail
+    ? `この請求は確定済みです\n${detail}`
+    : 'この請求は確定済みです';
+  const subText = detail ? `<span class="finalized-sub">${escapeHtml(detail)}</span>` : '';
+  return ` <span class="finalized-badge"><span class="pill finalized" title="${escapeHtml(title)}">確定済み</span>${subText}</span>`;
 }
 
 function maskAccountNumber(value) {
@@ -1955,11 +1970,8 @@ function renderBillingResult() {
   function renderFinalizeAction(item) {
     const finalized = isBillingRowFinalized(item);
     if (finalized) {
-      const timestamp = formatDateTimeDisplay(item.finalizedAt);
-      const actor = item.finalizedBy ? String(item.finalizedBy).trim() : '';
+      const detailText = escapeHtml(getFinalizationDetailText(item));
       const source = item.finalizationSource ? String(item.finalizationSource).trim() : '';
-      const detailParts = [timestamp, actor].filter(Boolean);
-      const detailText = detailParts.length ? escapeHtml(detailParts.join(' / ')) : '';
       const sourceLabel = source ? ` (${escapeHtml(source)})` : '';
       if (detailText) {
         return `<div class="muted">確定済み${sourceLabel}<br><small>${detailText}</small></div>`;

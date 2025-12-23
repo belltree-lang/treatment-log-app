@@ -774,6 +774,10 @@ function formatPaidStatus(item) {
   return item.paidStatus || item.bankStatus || '';
 }
 
+function normalizeReceiptStatus(status) {
+  return String(status || '').trim().toUpperCase();
+}
+
 function isBillingRowFinalized(item) {
   const flag = item && item.billingFinalized;
   return flag === true || flag === 'true' || flag === 1 || flag === '1';
@@ -789,14 +793,38 @@ function getFinalizationDetailText(item) {
   return getFinalizationDetailParts(item).join(' / ');
 }
 
-function renderFinalizedBadge(item) {
-  if (!isBillingRowFinalized(item)) return '';
-  const detail = getFinalizationDetailText(item);
-  const title = detail
-    ? `この請求は確定済みです\n${detail}`
-    : 'この請求は確定済みです';
-  const subText = detail ? `<span class="finalized-sub">${escapeHtml(detail)}</span>` : '';
-  return ` <span class="finalized-badge"><span class="pill finalized" title="${escapeHtml(title)}">確定済み</span>${subText}</span>`;
+function renderReceiptStatusBadge(item) {
+  const finalized = isBillingRowFinalized(item);
+  const status = normalizeReceiptStatus(item && item.receiptStatus);
+  const aggregateLabel = status === 'AGGREGATE'
+    ? (item && item.aggregateUntilMonth ? formatYmDisplay(item.aggregateUntilMonth) : '')
+    : '';
+
+  if (!finalized && status !== 'AGGREGATE') return '';
+
+  const titleLines = finalized
+    ? ['この請求は合算確定です']
+    : ['この請求は合算請求として処理予定です'];
+
+  const subText = (() => {
+    if (finalized) {
+      const detail = getFinalizationDetailText(item);
+      if (detail) {
+        titleLines.push(detail);
+        return `<span class="receipt-badge-sub">${escapeHtml(detail)}</span>`;
+      }
+      return '';
+    }
+    if (aggregateLabel) {
+      titleLines.push(`${aggregateLabel}までの合算を予定`);
+      return `<span class="receipt-badge-sub">〜${escapeHtml(aggregateLabel)}合算</span>`;
+    }
+    return '';
+  })();
+
+  const badgeClass = finalized ? 'receipt-badge finalized' : 'receipt-badge aggregate';
+  const label = finalized ? '合算確定' : '合算予定';
+  return ` <span class="receipt-badge-group"><span class="${badgeClass}" title="${escapeHtml(titleLines.join(' / '))}">${label}</span>${subText}</span>`;
 }
 
 function maskAccountNumber(value) {
@@ -2003,7 +2031,7 @@ function renderBillingResult() {
       const safeItem = item && typeof item === 'object' ? item : {};
       const finalized = isBillingRowFinalized(safeItem);
       const rowClass = finalized ? ' class="finalized-row"' : '';
-      const nameWithBadge = `${safeItem.nameKanji || ''}${renderFinalizedBadge(safeItem)}`;
+      const nameWithBadge = `${safeItem.nameKanji || ''}${renderReceiptStatusBadge(safeItem)}`;
       bodyRows.push(`
       <tr${rowClass}>
         <td>${safeItem.patientId || ''}</td>

@@ -485,6 +485,106 @@ function normalizeReceiptMonthKeys_(months) {
   return normalized;
 }
 
+function resolveTreatmentAmountForEntry_(entry) {
+  if (!entry) return 0;
+  const amountCalc = calculateBillingAmounts_({
+    visitCount: entry.visitCount,
+    insuranceType: entry.insuranceType,
+    burdenRate: entry.burdenRate,
+    manualUnitPrice: entry.manualUnitPrice != null ? entry.manualUnitPrice : entry.unitPrice,
+    manualTransportAmount: Object.prototype.hasOwnProperty.call(entry, 'manualTransportAmount')
+      ? entry.manualTransportAmount
+      : entry.transportAmount,
+    unitPrice: entry.unitPrice,
+    medicalAssistance: entry.medicalAssistance,
+    carryOverAmount: entry.carryOverAmount,
+    selfPayItems: entry.selfPayItems,
+    manualSelfPayAmount: entry.manualSelfPayAmount
+  });
+
+  return Number.isFinite(amountCalc && amountCalc.treatmentAmount) ? amountCalc.treatmentAmount : 0;
+}
+
+function resolveTreatmentAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return 0;
+
+  if (fallbackEntry) {
+    return resolveTreatmentAmountForEntry_(fallbackEntry);
+  }
+
+  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
+  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  if (!normalized || !Array.isArray(normalized.billingJson)) return 0;
+
+  const found = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
+  return resolveTreatmentAmountForEntry_(found);
+}
+
+function formatAggregateReceiptDescription_(months) {
+  const normalized = normalizeReceiptMonthKeys_(months);
+  if (!normalized.length) return '';
+  const first = normalized[0];
+  const last = normalized[normalized.length - 1];
+  const firstLabel = `${first.slice(0, 4)}年${first.slice(4, 6)}月`;
+  const lastLabel = `${last.slice(0, 4)}年${last.slice(4, 6)}月`;
+  if (first === last) {
+    return `${firstLabel}分 施術料金として`;
+  }
+  return `${firstLabel}〜${lastLabel}分 施術料金として`;
+}
+
+function formatAggregateReceiptMonthLabel_(monthKey) {
+  const normalized = normalizeBillingMonthKeySafe_(monthKey);
+  if (!normalized) return '';
+  const year = normalized.slice(0, 4);
+  const month = normalized.slice(4, 6);
+  return `${year}年${month}月 施術料`;
+}
+
+function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared) {
+  const monthKey = normalizeBillingMonthKeySafe_(previousMonthKey);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+  if (!monthKey || !pid) return null;
+
+  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
+  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  if (!normalized || !Array.isArray(normalized.billingJson)) return null;
+
+  const flags = normalized.bankFlagsByPatient && normalized.bankFlagsByPatient[pid];
+  if (!flags || !flags.af) return null;
+
+  const previousEntry = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
+  const aggregateUntilMonth = normalizeBillingMonthKeySafe_(previousEntry && previousEntry.aggregateUntilMonth)
+    || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
+  const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth);
+  const aggregateMonths = normalizeReceiptMonthKeys_(aggregateSourceMonths.concat([monthKey]));
+  if (!aggregateMonths.length) return null;
+
+  const breakdown = [];
+  let total = 0;
+  aggregateMonths.forEach(month => {
+    const amount = resolveTreatmentAmountForMonthAndPatient_(
+      month,
+      pid,
+      month === monthKey ? previousEntry : null
+    );
+    total += amount;
+    const label = formatAggregateReceiptMonthLabel_(month);
+    breakdown.push({ month: label || month, amount });
+  });
+
+  return {
+    months: aggregateMonths,
+    breakdown,
+    total,
+    remark: formatAggregateReceiptDescription_(aggregateMonths)
+  };
+}
+
 function buildReceiptMonthsFromBankUnpaid_(patientId, anchorMonthKey, prepared) {
   const monthKey = normalizeBillingMonthKeySafe_(anchorMonthKey);
   const pid = typeof billingNormalizePatientId_ === 'function'
@@ -576,15 +676,36 @@ function attachPreviousReceiptAmounts_(prepared) {
 
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
-    const receiptMonths = hasPreviousReceiptSheet
-      ? buildReceiptMonthsFromBankUnpaid_(pid, previousMonthKey, prepared)
-      : [];
-    const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptMonths, prepared, bankAmountCache);
-    const previousReceiptAmount = Array.isArray(receiptBreakdown)
-      ? receiptBreakdown.reduce((sum, item) => sum + (Number(item && item.amount) || 0), 0)
-      : 0;
+    const aggregateReceipt = hasPreviousReceiptSheet
+      ? resolveAggregateReceiptForEntry_(pid, previousMonthKey, prepared)
+      : null;
+    const receiptMonths = aggregateReceipt
+      ? aggregateReceipt.months
+      : (hasPreviousReceiptSheet ? buildReceiptMonthsFromBankUnpaid_(pid, previousMonthKey, prepared) : []);
+    const receiptBreakdown = aggregateReceipt
+      ? aggregateReceipt.breakdown
+      : buildReceiptMonthBreakdownForEntry_(pid, receiptMonths, prepared, bankAmountCache);
+    const previousReceiptAmount = aggregateReceipt
+      ? aggregateReceipt.total
+      : (Array.isArray(receiptBreakdown)
+        ? receiptBreakdown.reduce((sum, item) => sum + (Number(item && item.amount) || 0), 0)
+        : 0);
 
-    return Object.assign({}, entry, { previousReceiptAmount, hasPreviousReceiptSheet, receiptMonths });
+    const previousReceipt = aggregateReceipt
+      ? {
+        addressee: '株式会社べるつりー',
+        note: aggregateReceipt.remark
+      }
+      : null;
+
+    return Object.assign({}, entry, {
+      previousReceiptAmount,
+      hasPreviousReceiptSheet,
+      receiptMonths,
+      receiptRemark: aggregateReceipt ? aggregateReceipt.remark : entry && entry.receiptRemark,
+      receiptMonthBreakdown: aggregateReceipt ? receiptBreakdown : entry && entry.receiptMonthBreakdown,
+      previousReceipt: previousReceipt || entry && entry.previousReceipt
+    });
   });
 
   return Object.assign({}, prepared, {

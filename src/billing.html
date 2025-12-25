@@ -122,6 +122,9 @@
         </label>
         <button class="btn" id="billingAggregateBtn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
         <button class="btn secondary" id="billingSaveBtn" type="button" onclick="handleBillingSaveEdits()">変更を保存</button>
+        <label>PDF対象月
+          <select id="billingPdfMonth" class="billing-prepared-month-select"></select>
+        </label>
         <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
         <div class="status-line">
           <div id="billingStatus" class="status-line" style="flex:1"></div>

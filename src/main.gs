@@ -431,6 +431,20 @@ function savePreparedBillingMetaJson_(billingMonth, metaPayload) {
   return { billingMonth: monthKey, inserted: rows.length };
 }
 
+function getPreparedBillingMonths() {
+  // preparedMonths は PreparedBillingMeta シートを取得元とする。
+  const sheet = ensurePreparedBillingMetaSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  const uniqueMonths = new Set(
+    values
+      .map(row => normalizeBillingMonthKeySafe_(row[0]))
+      .filter(Boolean)
+  );
+  return Array.from(uniqueMonths).sort((a, b) => Number(b) - Number(a));
+}
+
 function normalizeReceiptStatus_(value) {
   const status = value == null ? '' : String(value).trim().toUpperCase();
   const allowed = ['UNPAID', 'AGGREGATE', 'HOLD'];
@@ -3001,6 +3015,27 @@ function applyBillingEdits(billingMonth, options) {
 function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   const prepared = applyBillingEdits(billingMonth, options);
   return generatePreparedInvoices_(prepared, options || {});
+}
+
+function generatePreparedInvoicesForMonth(billingMonth, options) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) {
+    throw new Error('PDF対象月が指定されていません。');
+  }
+
+  const opts = options || {};
+  if (opts.applyEdits === true) {
+    applyBillingEdits(monthKey, opts);
+  }
+
+  const loaded = loadPreparedBilling_(monthKey, { withValidation: true });
+  const validation = loaded && loaded.validation ? loaded.validation : null;
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
+  if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
+    throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
+  }
+
+  return generatePreparedInvoices_(prepared, opts);
 }
 
 function updateBillingReceiptStatus(billingMonth, options) {

@@ -15,6 +15,8 @@ const billingState = {
   receiptStatus: '',
   aggregateUntilMonth: '',
   receiptSaving: false,
+  preparedMonths: [],
+  selectedPreparedMonth: '',
   sort: { field: null, direction: 'asc' }
 };
 
@@ -76,6 +78,59 @@ function getDefaultMonth() {
   return y + '-' + m;
 }
 
+function getSelectedPreparedMonth() {
+  const selection = billingState.selectedPreparedMonth || '';
+  return normalizeYm(selection);
+}
+
+function updatePreparedMonthSelectors() {
+  const selectors = Array.from(document.querySelectorAll('.billing-prepared-month-select'));
+  if (!selectors.length) return;
+  const months = billingState.preparedMonths || [];
+  const selected = getSelectedPreparedMonth();
+  const options = months.length
+    ? months.map(month => `<option value="${month}">${formatYmDisplay(month)}</option>`).join('')
+    : '<option value="">準備済みの月がありません</option>';
+  selectors.forEach(select => {
+    select.innerHTML = options;
+    select.value = selected || '';
+    select.disabled = billingState.loading || !months.length;
+    select.onchange = handlePreparedMonthSelectorChange;
+  });
+}
+
+function handlePreparedMonthSelectorChange(event) {
+  const next = normalizeYm(event && event.target ? event.target.value : '');
+  if (!next) return;
+  billingState.selectedPreparedMonth = next;
+  updatePreparedMonthSelectors();
+  updateBillingControls();
+}
+
+function refreshPreparedBillingMonths(preferredMonth) {
+  google.script.run
+    .withSuccessHandler(function(result) {
+      const months = Array.isArray(result) ? result : [];
+      const normalizedMonths = months.map(normalizeYm).filter(Boolean);
+      billingState.preparedMonths = normalizedMonths;
+      let next = normalizeYm(preferredMonth || billingState.selectedPreparedMonth || '');
+      if (!next || !normalizedMonths.includes(next)) {
+        next = normalizedMonths[0] || '';
+      }
+      billingState.selectedPreparedMonth = next;
+      updatePreparedMonthSelectors();
+      updateBillingControls();
+    })
+    .withFailureHandler(function(err) {
+      console.warn('Failed to load prepared billing months', err);
+      billingState.preparedMonths = [];
+      billingState.selectedPreparedMonth = '';
+      updatePreparedMonthSelectors();
+      updateBillingControls();
+    })
+    .getPreparedBillingMonths();
+}
+
 function updateBillingControls() {
   const monthInput = qs('billingMonth');
   const aggregateBtn = qs('billingAggregateBtn');
@@ -83,6 +138,8 @@ function updateBillingControls() {
   const saveBtn = qs('billingSaveBtn');
   const loading = billingState.loading;
   const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
+  const pdfTarget = getSelectedPreparedMonth();
+  const hasPdfTarget = !!pdfTarget;
   const finalizedLocked = hasFinalizedBillingRows();
 
   if (monthInput) {
@@ -95,12 +152,12 @@ function updateBillingControls() {
     aggregateBtn.title = disabled && finalizedLocked ? '確定済みの請求が含まれているため再集計できません' : '';
   }
   if (pdfBtn) {
-    const disabled = loading || !prepared || finalizedLocked;
+    const disabled = loading || !hasPdfTarget || finalizedLocked;
     pdfBtn.disabled = disabled;
     pdfBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     pdfBtn.title = disabled
-      ? (!prepared
-        ? '先に「請求データを集計」を実行してください'
+      ? (!hasPdfTarget
+        ? 'PDF対象月を選択してください'
         : (finalizedLocked ? '確定済みの請求が含まれているためPDF生成できません' : ''))
       : '';
   }
@@ -110,6 +167,7 @@ function updateBillingControls() {
     saveBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     saveBtn.title = disabled && !prepared ? '先に「請求データを集計」を実行してください' : '';
   }
+  updatePreparedMonthSelectors();
   updateInvoiceModeControls();
   renderReceiptControls();
   renderFinalizedLockNotice();
@@ -1582,6 +1640,7 @@ function onBillingPrepared(result) {
     billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
     billingState.errorMessage = '';
     resetBillingEdits();
+    refreshPreparedBillingMonths(normalized && normalized.billingMonth);
     logBillingState('onBillingPrepared', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
     renderBillingResult();
   } catch (err) {
@@ -1592,8 +1651,9 @@ function onBillingPrepared(result) {
 }
 
 function handleBillingPdfGeneration() {
-  if (!billingState.prepared || !billingState.prepared.billingMonth) {
-    alert('先に「請求データを集計」を実行してください。');
+  const targetMonth = getSelectedPreparedMonth();
+  if (!targetMonth) {
+    alert('PDF対象月を選択してください。');
     return;
   }
 
@@ -1611,14 +1671,18 @@ function handleBillingPdfGeneration() {
   billingState.invoiceMode = invoiceMode;
   billingState.invoicePatientIdsInput = invoicePatientIdsText;
   setBillingLoading(true, 'PDF生成中…');
+  const preparedMonth = normalizeYm(billingState.prepared && billingState.prepared.billingMonth);
+  // 編集反映は「prepared月＝PDF対象月」の場合のみ。過去月編集は対象外。
+  const shouldApplyEdits = preparedMonth && preparedMonth === targetMonth;
   const payload = Object.assign({}, buildBillingSavePayload(), {
     invoiceMode,
-    invoicePatientIds
+    invoicePatientIds,
+    applyEdits: shouldApplyEdits
   });
   google.script.run
     .withSuccessHandler(onBillingPdfCompleted)
     .withFailureHandler(onBillingFailed)
-    .applyBillingEditsAndGenerateInvoices(billingState.prepared.billingMonth, payload);
+    .generatePreparedInvoicesForMonth(targetMonth, payload);
 }
 
 function onBillingPdfCompleted(result) {
@@ -2174,6 +2238,7 @@ function renderBillingResult() {
   attachBillingEditHandlers();
   attachBillingSortHandlers();
   attachBillingFinalizeHandlers();
+  updatePreparedMonthSelectors();
 }
 
 function renderBillingActionFooter(hasRows) {
@@ -2181,16 +2246,25 @@ function renderBillingActionFooter(hasRows) {
   const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
   const loading = billingState.loading;
   const saveDisabled = loading || !prepared;
-  const pdfDisabled = loading || !prepared;
+  const pdfTarget = getSelectedPreparedMonth();
+  const pdfReady = !!pdfTarget;
+  const pdfDisabled = loading || !pdfReady;
   const helper = prepared
     ? '編集を保存したら、そのままPDF生成へ進めます。'
-    : '先に「請求データを集計」を実行すると保存・PDF生成が有効になります。';
+    : '先に「請求データを集計」を実行すると保存が有効になります。';
+  const pdfHelper = pdfReady
+    ? `PDF対象月: ${formatYmDisplay(pdfTarget)}`
+    : 'PDF対象月が未選択です。';
   return `
     <div class="action-footer">
       <div>
         <div class="muted">${helper}</div>
+        <div class="muted">${pdfHelper}</div>
       </div>
       <div class="action-buttons">
+        <label class="muted">PDF対象月
+          <select class="billing-prepared-month-select"></select>
+        </label>
         <button class="btn secondary" type="button" onclick="handleBillingSaveEdits()" ${saveDisabled ? 'disabled' : ''}>変更を保存</button>
         <button class="btn" type="button" onclick="handleBillingPdfGeneration()" ${pdfDisabled ? 'disabled' : ''}>PDF生成＆担当者フォルダ保存</button>
       </div>
@@ -2277,6 +2351,7 @@ function initBillingPage() {
     };
   }
   updateBillingControls();
+  refreshPreparedBillingMonths();
   updateSimpleBankControls();
   renderBillingResult();
   renderSimpleBankDetail();

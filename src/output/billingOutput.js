@@ -321,9 +321,10 @@ function resolveInvoiceReceiptDisplay_(item) {
   const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const fallbackMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
   const receiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth);
-  const receiptRemark = receiptMonths.length > 1
+  const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
+  const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
-    : '';
+    : '');
   const receiptStatus = item && item.receiptStatus ? String(item.receiptStatus).toUpperCase() : '';
   const bankFlags = item && item.bankFlags;
   const unpaidFlag = bankFlags && (bankFlags.ae || bankFlags.AE);

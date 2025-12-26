@@ -804,7 +804,6 @@ function loadTreatmentLogs_() {
     staffExtractionSamples: staffExtractionDebug.length
   }));
   if (isBillingDebugEnabled_()) {
-  billingLogger_.log('[billing] loadTreatmentLogs_: timestamps=' + JSON.stringify(timestampDebug));
   billingLogger_.log('[billing] loadTreatmentLogs_: pid normalization samples=' + JSON.stringify(normalizationDebug));
   billingLogger_.log('[billing] loadTreatmentLogs_: invalid date samples=' + JSON.stringify(invalidDateDebug));
   billingLogger_.log('[billing] loadTreatmentLogs_: empty pid rows=' + JSON.stringify(emptyPidRows));

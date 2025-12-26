@@ -1278,7 +1278,8 @@ function resolveBillingHistoryColumns_(sheet) {
 
 function ensureBillingHistorySheet_() {
   const SHEET_NAME = '請求履歴';
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return null;
   let sheet = workbook.getSheetByName(SHEET_NAME);
   if (!sheet) {
     sheet = workbook.insertSheet(SHEET_NAME);
@@ -1289,7 +1290,8 @@ function ensureBillingHistorySheet_() {
 }
 
 function ensureUnpaidHistorySheet_() {
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return null;
   let sheet = workbook.getSheetByName(UNPAID_HISTORY_SHEET_NAME);
   if (!sheet) {
     sheet = workbook.insertSheet(UNPAID_HISTORY_SHEET_NAME);
@@ -1307,6 +1309,9 @@ function ensureUnpaidHistorySheet_() {
 
 function appendUnpaidHistoryEntries_(entries) {
   const sheet = ensureUnpaidHistorySheet_();
+  if (!sheet) {
+    return { added: 0, skipped: entries && entries.length ? entries.length : 0 };
+  }
   const lastRow = sheet.getLastRow();
   const existing = lastRow >= 2
     ? sheet.getRange(2, 1, lastRow - 1, 6).getValues()
@@ -1351,6 +1356,7 @@ function appendUnpaidHistoryEntries_(entries) {
 function appendBillingHistoryRows(billingJson, options) {
   const opts = options || {};
   const ensured = ensureBillingHistorySheet_();
+  if (!ensured) return { billingMonth: opts.billingMonth || '', inserted: 0 };
   const sheet = ensured.sheet;
   const columns = ensured.columns;
   const headers = ensured.headers;
@@ -1452,6 +1458,7 @@ function appendBillingHistoryRows(billingJson, options) {
 
 function applyPaymentResultsToHistory(billingMonth, bankStatuses) {
   const ensured = ensureBillingHistorySheet_();
+  if (!ensured) return { billingMonth, updated: 0 };
   const sheet = ensured.sheet;
   const columns = ensured.columns;
   const headers = ensured.headers;

@@ -1552,13 +1552,14 @@ function getBillingSourceData(billingMonth) {
       staffDirectorySize: Object.keys(staffDirectory || {}).length
     }));
     billingLogger_.log('[billing] CarryOverLedger status=' + JSON.stringify(carryOverLedgerMeta));
-    return {
+  return {
       billingMonth: month.key,
     month,
     treatmentVisitCounts,
     visitCounts: treatmentVisitCounts,
     patients: mergedPatients,
     patientMap: mergedPatients,
+    bankRecords,
     bankInfoByName: buildBankLookupByKanji_(bankRecords),
     bankStatuses: getBillingPaymentResultsIfExists_(month),
     staffByPatient: visitCountsResult.staffByPatient || {},

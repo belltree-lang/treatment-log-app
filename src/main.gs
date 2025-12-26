@@ -1997,8 +1997,6 @@ function ensureUnpaidCheckColumn_(sheet, headers, options) {
 function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
   const targetSheet = sheet;
   const opts = options || {};
-  const billingJson = Array.isArray(opts.billingJson) ? opts.billingJson : [];
-  const bankRecords = Array.isArray(opts.bankRecords) ? opts.bankRecords : [];
   const workingHeaders = Array.isArray(headers) && headers.length
     ? headers.slice()
     : (targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getDisplayValues()[0] || []);
@@ -2027,42 +2025,15 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
     if (lastRow >= 2) {
       const headerCount = targetSheet.getLastColumn();
       const refreshedHeaders = targetSheet.getRange(1, 1, 1, headerCount).getDisplayValues()[0] || [];
-      const pidCol = resolveBillingColumn_(
-        refreshedHeaders,
-        BILLING_LABELS.recNo.concat(['患者ID', '患者番号']),
-        '患者ID',
-        {}
-      );
-      if (!pidCol) return { unpaidCol, aggregateCol };
       const rowCount = lastRow - 1;
-      const pidValues = targetSheet.getRange(2, pidCol, rowCount, 1).getDisplayValues();
+      const rowValues = targetSheet.getRange(2, 1, rowCount, headerCount).getDisplayValues();
       const hasValue_ = value => value !== '' && value !== null && value !== undefined && String(value).trim() !== '';
-      const targetPatientIds = new Set();
-      billingJson.forEach(entry => {
-        const rawPid = entry && entry.patientId;
-        const pid = typeof billingNormalizePatientId_ === 'function'
-          ? billingNormalizePatientId_(rawPid)
-          : (rawPid ? String(rawPid).trim() : '');
-        if (pid) targetPatientIds.add(pid);
-      });
-      bankRecords.forEach(record => {
-        const rawPid = record && record.patientId;
-        const pid = typeof billingNormalizePatientId_ === 'function'
-          ? billingNormalizePatientId_(rawPid)
-          : (rawPid ? String(rawPid).trim() : '');
-        if (pid) targetPatientIds.add(pid);
-      });
-      const shouldFilterByTargets = targetPatientIds.size > 0;
       const validRows = [];
 
-      pidValues.forEach((row, index) => {
-        const pidValue = row && row[0];
-        if (!hasValue_(pidValue)) return;
-        const normalizedPid = typeof billingNormalizePatientId_ === 'function'
-          ? billingNormalizePatientId_(pidValue)
-          : String(pidValue).trim();
-        if (!normalizedPid) return;
-        if (shouldFilterByTargets && !targetPatientIds.has(normalizedPid)) return;
+      rowValues.forEach((row, index) => {
+        if (!row || !row.length) return;
+        const hasAnyValue = row.some(value => hasValue_(value));
+        if (!hasAnyValue) return;
         validRows.push(index + 2);
       });
 

@@ -362,7 +362,7 @@ function buildInvoicePreviousReceipt_(item, display) {
   const addressee = item && item.nameKanji ? String(item.nameKanji).trim() : '';
   const receiptMonths = receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [];
   const date = formatReceiptSettlementDate_(receiptMonths, formatInvoiceDateLabel_());
-  const amount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
+  const amount = normalizeInvoiceMoney_(item && item.grandTotal);
   const note = receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '';
   const breakdown = resolveReceiptMonthBreakdown_(item, receiptDisplay && receiptDisplay.receiptMonths);
 

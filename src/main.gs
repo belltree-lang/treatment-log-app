@@ -280,8 +280,11 @@ function buildStaffByPatient_() {
 function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
   const result = {};
   const directory = staffDirectory || {};
-  const displayLog = [];
+  let totalPatientCount = 0;
+  let totalEmails = 0;
+  let resolvedNames = 0;
   Object.keys(staffByPatient || {}).forEach(pid => {
+    totalPatientCount += 1;
     const emails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : [staffByPatient[pid]];
     const seen = new Set();
     const names = [];
@@ -291,22 +294,17 @@ function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
       seen.add(key);
       const resolved = directory[key] || '';
       names.push(resolved || email || '');
+      totalEmails += 1;
+      if (resolved) resolvedNames += 1;
 
-      if (displayLog.length < 200) {
-        displayLog.push({
-          patientId: pid,
-          email,
-          normalizedKey: key,
-          matched: !!directory[key],
-          resolvedName: resolved || ''
-        });
-      }
     });
     result[pid] = names.filter(Boolean);
   });
-  if (displayLog.length) {
-    billingLogger_.log('[billing] buildStaffDisplayByPatient_: resolved staff detail=' + JSON.stringify(displayLog));
-  }
+  billingLogger_.log('[billing] buildStaffDisplayByPatient_: summary=' + JSON.stringify({
+    patientCount: totalPatientCount,
+    staffEntries: totalEmails,
+    resolvedNames
+  }));
   return result;
 }
 
@@ -2250,6 +2248,16 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const existingAmountValues = sheet.getRange(2, amountCol, rowCount, 1).getValues();
   const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
+  const isBlank_ = value => value === '' || value === null || value === undefined;
+  const isSameAmount_ = (current, next) => {
+    if (isBlank_(current) && isBlank_(next)) return true;
+    const currentNum = !isBlank_(current) ? Number(current) : NaN;
+    const nextNum = !isBlank_(next) ? Number(next) : NaN;
+    if (Number.isFinite(currentNum) && Number.isFinite(nextNum)) {
+      return currentNum === nextNum;
+    }
+    return String(current) === String(next);
+  };
 
   const newAmountValues = nameValues.map((row, idx) => {
     const kanaRow = kanaValues[idx] || [];
@@ -2270,8 +2278,36 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
     return [nextAmount];
   });
 
-  sheet.getRange(2, amountCol, rowCount, 1).setValues(newAmountValues);
-  return { billingMonth: month.key, updated: rowCount };
+  const updates = [];
+  newAmountValues.forEach((rowValue, idx) => {
+    const existingValue = existingAmountValues[idx] ? existingAmountValues[idx][0] : '';
+    const nextValue = rowValue[0];
+    if (!isSameAmount_(existingValue, nextValue)) {
+      updates.push({ row: idx + 2, value: nextValue });
+    }
+  });
+
+  if (!updates.length) {
+    return { billingMonth: month.key, updated: 0 };
+  }
+
+  let segmentStart = updates[0].row;
+  let segmentValues = [[updates[0].value]];
+  let previousRow = updates[0].row;
+  for (let idx = 1; idx < updates.length; idx++) {
+    const update = updates[idx];
+    if (update.row === previousRow + 1) {
+      segmentValues.push([update.value]);
+    } else {
+      sheet.getRange(segmentStart, amountCol, segmentValues.length, 1).setValues(segmentValues);
+      segmentStart = update.row;
+      segmentValues = [[update.value]];
+    }
+    previousRow = update.row;
+  }
+  sheet.getRange(segmentStart, amountCol, segmentValues.length, 1).setValues(segmentValues);
+
+  return { billingMonth: month.key, updated: updates.length };
 }
 
 function summarizeBankWithdrawalSheet_(billingMonth) {
@@ -2501,11 +2537,12 @@ function coerceBillingJsonArray_(raw) {
     return normalized;
   }
 
-function toClientBillingPayload_(prepared) {
+function toClientBillingPayload_(prepared, options) {
   const rawLength = prepared && prepared.billingJson
     ? (Array.isArray(prepared.billingJson) ? prepared.billingJson.length : 'non-array')
     : 0;
-  const normalized = normalizePreparedBilling_(prepared);
+  const opts = options || {};
+  const normalized = opts.alreadyNormalized ? prepared : normalizePreparedBilling_(prepared);
   if (!normalized) return null;
   const billingJson = Array.isArray(normalized.billingJson) ? normalized.billingJson : [];
   billingLogger_.log('[billing] toClientBillingPayload_: billingJson length before normalize=' + rawLength +
@@ -2558,13 +2595,13 @@ function serializeBillingPayload_(payload) {
 function prepareBillingData(billingMonth) {
   const normalizedMonth = normalizeBillingMonthInput(billingMonth);
   const prepared = buildPreparedBillingPayload_(normalizedMonth);
-  const clientPayload = toClientBillingPayload_(prepared);
+  const normalizedPrepared = normalizePreparedBilling_(prepared);
+  const clientPayload = toClientBillingPayload_(normalizedPrepared, { alreadyNormalized: true });
   const payloadWithMonth = clientPayload
     ? Object.assign({}, clientPayload, { billingMonth: normalizedMonth.key })
     : clientPayload;
   const serialized = serializeBillingPayload_(payloadWithMonth) || payloadWithMonth;
   const payloadJson = serialized ? JSON.stringify(serialized) : '';
-  const payloadPreview = payloadJson.length > 50000 ? payloadJson.slice(0, 50000) + '…<truncated>' : payloadJson;
 
   billingLogger_.log(
     '[billing] prepareBillingData payloadSummary=' +
@@ -2574,8 +2611,7 @@ function prepareBillingData(billingMonth) {
         billingJsonLength: serialized && serialized.billingJson ? serialized.billingJson.length : null,
         patientCount: serialized && serialized.patients ? Object.keys(serialized.patients).length : null,
         payloadByteLength: payloadJson.length
-      }) +
-      '\n[billing] prepareBillingData payloadRaw=' + payloadPreview
+      })
   );
 
   const cachePayload = serialized

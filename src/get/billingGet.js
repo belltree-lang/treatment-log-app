@@ -426,10 +426,21 @@ function buildPatientIdLookupByNameKey_(patients) {
   }, {});
 }
 
+function getBillingStaffDirectoryCache_() {
+  if (typeof CacheService === 'undefined' || !CacheService || typeof CacheService.getScriptCache !== 'function') {
+    return null;
+  }
+  try {
+    return CacheService.getScriptCache();
+  } catch (err) {
+    console.warn('[billing] CacheService unavailable for staff directory', err);
+    return null;
+  }
+}
+
 function loadBillingStaffDirectory_() {
   if (billingStaffDirectoryCache_.directory) {
     return billingStaffDirectoryCache_.directory;
-  }
   const sheet = billingSs().getSheetByName('スタッフ一覧');
   if (!sheet) return {};
   const lastRow = sheet.getLastRow();
@@ -499,14 +510,17 @@ function loadBillingStaffDirectory_() {
     billingLogger_.log('[billing] loadBillingStaffDirectory_: key detail list (truncated)=' + JSON.stringify(staffKeyDetailListLog));
   }
   billingStaffDirectoryCache_.directory = directory;
-  return directory;
+   return directory;
 }
 
 function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
   const result = {};
   const directory = staffDirectory || {};
-  const displayLog = [];
+  let totalPatientCount = 0;
+  let totalEmails = 0;
+  let resolvedNames = 0;
   Object.keys(staffByPatient || {}).forEach(pid => {
+    totalPatientCount += 1;
     const emails = Array.isArray(staffByPatient[pid]) ? staffByPatient[pid] : [staffByPatient[pid]];
     const seen = new Set();
     const names = [];
@@ -516,22 +530,17 @@ function buildStaffDisplayByPatient_(staffByPatient, staffDirectory) {
       seen.add(key);
       const resolved = directory[key] || '';
       names.push(resolved || email || '');
+      totalEmails += 1;
+      if (resolved) resolvedNames += 1;
 
-      if (displayLog.length < 200) {
-        displayLog.push({
-          patientId: pid,
-          email,
-          normalizedKey: key,
-          matched: !!directory[key],
-          resolvedName: resolved || ''
-        });
-      }
     });
     result[pid] = names.filter(Boolean);
   });
-  if (displayLog.length) {
-    billingLogger_.log('[billing] buildStaffDisplayByPatient_: resolved staff detail=' + JSON.stringify(displayLog));
-  }
+  billingLogger_.log('[billing] buildStaffDisplayByPatient_: summary=' + JSON.stringify({
+    patientCount: totalPatientCount,
+    staffEntries: totalEmails,
+    resolvedNames
+  }));
   return result;
 }
 
@@ -785,27 +794,29 @@ function loadTreatmentLogs_() {
     };
   });
 
-  const timestampDebug = logs.map(log => ({
-    rowNumber: log.rowNumber,
-    patientId: log.patientId,
-    timestamp: log.timestamp instanceof Date ? log.timestamp.toISOString() : String(log.timestamp),
-    isDate: log.timestamp instanceof Date,
-    isValidDate: log.timestamp instanceof Date && !isNaN(log.timestamp.getTime())
+  billingLogger_.log('[billing] loadTreatmentLogs_: summary=' + JSON.stringify({
+    totalRows: values.length,
+    logCount: logs.length,
+    pidNormalizationSamples: normalizationDebug.length,
+    invalidDateSamples: invalidDateDebug.length,
+    emptyPidSamples: emptyPidRows.length,
+    staffKeySamples: staffKeyDebug.length,
+    staffExtractionSamples: staffExtractionDebug.length
   }));
   if (isBillingDebugEnabled_()) {
-    billingLogger_.log('[billing] loadTreatmentLogs_: timestamps=' + JSON.stringify(timestampDebug));
-    billingLogger_.log('[billing] loadTreatmentLogs_: pid normalization samples=' + JSON.stringify(normalizationDebug));
-    billingLogger_.log('[billing] loadTreatmentLogs_: invalid date samples=' + JSON.stringify(invalidDateDebug));
-    billingLogger_.log('[billing] loadTreatmentLogs_: empty pid rows=' + JSON.stringify(emptyPidRows));
-    billingLogger_.log('[billing] loadTreatmentLogs_: staff key samples=' + JSON.stringify(staffKeyDebug));
-    billingLogger_.log('[billing] loadTreatmentLogs_: staff extraction samples=' + JSON.stringify(staffExtractionDebug));
-  }
-  billingTreatmentLogCache_.logs = logs;
-  if (normalizedMonthKey) {
-    billingTreatmentLogCache_.monthKey = normalizedMonthKey;
-  }
-  return logs;
+  billingLogger_.log('[billing] loadTreatmentLogs_: timestamps=' + JSON.stringify(timestampDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: pid normalization samples=' + JSON.stringify(normalizationDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: invalid date samples=' + JSON.stringify(invalidDateDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: empty pid rows=' + JSON.stringify(emptyPidRows));
+  billingLogger_.log('[billing] loadTreatmentLogs_: staff key samples=' + JSON.stringify(staffKeyDebug));
+  billingLogger_.log('[billing] loadTreatmentLogs_: staff extraction samples=' + JSON.stringify(staffExtractionDebug));
 }
+
+billingTreatmentLogCache_.logs = logs;
+if (normalizedMonthKey) {
+  billingTreatmentLogCache_.monthKey = normalizedMonthKey;
+}
+return logs;
 
 function buildVisitCountMap_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);

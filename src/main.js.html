@@ -219,7 +219,7 @@ function isReceiptEditingLocked() {
 
 function updateInvoiceModeControls() {
   const loading = billingState.loading;
-  const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
+  const hasPdfTarget = !!getSelectedPreparedMonth();
   const mode = getInvoiceMode();
   const patientInput = qs('invoicePatientIds');
   const note = qs('invoicePatientIdsNote');
@@ -234,7 +234,7 @@ function updateInvoiceModeControls() {
   });
 
   if (patientInput) {
-    patientInput.disabled = loading || !prepared || !isPartial;
+    patientInput.disabled = loading || !hasPdfTarget || !isPartial;
     if (!isPartial && !loading) {
       patientInput.value = billingState.invoicePatientIdsInput || patientInput.value;
     }

@@ -2861,6 +2861,8 @@ function generatePreparedInvoices_(prepared, options) {
   return {
     billingMonth: normalized.billingMonth,
     billingJson: receiptEnriched.billingJson,
+    receiptStatus: normalized.receiptStatus || '',
+    aggregateUntilMonth: normalized.aggregateUntilMonth || '',
     files: pdfs.files.concat(aggregateFiles),
     invoicePatientIds: targetPatientIds,
     missingInvoicePatientIds: missingPatientIds,

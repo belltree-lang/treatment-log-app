@@ -485,6 +485,30 @@ function normalizeReceiptMonthKeys_(months) {
   return normalized;
 }
 
+function createBillingMonthCache_() {
+  return {
+    preparedByMonth: {},
+    bankWithdrawalUnpaidByMonth: {},
+    bankWithdrawalAmountsByMonth: {}
+  };
+}
+
+function getPreparedBillingForMonthCached_(billingMonth, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return null;
+  const store = cache && cache.preparedByMonth ? cache.preparedByMonth : null;
+  if (store && Object.prototype.hasOwnProperty.call(store, monthKey)) {
+    return store[monthKey];
+  }
+
+  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
+  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  if (store) {
+    store[monthKey] = normalized || null;
+  }
+  return normalized;
+}
+
 function resolveTreatmentAmountForEntry_(entry) {
   if (!entry) return 0;
   const amountCalc = calculateBillingAmounts_({
@@ -505,7 +529,7 @@ function resolveTreatmentAmountForEntry_(entry) {
   return Number.isFinite(amountCalc && amountCalc.treatmentAmount) ? amountCalc.treatmentAmount : 0;
 }
 
-function resolveTreatmentAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry) {
+function resolveTreatmentAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const pid = billingNormalizePatientId_(patientId);
   if (!monthKey || !pid) return 0;
@@ -514,8 +538,7 @@ function resolveTreatmentAmountForMonthAndPatient_(billingMonth, patientId, fall
     return resolveTreatmentAmountForEntry_(fallbackEntry);
   }
 
-  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
-  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  const normalized = getPreparedBillingForMonthCached_(monthKey, cache);
   if (!normalized || !Array.isArray(normalized.billingJson)) return 0;
 
   const found = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
@@ -543,15 +566,14 @@ function formatAggregateReceiptMonthLabel_(monthKey) {
   return `${year}年${month}月 施術料`;
 }
 
-function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared) {
+function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(previousMonthKey);
   const pid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(patientId)
     : String(patientId || '').trim();
   if (!monthKey || !pid) return null;
 
-  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
-  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  const normalized = getPreparedBillingForMonthCached_(monthKey, cache);
   if (!normalized || !Array.isArray(normalized.billingJson)) return null;
 
   const flags = normalized.bankFlagsByPatient && normalized.bankFlagsByPatient[pid];
@@ -560,7 +582,7 @@ function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared)
   const previousEntry = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
   const aggregateUntilMonth = normalizeBillingMonthKeySafe_(previousEntry && previousEntry.aggregateUntilMonth)
     || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
-  const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth);
+  const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth, cache);
   const aggregateMonths = normalizeReceiptMonthKeys_(aggregateSourceMonths.concat([monthKey]));
   if (!aggregateMonths.length) return null;
 
@@ -570,7 +592,8 @@ function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared)
     const amount = resolveTreatmentAmountForMonthAndPatient_(
       month,
       pid,
-      month === monthKey ? previousEntry : null
+      month === monthKey ? previousEntry : null,
+      cache
     );
     total += amount;
     const label = formatAggregateReceiptMonthLabel_(month);
@@ -585,7 +608,7 @@ function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared)
   };
 }
 
-function buildReceiptMonthsFromBankUnpaid_(patientId, anchorMonthKey, prepared) {
+function buildReceiptMonthsFromBankUnpaid_(patientId, anchorMonthKey, prepared, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(anchorMonthKey);
   const pid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(patientId)
@@ -604,7 +627,7 @@ function buildReceiptMonthsFromBankUnpaid_(patientId, anchorMonthKey, prepared) 
 
     months.push(cursor);
 
-    const isChecked = isPatientCheckedUnpaidInBankWithdrawalSheet_(pid, cursor, prepared);
+    const isChecked = isPatientCheckedUnpaidInBankWithdrawalSheet_(pid, cursor, prepared, cache);
     if (!isChecked) break;
     cursor = resolvePreviousBillingMonthKey_(cursor);
     guard += 1;
@@ -613,26 +636,23 @@ function buildReceiptMonthsFromBankUnpaid_(patientId, anchorMonthKey, prepared) 
   return months.reverse();
 }
 
-function isPatientCheckedUnpaidInBankWithdrawalSheet_(patientId, billingMonth, prepared) {
+// Internal helper: build map of unpaid patients for the month (not a boolean predicate).
+function collectBankWithdrawalUnpaidPatients_(billingMonth, prepared) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
-  const pid = typeof billingNormalizePatientId_ === 'function'
-    ? billingNormalizePatientId_(patientId)
-    : String(patientId || '').trim();
-
-  if (!monthKey || !pid) return false;
+  if (!monthKey) return {};
 
   const workbook = billingSs();
   const sheetName = formatBankWithdrawalSheetName_(monthKey);
   const sheet = workbook.getSheetByName(sheetName);
-  if (!sheet) return false;
+  if (!sheet) return {};
 
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return false;
+  if (lastRow < 2) return {};
 
   const lastCol = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
-  if (!unpaidCol) return false;
+  if (!unpaidCol) return {};
   const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
@@ -642,6 +662,7 @@ function isPatientCheckedUnpaidInBankWithdrawalSheet_(patientId, billingMonth, p
     ? billingNormalizePatientId_
     : value => String(value || '').trim();
 
+  const unpaidMap = {};
   for (let i = 0; i < values.length; i += 1) {
     const row = values[i];
     if (!row[unpaidCol - 1]) continue;
@@ -650,13 +671,38 @@ function isPatientCheckedUnpaidInBankWithdrawalSheet_(patientId, billingMonth, p
       ? normalizePid(row[pidCol - 1])
       : nameToPatientId[buildFullNameKey_(row[nameCol - 1], kanaCol ? row[kanaCol - 1] : '')];
 
-    if (resolvedPid && resolvedPid === pid) return true;
+    if (resolvedPid) unpaidMap[resolvedPid] = true;
   }
 
-  return false;
+  return unpaidMap;
 }
 
-function attachPreviousReceiptAmounts_(prepared) {
+function getBankWithdrawalUnpaidMapCached_(billingMonth, prepared, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return {};
+  const store = cache && cache.bankWithdrawalUnpaidByMonth ? cache.bankWithdrawalUnpaidByMonth : null;
+  if (store && Object.prototype.hasOwnProperty.call(store, monthKey)) {
+    return store[monthKey] || {};
+  }
+  const unpaidMap = collectBankWithdrawalUnpaidPatients_(monthKey, prepared);
+  if (store) {
+    store[monthKey] = unpaidMap || {};
+  }
+  return unpaidMap || {};
+}
+
+function isPatientCheckedUnpaidInBankWithdrawalSheet_(patientId, billingMonth, prepared, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+
+  if (!monthKey || !pid) return false;
+  const unpaidMap = getBankWithdrawalUnpaidMapCached_(monthKey, prepared, cache);
+  return !!(unpaidMap && unpaidMap[pid]);
+}
+
+function attachPreviousReceiptAmounts_(prepared, cache) {
   const monthKey = prepared && prepared.billingMonth;
   if (!monthKey || !Array.isArray(prepared && prepared.billingJson)) return prepared;
 
@@ -666,9 +712,14 @@ function attachPreviousReceiptAmounts_(prepared) {
   const previousReceipt = collectPreviousReceiptAmountsFromBankSheet_(previousMonthKey, prepared);
   const hasPreviousReceiptSheet = !!(previousReceipt && previousReceipt.hasSheet);
   const previousAmounts = previousReceipt && previousReceipt.amounts;
-  const bankAmountCache = previousMonthKey && previousAmounts
-    ? { [previousMonthKey]: previousAmounts }
-    : {};
+  const monthCache = cache || {
+    preparedByMonth: {},
+    bankWithdrawalUnpaidByMonth: {},
+    bankWithdrawalAmountsByMonth: {}
+  };
+  if (previousMonthKey && previousAmounts) {
+    monthCache.bankWithdrawalAmountsByMonth[previousMonthKey] = previousAmounts;
+  }
 
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
@@ -677,14 +728,14 @@ function attachPreviousReceiptAmounts_(prepared) {
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
     const aggregateReceipt = hasPreviousReceiptSheet
-      ? resolveAggregateReceiptForEntry_(pid, previousMonthKey, prepared)
+      ? resolveAggregateReceiptForEntry_(pid, previousMonthKey, prepared, monthCache)
       : null;
     const receiptMonths = aggregateReceipt
       ? aggregateReceipt.months
-      : (hasPreviousReceiptSheet ? buildReceiptMonthsFromBankUnpaid_(pid, previousMonthKey, prepared) : []);
+      : (hasPreviousReceiptSheet ? buildReceiptMonthsFromBankUnpaid_(pid, previousMonthKey, prepared, monthCache) : []);
     const receiptBreakdown = aggregateReceipt
       ? aggregateReceipt.breakdown
-      : buildReceiptMonthBreakdownForEntry_(pid, receiptMonths, prepared, bankAmountCache);
+      : buildReceiptMonthBreakdownForEntry_(pid, receiptMonths, prepared, monthCache);
     const previousReceiptAmount = aggregateReceipt
       ? aggregateReceipt.total
       : (Array.isArray(receiptBreakdown)
@@ -759,9 +810,9 @@ function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
 function collectBankWithdrawalAmountsByPatientCached_(billingMonth, prepared, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey) return {};
-  const store = cache || {};
-  if (!store[monthKey]) {
-    store[monthKey] = collectBankWithdrawalAmountsByPatient_(monthKey, prepared);
+  const store = cache && cache.bankWithdrawalAmountsByMonth ? cache.bankWithdrawalAmountsByMonth : (cache || {});
+  if (!Object.prototype.hasOwnProperty.call(store, monthKey)) {
+    store[monthKey] = collectBankWithdrawalAmountsByPatient_(monthKey, prepared) || {};
   }
   return store[monthKey];
 }
@@ -861,7 +912,7 @@ function resolveBillingAmountForEntry_(entry) {
   return 0;
 }
 
-function resolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry) {
+function resolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const pid = billingNormalizePatientId_(patientId);
   if (!monthKey || !pid) return 0;
@@ -870,15 +921,14 @@ function resolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallba
     return resolveBillingAmountForEntry_(fallbackEntry);
   }
 
-  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
-  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  const normalized = getPreparedBillingForMonthCached_(monthKey, cache);
   if (!normalized || !Array.isArray(normalized.billingJson)) return 0;
 
   const found = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
   return resolveBillingAmountForEntry_(found);
 }
 
-function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggregateUntilMonth) {
+function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggregateUntilMonth, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const pid = billingNormalizePatientId_(patientId);
   if (!monthKey || !pid) return [];
@@ -893,9 +943,11 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
     const cursorNum = Number(cursorKey);
     if (limitNum && cursorNum <= limitNum) break;
 
-    const loaded = loadPreparedBillingWithSheetFallback_(cursorKey, { withValidation: false, allowInvalid: true, restoreCache: false });
-    const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
-    if (!normalized || !normalized.billingJson || !normalized.bankFlagsByPatient) break;
+    const normalized = getPreparedBillingForMonthCached_(cursorKey, cache);
+    if (!normalized || !normalized.billingJson || !normalized.bankFlagsByPatient) {
+      cursor = resolvePreviousBillingMonthKey_(cursorKey);
+      continue;
+    }
 
     const flags = normalized.bankFlagsByPatient[pid];
     if (flags && (flags.ae || flags.af)) {
@@ -933,12 +985,17 @@ function formatAggregateBillingRemark_(months) {
   return labels.join('・') + ' 合算請求';
 }
 
-function applyAggregateInvoiceRulesFromBankFlags_(prepared) {
+function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
   const normalized = normalizePreparedBilling_(prepared);
   const monthKey = normalizeBillingMonthKeySafe_(normalized && normalized.billingMonth);
   if (!normalized || !monthKey || !Array.isArray(normalized.billingJson)) return normalized || prepared;
 
   const bankFlagsByPatient = normalized.bankFlagsByPatient || {};
+  const monthCache = cache || {
+    preparedByMonth: {},
+    bankWithdrawalUnpaidByMonth: {},
+    bankWithdrawalAmountsByMonth: {}
+  };
 
   const transformed = normalized.billingJson.map(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
@@ -963,11 +1020,14 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared) {
 
     const aggregateUntilMonth = normalizeBillingMonthKeySafe_(entry && entry.aggregateUntilMonth)
       || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
-    const aggregateMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth);
+    const aggregateMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth, monthCache);
     if (!aggregateMonths.length) return entry;
 
     const targetMonths = aggregateMonths.concat([monthKey]);
-    const aggregateTotal = targetMonths.reduce((sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, ym === monthKey ? entry : null), 0);
+    const aggregateTotal = targetMonths.reduce(
+      (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, ym === monthKey ? entry : null, monthCache),
+      0
+    );
     const aggregateRemark = formatAggregateBillingRemark_(targetMonths);
 
     return Object.assign({}, entry, {
@@ -2407,8 +2467,9 @@ function filterBillingJsonForInvoice_(billingJson, patientIds) {
 
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
-  const aggregateApplied = applyAggregateInvoiceRulesFromBankFlags_(normalized);
-  const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied);
+  const monthCache = createBillingMonthCache_();
+  const aggregateApplied = applyAggregateInvoiceRulesFromBankFlags_(normalized, monthCache);
+  const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied, monthCache);
   if (!receiptEnriched || !receiptEnriched.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
@@ -2427,18 +2488,22 @@ function generatePreparedInvoices_(prepared, options) {
 
     const baseEntry = (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid) || entry;
     const aggregateUntilMonth = normalizeBillingMonthKeySafe_(baseEntry.aggregateUntilMonth || normalized.aggregateUntilMonth);
-    const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(normalized.billingMonth, pid, aggregateUntilMonth);
+    const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(normalized.billingMonth, pid, aggregateUntilMonth, monthCache);
     const aggregateMonths = normalizeAggregateInvoiceMonths_(
       aggregateSourceMonths.concat([normalized.billingMonth]),
       normalized,
       normalized.billingMonth
     );
     const uniqueAggregateMonths = Array.from(new Set(aggregateMonths));
-    const aggregateTotal = uniqueAggregateMonths.reduce((sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(
-      ym,
-      pid,
-      ym === normalized.billingMonth ? baseEntry : null
-    ), 0);
+    const aggregateTotal = uniqueAggregateMonths.reduce(
+      (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(
+        ym,
+        pid,
+        ym === normalized.billingMonth ? baseEntry : null,
+        monthCache
+      ),
+      0
+    );
     const aggregateRemark = formatAggregateBillingRemark_(uniqueAggregateMonths);
     const aggregateEntry = Object.assign({}, baseEntry, {
       billingMonth: normalized.billingMonth,

@@ -1854,6 +1854,7 @@ function buildPreparedBillingPayload_(billingMonth) {
     schemaVersion: PREPARED_BILLING_SCHEMA_VERSION,
     billingMonth: billingMonthKey || source.billingMonth,
     billingJson: billingJsonArray,
+    bankRecords: source.bankRecords || [],
     preparedAt: new Date().toISOString(),
     patients: source.patients || source.patientMap || {},
     bankInfoByName: source.bankInfoByName || {},
@@ -1988,13 +1989,16 @@ function ensureBankInfoSheet_() {
   throw new Error('銀行情報シートが見つかりません。参照専用のテンプレートを用意してください。');
 }
 
-function ensureUnpaidCheckColumn_(sheet, headers) {
-  const ensured = ensureBankWithdrawalFlagColumns_(sheet, headers);
+function ensureUnpaidCheckColumn_(sheet, headers, options) {
+  const ensured = ensureBankWithdrawalFlagColumns_(sheet, headers, options);
   return ensured.unpaidCol;
 }
 
-function ensureBankWithdrawalFlagColumns_(sheet, headers) {
+function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
   const targetSheet = sheet;
+  const opts = options || {};
+  const billingJson = Array.isArray(opts.billingJson) ? opts.billingJson : [];
+  const bankRecords = Array.isArray(opts.bankRecords) ? opts.bankRecords : [];
   const workingHeaders = Array.isArray(headers) && headers.length
     ? headers.slice()
     : (targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getDisplayValues()[0] || []);
@@ -2029,39 +2033,38 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers) {
         '患者ID',
         {}
       );
-      const billingMonthCol = resolveBillingColumn_(
-        refreshedHeaders,
-        ['請求月', '対象月', '請求年月', 'billingMonth', '年月', '月'],
-        '請求月',
-        {}
-      );
-      const amountCol = resolveBillingColumn_(
-        refreshedHeaders,
-        ['金額', '請求金額', '引落額', '引落金額'],
-        '金額',
-        { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
-      );
+      if (!pidCol) return { unpaidCol, aggregateCol };
       const rowCount = lastRow - 1;
-      const maxCol = Math.max(
-        headerCount,
-        unpaidCol || 0,
-        aggregateCol || 0,
-        pidCol || 0,
-        billingMonthCol || 0,
-        amountCol || 0
-      );
-      const values = targetSheet.getRange(2, 1, rowCount, maxCol).getValues();
+      const pidValues = targetSheet.getRange(2, pidCol, rowCount, 1).getDisplayValues();
       const hasValue_ = value => value !== '' && value !== null && value !== undefined && String(value).trim() !== '';
+      const targetPatientIds = new Set();
+      billingJson.forEach(entry => {
+        const rawPid = entry && entry.patientId;
+        const pid = typeof billingNormalizePatientId_ === 'function'
+          ? billingNormalizePatientId_(rawPid)
+          : (rawPid ? String(rawPid).trim() : '');
+        if (pid) targetPatientIds.add(pid);
+      });
+      bankRecords.forEach(record => {
+        const rawPid = record && record.patientId;
+        const pid = typeof billingNormalizePatientId_ === 'function'
+          ? billingNormalizePatientId_(rawPid)
+          : (rawPid ? String(rawPid).trim() : '');
+        if (pid) targetPatientIds.add(pid);
+      });
+      const shouldFilterByTargets = targetPatientIds.size > 0;
       const validRows = [];
 
-      if (pidCol) {
-        values.forEach((row, index) => {
-          const pid = row[pidCol - 1];
-          if (hasValue_(pid)) {
-            validRows.push(index + 2);
-          }
-        });
-      }
+      pidValues.forEach((row, index) => {
+        const pidValue = row && row[0];
+        if (!hasValue_(pidValue)) return;
+        const normalizedPid = typeof billingNormalizePatientId_ === 'function'
+          ? billingNormalizePatientId_(pidValue)
+          : String(pidValue).trim();
+        if (!normalizedPid) return;
+        if (shouldFilterByTargets && !targetPatientIds.has(normalizedPid)) return;
+        validRows.push(index + 2);
+      });
 
       const segments = [];
       if (validRows.length) {
@@ -2200,7 +2203,10 @@ function ensureBankWithdrawalSheet_(billingMonth, options) {
     }
   }
   ensureBankWithdrawalPatientIdColumn_(sheet);
-  ensureUnpaidCheckColumn_(sheet);
+  ensureUnpaidCheckColumn_(sheet, null, {
+    billingJson: opts.billingJson,
+    bankRecords: opts.bankRecords
+  });
   return sheet;
 }
 
@@ -2345,7 +2351,12 @@ function buildBillingAmountByPatientId_(billingJson) {
 
 function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const month = normalizeBillingMonthInput(billingMonth || (prepared && prepared.billingMonth));
-  const sheet = ensureBankWithdrawalSheet_(month, { refreshFromTemplate: true, preserveExistingSheet: true });
+  const sheet = ensureBankWithdrawalSheet_(month, {
+    refreshFromTemplate: true,
+    preserveExistingSheet: true,
+    billingJson: prepared && prepared.billingJson,
+    bankRecords: prepared && prepared.bankRecords
+  });
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return { billingMonth: month.key, updated: 0 };
 
@@ -2558,7 +2569,11 @@ function confirmBankWithdrawalDataReady(billingMonth) {
     throw new Error('請求データが未集計です。先に「請求データ集計」を実行してください。');
   }
 
-  ensureBankWithdrawalSheet_(month, { refreshFromTemplate: false });
+  ensureBankWithdrawalSheet_(month, {
+    refreshFromTemplate: false,
+    billingJson: prepared && prepared.billingJson,
+    bankRecords: prepared && prepared.bankRecords
+  });
   const sheetSummary = summarizeBankWithdrawalSheet_(month);
 
   return summarizeBankWithdrawalState_(month, prepared, sheetSummary, {
@@ -2632,6 +2647,7 @@ function coerceBillingJsonArray_(raw) {
       preparedAt: payload.preparedAt || null,
       billingJson,
       patients: normalizeMap_(payload.patients),
+      bankRecords: Array.isArray(payload.bankRecords) ? payload.bankRecords : [],
       bankInfoByName: normalizeMap_(payload.bankInfoByName),
       bankAccountInfoByPatient: normalizeMap_(payload.bankAccountInfoByPatient),
       bankFlagsByPatient,

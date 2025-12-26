@@ -441,6 +441,7 @@ function getBillingStaffDirectoryCache_() {
 function loadBillingStaffDirectory_() {
   if (billingStaffDirectoryCache_.directory) {
     return billingStaffDirectoryCache_.directory;
+    }
   const sheet = billingSs().getSheetByName('スタッフ一覧');
   if (!sheet) return {};
   const lastRow = sheet.getLastRow();
@@ -816,6 +817,7 @@ if (normalizedMonthKey) {
   billingTreatmentLogCache_.monthKey = normalizedMonthKey;
 }
 return logs;
+}
 
 function buildVisitCountMap_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);

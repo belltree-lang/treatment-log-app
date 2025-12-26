@@ -208,6 +208,18 @@ function getBillingCache_() {
   }
 }
 
+function isBillingDebugEnabled_() {
+  try {
+    if (typeof getConfig === 'function') {
+      const raw = getConfig('BILLING_DEBUG') || getConfig('billing_debug') || getConfig('BILLING_DEBUG_LOG');
+      return String(raw || '').trim() === '1';
+    }
+  } catch (err) {
+    // ignore property access errors
+  }
+  return false;
+}
+
 function buildStaffByPatient_() {
   const logs = loadTreatmentLogs_();
   const staffHistoryByPatient = {};
@@ -502,6 +514,7 @@ function normalizeReceiptMonthKeys_(months) {
 function createBillingMonthCache_() {
   return {
     preparedByMonth: {},
+    preparedEntriesByMonth: {},
     bankWithdrawalUnpaidByMonth: {},
     bankWithdrawalAmountsByMonth: {}
   };
@@ -515,12 +528,145 @@ function getPreparedBillingForMonthCached_(billingMonth, cache) {
     return store[monthKey];
   }
 
-  const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { withValidation: false, allowInvalid: true, restoreCache: false });
-  const normalized = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
+  const cachedPrepared = loadPreparedBilling_(monthKey, { withValidation: false, allowInvalid: true });
+  const cachedPayload = cachedPrepared && cachedPrepared.prepared !== undefined ? cachedPrepared.prepared : cachedPrepared;
+  const normalized = cachedPayload ? normalizePreparedBilling_(cachedPayload) : null;
+  const summary = normalized || loadPreparedBillingSummaryFromSheet_(monthKey);
+  const reduced = reducePreparedBillingSummary_(summary);
   if (store) {
-    store[monthKey] = normalized || null;
+    store[monthKey] = reduced || null;
   }
-  return normalized;
+  return reduced;
+}
+
+function getPreparedBillingEntryForMonthCached_(billingMonth, patientId, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return null;
+  const store = cache && cache.preparedEntriesByMonth ? cache.preparedEntriesByMonth : null;
+  const monthStore = store && store[monthKey];
+  if (monthStore && Object.prototype.hasOwnProperty.call(monthStore, pid)) {
+    return monthStore[pid] || null;
+  }
+  const entryMap = loadPreparedBillingEntryMapFromSheet_(monthKey);
+  if (store) {
+    store[monthKey] = entryMap || {};
+  }
+  return entryMap && entryMap[pid] ? entryMap[pid] : null;
+}
+
+function reducePreparedBillingSummary_(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  return {
+    billingMonth: payload.billingMonth || '',
+    preparedAt: payload.preparedAt || null,
+    preparedBy: payload.preparedBy || '',
+    schemaVersion: payload.schemaVersion || PREPARED_BILLING_SCHEMA_VERSION,
+    bankFlagsByPatient: payload.bankFlagsByPatient || {},
+    totalsByPatient: payload.totalsByPatient || {},
+    aggregateUntilMonth: normalizeBillingMonthKeySafe_(payload.aggregateUntilMonth)
+  };
+}
+
+function loadPreparedBillingSummaryFromSheet_(billingMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const workbook = ss();
+  const metaSheet = workbook.getSheetByName('PreparedBillingMeta');
+  if (!monthKey || !metaSheet) return null;
+
+  const metaLastRow = metaSheet.getLastRow();
+  if (metaLastRow < 2) return null;
+
+  const metaValues = metaSheet.getRange(2, 1, metaLastRow - 1, 5).getValues();
+  const metaRow = metaValues.find(row => String(row[0] || '').trim() === monthKey);
+  if (!metaRow) return null;
+
+  const preparedAtCell = metaRow[1];
+  const preparedByCell = metaRow[2];
+  const payloadVersion = metaRow[3];
+  let parsed = {};
+  const metaJsonSheet = workbook.getSheetByName('PreparedBillingMetaJson');
+  if (metaJsonSheet) {
+    const metaLast = metaJsonSheet.getLastRow();
+    if (metaLast >= 2) {
+      const rows = metaJsonSheet.getRange(2, 1, metaLast - 1, 3).getValues();
+      const chunks = rows
+        .filter(row => String(row[0] || '').trim() === monthKey)
+        .sort((a, b) => Number(a[1]) - Number(b[1]))
+        .map(row => row[2] || '')
+        .filter(Boolean);
+      const payloadJson = chunks.join('');
+      if (payloadJson) {
+        try {
+          parsed = JSON.parse(payloadJson) || {};
+        } catch (err) {
+          billingLogger_.log('[billing] loadPreparedBillingSummaryFromSheet_ failed to parse meta payload for ' + monthKey + ': ' + err);
+        }
+      }
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    parsed = {};
+  }
+
+  return Object.assign({}, parsed, {
+    billingMonth: monthKey,
+    preparedAt: parsed.preparedAt || (preparedAtCell instanceof Date ? preparedAtCell.toISOString() : null),
+    preparedBy: parsed.preparedBy || preparedByCell || '',
+    schemaVersion: parsed.schemaVersion || payloadVersion || PREPARED_BILLING_SCHEMA_VERSION
+  });
+}
+
+function loadPreparedBillingEntryMapFromSheet_(billingMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const workbook = ss();
+  const jsonSheet = workbook.getSheetByName('PreparedBillingJson');
+  if (!monthKey || !jsonSheet) return {};
+
+  const jsonLastRow = jsonSheet.getLastRow();
+  if (jsonLastRow < 2) return {};
+
+  const jsonValues = jsonSheet.getRange(2, 1, jsonLastRow - 1, 3).getValues();
+  const entries = {};
+  jsonValues.forEach(row => {
+    if (String(row[0] || '').trim() !== monthKey) return;
+    const jsonText = row[2];
+    if (!jsonText) return;
+    try {
+      const parsedRow = JSON.parse(jsonText);
+      const pid = billingNormalizePatientId_(parsedRow && parsedRow.patientId);
+      if (!pid) return;
+      entries[pid] = pickPreparedBillingEntrySummary_(parsedRow);
+    } catch (err) {
+      billingLogger_.log('[billing] loadPreparedBillingEntryMapFromSheet_ failed to parse billingRowJson for ' + monthKey + ': ' + err);
+    }
+  });
+  return entries;
+}
+
+function pickPreparedBillingEntrySummary_(entry) {
+  const row = entry || {};
+  return {
+    patientId: row.patientId || '',
+    aggregateUntilMonth: row.aggregateUntilMonth || '',
+    billingAmount: row.billingAmount,
+    total: row.total,
+    grandTotal: row.grandTotal,
+    carryOverAmount: row.carryOverAmount,
+    carryOverFromHistory: row.carryOverFromHistory,
+    treatmentAmount: row.treatmentAmount,
+    visitCount: row.visitCount,
+    insuranceType: row.insuranceType,
+    burdenRate: row.burdenRate,
+    manualUnitPrice: row.manualUnitPrice,
+    manualTransportAmount: row.manualTransportAmount,
+    transportAmount: row.transportAmount,
+    unitPrice: row.unitPrice,
+    medicalAssistance: row.medicalAssistance,
+    selfPayItems: row.selfPayItems,
+    manualSelfPayAmount: row.manualSelfPayAmount
+  };
 }
 
 function resolveTreatmentAmountForEntry_(entry) {
@@ -552,10 +698,7 @@ function resolveTreatmentAmountForMonthAndPatient_(billingMonth, patientId, fall
     return resolveTreatmentAmountForEntry_(fallbackEntry);
   }
 
-  const normalized = getPreparedBillingForMonthCached_(monthKey, cache);
-  if (!normalized || !Array.isArray(normalized.billingJson)) return 0;
-
-  const found = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
+  const found = getPreparedBillingEntryForMonthCached_(monthKey, pid, cache);
   return resolveTreatmentAmountForEntry_(found);
 }
 
@@ -588,12 +731,12 @@ function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared,
   if (!monthKey || !pid) return null;
 
   const normalized = getPreparedBillingForMonthCached_(monthKey, cache);
-  if (!normalized || !Array.isArray(normalized.billingJson)) return null;
+  if (!normalized) return null;
 
   const flags = normalized.bankFlagsByPatient && normalized.bankFlagsByPatient[pid];
   if (!flags || !flags.af) return null;
 
-  const previousEntry = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
+  const previousEntry = getPreparedBillingEntryForMonthCached_(monthKey, pid, cache);
   const aggregateUntilMonth = normalizeBillingMonthKeySafe_(previousEntry && previousEntry.aggregateUntilMonth)
     || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
   const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth, cache);
@@ -936,9 +1079,14 @@ function resolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallba
   }
 
   const normalized = getPreparedBillingForMonthCached_(monthKey, cache);
-  if (!normalized || !Array.isArray(normalized.billingJson)) return 0;
+  if (!normalized) return 0;
 
-  const found = normalized.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === pid);
+  const totalsEntry = normalized.totalsByPatient && normalized.totalsByPatient[pid];
+  if (totalsEntry) {
+    return resolveBillingAmountForEntry_(totalsEntry);
+  }
+
+  const found = getPreparedBillingEntryForMonthCached_(monthKey, pid, cache);
   return resolveBillingAmountForEntry_(found);
 }
 
@@ -958,7 +1106,7 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
     if (limitNum && cursorNum <= limitNum) break;
 
     const normalized = getPreparedBillingForMonthCached_(cursorKey, cache);
-    if (!normalized || !normalized.billingJson || !normalized.bankFlagsByPatient) {
+    if (!normalized || !normalized.bankFlagsByPatient) {
       cursor = resolvePreviousBillingMonthKey_(cursorKey);
       continue;
     }
@@ -1265,14 +1413,18 @@ function loadPreparedBilling_(billingMonthKey, options) {
   const cached = loadBillingCachePayload_(cache, key);
   if (!cached) {
     try {
-      Logger.log('[billing] loadPreparedBilling_: cache miss for ' + key);
+      if (isBillingDebugEnabled_()) {
+        Logger.log('[billing] loadPreparedBilling_: cache miss for ' + key);
+      }
     } catch (err) {
       // ignore logging errors in non-GAS environments
     }
     return wrapResult(null, { ok: false, reason: 'cache miss' });
   }
   try {
-    Logger.log('[billing] loadPreparedBilling_ raw cache for ' + key + ': ' + cached);
+    if (isBillingDebugEnabled_()) {
+      Logger.log('[billing] loadPreparedBilling_ raw cache for ' + key + ': ' + cached);
+    }
   } catch (err) {
     // ignore logging errors in non-GAS environments
   }
@@ -1282,33 +1434,41 @@ function loadPreparedBilling_(billingMonthKey, options) {
     const validation = validatePreparedBillingPayload_(parsed, expectedMonthKey);
     const normalized = normalizePreparedBilling_(parsed);
     const normalizedLength = normalized && Array.isArray(normalized.billingJson) ? normalized.billingJson.length : 0;
-    billingLogger_.log('[billing] loadPreparedBilling_ parsed cache summary=' + JSON.stringify({
-      cacheKey: key,
-      expectedMonthKey,
-      parsedMonth: parsed && (parsed.billingMonth || parsed.month),
-      normalizedMonth: normalized && normalized.billingMonth,
-      rawBillingJsonLength: rawLength,
-      normalizedBillingJsonLength: normalizedLength,
-      validationReason: validation.reason || null,
-      validationOk: validation.ok
-    }));
+    if (isBillingDebugEnabled_()) {
+      billingLogger_.log('[billing] loadPreparedBilling_ parsed cache summary=' + JSON.stringify({
+        cacheKey: key,
+        expectedMonthKey,
+        parsedMonth: parsed && (parsed.billingMonth || parsed.month),
+        normalizedMonth: normalized && normalized.billingMonth,
+        rawBillingJsonLength: rawLength,
+        normalizedBillingJsonLength: normalizedLength,
+        validationReason: validation.reason || null,
+        validationOk: validation.ok
+      }));
+    }
     if (!validation.ok) {
       if (validation.reason === 'billingMonth mismatch' && normalized && expectedMonthKey && Array.isArray(normalized.billingJson)) {
         const corrected = Object.assign({}, normalized, { billingMonth: expectedMonthKey });
-        billingLogger_.log('[billing] loadPreparedBilling_ auto-correcting billingMonth mismatch for cache key=' + key);
+        if (isBillingDebugEnabled_()) {
+          billingLogger_.log('[billing] loadPreparedBilling_ auto-correcting billingMonth mismatch for cache key=' + key);
+        }
         savePreparedBilling_(corrected);
         return wrapResult(corrected, validation);
       }
       if (allowInvalid && normalized && Array.isArray(normalized.billingJson)) {
         try {
-          Logger.log('[billing] loadPreparedBilling_: allowing invalid cache for ' + key + ' reason=' + validation.reason);
+          if (isBillingDebugEnabled_()) {
+            Logger.log('[billing] loadPreparedBilling_: allowing invalid cache for ' + key + ' reason=' + validation.reason);
+          }
         } catch (err) {
           // ignore logging errors in non-GAS environments
         }
         return wrapResult(Object.assign({}, normalized, { billingMonth: validation.billingMonth || expectedMonthKey }), validation);
       }
       try {
-        Logger.log('[billing] loadPreparedBilling_: invalid cache for ' + key + ' reason=' + validation.reason);
+        if (isBillingDebugEnabled_()) {
+          Logger.log('[billing] loadPreparedBilling_: invalid cache for ' + key + ' reason=' + validation.reason);
+        }
       } catch (err) {
         // ignore logging errors in non-GAS environments
       }
@@ -1544,6 +1704,9 @@ function assertBillingAdmin_() {
 }
 
 function buildPreparedBillingPayload_(billingMonth) {
+  if (typeof clearTreatmentLogCache_ === 'function') {
+    clearTreatmentLogCache_();
+  }
   const resolvedMonthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const source = getBillingSourceData(resolvedMonthKey || billingMonth);
   const existingPrepared = resolvedMonthKey ? loadPreparedBillingFromSheet_(resolvedMonthKey) : null;
@@ -2328,11 +2491,13 @@ function coerceBillingJsonArray_(raw) {
       aggregateUntilMonth: normalizeBillingMonthKeySafe_(payload.aggregateUntilMonth)
     };
     const normalizedLength = Array.isArray(normalized.billingJson) ? normalized.billingJson.length : 0;
-    billingLogger_.log('[billing] normalizePreparedBilling_ lengths=' + JSON.stringify({
-      rawBillingJsonLength: rawLength,
-      normalizedBillingJsonLength: normalizedLength,
-      billingMonth: normalized.billingMonth
-    }));
+    if (isBillingDebugEnabled_()) {
+      billingLogger_.log('[billing] normalizePreparedBilling_ lengths=' + JSON.stringify({
+        rawBillingJsonLength: rawLength,
+        normalizedBillingJsonLength: normalizedLength,
+        billingMonth: normalized.billingMonth
+      }));
+    }
     return normalized;
   }
 

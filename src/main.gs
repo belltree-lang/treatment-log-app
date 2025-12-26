@@ -2019,27 +2019,87 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers) {
   }
 
   try {
-    const maxRows = typeof targetSheet.getMaxRows === 'function'
-      ? targetSheet.getMaxRows()
-      : targetSheet.getLastRow();
-    const unpaidRange = targetSheet.getRange(2, unpaidCol, Math.max((maxRows || 0) - 1, 1), 1);
-    const aggregateRange = aggregateCol
-      ? targetSheet.getRange(2, aggregateCol, Math.max((maxRows || 0) - 1, 1), 1)
-      : null;
+    const lastRow = targetSheet.getLastRow();
+    if (lastRow >= 2) {
+      const headerCount = targetSheet.getLastColumn();
+      const refreshedHeaders = targetSheet.getRange(1, 1, 1, headerCount).getDisplayValues()[0] || [];
+      const pidCol = resolveBillingColumn_(
+        refreshedHeaders,
+        BILLING_LABELS.recNo.concat(['患者ID', '患者番号']),
+        '患者ID',
+        {}
+      );
+      const billingMonthCol = resolveBillingColumn_(
+        refreshedHeaders,
+        ['請求月', '対象月', '請求年月', 'billingMonth', '年月', '月'],
+        '請求月',
+        {}
+      );
+      const amountCol = resolveBillingColumn_(
+        refreshedHeaders,
+        ['金額', '請求金額', '引落額', '引落金額'],
+        '金額',
+        { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
+      );
+      const rowCount = lastRow - 1;
+      const maxCol = Math.max(
+        headerCount,
+        unpaidCol || 0,
+        aggregateCol || 0,
+        pidCol || 0,
+        billingMonthCol || 0,
+        amountCol || 0
+      );
+      const values = targetSheet.getRange(2, 1, rowCount, maxCol).getValues();
+      const hasValue_ = value => value !== '' && value !== null && value !== undefined && String(value).trim() !== '';
+      const validRows = [];
 
-    if (unpaidRange && typeof unpaidRange.insertCheckboxes === 'function') {
-      unpaidRange.insertCheckboxes();
-    } else if (SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function') {
-      const unpaidRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
-      unpaidRange.setDataValidation(unpaidRule);
-    }
+      if (pidCol && billingMonthCol && amountCol) {
+        values.forEach((row, index) => {
+          const pid = row[pidCol - 1];
+          const billingMonth = row[billingMonthCol - 1];
+          const amount = Number(row[amountCol - 1]) || 0;
+          if (hasValue_(pid) && hasValue_(billingMonth) && amount !== 0) {
+            validRows.push(index + 2);
+          }
+        });
+      }
 
-    if (aggregateRange) {
-      if (typeof aggregateRange.insertCheckboxes === 'function') {
-        aggregateRange.insertCheckboxes();
-      } else if (SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function') {
-        const aggregateCheckboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
-        aggregateRange.setDataValidation(aggregateCheckboxRule);
+      const segments = [];
+      if (validRows.length) {
+        let segmentStart = validRows[0];
+        let segmentLength = 1;
+        for (let i = 1; i < validRows.length; i += 1) {
+          const rowNumber = validRows[i];
+          if (rowNumber === segmentStart + segmentLength) {
+            segmentLength += 1;
+          } else {
+            segments.push({ startRow: segmentStart, length: segmentLength });
+            segmentStart = rowNumber;
+            segmentLength = 1;
+          }
+        }
+        segments.push({ startRow: segmentStart, length: segmentLength });
+      }
+
+      if (segments.length) {
+        const rule = SpreadsheetApp && typeof SpreadsheetApp.newDataValidation === 'function'
+          ? SpreadsheetApp.newDataValidation().requireCheckbox().build()
+          : null;
+        const applyCheckboxes = columnIndex => {
+          segments.forEach(segment => {
+            const range = targetSheet.getRange(segment.startRow, columnIndex, segment.length, 1);
+            if (range && typeof range.insertCheckboxes === 'function') {
+              range.insertCheckboxes();
+            } else if (rule) {
+              range.setDataValidation(rule);
+            }
+          });
+        };
+        applyCheckboxes(unpaidCol);
+        if (aggregateCol) {
+          applyCheckboxes(aggregateCol);
+        }
       }
     }
   } catch (err) {

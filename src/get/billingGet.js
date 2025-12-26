@@ -895,17 +895,11 @@ function buildVisitCountMap_(billingMonth) {
     map[pid] = sorted;
     return map;
   }, {});
-  billingLogger_.log('[billing] buildVisitCountMap_: month range=' + month.start.toISOString() + ' - ' + month.end.toISOString());
-  billingLogger_.log('[billing] buildVisitCountMap_: skipped samples=' + JSON.stringify(skipSamples));
-  billingLogger_.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
-  billingLogger_.log('[billing] buildVisitCountMap_: visitCountMap keys=' + JSON.stringify(Object.keys(counts)));
-  billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient size=' + Object.keys(staffByPatient).length);
-  billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient mapping (truncated)=' + JSON.stringify(
-    Object.keys(staffByPatient)
-      .slice(0, 200)
-      .map(pid => ({ patientId: pid, staff: staffByPatient[pid] }))
-  ));
-  billingLogger_.log('[billing] buildVisitCountMap_: debug=' + JSON.stringify(debug));
+  if (isBillingDebugEnabled_()) {
+    billingLogger_.log('[billing] buildVisitCountMap_: month range=' + month.start.toISOString() + ' - ' + month.end.toISOString());
+    billingLogger_.log('[billing] buildVisitCountMap_: after month filter count=' + filteredCount);
+    billingLogger_.log('[billing] buildVisitCountMap_: staffByPatient size=' + Object.keys(staffByPatient).length);
+  }
   return { billingMonth: month.key, counts, staffByPatient, staffHistoryByPatient };
 }
 

@@ -2054,12 +2054,10 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers) {
       const hasValue_ = value => value !== '' && value !== null && value !== undefined && String(value).trim() !== '';
       const validRows = [];
 
-      if (pidCol && billingMonthCol && amountCol) {
+      if (pidCol) {
         values.forEach((row, index) => {
           const pid = row[pidCol - 1];
-          const billingMonth = row[billingMonthCol - 1];
-          const amount = Number(row[amountCol - 1]) || 0;
-          if (hasValue_(pid) && hasValue_(billingMonth) && amount !== 0) {
+          if (hasValue_(pid)) {
             validRows.push(index + 2);
           }
         });

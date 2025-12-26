@@ -171,6 +171,25 @@ if (typeof globalThis !== 'undefined') {
   globalThis.BILLING_CACHE_CHUNK_SIZE = BILLING_CACHE_CHUNK_SIZE;
 }
 
+const BILLING_MONTH_KEY_CACHE_ = {};
+
+function buildBillingMonthKeyCacheKey_(candidate) {
+  if (candidate && typeof candidate === 'object') {
+    if (candidate.key) return String(candidate.key);
+    if (candidate.billingMonth) return String(candidate.billingMonth);
+    if (candidate.ym) return String(candidate.ym);
+    if (candidate.month && candidate.month.key) return String(candidate.month.key);
+    if (candidate.month && candidate.month.ym) return String(candidate.month.ym);
+  }
+  if (candidate instanceof Date && !isNaN(candidate.getTime())) {
+    return 'date:' + candidate.getTime();
+  }
+  if (typeof candidate === 'string' || typeof candidate === 'number') {
+    return String(candidate);
+  }
+  return '';
+}
+
 function normalizeBillingMonthKeySafe_(value) {
   const candidates = [];
   if (value && typeof value === 'object') {
@@ -187,11 +206,24 @@ function normalizeBillingMonthKeySafe_(value) {
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     if (!candidate) continue;
+    const cacheKey = buildBillingMonthKeyCacheKey_(candidate);
+    if (cacheKey && Object.prototype.hasOwnProperty.call(BILLING_MONTH_KEY_CACHE_, cacheKey)) {
+      return BILLING_MONTH_KEY_CACHE_[cacheKey];
+    }
     try {
-      return normalizeBillingMonthInput(candidate).key;
+      const normalized = normalizeBillingMonthInput(candidate).key;
+      if (cacheKey) {
+        BILLING_MONTH_KEY_CACHE_[cacheKey] = normalized;
+      }
+      return normalized;
     } catch (err) {
       const fallback = String(candidate || '').trim();
-      if (fallback) return fallback;
+      if (fallback) {
+        if (cacheKey) {
+          BILLING_MONTH_KEY_CACHE_[cacheKey] = fallback;
+        }
+        return fallback;
+      }
     }
   }
   return '';

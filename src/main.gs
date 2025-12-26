@@ -56,7 +56,15 @@ function include(filename) {
  * @return {SpreadsheetApp.Spreadsheet}
  */
 function ss() {
-  return SpreadsheetApp.getActiveSpreadsheet();
+  try {
+    if (typeof SpreadsheetApp === 'undefined' || !SpreadsheetApp.getActiveSpreadsheet) {
+      return null;
+    }
+    return SpreadsheetApp.getActiveSpreadsheet();
+  } catch (err) {
+    console.warn('[billing] SpreadsheetApp unavailable', err);
+    return null;
+  }
 }
 
 function billingSs() {
@@ -334,7 +342,8 @@ function clearBillingCache_(key) {
 function ensurePreparedBillingMetaSheet_() {
   const SHEET_NAME = 'PreparedBillingMeta';
   const HEADER = ['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'note'];
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return null;
   let sheet = workbook.getSheetByName(SHEET_NAME);
   if (!sheet) {
     sheet = workbook.insertSheet(SHEET_NAME);
@@ -346,7 +355,8 @@ function ensurePreparedBillingMetaSheet_() {
 function ensurePreparedBillingMetaJsonSheet_() {
   const SHEET_NAME = 'PreparedBillingMetaJson';
   const HEADER = ['billingMonth', 'chunkIndex', 'payloadChunk'];
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return null;
   let sheet = workbook.getSheetByName(SHEET_NAME);
   if (!sheet) {
     sheet = workbook.insertSheet(SHEET_NAME);
@@ -358,7 +368,8 @@ function ensurePreparedBillingMetaJsonSheet_() {
 function ensurePreparedBillingJsonSheet_() {
   const SHEET_NAME = 'PreparedBillingJson';
   const HEADER = ['billingMonth', 'patientId', 'billingRowJson'];
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return null;
   let sheet = workbook.getSheetByName(SHEET_NAME);
   if (!sheet) {
     sheet = workbook.insertSheet(SHEET_NAME);
@@ -372,6 +383,7 @@ function savePreparedBillingMeta_(billingMonth, meta) {
   if (!monthKey) return null;
 
   const sheet = ensurePreparedBillingMetaSheet_();
+  if (!sheet) return null;
   const preparedAtValue = (() => {
     const parsed = meta && meta.preparedAt ? new Date(meta.preparedAt) : null;
     return parsed instanceof Date && !isNaN(parsed.getTime()) ? parsed : new Date();
@@ -412,6 +424,7 @@ function savePreparedBillingMetaJson_(billingMonth, metaPayload) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const sheet = ensurePreparedBillingMetaJsonSheet_();
   if (!monthKey) return { billingMonth: monthKey || '', inserted: 0 };
+  if (!sheet) return { billingMonth: monthKey, inserted: 0 };
 
   const lastRow = sheet.getLastRow();
   const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
@@ -444,6 +457,7 @@ function savePreparedBillingMetaJson_(billingMonth, metaPayload) {
 function getPreparedBillingMonths() {
   // preparedMonths は PreparedBillingMeta シートを取得元とする。
   const sheet = ensurePreparedBillingMetaSheet_();
+  if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   const values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
@@ -529,7 +543,12 @@ function getPreparedBillingForMonthCached_(billingMonth, cache) {
   const cachedPrepared = loadPreparedBilling_(monthKey, { withValidation: false, allowInvalid: true });
   const cachedPayload = cachedPrepared && cachedPrepared.prepared !== undefined ? cachedPrepared.prepared : cachedPrepared;
   const normalized = cachedPayload ? normalizePreparedBilling_(cachedPayload) : null;
-  const summary = normalized || loadPreparedBillingSummaryFromSheet_(monthKey);
+  let summary = normalized || loadPreparedBillingSummaryFromSheet_(monthKey);
+  if (!summary && typeof loadPreparedBillingWithSheetFallback_ === 'function') {
+    const fallback = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
+    const fallbackPayload = fallback && fallback.prepared !== undefined ? fallback.prepared : fallback;
+    summary = fallbackPayload ? normalizePreparedBilling_(fallbackPayload) : summary;
+  }
   const reduced = reducePreparedBillingSummary_(summary);
   if (store) {
     store[monthKey] = reduced || null;
@@ -555,20 +574,30 @@ function getPreparedBillingEntryForMonthCached_(billingMonth, patientId, cache) 
 
 function reducePreparedBillingSummary_(payload) {
   if (!payload || typeof payload !== 'object') return null;
+  let totalsByPatient = payload.totalsByPatient || {};
+  if (!Object.keys(totalsByPatient || {}).length && Array.isArray(payload.billingJson)) {
+    totalsByPatient = {};
+    payload.billingJson.forEach(entry => {
+      const pid = billingNormalizePatientId_(entry && entry.patientId);
+      if (!pid) return;
+      totalsByPatient[pid] = pickPreparedBillingEntrySummary_(entry);
+    });
+  }
   return {
     billingMonth: payload.billingMonth || '',
     preparedAt: payload.preparedAt || null,
     preparedBy: payload.preparedBy || '',
     schemaVersion: payload.schemaVersion || PREPARED_BILLING_SCHEMA_VERSION,
     bankFlagsByPatient: payload.bankFlagsByPatient || {},
-    totalsByPatient: payload.totalsByPatient || {},
+    totalsByPatient,
     aggregateUntilMonth: normalizeBillingMonthKeySafe_(payload.aggregateUntilMonth)
   };
 }
 
 function loadPreparedBillingSummaryFromSheet_(billingMonth) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return null;
   const metaSheet = workbook.getSheetByName('PreparedBillingMeta');
   if (!monthKey || !metaSheet) return null;
 
@@ -618,7 +647,8 @@ function loadPreparedBillingSummaryFromSheet_(billingMonth) {
 
 function loadPreparedBillingEntryMapFromSheet_(billingMonth) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return {};
   const jsonSheet = workbook.getSheetByName('PreparedBillingJson');
   if (!monthKey || !jsonSheet) return {};
 
@@ -1096,8 +1126,9 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   const limitNum = Number(normalizeBillingMonthKeySafe_(aggregateUntilMonth)) || 0;
   const months = [];
   let cursor = resolvePreviousBillingMonthKey_(monthKey);
+  let guard = 0;
 
-  while (cursor) {
+  while (cursor && guard < 48) {
     const cursorKey = normalizeBillingMonthKeySafe_(cursor);
     if (!cursorKey) break;
     const cursorNum = Number(cursorKey);
@@ -1106,6 +1137,7 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
     const normalized = getPreparedBillingForMonthCached_(cursorKey, cache);
     if (!normalized || !normalized.bankFlagsByPatient) {
       cursor = resolvePreviousBillingMonthKey_(cursorKey);
+      guard += 1;
       continue;
     }
 
@@ -1113,6 +1145,7 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
     if (flags && (flags.ae || flags.af)) {
       months.unshift(normalized.billingMonth || cursorKey);
       cursor = resolvePreviousBillingMonthKey_(normalized.billingMonth || cursorKey);
+      guard += 1;
       continue;
     }
     break;
@@ -1210,6 +1243,7 @@ function savePreparedBillingJsonRows_(billingMonth, billingJson) {
   if (!monthKey || !Array.isArray(billingJson)) return { billingMonth: monthKey || '', inserted: 0 };
 
   const sheet = ensurePreparedBillingJsonSheet_();
+  if (!sheet) return { billingMonth: monthKey, inserted: 0 };
   const lastRow = sheet.getLastRow();
   const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
 
@@ -1273,7 +1307,8 @@ function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
 
 function loadPreparedBillingFromSheet_(billingMonth) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
-  const workbook = ss();
+  const workbook = billingSs();
+  if (!workbook) return null;
   const metaSheet = workbook.getSheetByName('PreparedBillingMeta');
   if (!monthKey || !metaSheet) return null;
 
@@ -3509,7 +3544,11 @@ function billingApplyPaymentResultPdfFromMenu() {
 }
 
 function summarizeBillingHistory_(billingMonth) {
-  const sheet = ss().getSheetByName('請求履歴');
+  const workbook = billingSs();
+  if (!workbook) {
+    return { billingMonth, exists: false };
+  }
+  const sheet = workbook.getSheetByName('請求履歴');
   if (!sheet) {
     return { billingMonth, exists: false };
   }

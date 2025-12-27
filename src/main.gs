@@ -2846,9 +2846,37 @@ function generatePreparedInvoices_(prepared, options) {
     const meta = generateAggregateInvoicePdf(aggregateEntry, { aggregateMonths: uniqueAggregateMonths, billingMonth: normalized.billingMonth });
     return Object.assign({}, meta, { patientId: aggregateEntry.patientId, nameKanji: aggregateEntry.nameKanji });
   }).filter(Boolean);
+  const aggregateSummaryTargets = (receiptEnriched.billingJson || []).filter(row => row && row.aggregateStatus === 'confirmed');
+  const aggregateSummaryFiles = aggregateSummaryTargets.map(entry => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    if (!pid) return null;
+
+    const baseEntry = (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid) || entry;
+    let aggregateMonths = []
+      .concat(entry && entry.aggregateTargetMonths ? entry.aggregateTargetMonths : [])
+      .concat(entry && entry.receiptMonths ? entry.receiptMonths : [])
+      .concat(baseEntry && baseEntry.aggregateTargetMonths ? baseEntry.aggregateTargetMonths : [])
+      .concat(baseEntry && baseEntry.receiptMonths ? baseEntry.receiptMonths : []);
+    if (!aggregateMonths.length) {
+      const aggregateUntilMonth = normalizeBillingMonthKeySafe_(baseEntry.aggregateUntilMonth || normalized.aggregateUntilMonth);
+      const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(normalized.billingMonth, pid, aggregateUntilMonth, monthCache);
+      aggregateMonths = aggregateSourceMonths.concat([normalized.billingMonth]);
+    }
+    const normalizedAggregateMonths = normalizeAggregateInvoiceMonths_(aggregateMonths, normalized, normalized.billingMonth);
+    const uniqueAggregateMonths = Array.from(new Set(normalizedAggregateMonths));
+    const aggregateEntry = Object.assign({}, baseEntry, entry, {
+      billingMonth: normalized.billingMonth,
+      receiptMonths: uniqueAggregateMonths,
+      aggregateTargetMonths: uniqueAggregateMonths
+    });
+
+    const meta = generateAggregateInvoicePdf(aggregateEntry, { aggregateMonths: uniqueAggregateMonths, billingMonth: normalized.billingMonth });
+    return Object.assign({}, meta, { patientId: aggregateEntry.patientId, nameKanji: aggregateEntry.nameKanji });
+  }).filter(Boolean);
   const matchedIds = new Set(
     targetBillingRows
       .concat(aggregateFiles.map(file => ({ patientId: file && file.patientId })))
+      .concat(aggregateSummaryFiles.map(file => ({ patientId: file && file.patientId })))
       .map(row => String(row && row.patientId ? row.patientId : '').trim())
       .filter(Boolean)
   );
@@ -2863,7 +2891,7 @@ function generatePreparedInvoices_(prepared, options) {
     billingJson: receiptEnriched.billingJson,
     receiptStatus: normalized.receiptStatus || '',
     aggregateUntilMonth: normalized.aggregateUntilMonth || '',
-    files: pdfs.files.concat(aggregateFiles),
+    files: pdfs.files.concat(aggregateFiles, aggregateSummaryFiles),
     invoicePatientIds: targetPatientIds,
     missingInvoicePatientIds: missingPatientIds,
     invoiceGenerationMode: targetPatientIds.length ? 'partial' : 'bulk',

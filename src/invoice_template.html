@@ -74,45 +74,18 @@
         <div><?= data.nameKanji ?></div>
         <div class="label">保険区分</div>
         <div><?= data.insuranceType || '―' ?> / <?= data.burdenRate ? data.burdenRate + '割' : '―' ?></div>
-        <div class="label">対象期間</div>
-        <div><?= chargeMonthLabel || '―' ?></div>
-      </div>
-    </section>
+      <div class="label">対象期間</div>
+      <div><?= chargeMonthLabel || '―' ?></div>
+    </div>
+  </section>
 
-    <section class="card">
-      <h3 class="section-title">ご請求内容（<?= isAggregateInvoice ? '未回収合算' : '当月' ?>）</h3>
-      <?
-        var aggregateDetails = isAggregateInvoice && Array.isArray(data.aggregateInvoiceDetails)
-          ? data.aggregateInvoiceDetails
-          : [];
-        var aggregateDetailCount = aggregateDetails.length;
-        var useStackedAggregate = isAggregateInvoice && aggregateDetailCount > 0 && aggregateDetailCount <= 3;
-        var useAggregateSummary = isAggregateInvoice && aggregateDetailCount >= 4;
-        var normalizedBillingMonth = normalizeInvoiceMonthKey_(data.billingMonth || '');
-        var normalizedRepresentativeMonth = normalizeInvoiceMonthKey_(data.representativeMonth || normalizedBillingMonth);
-        var representativeDetail = data.representativeInvoiceDetail || null;
-        if (!representativeDetail && normalizedRepresentativeMonth) {
-          representativeDetail = aggregateDetails.find(function(detail) {
-            return normalizeInvoiceMonthKey_(detail && detail.month) === normalizedRepresentativeMonth;
-          });
-        }
-        if (!representativeDetail && aggregateDetailCount) {
-          representativeDetail = aggregateDetails[aggregateDetailCount - 1];
-        }
-        var aggregateSummaryRows = Array.isArray(data.aggregateSummaryRows) ? data.aggregateSummaryRows : [];
-      ?>
-      <? var isConfirmedAggregate = data.aggregateStatus === 'confirmed' && aggregateDetailCount > 0; ?>
+  <section class="card">
+    <h3 class="section-title">ご請求内容（<?= isAggregateInvoice ? '未回収合算' : '当月' ?>）</h3>
       <? var aggregateMonthTotals = Array.isArray(data.aggregateMonthTotals)
         ? data.aggregateMonthTotals
-        : aggregateDetails.map(function(detail) {
-          return {
-            month: detail && detail.month,
-            monthLabel: detail && detail.monthLabel,
-            total: detail && detail.grandTotal
-          };
-        });
+        : [];
       ?>
-      <? if (isConfirmedAggregate) { ?>
+      <? if (isAggregateInvoice) { ?>
         <div class="subsection-title">月別内訳</div>
         <table class="subtable">
           <thead>
@@ -130,75 +103,6 @@
             <tr>
               <td>合算請求額</td>
               <td class="amount"><?= formatBillingCurrency_(data.grandTotal) ?> 円</td>
-            </tr>
-          </tfoot>
-        </table>
-      <? } else if (useStackedAggregate) { ?>
-        <? aggregateDetails.forEach(function(detail) { ?>
-          <div class="subsection-title"><?= detail.monthLabel || normalizeBillingMonthLabel_(detail.month) ?> ご請求</div>
-          <table>
-            <thead>
-              <tr><th>項目</th><th>詳細</th><th class="amount">金額</th></tr>
-            </thead>
-            <tbody>
-              <? detail.rows.forEach(function(row) { ?>
-                <tr>
-                  <td><?= row.label ?></td>
-                  <td><?= row.detail || '' ?></td>
-                  <td class="amount"><?= formatBillingCurrency_(row.amount) ?> 円</td>
-                </tr>
-              <? }); ?>
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="2">合計</td>
-                <td class="amount"><?= formatBillingCurrency_(detail.grandTotal) ?> 円</td>
-              </tr>
-            </tfoot>
-          </table>
-        <? }); ?>
-        <div class="note"><strong>合算請求額:</strong> <?= formatBillingCurrency_(data.grandTotal) ?> 円</div>
-      <? } else if (useAggregateSummary && representativeDetail) { ?>
-        <div class="subsection-title">月別簡易内訳</div>
-        <table class="subtable">
-          <thead>
-            <tr><th>月</th><th class="amount">施術料</th><th class="amount">交通費</th><th class="amount">小計</th></tr>
-          </thead>
-          <tbody>
-            <? aggregateSummaryRows.forEach(function(row) { ?>
-              <tr>
-                <td><?= row.monthLabel || normalizeBillingMonthLabel_(row.month) ?></td>
-                <td class="amount"><?= formatBillingCurrency_(row.treatmentAmount || 0) ?> 円</td>
-                <td class="amount"><?= formatBillingCurrency_(row.transportAmount || 0) ?> 円</td>
-                <td class="amount"><?= formatBillingCurrency_(row.subtotal || 0) ?> 円</td>
-              </tr>
-            <? }); ?>
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colspan="3">合算請求額</td>
-              <td class="amount"><?= formatBillingCurrency_(data.grandTotal) ?> 円</td>
-            </tr>
-          </tfoot>
-        </table>
-        <div class="subsection-title">詳細内訳（<?= representativeDetail.monthLabel || normalizeBillingMonthLabel_(representativeDetail.month) ?>）</div>
-        <table>
-          <thead>
-            <tr><th>項目</th><th>詳細</th><th class="amount">金額</th></tr>
-          </thead>
-          <tbody>
-            <? representativeDetail.rows.forEach(function(row) { ?>
-              <tr>
-                <td><?= row.label ?></td>
-                <td><?= row.detail || '' ?></td>
-                <td class="amount"><?= formatBillingCurrency_(row.amount) ?> 円</td>
-              </tr>
-            <? }); ?>
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colspan="2">合計</td>
-              <td class="amount"><?= formatBillingCurrency_(representativeDetail.grandTotal) ?> 円</td>
             </tr>
           </tfoot>
         </table>
@@ -240,9 +144,6 @@
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptAmount = receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price; ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
-    <? var receiptBreakdown = receipt.breakdown || []; ?>
-    <? var hasReceiptBreakdown = Array.isArray(receiptBreakdown) && receiptBreakdown.length > 0; ?>
-
     <? if (!data.forceHideReceipt) { ?>
       <section class="card">
         <h3 class="section-title">前月分領収書</h3>
@@ -259,22 +160,6 @@
           <div class="label">発行者</div>
           <div>株式会社べるつりー</div>
         </div>
-        <? if (hasReceiptBreakdown) { ?>
-          <div class="note">未回収期間の内訳</div>
-          <table class="subtable">
-            <thead>
-              <tr><th>年月</th><th class="amount">金額</th></tr>
-            </thead>
-            <tbody>
-              <? receiptBreakdown.forEach(function(entry) { ?>
-                <tr>
-                  <td><?= normalizeBillingMonthLabel_(entry.month) || entry.month || '―' ?></td>
-                  <td class="amount"><?= formatBillingCurrency_(entry.amount || 0) ?> 円</td>
-                </tr>
-              <? }); ?>
-            </tbody>
-          </table>
-        <? } ?>
       <? } else { ?>
           <div class="note">前月分は未入金のため、後日合算して請求されます</div>
         <? } ?>

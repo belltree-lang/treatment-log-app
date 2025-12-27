@@ -564,6 +564,11 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     transportAmount: detail && detail.transportAmount,
     subtotal: detail ? (detail.treatmentAmount + detail.transportAmount) : 0
   }));
+  const aggregateMonthTotals = aggregateInvoiceDetails.map(detail => ({
+    month: detail && detail.month,
+    monthLabel: detail && detail.monthLabel,
+    total: detail && detail.grandTotal
+  }));
 
   return Object.assign({}, item, {
     monthLabel: aggregateLabel,
@@ -571,11 +576,13 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     isAggregateInvoice: true,
     invoiceMode: 'aggregate',
     watermark,
+    aggregateStatus: item && item.aggregateStatus ? String(item.aggregateStatus) : '',
     receiptMonths: months,
     receiptRemark: aggregateRemark,
     aggregateRemark,
     aggregateInvoiceDetails,
     aggregateSummaryRows,
+    aggregateMonthTotals,
     representativeMonth: normalizedRepresentativeMonth,
     representativeInvoiceDetail,
     showReceipt: false,

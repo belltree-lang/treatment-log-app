@@ -306,6 +306,25 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
   return normalized;
 }
 
+function normalizePastInvoiceMonths_(months, billingMonth) {
+  const list = Array.isArray(months) ? months : [];
+  const billingKey = normalizeInvoiceMonthKey_(billingMonth);
+  const billingNum = Number(billingKey) || 0;
+  const seen = new Set();
+  const normalized = [];
+
+  list.forEach(value => {
+    const ym = normalizeInvoiceMonthKey_(value);
+    if (!ym || seen.has(ym)) return;
+    const ymNum = Number(ym) || 0;
+    if (billingNum && ymNum >= billingNum) return;
+    seen.add(ym);
+    normalized.push(ym);
+  });
+
+  return normalized.sort();
+}
+
 function resolveHasPreviousReceiptSheet_(item) {
   if (!item) return false;
   if (Object.prototype.hasOwnProperty.call(item, 'hasPreviousReceiptSheet')) {
@@ -321,8 +340,10 @@ function resolveInvoiceReceiptDisplay_(item) {
   const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const fallbackMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
   const billingMonthKey = normalizeInvoiceMonthKey_(item && item.billingMonth);
-  const receiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth)
-    .filter(month => !billingMonthKey || month !== billingMonthKey);
+  const receiptMonths = normalizePastInvoiceMonths_(
+    normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth),
+    billingMonthKey
+  );
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
@@ -492,21 +513,7 @@ function formatAggregateInvoiceFileName_(item, billingMonthLabel) {
 }
 
 function normalizeAggregateMonthsForInvoice_(months, billingMonth) {
-  const monthList = Array.isArray(months) ? months : [];
-  const billingKey = normalizeInvoiceMonthKey_(billingMonth);
-  const normalized = monthList
-    .map(normalizeInvoiceMonthKey_)
-    .filter(Boolean);
-  const unique = [];
-  const seen = new Set();
-  normalized.forEach(ym => {
-    if (billingKey && ym === billingKey) return;
-    if (!seen.has(ym)) {
-      seen.add(ym);
-      unique.push(ym);
-    }
-  });
-  return unique.sort();
+  return normalizePastInvoiceMonths_(months, billingMonth);
 }
 
 function formatAggregateInvoiceRemark_(months) {

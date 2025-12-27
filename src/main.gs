@@ -800,7 +800,8 @@ function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared,
   const aggregateUntilMonth = normalizeBillingMonthKeySafe_(previousEntry && previousEntry.aggregateUntilMonth)
     || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
   const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth, cache);
-  const aggregateMonths = normalizeReceiptMonthKeys_(aggregateSourceMonths.concat([monthKey]));
+  const aggregateMonths = normalizeReceiptMonthKeys_(aggregateSourceMonths)
+    .filter(month => month !== monthKey);
   if (!aggregateMonths.length) return null;
 
   const breakdown = [];
@@ -950,9 +951,12 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     const receiptMonths = aggregateReceipt
       ? aggregateReceipt.months
       : (hasPreviousReceiptSheet ? buildReceiptMonthsFromBankUnpaid_(pid, previousMonthKey, prepared, monthCache) : []);
+    const filteredReceiptMonths = Array.isArray(receiptMonths)
+      ? receiptMonths.filter(month => month !== monthKey)
+      : receiptMonths;
     const receiptBreakdown = aggregateReceipt
       ? aggregateReceipt.breakdown
-      : buildReceiptMonthBreakdownForEntry_(pid, receiptMonths, prepared, monthCache);
+      : buildReceiptMonthBreakdownForEntry_(pid, filteredReceiptMonths, prepared, monthCache);
     const previousReceiptAmount = aggregateReceipt
       ? aggregateReceipt.total
       : (Array.isArray(receiptBreakdown)
@@ -969,7 +973,7 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     return Object.assign({}, entry, {
       previousReceiptAmount,
       hasPreviousReceiptSheet,
-      receiptMonths,
+      receiptMonths: filteredReceiptMonths,
       receiptRemark: aggregateReceipt ? aggregateReceipt.remark : entry && entry.receiptRemark,
       receiptMonthBreakdown: aggregateReceipt ? receiptBreakdown : entry && entry.receiptMonthBreakdown,
       previousReceipt: previousReceipt || entry && entry.previousReceipt
@@ -1246,11 +1250,10 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
     const aggregateUntilMonth = normalizeBillingMonthKeySafe_(entry && entry.aggregateUntilMonth)
       || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
     const aggregateMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth, monthCache);
-    if (!aggregateMonths.length) return entry;
-
-    const targetMonths = aggregateMonths.concat([monthKey]);
+    const targetMonths = aggregateMonths.filter(ym => ym !== monthKey);
+    if (!targetMonths.length) return entry;
     const aggregateTotal = targetMonths.reduce(
-      (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, ym === monthKey ? entry : null, monthCache),
+      (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, null, monthCache),
       0
     );
     const aggregateRemark = formatAggregateBillingRemark_(targetMonths);
@@ -2816,17 +2819,14 @@ function generatePreparedInvoices_(prepared, options) {
     const baseEntry = (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid) || entry;
     const aggregateUntilMonth = normalizeBillingMonthKeySafe_(baseEntry.aggregateUntilMonth || normalized.aggregateUntilMonth);
     const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(normalized.billingMonth, pid, aggregateUntilMonth, monthCache);
-    const aggregateMonths = normalizeAggregateInvoiceMonths_(
-      aggregateSourceMonths.concat([normalized.billingMonth]),
-      normalized,
-      normalized.billingMonth
-    );
-    const uniqueAggregateMonths = Array.from(new Set(aggregateMonths));
+    const aggregateMonths = normalizeAggregateInvoiceMonths_(aggregateSourceMonths, normalized, normalized.billingMonth);
+    const uniqueAggregateMonths = Array.from(new Set(aggregateMonths))
+      .filter(month => month !== normalized.billingMonth);
     const aggregateTotal = uniqueAggregateMonths.reduce(
       (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(
         ym,
         pid,
-        ym === normalized.billingMonth ? baseEntry : null,
+        null,
         monthCache
       ),
       0
@@ -2887,8 +2887,7 @@ function normalizeAggregateInvoiceMonths_(months, prepared, billingMonth) {
   const aggregateUntilMonth = prepared && prepared.aggregateUntilMonth ? prepared.aggregateUntilMonth : '';
   const source = []
     .concat(months || [])
-    .concat(aggregateUntilMonth ? [aggregateUntilMonth] : [])
-    .concat(billingMonth ? [billingMonth] : []);
+    .concat(aggregateUntilMonth ? [aggregateUntilMonth] : []);
   return typeof normalizeAggregateMonthsForInvoice_ === 'function'
     ? normalizeAggregateMonthsForInvoice_(source, billingMonth)
     : source;

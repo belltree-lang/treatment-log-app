@@ -101,7 +101,39 @@
         }
         var aggregateSummaryRows = Array.isArray(data.aggregateSummaryRows) ? data.aggregateSummaryRows : [];
       ?>
-      <? if (useStackedAggregate) { ?>
+      <? var isConfirmedAggregate = data.aggregateStatus === 'confirmed' && aggregateDetailCount > 0; ?>
+      <? var aggregateMonthTotals = Array.isArray(data.aggregateMonthTotals)
+        ? data.aggregateMonthTotals
+        : aggregateDetails.map(function(detail) {
+          return {
+            month: detail && detail.month,
+            monthLabel: detail && detail.monthLabel,
+            total: detail && detail.grandTotal
+          };
+        });
+      ?>
+      <? if (isConfirmedAggregate) { ?>
+        <div class="subsection-title">月別内訳</div>
+        <table class="subtable">
+          <thead>
+            <tr><th>年月</th><th class="amount">月合計金額</th></tr>
+          </thead>
+          <tbody>
+            <? aggregateMonthTotals.forEach(function(row) { ?>
+              <tr>
+                <td><?= row.monthLabel || normalizeBillingMonthLabel_(row.month) ?></td>
+                <td class="amount"><?= formatBillingCurrency_(row.total || 0) ?> 円</td>
+              </tr>
+            <? }); ?>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td>合算請求額</td>
+              <td class="amount"><?= formatBillingCurrency_(data.grandTotal) ?> 円</td>
+            </tr>
+          </tfoot>
+        </table>
+      <? } else if (useStackedAggregate) { ?>
         <? aggregateDetails.forEach(function(detail) { ?>
           <div class="subsection-title"><?= detail.monthLabel || normalizeBillingMonthLabel_(detail.month) ?> ご請求</div>
           <table>

@@ -320,7 +320,9 @@ function resolveHasPreviousReceiptSheet_(item) {
 function resolveInvoiceReceiptDisplay_(item) {
   const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const fallbackMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
-  const receiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth);
+  const billingMonthKey = normalizeInvoiceMonthKey_(item && item.billingMonth);
+  const receiptMonths = normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth)
+    .filter(month => !billingMonthKey || month !== billingMonthKey);
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
@@ -367,12 +369,22 @@ function buildInvoicePreviousReceipt_(item, display) {
   const receiptDisplay = display || resolveInvoiceReceiptDisplay_(item);
   const addressee = item && item.nameKanji ? String(item.nameKanji).trim() : '';
   const receiptMonths = receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [];
+  const aggregateTargetMonths = Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [];
+  const aggregateMonthsForCalc = normalizeAggregateMonthsForInvoice_(
+    aggregateTargetMonths.length ? aggregateTargetMonths : receiptMonths,
+    item && item.billingMonth
+  );
   const date = formatReceiptSettlementDate_(receiptMonths, formatInvoiceDateLabel_());
   const receiptMonthsCount = Array.isArray(receiptMonths) ? receiptMonths.length : 0;
   const isAggregateInvoice = receiptMonthsCount > 1;
+  const aggregateBreakdown = isAggregateInvoice ? resolveReceiptMonthBreakdown_(item, aggregateMonthsForCalc) : [];
+  const aggregateAmount = Array.isArray(aggregateBreakdown)
+    ? aggregateBreakdown.reduce((sum, row) => sum + (Number(row && row.amount) || 0), 0)
+    : 0;
+  const fallbackReceiptAmount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const amount = isAggregateInvoice
-    ? normalizeInvoiceMoney_(item && item.grandTotal)
-    : normalizeInvoiceMoney_(item && item.previousReceiptAmount);
+    ? (aggregateAmount || fallbackReceiptAmount)
+    : fallbackReceiptAmount;
   const note = receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '';
 
   return {
@@ -481,16 +493,14 @@ function formatAggregateInvoiceFileName_(item, billingMonthLabel) {
 
 function normalizeAggregateMonthsForInvoice_(months, billingMonth) {
   const monthList = Array.isArray(months) ? months : [];
+  const billingKey = normalizeInvoiceMonthKey_(billingMonth);
   const normalized = monthList
     .map(normalizeInvoiceMonthKey_)
     .filter(Boolean);
-  if (!normalized.length && billingMonth) {
-    const fallback = normalizeInvoiceMonthKey_(billingMonth);
-    if (fallback) normalized.push(fallback);
-  }
   const unique = [];
   const seen = new Set();
   normalized.forEach(ym => {
+    if (billingKey && ym === billingKey) return;
     if (!seen.has(ym)) {
       seen.add(ym);
       unique.push(ym);

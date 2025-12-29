@@ -42,6 +42,16 @@
   .pill-input{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--border); border-radius:999px; background:#fff; cursor:pointer; }
   .pill-input input{ accent-color:var(--brand); }
   .patient-id-input{ display:flex; flex-direction:column; gap:6px; }
+  .flow-grid{ display:grid; grid-template-columns:1.1fr 1fr; gap:12px; width:100%; align-items:flex-start; }
+  .flow-panel{ border:1px solid var(--border); border-radius:12px; padding:12px; background:#f8fafc; display:flex; flex-direction:column; gap:10px; }
+  .flow-panel.primary{ background:#eef2ff; border-color:#c7d2fe; }
+  .flow-header{ display:flex; align-items:flex-start; gap:10px; }
+  .flow-step{ display:inline-flex; align-items:center; justify-content:center; min-width:86px; padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:#fff; font-weight:700; font-size:0.9rem; letter-spacing:0.01em; }
+  .flow-step.primary{ background:#1d4ed8; color:#fff; border-color:#1d4ed8; box-shadow:0 8px 20px rgba(37,99,235,0.15); }
+  .flow-title{ margin:0; font-size:1rem; font-weight:700; }
+  .flow-body{ display:flex; flex-direction:column; gap:10px; }
+  .flow-actions{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .input-note-emphasis{ font-size:0.88rem; color:#b91c1c; margin:4px 0 0; }
   table{ width:100%; border-collapse:collapse; margin-top:10px; font-size:0.9rem; }
   th,td{ border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
   th{ background:#f3f4f6; }
@@ -98,6 +108,7 @@
   .prepared-month-info .pill{ width:100%; justify-content:flex-start; }
   @media (max-width: 900px){
     .layout{ grid-template-columns:1fr; }
+    .flow-grid{ grid-template-columns:1fr; }
     .sidebar{ flex-direction:row; flex-wrap:wrap; align-items:center; }
     .sidebar button{ width:100%; }
     .bank-flow-grid{ grid-template-columns:1fr; }
@@ -117,23 +128,53 @@
   <main class="content">
     <section class="card" id="billingControls">
       <h2>請求書を作成</h2>
-      <p class="muted">対象月を指定し、まず集計のみを実行します。内容確認後に PDF 生成・担当者別フォルダ振り分けを実行してください。</p>
+      <p class="muted">PDF 生成は「PreparedBilling（月選択）→ PDF 生成」を起点にします。新しい月を集計する場合のみ右側の「集計専用」を使用してください。</p>
       <div class="controls">
-        <label>請求月
-          <input type="month" id="billingMonth" />
-        </label>
-        <button class="btn" id="billingAggregateBtn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
-        <button class="btn danger small" id="billingReaggregateBtn" type="button" onclick="handleBillingReaggregation()">請求データを初期化して再集計</button>
-        <button class="btn secondary" id="billingSaveBtn" type="button" onclick="handleBillingSaveEdits()">変更を保存</button>
-        <label>PDF対象月
-          <select id="billingPdfMonth" class="billing-prepared-month-select"></select>
-        </label>
-        <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
-        <div class="prepared-month-info">
-          <div class="pill neutral" id="preparedMonthBadge" style="display:none"></div>
-          <p class="field-note warn" id="preparedMonthWarning" style="display:none"></p>
-          <p class="field-note" id="preparedSnapshotNote" style="display:none"></p>
-          <p class="field-note" id="preparedReaggregationNotice" style="display:none"></p>
+        <div class="flow-grid" aria-label="請求の集計とPDF生成フロー">
+          <div class="flow-panel primary">
+            <div class="flow-header">
+              <span class="flow-step primary">STEP 1</span>
+              <div>
+                <p class="flow-title">PreparedBilling（月選択）</p>
+                <p class="muted" style="margin:4px 0 0">PDF 生成は選択した PreparedBilling をそのまま使用します。</p>
+              </div>
+            </div>
+            <div class="flow-body">
+              <label>PDF対象月（PreparedBilling）
+                <select id="billingPdfMonth" class="billing-prepared-month-select"></select>
+                <span class="field-note">集計済みの月を選択し、次の PDF 生成に進みます。</span>
+              </label>
+              <div class="flow-actions">
+                <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
+              </div>
+              <div class="prepared-month-info">
+                <div class="pill neutral" id="preparedMonthBadge" style="display:none"></div>
+                <p class="field-note warn" id="preparedMonthWarning" style="display:none"></p>
+                <p class="field-note" id="preparedSnapshotNote" style="display:none"></p>
+                <p class="field-note" id="preparedReaggregationNotice" style="display:none"></p>
+              </div>
+            </div>
+          </div>
+          <div class="flow-panel">
+            <div class="flow-header">
+              <span class="flow-step">集計専用</span>
+              <div>
+                <p class="flow-title">PreparedBilling を作成・更新する場合</p>
+                <p class="muted" style="margin:4px 0 0">請求月は集計専用の入力欄です。PDF では左側の選択を使用します。</p>
+              </div>
+            </div>
+            <div class="flow-body">
+              <label>集計用請求月
+                <input type="month" id="billingMonth" />
+                <span class="input-note-emphasis">PDF 生成では「PDF対象月（PreparedBilling）」を使用します。ここで指定した月は集計専用です。</span>
+              </label>
+              <div class="flow-actions">
+                <button class="btn" id="billingAggregateBtn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
+                <button class="btn danger small" id="billingReaggregateBtn" type="button" onclick="handleBillingReaggregation()">請求データを初期化して再集計</button>
+                <button class="btn secondary" id="billingSaveBtn" type="button" onclick="handleBillingSaveEdits()">変更を保存</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="status-line">
           <div id="billingStatus" class="status-line" style="flex:1"></div>

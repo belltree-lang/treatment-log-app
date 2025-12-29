@@ -17,6 +17,7 @@ const billingState = {
   receiptSaving: false,
   preparedMonths: [],
   selectedPreparedMonth: '',
+  reaggregationRequiredMonths: {},
   sort: { field: null, direction: 'asc' }
 };
 
@@ -275,10 +276,43 @@ function getPreparedMonthContext() {
   };
 }
 
+function isReaggregationRequired(monthKey) {
+  const key = normalizeYm(monthKey);
+  if (!key) return false;
+  return !!(billingState.reaggregationRequiredMonths && billingState.reaggregationRequiredMonths[key]);
+}
+
+function markReaggregationRequired(monthKey) {
+  const key = normalizeYm(monthKey);
+  if (!key) return;
+  const map = billingState.reaggregationRequiredMonths || {};
+  if (map[key]) return;
+  billingState.reaggregationRequiredMonths = Object.assign({}, map, { [key]: true });
+  renderPreparedMonthInfo();
+}
+
+function clearReaggregationRequirement(monthKey) {
+  const key = normalizeYm(monthKey);
+  if (!key) return;
+  const map = billingState.reaggregationRequiredMonths || {};
+  if (!map[key]) return;
+  const next = Object.assign({}, map);
+  delete next[key];
+  billingState.reaggregationRequiredMonths = next;
+  renderPreparedMonthInfo();
+}
+
 function renderPreparedMonthInfo() {
   const badge = qs('preparedMonthBadge');
   const warning = qs('preparedMonthWarning');
+  const snapshotNote = qs('preparedSnapshotNote');
+  const reaggregationNote = qs('preparedReaggregationNotice');
   const ctx = getPreparedMonthContext();
+  const preparedAt = formatDateTimeDisplay(billingState.prepared && billingState.prepared.preparedAt);
+  const preparedBy = billingState.prepared && billingState.prepared.preparedBy
+    ? String(billingState.prepared.preparedBy).trim()
+    : '';
+  const needsReaggregation = isReaggregationRequired(ctx.preparedMonth || ctx.billingMonth);
   if (badge) {
     if (ctx.hasPreparedMonth) {
       badge.style.display = 'inline-flex';
@@ -299,6 +333,32 @@ function renderPreparedMonthInfo() {
     } else {
       warning.style.display = 'none';
       warning.textContent = '';
+    }
+  }
+  if (snapshotNote) {
+    if (ctx.hasPreparedMonth) {
+      const details = [preparedAt ? `集計: ${preparedAt}` : '', preparedBy ? `実行者: ${preparedBy}` : '']
+        .filter(Boolean)
+        .join(' / ');
+      const baseText = 'PreparedBilling は集計時点の不変スナップショットです。PDF生成は選択した集計済みデータをそのまま使用します。';
+      snapshotNote.style.display = '';
+      snapshotNote.className = 'field-note';
+      snapshotNote.textContent = details ? `${baseText} (${details})` : baseText;
+    } else {
+      snapshotNote.style.display = 'none';
+      snapshotNote.textContent = '';
+    }
+  }
+  if (reaggregationNote) {
+    if (ctx.hasPreparedMonth) {
+      reaggregationNote.style.display = '';
+      reaggregationNote.className = needsReaggregation ? 'field-note warn' : 'field-note';
+      reaggregationNote.textContent = needsReaggregation
+        ? '合算・未回収チェックを変更しています。PDF生成前に再集計を実行してください。'
+        : '合算フラグや未回収チェックを更新した場合は、PDF生成前に「請求データを集計」で再集計してください。';
+    } else {
+      reaggregationNote.style.display = 'none';
+      reaggregationNote.textContent = '';
     }
   }
 }
@@ -1720,6 +1780,7 @@ function onBillingPrepared(result) {
     billingState.loading = false;
     billingState.statusMessage = '集計が完了しました。内容確認後にPDFを生成してください。';
     billingState.errorMessage = '';
+    clearReaggregationRequirement(normalized && normalized.billingMonth);
     resetBillingEdits();
     refreshPreparedBillingMonths(normalized && normalized.billingMonth);
     logBillingState('onBillingPrepared', { rows: normalized && normalized.billingJson ? normalized.billingJson.length : 0 });
@@ -1889,6 +1950,7 @@ function handleBankSheetGeneration() {
       bankFlowState.sheet = result || null;
       bankFlowState.status = '銀行引落シートを生成しました。未回収チェックなどを行ってください。';
       bankFlowState.loading = false;
+      markReaggregationRequired(ym);
       renderBankFlowDetail();
       updateBankControls();
     })
@@ -1911,6 +1973,7 @@ function handleBankFinalize() {
       bankFlowState.finalized = result || null;
       bankFlowState.status = '当月の銀行引落データを確定としてマークしました。';
       bankFlowState.loading = false;
+      markReaggregationRequired(ym);
       renderBankFlowDetail();
       updateBankControls();
     })
@@ -1933,6 +1996,7 @@ function handleBankUnpaidApply() {
       bankFlowState.unpaid = result || null;
       bankFlowState.status = '未回収履歴へ反映しました。';
       bankFlowState.loading = false;
+      markReaggregationRequired(ym);
       renderBankFlowDetail();
       updateBankControls();
     })

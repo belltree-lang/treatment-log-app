@@ -121,6 +121,7 @@
           <input type="month" id="billingMonth" />
         </label>
         <button class="btn" id="billingAggregateBtn" type="button" onclick="handleBillingAggregation()">請求データを集計</button>
+        <button class="btn danger small" id="billingReaggregateBtn" type="button" onclick="handleBillingReaggregation()">請求データを初期化して再集計</button>
         <button class="btn secondary" id="billingSaveBtn" type="button" onclick="handleBillingSaveEdits()">変更を保存</button>
         <label>PDF対象月
           <select id="billingPdfMonth" class="billing-prepared-month-select"></select>
@@ -130,6 +131,7 @@
           <div id="billingStatus" class="status-line" style="flex:1"></div>
           <div id="carryOverLedgerStatus" class="pill neutral" style="display:none"></div>
         </div>
+        <p class="field-note warn" style="margin-top:0">※ 「初期化して再集計」は指定月の既存請求データをキャッシュ・シートともに削除します。誤操作にご注意ください。</p>
         <p class="finalized-lock-note" id="finalizedLockNote" style="display:none"></p>
         <div id="billingError" class="alert danger" style="display:none"></div>
       </div>

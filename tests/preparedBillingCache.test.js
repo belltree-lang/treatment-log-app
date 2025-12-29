@@ -347,8 +347,8 @@ function testBankFlagsAreMergedIntoBillingJson() {
     }
   });
 
-  assert.deepStrictEqual(normalized.billingJson[0].bankFlags, { ae: true, af: false }, 'bankFlagsは準備データからコピーされる');
-  assert.deepStrictEqual(normalized.billingJson[1].bankFlags, { ae: false, af: false }, 'bankFlagsが無い患者はfalseで初期化される');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(normalized.billingJson[0].bankFlags)), { ae: true, af: false }, 'bankFlagsは準備データからコピーされる');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(normalized.billingJson[1].bankFlags)), { ae: false, af: false }, 'bankFlagsが無い患者はfalseで初期化される');
 }
 
 function testBankExportReportsLedgerIssues() {
@@ -533,6 +533,62 @@ function testPreparedBillingSheetSaveAndLoad() {
   assert.strictEqual(Array.isArray(loaded.billingJson) ? loaded.billingJson.length : 0, 2, 'billingJsonが復元される');
 }
 
+function testDeletePreparedBillingDataForMonth() {
+  const store = {};
+  const cache = {
+    getScriptCache: () => ({
+      get: key => store[key] || null,
+      put: (key, value) => { store[key] = value; },
+      remove: key => { delete store[key]; },
+      removeAll: keys => keys.forEach(key => delete store[key])
+    })
+  };
+  const sheets = {
+    PreparedBillingMeta: createSheetMock(),
+    PreparedBillingMetaJson: createSheetMock(),
+    PreparedBillingJson: createSheetMock()
+  };
+  sheets.PreparedBillingMeta.getRange(1, 1, 1, 5).setValues([['billingMonth', 'preparedAt', 'preparedBy', 'payloadVersion', 'note']]);
+  sheets.PreparedBillingMeta.getRange(2, 1, 2, 5).setValues([['202501', '', '', '', ''], ['202502', '', '', '', '']]);
+  sheets.PreparedBillingMetaJson.getRange(1, 1, 1, 3).setValues([['billingMonth', 'chunkIndex', 'payloadChunk']]);
+  sheets.PreparedBillingMetaJson.getRange(2, 1, 2, 3).setValues([['202501', 1, '{}'], ['202502', 1, '{}']]);
+  sheets.PreparedBillingJson.getRange(1, 1, 1, 3).setValues([['billingMonth', 'patientId', 'billingRowJson']]);
+  sheets.PreparedBillingJson.getRange(2, 1, 2, 3).setValues([['202501', 'P001', '{}'], ['202502', 'P002', '{}']]);
+
+  const cacheKey = 'billing_prepared_202501';
+  store[cacheKey] = '{"mock":"data"}';
+
+  const ctx = createMainContext({
+    CacheService: cache,
+    SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: name => sheets[name] || null }) },
+    billingLogger_: { log: () => {} }
+  });
+
+  const summary = ctx.deletePreparedBillingDataForMonth_('202501');
+  assert.strictEqual(summary.cacheCleared, true, 'キャッシュが削除される');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(store, cacheKey), false, '指定月のキャッシュキーが削除される');
+  assert.strictEqual(sheets.PreparedBillingMeta._rows[1][0], '202502', 'メタシートの指定月行が削除される');
+  assert.strictEqual(sheets.PreparedBillingMetaJson._rows[1][0], '202502', 'メタJSONシートの指定月行が削除される');
+  assert.strictEqual(sheets.PreparedBillingJson._rows[1][0], '202502', '明細シートの指定月行が削除される');
+  assert.strictEqual(summary.sheetDeletions.every(entry => entry.removed === 1), true, '各シートで1行削除される');
+}
+
+function testResetPreparedBillingAndPrepare() {
+  let deleted = null;
+  let preparedMonth = null;
+  const ctx = createMainContext({
+    normalizeBillingMonthInput: input => ({ key: String(input).replace(/\D/g, '') }),
+    deletePreparedBillingDataForMonth_: month => { deleted = month; return { billingMonth: month }; },
+    prepareBillingData: month => { preparedMonth = month; return { billingMonth: month, billingJson: [] }; },
+    billingLogger_: { log: () => {} }
+  });
+
+  const result = ctx.resetPreparedBillingAndPrepare('2025/01');
+  assert.strictEqual(deleted, '202501', '再集計前に指定月のデータを削除する');
+  assert.strictEqual(preparedMonth, '202501', '正規化した月で集計を実行する');
+  assert.strictEqual(result.billingMonth, '202501', '返却されるbillingMonthが正規化される');
+}
+
 function testBankWithdrawalSheetRegeneration() {
   const bankTemplate = createBankSheetMock('銀行情報', [
     ['名前', '金額', '口座'],
@@ -635,6 +691,8 @@ function run() {
   testInvoiceGenerationUsesSheetWhenCacheMissing();
   testPrepareBillingDataNormalizesMonthKey();
   testPreparedBillingSheetSaveAndLoad();
+  testDeletePreparedBillingDataForMonth();
+  testResetPreparedBillingAndPrepare();
   testBankWithdrawalSheetRegeneration();
   console.log('prepared billing cache tests passed');
 }

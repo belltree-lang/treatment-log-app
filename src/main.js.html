@@ -151,6 +151,13 @@ function updateBillingControls() {
     aggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     aggregateBtn.title = disabled && finalizedLocked ? '確定済みの請求が含まれているため再集計できません' : '';
   }
+  const reaggregateBtn = qs('billingReaggregateBtn');
+  if (reaggregateBtn) {
+    const disabled = loading || finalizedLocked;
+    reaggregateBtn.disabled = disabled;
+    reaggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
+    reaggregateBtn.title = disabled && finalizedLocked ? '確定済みの請求が含まれているため再集計できません' : '指定月の既存請求データを削除して再集計します';
+  }
   if (pdfBtn) {
     const disabled = loading || !hasPdfTarget || finalizedLocked;
     pdfBtn.disabled = disabled;
@@ -1627,6 +1634,29 @@ function handleBillingAggregation() {
       onBillingFailed(err);
     })
     .prepareBillingData(ym);
+}
+
+function handleBillingReaggregation() {
+  if (shouldBlockFinalizedBillingOperation()) return;
+  const ym = normalizeYm(qs('billingMonth').value);
+  if (!ym) {
+    alert('請求月を入力してください (YYYY-MM)');
+    return;
+  }
+  const confirmed = confirm('指定した月の既存請求データ（キャッシュ・スプレッドシート）を削除して再集計します。本当に実行しますか？');
+  if (!confirmed) return;
+  logBillingState('handleBillingReaggregation:start', { ym });
+  setBillingLoading(true, '再集計中…');
+  google.script.run
+    .withSuccessHandler(function(result) {
+      logBillingState('resetPreparedBillingAndPrepare:success', { ym });
+      onBillingPrepared(result);
+    })
+    .withFailureHandler(function(err) {
+      logBillingState('resetPreparedBillingAndPrepare:error', { ym, error: err && err.message ? err.message : err });
+      onBillingFailed(err);
+    })
+    .resetPreparedBillingAndPrepare(ym);
 }
 
 function onBillingPrepared(result) {

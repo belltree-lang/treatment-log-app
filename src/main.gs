@@ -2724,6 +2724,76 @@ function serializeBillingPayload_(payload) {
   }
 }
 
+function deletePreparedBillingRowsForMonth_(sheet, monthKey) {
+  const sheetName = sheet && typeof sheet.getName === 'function' ? sheet.getName() : '';
+  if (!sheet || !monthKey) return { sheetName, removed: 0 };
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { sheetName, removed: 0 };
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  let removed = 0;
+  for (let idx = values.length - 1; idx >= 0; idx--) {
+    if (String(values[idx][0] || '').trim() !== monthKey) continue;
+    sheet.deleteRow(idx + 2);
+    removed += 1;
+  }
+
+  return { sheetName, removed };
+}
+
+function deletePreparedBillingDataForMonth_(billingMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const summary = { billingMonth: monthKey || '', cacheCleared: false, sheetDeletions: [] };
+  if (!monthKey) return summary;
+
+  const cacheKey = buildBillingCacheKey_(monthKey);
+  if (cacheKey) {
+    clearBillingCache_(cacheKey);
+    summary.cacheCleared = true;
+  }
+
+  const workbook = billingSs();
+  if (workbook) {
+    const removeRows = sheetName => deletePreparedBillingRowsForMonth_(workbook.getSheetByName(sheetName), monthKey);
+    summary.sheetDeletions = [
+      removeRows('PreparedBillingMeta'),
+      removeRows('PreparedBillingMetaJson'),
+      removeRows('PreparedBillingJson')
+    ];
+  }
+
+  try {
+    if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+      billingLogger_.log('[billing] deletePreparedBillingDataForMonth_ summary=' + JSON.stringify(summary));
+    }
+  } catch (err) {
+    // ignore logging issues in non-GAS environments
+  }
+
+  return summary;
+}
+
+function resetPreparedBillingAndPrepare(billingMonth) {
+  const normalizedMonth = normalizeBillingMonthInput ? normalizeBillingMonthInput(billingMonth) : null;
+  const monthKey = normalizedMonth && normalizedMonth.key
+    ? normalizedMonth.key
+    : normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) {
+    throw new Error('請求月をYYYY-MM形式で指定してください。');
+  }
+
+  deletePreparedBillingDataForMonth_(monthKey);
+  try {
+    if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+      billingLogger_.log('[billing] resetPreparedBillingAndPrepare clearing existing data for ' + monthKey);
+    }
+  } catch (err) {
+    // ignore logging issues in non-GAS environments
+  }
+
+  return prepareBillingData(monthKey);
+}
+
 function prepareBillingData(billingMonth) {
   const normalizedMonth = normalizeBillingMonthInput(billingMonth);
   const existingResult = loadPreparedBillingWithSheetFallback_(normalizedMonth.key, { withValidation: true });

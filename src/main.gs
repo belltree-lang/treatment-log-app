@@ -2726,6 +2726,16 @@ function serializeBillingPayload_(payload) {
 
 function prepareBillingData(billingMonth) {
   const normalizedMonth = normalizeBillingMonthInput(billingMonth);
+  const existingResult = loadPreparedBillingWithSheetFallback_(normalizedMonth.key, { withValidation: true });
+  const existingPrepared = existingResult && existingResult.prepared !== undefined ? existingResult.prepared : existingResult;
+  const existingValidation = existingResult && existingResult.validation
+    ? existingResult.validation
+    : (existingResult && existingResult.ok !== undefined ? existingResult : null);
+  if (existingPrepared && (!existingValidation || existingValidation.ok)) {
+    billingLogger_.log('[billing] prepareBillingData using existing prepared billing for ' + normalizedMonth.key);
+    return existingPrepared;
+  }
+
   const prepared = buildPreparedBillingPayload_(normalizedMonth);
   const normalizedPrepared = normalizePreparedBilling_(prepared);
   const clientPayload = toClientBillingPayload_(normalizedPrepared, { alreadyNormalized: true });

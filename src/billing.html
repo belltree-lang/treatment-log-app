@@ -94,6 +94,8 @@
   .bank-action .field-note{ margin:0; }
   .bank-status-cards{ display:grid; grid-template-columns:1fr; gap:10px; }
   .bank-status-cards .summary-card{ height:100%; }
+  .prepared-month-info{ display:flex; flex-direction:column; gap:6px; min-width:220px; }
+  .prepared-month-info .pill{ width:100%; justify-content:flex-start; }
   @media (max-width: 900px){
     .layout{ grid-template-columns:1fr; }
     .sidebar{ flex-direction:row; flex-wrap:wrap; align-items:center; }
@@ -127,6 +129,10 @@
           <select id="billingPdfMonth" class="billing-prepared-month-select"></select>
         </label>
         <button class="btn secondary" id="billingPdfBtn" type="button" onclick="handleBillingPdfGeneration()">PDF生成＆担当者フォルダ保存</button>
+        <div class="prepared-month-info">
+          <div class="pill neutral" id="preparedMonthBadge" style="display:none"></div>
+          <p class="field-note warn" id="preparedMonthWarning" style="display:none"></p>
+        </div>
         <div class="status-line">
           <div id="billingStatus" class="status-line" style="flex:1"></div>
           <div id="carryOverLedgerStatus" class="pill neutral" style="display:none"></div>

@@ -83,6 +83,11 @@ function getSelectedPreparedMonth() {
   return normalizeYm(selection);
 }
 
+function getBillingMonthInputValue() {
+  const input = qs('billingMonth');
+  return normalizeYm(input && input.value ? input.value : '');
+}
+
 function updatePreparedMonthSelectors() {
   const selectors = Array.from(document.querySelectorAll('.billing-prepared-month-select'));
   if (!selectors.length) return;
@@ -141,6 +146,8 @@ function updateBillingControls() {
   const pdfTarget = getSelectedPreparedMonth();
   const hasPdfTarget = !!pdfTarget;
   const finalizedLocked = hasFinalizedBillingRows();
+  const billingMonthInput = getBillingMonthInputValue();
+  const hasMonthMismatch = !!(billingMonthInput && hasPdfTarget && billingMonthInput !== pdfTarget);
 
   if (monthInput) {
     monthInput.disabled = loading;
@@ -159,13 +166,15 @@ function updateBillingControls() {
     reaggregateBtn.title = disabled && finalizedLocked ? '確定済みの請求が含まれているため再集計できません' : '指定月の既存請求データを削除して再集計します';
   }
   if (pdfBtn) {
-    const disabled = loading || !hasPdfTarget || finalizedLocked;
+    const disabled = loading || !hasPdfTarget || finalizedLocked || hasMonthMismatch;
     pdfBtn.disabled = disabled;
     pdfBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     pdfBtn.title = disabled
       ? (!hasPdfTarget
         ? 'PDF対象月を選択してください'
-        : (finalizedLocked ? '確定済みの請求が含まれているためPDF生成できません' : ''))
+        : hasMonthMismatch
+          ? `請求月 (${formatYmDisplay(billingMonthInput)}) とPDF対象月 (${formatYmDisplay(pdfTarget)}) が一致していません`
+          : (finalizedLocked ? '確定済みの請求が含まれているためPDF生成できません' : ''))
       : '';
   }
   if (saveBtn) {
@@ -178,6 +187,7 @@ function updateBillingControls() {
   updateInvoiceModeControls();
   renderReceiptControls();
   renderFinalizedLockNotice();
+  renderPreparedMonthInfo();
 }
 
 function getBankTargetMonth() {
@@ -249,6 +259,47 @@ function updateInvoiceModeControls() {
 
   if (note) {
     note.className = isPartial ? 'field-note warn' : 'field-note';
+  }
+}
+
+function getPreparedMonthContext() {
+  const billingMonth = getBillingMonthInputValue();
+  const preparedMonth = getSelectedPreparedMonth();
+  const hasPreparedMonth = !!preparedMonth;
+  const mismatch = !!(billingMonth && preparedMonth && billingMonth !== preparedMonth);
+  return {
+    billingMonth,
+    preparedMonth,
+    hasPreparedMonth,
+    mismatch
+  };
+}
+
+function renderPreparedMonthInfo() {
+  const badge = qs('preparedMonthBadge');
+  const warning = qs('preparedMonthWarning');
+  const ctx = getPreparedMonthContext();
+  if (badge) {
+    if (ctx.hasPreparedMonth) {
+      badge.style.display = 'inline-flex';
+      badge.className = ctx.mismatch ? 'pill warn' : 'pill ok';
+      badge.textContent = `PDF基準月: ${formatYmDisplay(ctx.preparedMonth)}`;
+      badge.title = 'PreparedBilling.billingMonth に基づきPDFを生成します';
+    } else {
+      badge.style.display = 'none';
+      badge.textContent = '';
+      badge.removeAttribute('title');
+    }
+  }
+  if (warning) {
+    if (ctx.mismatch) {
+      const billingDisplay = ctx.billingMonth ? formatYmDisplay(ctx.billingMonth) : '未入力';
+      warning.style.display = '';
+      warning.textContent = `請求月 (${billingDisplay}) とPDF対象月 (${formatYmDisplay(ctx.preparedMonth)}) が一致していません。`;
+    } else {
+      warning.style.display = 'none';
+      warning.textContent = '';
+    }
   }
 }
 
@@ -1686,6 +1737,12 @@ function handleBillingPdfGeneration() {
     alert('PDF対象月を選択してください。');
     return;
   }
+  const preparedContext = getPreparedMonthContext();
+  if (preparedContext.mismatch) {
+    alert(`請求月 (${formatYmDisplay(preparedContext.billingMonth) || '未入力'}) とPDF対象月 (${formatYmDisplay(targetMonth)}) が一致していません。揃えてから実行してください。`);
+    renderPreparedMonthInfo();
+    return;
+  }
 
   if (shouldBlockFinalizedBillingOperation()) return;
 
@@ -2278,13 +2335,17 @@ function renderBillingActionFooter(hasRows) {
   const saveDisabled = loading || !prepared;
   const pdfTarget = getSelectedPreparedMonth();
   const pdfReady = !!pdfTarget;
-  const pdfDisabled = loading || !pdfReady;
+  const preparedContext = getPreparedMonthContext();
+  const pdfDisabled = loading || !pdfReady || preparedContext.mismatch;
   const helper = prepared
     ? '編集を保存したら、そのままPDF生成へ進めます。'
     : '先に「請求データを集計」を実行すると保存が有効になります。';
-  const pdfHelper = pdfReady
-    ? `PDF対象月: ${formatYmDisplay(pdfTarget)}`
-    : 'PDF対象月が未選択です。';
+  const billingDisplay = preparedContext.billingMonth ? formatYmDisplay(preparedContext.billingMonth) : '未入力';
+  const pdfHelper = preparedContext.mismatch
+    ? `請求月 (${billingDisplay}) とPDF対象月 (${formatYmDisplay(pdfTarget)}) が一致していません。`
+    : (pdfReady
+      ? `PDF対象月: ${formatYmDisplay(pdfTarget)}`
+      : 'PDF対象月が未選択です。');
   return `
     <div class="action-footer">
       <div>
@@ -2367,6 +2428,10 @@ function initBillingPage() {
   const input = qs('billingMonth');
   if (input && !input.value) {
     input.value = getDefaultMonth();
+  }
+  if (input) {
+    input.onchange = updateBillingControls;
+    input.oninput = updateBillingControls;
   }
   const bankMonthInput = qs('bankWithdrawalMonth');
   if (bankMonthInput && !bankMonthInput.value) {

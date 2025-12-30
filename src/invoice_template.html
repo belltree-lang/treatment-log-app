@@ -128,7 +128,7 @@
           </tfoot>
         </table>
       <? } ?>
-      <div class="note"><?= isAggregateInvoice ? '未回収期間を含めた合計金額です。' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+      <div class="note"><?= isAggregateInvoice ? '未回収期間を含めた合計金額です。（前月未回収分を含む）' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
       <? if (data.aggregateRemark) { ?>
         <div class="note"><strong>備考:</strong> <?= data.aggregateRemark ?></div>
       <? } ?>

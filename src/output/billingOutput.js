@@ -81,18 +81,27 @@ function convertSpreadsheetToExcelBlob_(file, exportName) {
   return excelBlob.setName(name + '.xlsx');
 }
 
-const billingSs = (typeof globalThis !== 'undefined' && typeof globalThis.billingSs === 'function')
-  ? globalThis.billingSs
-  : function billingSsFallback_() {
-    if (typeof globalThis.ss === 'function') {
-      try {
-        return globalThis.ss();
-      } catch (e) {
-        return null;
-      }
+function resolveBillingSpreadsheetForOutput_() {
+  const root = typeof globalThis !== 'undefined' ? globalThis : this;
+
+  if (root && typeof root.billingSs === 'function') {
+    try {
+      return root.billingSs();
+    } catch (err) {
+      return null;
     }
-    return null;
-  };
+  }
+
+  if (root && typeof root.ss === 'function') {
+    try {
+      return root.ss();
+    } catch (err) {
+      return null;
+    }
+  }
+
+  return null;
+}
 
 function normalizeBillingAmount_(item) {
   if (!item) return 0;
@@ -1051,7 +1060,7 @@ function buildBankTransferRowsForBilling_(billingJson, bankInfoByName, patientMa
 }
 
 function ensureBankTransferSheet_() {
-  const workbook = billingSs();
+  const workbook = resolveBillingSpreadsheetForOutput_();
   let sheet = workbook.getSheetByName(LEGACY_BANK_TRANSFER_SHEET_NAME);
   if (!sheet) {
     sheet = workbook.insertSheet(LEGACY_BANK_TRANSFER_SHEET_NAME);
@@ -1306,7 +1315,7 @@ function resolveBillingHistoryColumns_(sheet) {
 
 function ensureBillingHistorySheet_() {
   const SHEET_NAME = '請求履歴';
-  const workbook = billingSs();
+  const workbook = resolveBillingSpreadsheetForOutput_();
   if (!workbook) return null;
   let sheet = workbook.getSheetByName(SHEET_NAME);
   if (!sheet) {
@@ -1318,7 +1327,7 @@ function ensureBillingHistorySheet_() {
 }
 
 function ensureUnpaidHistorySheet_() {
-  const workbook = billingSs();
+  const workbook = resolveBillingSpreadsheetForOutput_();
   if (!workbook) return null;
   let sheet = workbook.getSheetByName(UNPAID_HISTORY_SHEET_NAME);
   if (!sheet) {

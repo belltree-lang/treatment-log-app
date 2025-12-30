@@ -331,6 +331,21 @@ function testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate() {
   assert.strictEqual(trace.fallbackReceiptMonthsUsedInDecision, false, 'フォールバック月を意思決定に利用しない');
 }
 
+function testReceiptDisplayFallsBackToPreviousMonthWhenDefault() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const display = context.resolveInvoiceReceiptDisplay_({
+    billingMonth: '202411'
+  });
+
+  assert.strictEqual(display.visible, true, '請求月のみ指定でも領収書を表示する');
+  assert.deepStrictEqual(Array.from(display.receiptMonths || []), ['202410'], '前月を単月領収書として表示する');
+  assert.strictEqual(display.receiptMonthsSource, 'fallback', '表示ソースをフォールバックとして保持する');
+  assert.deepStrictEqual(Array.from(display.explicitReceiptMonths || []), [], '明示指定は無いままにする');
+}
+
 function testAggregateStatusDoesNotFinalizeWithoutConfirmation() {
   const context = createContext();
   vm.createContext(context);
@@ -857,6 +872,7 @@ function run() {
   testReceiptVisibilityRespectsBankFlagsAndStatus();
   testInvoiceTemplateSwitchesAggregateModeForUnpaid();
   testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate();
+  testReceiptDisplayFallsBackToPreviousMonthWhenDefault();
   testAggregateStatusDoesNotFinalizeWithoutConfirmation();
   testPreviousReceiptSettlementRequiresExplicitStatus();
   testPreviousReceiptVisibilityFollowsReceiptDecision();

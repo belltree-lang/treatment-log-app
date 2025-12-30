@@ -391,9 +391,18 @@ function resolveInvoiceReceiptDisplay_(item) {
     normalizeReceiptMonths_([], fallbackMonth),
     billingMonthKey
   );
-  const receiptMonths = explicitReceiptMonths.length
+  const aggregateStatus = normalizeAggregateStatus_(item && item.aggregateStatus);
+  const aggregateConfirmed = aggregateStatus === 'confirmed';
+  let receiptMonths = explicitReceiptMonths.length
     ? explicitReceiptMonths
     : aggregateTargetReceiptMonths;
+  const shouldUseFallbackReceiptMonths = !aggregateConfirmed
+    && !explicitReceiptMonths.length
+    && !aggregateTargetReceiptMonths.length
+    && fallbackReceiptMonths.length;
+  if (shouldUseFallbackReceiptMonths) {
+    receiptMonths = fallbackReceiptMonths;
+  }
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
@@ -403,13 +412,13 @@ function resolveInvoiceReceiptDisplay_(item) {
   const unpaidFlag = bankFlags && (bankFlags.ae || bankFlags.AE);
   const aggregateFlag = bankFlags && (bankFlags.af || bankFlags.AF);
   const hasBankRestriction = !!(unpaidFlag || aggregateFlag);
-  const aggregateStatus = normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = aggregateStatus === 'confirmed';
   const showReceipt = aggregateConfirmed
     ? true
     : (hasPreviousReceiptSheet && receiptStatus !== 'UNPAID' && !hasBankRestriction);
   const receiptMonthsSource = receiptMonths.length
-    ? (explicitReceiptMonths.length ? 'explicit' : 'aggregate')
+    ? (shouldUseFallbackReceiptMonths
+      ? 'fallback'
+      : (explicitReceiptMonths.length ? 'explicit' : 'aggregate'))
     : (fallbackReceiptMonths.length ? 'fallback' : 'none');
 
   return {

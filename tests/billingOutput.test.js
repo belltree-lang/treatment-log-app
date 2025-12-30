@@ -312,6 +312,20 @@ function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {
   assert.strictEqual(standard.chargeMonthLabel, '2025年02月', '請求月のみを表示する');
 }
 
+function testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { buildInvoiceTemplateData_ } = context;
+
+  const standard = buildInvoiceTemplateData_({ billingMonth: '202511', hasPreviousPrepared: true });
+  assert.strictEqual(standard.isAggregateInvoice, false, 'フォールバック領収月のみでは合算モードにしない');
+  assert.strictEqual(standard.invoiceMode, 'standard', 'フォールバックでは通常モードを維持する');
+  assert.strictEqual(standard.aggregateMonthTotals.length, 0, '合算内訳は生成しない');
+  assert.strictEqual(standard.chargeMonthLabel, '2025年11月', '請求月表示は billingMonth を優先する');
+}
+
 function testPreviousReceiptVisibilityFollowsReceiptDecision() {
   const context = createContext();
   vm.createContext(context);
@@ -336,6 +350,27 @@ function testPreviousReceiptIsHiddenWhenPreviousPreparedMissing() {
   const data = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'PAID', hasPreviousPrepared: false });
 
   assert.strictEqual(data.previousReceipt.visible, false, '前月請求が未生成なら前月領収書を非表示にする');
+}
+
+function testAggregateTemplateUsesExplicitMonths() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { buildAggregateInvoiceTemplateData_ } = context;
+
+  const data = buildAggregateInvoiceTemplateData_(
+    { billingMonth: '202511', patientId: '001' },
+    ['202509', '202510']
+  );
+
+  assert.deepStrictEqual(
+    Array.from(data.receiptMonths || []),
+    ['202509', '202510'],
+    '指定した合算月のみを請求対象に使う'
+  );
+  assert.strictEqual(data.chargeMonthLabel, '2025年11月', '請求月の表示は billingMonth を基準にする');
+  assert.strictEqual(data.monthLabel, '2025年11月（合算）', '合算時もベースは請求月ラベル');
 }
 
 function testSelfPaidInvoiceDoesNotRoundManualUnitPrice() {
@@ -764,8 +799,10 @@ function run() {
   testSelfPaidInvoiceStaysZeroWithoutManualUnitPrice();
   testReceiptVisibilityRespectsBankFlagsAndStatus();
   testInvoiceTemplateSwitchesAggregateModeForUnpaid();
+  testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate();
   testPreviousReceiptVisibilityFollowsReceiptDecision();
   testPreviousReceiptIsHiddenWhenPreviousPreparedMissing();
+  testAggregateTemplateUsesExplicitMonths();
   testSelfPaidInvoiceDoesNotRoundManualUnitPrice();
   testReceiptStatusIsOverwrittenInHistory();
   testInsuranceBillingUsesYenRounding();

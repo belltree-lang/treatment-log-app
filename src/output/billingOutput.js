@@ -132,10 +132,10 @@ function normalizeBillingAmount_(item) {
   return 0;
 }
 
-const resolveBillingAmountForMonthAndPatient_ = (typeof globalThis !== 'undefined'
+const resolveBillingAmountForMonthAndPatientForOutput_ = (typeof globalThis !== 'undefined'
   && typeof globalThis.resolveBillingAmountForMonthAndPatient_ === 'function')
   ? globalThis.resolveBillingAmountForMonthAndPatient_
-  : function fallbackResolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry) {
+  : function fallbackResolveBillingAmountForMonthAndPatientForOutput_(billingMonth, patientId, fallbackEntry) {
     const normalizedMonth = normalizeInvoiceMonthKey_(billingMonth);
     const fallbackMonth = fallbackEntry && normalizeInvoiceMonthKey_(fallbackEntry.billingMonth);
     if (normalizedMonth && fallbackMonth && normalizedMonth === fallbackMonth) {
@@ -587,7 +587,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const aggregateMonthTotals = months.map(monthKey => ({
     month: monthKey,
     monthLabel: normalizeBillingMonthLabel_(monthKey),
-    total: resolveBillingAmountForMonthAndPatient_(
+    total: resolveBillingAmountForMonthAndPatientForOutput_(
       monthKey,
       normalizedPatientId,
       monthKey === normalizedBillingMonth ? item : null,
@@ -692,7 +692,7 @@ function buildInvoiceTemplateData_(item) {
     ? normalizeAggregateMonthsForInvoice_(receiptMonths, billingMonth).map(monthKey => ({
       month: monthKey,
       monthLabel: normalizeBillingMonthLabel_(monthKey),
-      total: resolveBillingAmountForMonthAndPatient_(
+      total: resolveBillingAmountForMonthAndPatientForOutput_(
         monthKey,
         item && item.patientId,
         monthKey === normalizeInvoiceMonthKey_(billingMonth) ? item : null,

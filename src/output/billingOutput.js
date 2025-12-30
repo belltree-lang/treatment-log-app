@@ -374,10 +374,15 @@ function resolveInvoiceReceiptDisplay_(item) {
   const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const fallbackMonth = resolvePreviousBillingMonthKey_(item && item.billingMonth);
   const billingMonthKey = normalizeInvoiceMonthKey_(item && item.billingMonth);
-  const receiptMonths = normalizePastInvoiceMonths_(
-    normalizeReceiptMonths_(item && item.receiptMonths, fallbackMonth),
+  const explicitReceiptMonths = normalizePastInvoiceMonths_(
+    normalizeReceiptMonths_(item && item.receiptMonths),
     billingMonthKey
   );
+  const fallbackReceiptMonths = normalizePastInvoiceMonths_(
+    normalizeReceiptMonths_([], fallbackMonth),
+    billingMonthKey
+  );
+  const receiptMonths = explicitReceiptMonths.length ? explicitReceiptMonths : fallbackReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
@@ -399,7 +404,9 @@ function resolveInvoiceReceiptDisplay_(item) {
     visible: showReceipt,
     showReceipt,
     receiptRemark,
-    receiptMonths
+    receiptMonths,
+    explicitReceiptMonths,
+    receiptMonthsSource: explicitReceiptMonths.length ? 'explicit' : 'fallback'
   };
 }
 
@@ -574,8 +581,15 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const watermark = buildInvoiceWatermark_(item);
   const receipt = resolveInvoiceReceiptDisplay_(item);
   const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
+  const receiptDecisionMonths = receipt && Array.isArray(receipt.explicitReceiptMonths)
+    ? receipt.explicitReceiptMonths
+    : [];
   const months = normalizeAggregateMonthsForInvoice_(
-    Array.isArray(aggregateMonths) && aggregateMonths.length ? aggregateMonths : receiptMonths,
+    Array.isArray(aggregateMonths) && aggregateMonths.length
+      ? aggregateMonths
+      : (receiptDecisionMonths.length
+        ? receiptDecisionMonths
+        : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])),
     billingMonth
   );
   const aggregateRemark = formatAggregateInvoiceRemark_(months);
@@ -685,11 +699,20 @@ function buildInvoiceTemplateData_(item) {
     previousReceipt.visible = !!(receipt && receipt.visible && hasPreviousReceiptSheet);
   }
 
-  const isAggregateInvoice = (receiptMonths && receiptMonths.length > 1)
+  const receiptDecisionMonths = receipt && Array.isArray(receipt.explicitReceiptMonths)
+    ? receipt.explicitReceiptMonths
+    : [];
+  const aggregateDecisionMonths = normalizeAggregateMonthsForInvoice_(
+    receiptDecisionMonths.length
+      ? receiptDecisionMonths
+      : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : []),
+    billingMonth
+  );
+  const isAggregateInvoice = (aggregateDecisionMonths && aggregateDecisionMonths.length > 1)
     || (Number.isFinite(normalizedPreviousReceiptAmount) && normalizedPreviousReceiptAmount > 0);
   const chargeMonthLabel = monthLabel;
   const aggregateMonthTotals = isAggregateInvoice
-    ? normalizeAggregateMonthsForInvoice_(receiptMonths, billingMonth).map(monthKey => ({
+    ? aggregateDecisionMonths.map(monthKey => ({
       month: monthKey,
       monthLabel: normalizeBillingMonthLabel_(monthKey),
       total: resolveBillingAmountForMonthAndPatientForOutput_(

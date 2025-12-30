@@ -81,6 +81,19 @@ function convertSpreadsheetToExcelBlob_(file, exportName) {
   return excelBlob.setName(name + '.xlsx');
 }
 
+const billingSs = (typeof globalThis !== 'undefined' && typeof globalThis.billingSs === 'function')
+  ? globalThis.billingSs
+  : function billingSsFallback_() {
+    if (typeof globalThis.ss === 'function') {
+      try {
+        return globalThis.ss();
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  };
+
 function normalizeBillingAmount_(item) {
   if (!item) return 0;
 
@@ -109,6 +122,18 @@ function normalizeBillingAmount_(item) {
 
   return 0;
 }
+
+const resolveBillingAmountForMonthAndPatient_ = (typeof globalThis !== 'undefined'
+  && typeof globalThis.resolveBillingAmountForMonthAndPatient_ === 'function')
+  ? globalThis.resolveBillingAmountForMonthAndPatient_
+  : function fallbackResolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallbackEntry) {
+    const normalizedMonth = normalizeInvoiceMonthKey_(billingMonth);
+    const fallbackMonth = fallbackEntry && normalizeInvoiceMonthKey_(fallbackEntry.billingMonth);
+    if (normalizedMonth && fallbackMonth && normalizedMonth === fallbackMonth) {
+      return normalizeBillingAmount_(fallbackEntry);
+    }
+    return 0;
+  };
 
 function normalizeBillingNameKey_(value) {
   return String(value || '')
@@ -538,9 +563,13 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const aggregateLabel = monthLabel ? `${monthLabel}（合算）` : '合算請求';
   const amount = normalizeBillingAmount_(item);
   const watermark = buildInvoiceWatermark_(item);
-  const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
-  const aggregateRemark = formatAggregateInvoiceRemark_(months);
   const receipt = resolveInvoiceReceiptDisplay_(item);
+  const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
+  const months = normalizeAggregateMonthsForInvoice_(
+    Array.isArray(aggregateMonths) && aggregateMonths.length ? aggregateMonths : receiptMonths,
+    billingMonth
+  );
+  const aggregateRemark = formatAggregateInvoiceRemark_(months);
   const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const normalizedPreviousReceiptAmount = normalizeInvoiceMoney_(item && item.previousReceiptAmount);
   const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
@@ -567,7 +596,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
 
   return Object.assign({}, item, {
     monthLabel: aggregateLabel,
-    chargeMonthLabel: aggregateLabel,
+    chargeMonthLabel: monthLabel,
     isAggregateInvoice: true,
     invoiceMode: 'aggregate',
     watermark,
@@ -649,9 +678,7 @@ function buildInvoiceTemplateData_(item) {
 
   const isAggregateInvoice = (receiptMonths && receiptMonths.length > 1)
     || (Number.isFinite(normalizedPreviousReceiptAmount) && normalizedPreviousReceiptAmount > 0);
-  const chargeMonthLabel = isAggregateInvoice
-    ? formatInvoiceChargeMonthLabel_(receiptMonths, monthLabel)
-    : monthLabel;
+  const chargeMonthLabel = monthLabel;
   const aggregateMonthTotals = isAggregateInvoice
     ? normalizeAggregateMonthsForInvoice_(receiptMonths, billingMonth).map(monthKey => ({
       month: monthKey,

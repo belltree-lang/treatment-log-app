@@ -304,7 +304,7 @@ function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {
 
   assert.strictEqual(aggregate.isAggregateInvoice, true, '未回収や合算対象があれば合算モードになる');
   assert.strictEqual(aggregate.invoiceMode, 'aggregate', 'モード名を保持する');
-  assert.strictEqual(aggregate.chargeMonthLabel, '2024年12月〜2025年02月', '対象月は範囲表示になる');
+  assert.strictEqual(aggregate.chargeMonthLabel, '2025年02月', '請求月のみを表示する');
 
   const standard = buildInvoiceTemplateData_({ billingMonth: '202502', hasPreviousPrepared: false });
   assert.strictEqual(standard.isAggregateInvoice, false, '未回収が無ければ通常モード');

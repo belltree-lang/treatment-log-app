@@ -383,11 +383,17 @@ function resolveInvoiceReceiptDisplay_(item) {
     normalizeReceiptMonths_(item && item.receiptMonths),
     billingMonthKey
   );
+  const aggregateTargetReceiptMonths = normalizeAggregateMonthsForInvoice_(
+    Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [],
+    billingMonthKey
+  );
   const fallbackReceiptMonths = normalizePastInvoiceMonths_(
     normalizeReceiptMonths_([], fallbackMonth),
     billingMonthKey
   );
-  const receiptMonths = explicitReceiptMonths.length ? explicitReceiptMonths : fallbackReceiptMonths;
+  const receiptMonths = explicitReceiptMonths.length
+    ? explicitReceiptMonths
+    : aggregateTargetReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
@@ -402,6 +408,9 @@ function resolveInvoiceReceiptDisplay_(item) {
   const showReceipt = aggregateConfirmed
     ? true
     : (hasPreviousReceiptSheet && receiptStatus !== 'UNPAID' && !hasBankRestriction);
+  const receiptMonthsSource = receiptMonths.length
+    ? (explicitReceiptMonths.length ? 'explicit' : 'aggregate')
+    : (fallbackReceiptMonths.length ? 'fallback' : 'none');
 
   return {
     visible: showReceipt,
@@ -409,7 +418,8 @@ function resolveInvoiceReceiptDisplay_(item) {
     receiptRemark,
     receiptMonths,
     explicitReceiptMonths,
-    receiptMonthsSource: explicitReceiptMonths.length ? 'explicit' : 'fallback',
+    fallbackReceiptMonths,
+    receiptMonthsSource,
     aggregateStatus,
     aggregateConfirmed
   };
@@ -438,9 +448,11 @@ function resolveAggregateInvoiceDecision_(item, receipt, billingMonth) {
   const aggregateMonthsSource = usesExplicitReceiptMonths
     ? 'explicitReceiptMonths'
     : (usesAggregateTargetMonths ? 'aggregateTargetMonths' : 'none');
-  const fallbackReceiptMonths = receipt && receipt.receiptMonthsSource === 'fallback'
-    ? normalizeAggregateMonthsForInvoice_(receipt.receiptMonths || [], billingMonthKey)
-    : [];
+  const fallbackReceiptMonths = Array.isArray(receipt && receipt.fallbackReceiptMonths)
+    ? normalizeAggregateMonthsForInvoice_(receipt.fallbackReceiptMonths, billingMonthKey)
+    : (receipt && receipt.receiptMonthsSource === 'fallback'
+      ? normalizeAggregateMonthsForInvoice_(receipt.receiptMonths || [], billingMonthKey)
+      : []);
 
   const trace = {
     billingMonth: billingMonthKey,

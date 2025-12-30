@@ -324,6 +324,63 @@ function testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate() {
   assert.strictEqual(standard.invoiceMode, 'standard', 'フォールバックでは通常モードを維持する');
   assert.strictEqual(standard.aggregateMonthTotals.length, 0, '合算内訳は生成しない');
   assert.strictEqual(standard.chargeMonthLabel, '2025年11月', '請求月表示は billingMonth を優先する');
+  const trace = standard.aggregateDecisionTrace;
+  assert.ok(trace, '合算判定トレースを含める');
+  assert.strictEqual(trace.receiptMonthsSource, 'fallback', '領収月のソースを明示する');
+  assert.deepStrictEqual(Array.from(trace.decisionSources || []), [], 'フォールバック領収月は判定ソースに含めない');
+  assert.strictEqual(trace.fallbackReceiptMonthsUsedInDecision, false, 'フォールバック月を意思決定に利用しない');
+}
+
+function testAggregateStatusDoesNotFinalizeWithoutConfirmation() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { buildInvoiceTemplateData_ } = context;
+
+  const aggregate = buildInvoiceTemplateData_({
+    billingMonth: '202501',
+    previousReceiptAmount: 1000,
+    aggregateStatus: 'scheduled'
+  });
+  assert.strictEqual(aggregate.isAggregateInvoice, true, '未収金があれば合算判定は true');
+  assert.strictEqual(aggregate.aggregateConfirmed, false, 'scheduled では確定扱いにしない');
+  assert.strictEqual(aggregate.finalized, false, '合算でも confirmed でなければ確定扱いにしない');
+
+  const confirmed = buildInvoiceTemplateData_({
+    billingMonth: '202501',
+    previousReceiptAmount: 1000,
+    aggregateStatus: 'confirmed'
+  });
+  assert.strictEqual(confirmed.aggregateConfirmed, true, 'confirmed のときのみ確定扱いにする');
+  assert.strictEqual(confirmed.finalized, true, 'confirmed なら確定扱い');
+}
+
+function testPreviousReceiptSettlementRequiresExplicitStatus() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { isPreviousReceiptSettled_, buildInvoicePreviousReceipt_, buildInvoiceTemplateData_ } = context;
+  assert.strictEqual(isPreviousReceiptSettled_({}), false, 'ステータス不明なら未確定扱い');
+  assert.strictEqual(isPreviousReceiptSettled_({ previousReceiptStatus: 'SETTLED' }), true, 'previousReceiptStatus=SETTLED を settled とみなす');
+  assert.strictEqual(isPreviousReceiptSettled_({ receiptStatus: 'settled' }), true, '領収ステータスでも settled を認める');
+  assert.strictEqual(isPreviousReceiptSettled_({ previousReceiptStatus: 'pending' }), false, 'その他は未確定扱い');
+
+  const receipt = buildInvoicePreviousReceipt_({ billingMonth: '202501', previousReceiptStatus: 'SETTLED' });
+  assert.strictEqual(receipt.settled, true, '前月領収情報に settled フラグを含める');
+
+  const finalizedByReceipt = buildInvoiceTemplateData_({
+    billingMonth: '202501',
+    previousReceiptStatus: 'SETTLED'
+  });
+  assert.strictEqual(finalizedByReceipt.finalized, true, '前月領収ステータスが SETTLED のとき確定扱いにする');
+
+  const injectedSettled = buildInvoiceTemplateData_({
+    billingMonth: '202501',
+    previousReceipt: { settled: true }
+  });
+  assert.strictEqual(injectedSettled.finalized, false, '明示的なステータスなしの settled=true では確定扱いにしない');
 }
 
 function testPreviousReceiptVisibilityFollowsReceiptDecision() {
@@ -800,6 +857,8 @@ function run() {
   testReceiptVisibilityRespectsBankFlagsAndStatus();
   testInvoiceTemplateSwitchesAggregateModeForUnpaid();
   testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate();
+  testAggregateStatusDoesNotFinalizeWithoutConfirmation();
+  testPreviousReceiptSettlementRequiresExplicitStatus();
   testPreviousReceiptVisibilityFollowsReceiptDecision();
   testPreviousReceiptIsHiddenWhenPreviousPreparedMissing();
   testAggregateTemplateUsesExplicitMonths();

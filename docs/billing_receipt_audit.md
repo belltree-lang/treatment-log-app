@@ -6,9 +6,9 @@
 
 ## GS (billingOutput.js)
 
-### 削除候補
-- `buildAggregateInvoiceDetailForMonth_` は定義のみで呼び出し箇所が見当たらず、現在のテンプレート生成フローから外れている。履歴表示などで未使用。 【F:src/output/billingOutput.js†L757-L790】
-- `formatInvoiceChargeMonthLabel_` は請求／領収書のどの出力パスからも参照されていない。 【F:src/output/billingOutput.js†L609-L618】
+### 削除済み（issue #935）
+- `buildAggregateInvoiceDetailForMonth_` は定義のみで呼び出し箇所が見当たらず、現在のテンプレート生成フローから外れていたため削除。履歴表示などでも未使用。
+- `formatInvoiceChargeMonthLabel_` は請求／領収書のどの出力パスからも参照されていなかったため削除。過去仕様の名残と推測。
 
 ### 要整理・責務不明
 - `resolveInvoiceReceiptDisplay_` のデフォルトでは `hasPreviousReceiptSheet` が未定義でも true となり、`receiptStatus !== 'UNPAID'` かつ銀行フラグがない限り領収書表示を許可する挙動。前月領収書の有無が未設定でも表示されるため、フラグ未設定と実在の区別がつかない。 【F:src/output/billingOutput.js†L362-L435】

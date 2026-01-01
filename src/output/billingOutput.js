@@ -323,7 +323,7 @@ function formatAggregatedReceiptRemark_(months) {
   return parts.join('・') + '施術料金として';
 }
 
-function normalizeReceiptMonths_(months, fallbackMonth) {
+function normalizeReceiptMonths_(months) {
   const list = Array.isArray(months) ? months : [];
   const seen = new Set();
   const normalized = list.map(value => normalizeInvoiceMonthKey_(value)).filter(Boolean).filter(ym => {
@@ -331,11 +331,6 @@ function normalizeReceiptMonths_(months, fallbackMonth) {
     seen.add(ym);
     return true;
   });
-
-  if (!normalized.length && fallbackMonth) {
-    const normalizedFallback = normalizeInvoiceMonthKey_(fallbackMonth);
-    if (normalizedFallback) normalized.push(normalizedFallback);
-  }
 
   return normalized;
 }
@@ -367,7 +362,7 @@ function resolveHasPreviousReceiptSheet_(item) {
   if (Object.prototype.hasOwnProperty.call(item, 'hasPreviousPrepared')) {
     return !!item.hasPreviousPrepared;
   }
-  return true;
+  return false;
 }
 
 function normalizeAggregateStatus_(status) {
@@ -384,12 +379,7 @@ function resolveInvoiceReceiptDisplay_(item) {
   );
   const aggregateStatus = normalizeAggregateStatus_(item && item.aggregateStatus);
   const aggregateConfirmed = aggregateStatus === 'confirmed';
-  const fallbackMonth = resolvePreviousBillingMonthKey_(billingMonthKey);
-  const fallbackReceiptMonths = normalizePastInvoiceMonths_(
-    normalizeReceiptMonths_(fallbackMonth ? [fallbackMonth] : [], fallbackMonth),
-    billingMonthKey
-  );
-  const receiptMonths = explicitReceiptMonths.length ? explicitReceiptMonths : fallbackReceiptMonths;
+  const receiptMonths = explicitReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
@@ -398,7 +388,7 @@ function resolveInvoiceReceiptDisplay_(item) {
   const shouldHideByStatus = receiptStatus === 'UNPAID' || receiptStatus === 'HOLD';
   const visible = !shouldHideByStatus && !item.skipReceipt && receiptMonths.length > 0 && hasPreviousReceiptSheet;
   const receiptMonthsSource = receiptMonths.length
-    ? (explicitReceiptMonths.length ? 'explicit' : 'fallback')
+    ? 'explicit'
     : 'none';
 
   return {

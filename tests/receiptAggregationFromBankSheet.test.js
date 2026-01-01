@@ -30,23 +30,26 @@ function createContext() {
   return ctx;
 }
 
-(function testReceiptMonthsBackfillFromBankSheet() {
+(function testAggregateReceiptGeneratedFromPreviousAggregateInvoice() {
   const context = createContext();
 
-  const bankAmounts = {
-    '202411': { P01: 1200 },
-    '202410': { P01: 800 }
-  };
-
-  context.collectPreviousReceiptAmountsFromBankSheet_ = monthKey => ({
-    hasSheet: true,
-    amounts: bankAmounts[monthKey] || {}
-  });
-  context.buildReceiptMonthsFromBankUnpaid_ = patientId => (patientId === 'P01'
-    ? ['202410', '202411']
-    : ['202411']
+  context.buildReceiptMonthsFromBankUnpaid_ = (patientId, anchorMonth) => (patientId === 'P01' && anchorMonth === '202411'
+    ? ['202409', '202410', '202411']
+    : []
   );
-  context.collectBankWithdrawalAmountsByPatient_ = monthKey => bankAmounts[monthKey] || {};
+  context.isPatientCheckedUnpaidInBankWithdrawalSheet_ = (patientId, monthKey) => patientId === 'P01' && monthKey === '202411';
+  context.getPreparedBillingForMonthCached_ = monthKey => (monthKey === '202411'
+    ? { billingMonth: '202411', billingJson: [{ patientId: 'P01', aggregateUntilMonth: '202411', aggregateTargetMonths: ['202409', '202410', '202411'] }], aggregateUntilMonth: '202411' }
+    : null
+  );
+  context.getPreparedBillingEntryForMonthCached_ = (monthKey, patientId) => (monthKey === '202411' && patientId === 'P01'
+    ? { patientId: 'P01', aggregateUntilMonth: '202411', aggregateTargetMonths: ['202409', '202410', '202411'] }
+    : null
+  );
+  context.buildReceiptMonthBreakdownForEntry_ = (patientId, months) => months.map((month, idx) => ({
+    month,
+    amount: (idx + 1) * 1000
+  }));
 
   const prepared = {
     billingMonth: '202412',
@@ -61,24 +64,18 @@ function createContext() {
   const patientWithoutUnpaid = enriched.billingJson[1];
 
   assert.deepStrictEqual(
-    patientWithUnpaid.receiptMonths,
-    ['202410', '202411'],
-    'receipt months include unpaid history'
+    Array.from(patientWithUnpaid.receiptMonths || []),
+    ['202409', '202410', '202411'],
+    'aggregate receipt includes designated month and unpaid history'
   );
-  assert.strictEqual(
-    patientWithUnpaid.previousReceiptAmount,
-    2000,
-    'previousReceiptAmount aggregates all receipt months'
+  assert.ok(
+    Array.isArray(patientWithUnpaid.receiptMonthBreakdown) && patientWithUnpaid.receiptMonthBreakdown.length === 3,
+    'aggregate receipt keeps month breakdown'
   );
   assert.deepStrictEqual(
-    patientWithoutUnpaid.receiptMonths,
+    Array.from(patientWithoutUnpaid.receiptMonths || []),
     ['202411'],
-    'patients without unpaid history only include anchor month'
-  );
-  assert.strictEqual(
-    patientWithoutUnpaid.previousReceiptAmount,
-    0,
-    'patients without amounts keep zero aggregate'
+    'patients without aggregate invoices keep the default single-month receipt'
   );
 })();
 

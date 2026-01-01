@@ -264,28 +264,21 @@ function testReceiptVisibilityRespectsBankFlagsAndStatus() {
   assert.deepStrictEqual(Array.from(defaultStatus.receiptMonths || []), ['202412'], '前月の領収書を作成する');
 
   const withoutPreviousSheet = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', hasPreviousPrepared: false });
-  assert.strictEqual(withoutPreviousSheet.showReceipt, false, '銀行引落シートが無ければ前月領収書を非表示にする');
+  assert.strictEqual(withoutPreviousSheet.showReceipt, false, '前月請求が無ければ領収書を非表示にする');
 
-  const withUnpaidFlag = resolveInvoiceReceiptDisplay_({
+  const withUnpaidStatus = resolveInvoiceReceiptDisplay_({
     billingMonth: '202501',
     hasPreviousPrepared: true,
-    bankFlags: { ae: true, af: false }
+    receiptStatus: 'UNPAID'
   });
-  assert.strictEqual(withUnpaidFlag.showReceipt, false, '未回収フラグがONのときは領収書を非表示にする');
+  assert.strictEqual(withUnpaidStatus.showReceipt, false, '領収ステータスが UNPAID のときは非表示にする');
 
-  const withAggregateFlag = resolveInvoiceReceiptDisplay_({
+  const withSkipReceipt = resolveInvoiceReceiptDisplay_({
     billingMonth: '202501',
     hasPreviousPrepared: true,
-    bankFlags: { ae: false, af: true }
+    skipReceipt: true
   });
-  assert.strictEqual(withAggregateFlag.showReceipt, false, '合算フラグがONのときは領収書を非表示にする');
-
-  const bankFlagsCleared = resolveInvoiceReceiptDisplay_({
-    billingMonth: '202501',
-    hasPreviousPrepared: true,
-    bankFlags: { ae: false, af: false }
-  });
-  assert.strictEqual(bankFlagsCleared.showReceipt, true, '両方OFFなら従来どおり領収書を表示する');
+  assert.strictEqual(withSkipReceipt.showReceipt, false, 'skipReceipt が指定された場合は非表示にする');
 }
 
 function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {
@@ -297,19 +290,23 @@ function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {
 
   const aggregate = buildInvoiceTemplateData_({
     billingMonth: '202502',
+    aggregateStatus: 'confirmed',
+    aggregateTargetMonths: ['202412', '202501', '202502'],
     receiptMonths: ['202412', '202501', '202502'],
-    hasPreviousReceiptSheet: true,
-    previousReceiptAmount: 1500
+    skipReceipt: true,
+    hasPreviousReceiptSheet: true
   });
 
-  assert.strictEqual(aggregate.isAggregateInvoice, true, '未回収や合算対象があれば合算モードになる');
+  assert.strictEqual(aggregate.isAggregateInvoice, true, '合算対象があれば合算モードになる');
   assert.strictEqual(aggregate.invoiceMode, 'aggregate', 'モード名を保持する');
   assert.strictEqual(aggregate.chargeMonthLabel, '2025年02月', '請求月のみを表示する');
+  assert.strictEqual(aggregate.showReceipt, false, '合算請求時は領収書を出力しない');
 
-  const standard = buildInvoiceTemplateData_({ billingMonth: '202502', hasPreviousPrepared: false });
+  const standard = buildInvoiceTemplateData_({ billingMonth: '202502', hasPreviousPrepared: true });
   assert.strictEqual(standard.isAggregateInvoice, false, '未回収が無ければ通常モード');
   assert.strictEqual(standard.invoiceMode, 'standard', '通常モードを示す');
   assert.strictEqual(standard.chargeMonthLabel, '2025年02月', '請求月のみを表示する');
+  assert.strictEqual(standard.showReceipt, true, '通常モードでは領収書を表示する');
 }
 
 function testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate() {
@@ -328,7 +325,6 @@ function testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate() {
   assert.ok(trace, '合算判定トレースを含める');
   assert.strictEqual(trace.receiptMonthsSource, 'fallback', '領収月のソースを明示する');
   assert.deepStrictEqual(Array.from(trace.decisionSources || []), [], 'フォールバック領収月は判定ソースに含めない');
-  assert.strictEqual(trace.fallbackReceiptMonthsUsedInDecision, false, 'フォールバック月を意思決定に利用しない');
 }
 
 function testReceiptDisplayFallsBackToPreviousMonthWhenDefault() {
@@ -346,6 +342,35 @@ function testReceiptDisplayFallsBackToPreviousMonthWhenDefault() {
   assert.deepStrictEqual(Array.from(display.explicitReceiptMonths || []), [], '明示指定は無いままにする');
 }
 
+function testAggregateDecisionIgnoresPreviousReceiptAmount() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const aggregate = context.buildInvoiceTemplateData_({
+    billingMonth: '202501',
+    previousReceiptAmount: 5000,
+    receiptMonths: ['202412']
+  });
+
+  assert.strictEqual(aggregate.isAggregateInvoice, false, '金額のみでは合算扱いにしない');
+}
+
+function testAggregateInvoiceHidesReceiptWhenSkipped() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const display = context.resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    hasPreviousPrepared: true,
+    receiptMonths: ['202412', '202501'],
+    skipReceipt: true
+  });
+
+  assert.strictEqual(display.visible, false, '合算請求時は領収書を表示しない');
+}
+
 function testAggregateStatusDoesNotFinalizeWithoutConfirmation() {
   const context = createContext();
   vm.createContext(context);
@@ -355,16 +380,16 @@ function testAggregateStatusDoesNotFinalizeWithoutConfirmation() {
 
   const aggregate = buildInvoiceTemplateData_({
     billingMonth: '202501',
-    previousReceiptAmount: 1000,
+    aggregateTargetMonths: ['202411', '202412'],
     aggregateStatus: 'scheduled'
   });
-  assert.strictEqual(aggregate.isAggregateInvoice, true, '未収金があれば合算判定は true');
+  assert.strictEqual(aggregate.isAggregateInvoice, true, '明示的な合算対象があれば合算判定は true');
   assert.strictEqual(aggregate.aggregateConfirmed, false, 'scheduled では確定扱いにしない');
   assert.strictEqual(aggregate.finalized, false, '合算でも confirmed でなければ確定扱いにしない');
 
   const confirmed = buildInvoiceTemplateData_({
     billingMonth: '202501',
-    previousReceiptAmount: 1000,
+    aggregateTargetMonths: ['202411', '202412'],
     aggregateStatus: 'confirmed'
   });
   assert.strictEqual(confirmed.aggregateConfirmed, true, 'confirmed のときのみ確定扱いにする');
@@ -409,7 +434,7 @@ function testPreviousReceiptVisibilityFollowsReceiptDecision() {
   assert.strictEqual(payable.previousReceipt.visible, true, '銀行引落シートがあれば前月領収書も表示する');
 
   const onHold = buildInvoiceTemplateData_({ billingMonth: '202501', receiptStatus: 'HOLD', hasPreviousPrepared: true });
-  assert.strictEqual(onHold.previousReceipt.visible, true, '領収ステータスに依存せず表示する');
+  assert.strictEqual(onHold.previousReceipt.visible, false, 'HOLD の場合は領収書を非表示にする');
 }
 
 function testPreviousReceiptIsHiddenWhenPreviousPreparedMissing() {
@@ -873,6 +898,8 @@ function run() {
   testInvoiceTemplateSwitchesAggregateModeForUnpaid();
   testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate();
   testReceiptDisplayFallsBackToPreviousMonthWhenDefault();
+  testAggregateDecisionIgnoresPreviousReceiptAmount();
+  testAggregateInvoiceHidesReceiptWhenSkipped();
   testAggregateStatusDoesNotFinalizeWithoutConfirmation();
   testPreviousReceiptSettlementRequiresExplicitStatus();
   testPreviousReceiptVisibilityFollowsReceiptDecision();

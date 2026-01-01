@@ -260,25 +260,25 @@ function testReceiptVisibilityRespectsBankFlagsAndStatus() {
   const { resolveInvoiceReceiptDisplay_ } = context;
 
   const defaultStatus = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', hasPreviousPrepared: true });
-  assert.strictEqual(defaultStatus.showReceipt, true, '銀行引落シートがあれば前月領収書を表示する');
+  assert.strictEqual(defaultStatus.visible, true, '銀行引落シートがあれば前月領収書を表示する');
   assert.deepStrictEqual(Array.from(defaultStatus.receiptMonths || []), ['202412'], '前月の領収書を作成する');
 
   const withoutPreviousSheet = resolveInvoiceReceiptDisplay_({ billingMonth: '202501', hasPreviousPrepared: false });
-  assert.strictEqual(withoutPreviousSheet.showReceipt, false, '前月請求が無ければ領収書を非表示にする');
+  assert.strictEqual(withoutPreviousSheet.visible, false, '前月請求が無ければ領収書を非表示にする');
 
   const withUnpaidStatus = resolveInvoiceReceiptDisplay_({
     billingMonth: '202501',
     hasPreviousPrepared: true,
     receiptStatus: 'UNPAID'
   });
-  assert.strictEqual(withUnpaidStatus.showReceipt, false, '領収ステータスが UNPAID のときは非表示にする');
+  assert.strictEqual(withUnpaidStatus.visible, false, '領収ステータスが UNPAID のときは非表示にする');
 
   const withSkipReceipt = resolveInvoiceReceiptDisplay_({
     billingMonth: '202501',
     hasPreviousPrepared: true,
     skipReceipt: true
   });
-  assert.strictEqual(withSkipReceipt.showReceipt, false, 'skipReceipt が指定された場合は非表示にする');
+  assert.strictEqual(withSkipReceipt.visible, false, 'skipReceipt が指定された場合は非表示にする');
 }
 
 function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {

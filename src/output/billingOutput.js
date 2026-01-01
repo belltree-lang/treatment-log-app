@@ -606,18 +606,6 @@ function sanitizeFileName_(text) {
   return raw ? raw.replace(/[\\/\r\n]/g, '_') : '請求書';
 }
 
-function formatInvoiceChargeMonthLabel_(receiptMonths, fallbackMonthLabel) {
-  const months = Array.isArray(receiptMonths)
-    ? receiptMonths.map(normalizeInvoiceMonthKey_).filter(Boolean)
-    : [];
-  if (!months.length) return fallbackMonthLabel || '';
-  const sorted = months.slice().sort();
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  if (first === last) return normalizeBillingMonthLabel_(first);
-  return normalizeBillingMonthLabel_(first) + '〜' + normalizeBillingMonthLabel_(last);
-}
-
 function normalizeInvoicePatientIdsForOutput_(patientIds) {
   const source = Array.isArray(patientIds) ? patientIds : String(patientIds || '').split(/[,\s、]+/);
   const normalized = source
@@ -752,42 +740,6 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     finalized: !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled)),
     aggregateDecisionTrace
   });
-}
-
-function buildAggregateInvoiceDetailForMonth_(entry, representativeMonthKey) {
-  const monthKey = normalizeInvoiceMonthKey_(entry && (entry.billingMonth || entry.month));
-  if (!monthKey) return null;
-
-  const normalizedRepresentativeMonth = normalizeInvoiceMonthKey_(representativeMonthKey);
-  const isRepresentativeMonth = normalizedRepresentativeMonth ? monthKey === normalizedRepresentativeMonth : true;
-  const breakdownParams = Object.assign({}, entry, { billingMonth: monthKey });
-  if (!isRepresentativeMonth) {
-    breakdownParams.carryOverAmount = 0;
-    breakdownParams.carryOverFromHistory = 0;
-  }
-
-  const breakdown = calculateInvoiceChargeBreakdown_(breakdownParams);
-  const visits = breakdown.visits || 0;
-  const unitPrice = breakdown.treatmentUnitPrice || 0;
-  const transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
-
-  const rows = [];
-  if (isRepresentativeMonth) {
-    rows.push({ label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(entry) });
-  }
-  rows.push(
-    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
-    { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
-  );
-
-  return {
-    month: monthKey,
-    monthLabel: normalizeBillingMonthLabel_(monthKey),
-    rows,
-    grandTotal: breakdown.grandTotal,
-    treatmentAmount: breakdown.treatmentAmount,
-    transportAmount: breakdown.transportAmount
-  };
 }
 
 function buildInvoiceTemplateData_(item) {

@@ -396,14 +396,13 @@ function resolveInvoiceReceiptDisplay_(item) {
     : '');
   const receiptStatus = item && item.receiptStatus ? String(item.receiptStatus).toUpperCase() : '';
   const shouldHideByStatus = receiptStatus === 'UNPAID' || receiptStatus === 'HOLD';
-  const showReceipt = !shouldHideByStatus && !item.skipReceipt && receiptMonths.length > 0 && hasPreviousReceiptSheet;
+  const visible = !shouldHideByStatus && !item.skipReceipt && receiptMonths.length > 0 && hasPreviousReceiptSheet;
   const receiptMonthsSource = receiptMonths.length
     ? (explicitReceiptMonths.length ? 'explicit' : 'fallback')
     : 'none';
 
   return {
-    visible: showReceipt,
-    showReceipt,
+    visible,
     receiptRemark,
     receiptMonths,
     explicitReceiptMonths,
@@ -639,18 +638,17 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const months = normalizeAggregateMonthsForInvoice_(
     Array.isArray(aggregateMonths) && aggregateMonths.length
       ? aggregateMonths
-      : (receiptDecisionMonths.length
-        ? receiptDecisionMonths
-        : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])),
+    : (receiptDecisionMonths.length
+      ? receiptDecisionMonths
+      : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])),
     billingMonth
   );
   const aggregateRemark = formatAggregateInvoiceRemark_(months);
-  const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(item && item.patientId)
     : String(item && item.patientId || '').trim();
-  const aggregateStatus = normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = aggregateStatus === 'confirmed';
+  const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
+  const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : aggregateStatus === 'confirmed';
   const aggregateMonthTotals = months.map(monthKey => ({
     month: monthKey,
     monthLabel: normalizeBillingMonthLabel_(monthKey),
@@ -670,7 +668,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   }
 
   if (previousReceipt) {
-    previousReceipt.visible = !!(receipt && receipt.visible && hasPreviousReceiptSheet);
+    previousReceipt.visible = !!(receipt && receipt.visible);
   }
 
   const aggregateDecision = resolveAggregateInvoiceDecision_(item, receipt, billingMonth);
@@ -717,9 +715,6 @@ function buildInvoiceTemplateData_(item) {
   const visits = breakdown.visits || 0;
   const unitPrice = breakdown.treatmentUnitPrice || 0;
   const watermark = buildInvoiceWatermark_(item);
-  const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
-  const aggregateStatus = normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = aggregateStatus === 'confirmed';
   const rows = [
     { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
@@ -727,6 +722,8 @@ function buildInvoiceTemplateData_(item) {
   ];
 
   const receipt = resolveInvoiceReceiptDisplay_(item);
+  const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
+  const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : aggregateStatus === 'confirmed';
   const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
   const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt);
   const previousReceipt = item && item.previousReceipt
@@ -737,7 +734,7 @@ function buildInvoiceTemplateData_(item) {
   }
 
   if (previousReceipt) {
-    previousReceipt.visible = !!(receipt && receipt.visible && hasPreviousReceiptSheet);
+    previousReceipt.visible = !!(receipt && receipt.visible);
   }
 
   const aggregateDecision = resolveAggregateInvoiceDecision_(item, receipt, billingMonth);

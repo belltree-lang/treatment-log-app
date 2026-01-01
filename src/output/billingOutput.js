@@ -445,8 +445,7 @@ function resolveAggregateInvoiceDecision_(item, receipt, billingMonth) {
 
   return {
     aggregateDecisionMonths,
-    isAggregateInvoice: !!((aggregateDecisionMonths && aggregateDecisionMonths.length > 1)
-      || normalizeAggregateStatus_(item && item.aggregateStatus) === 'confirmed'),
+    isAggregateInvoice: !!(aggregateDecisionMonths && aggregateDecisionMonths.length > 1),
     decisionSources,
     trace
   };

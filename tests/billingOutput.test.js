@@ -342,6 +342,35 @@ function testReceiptDisplayFallsBackToPreviousMonthWhenDefault() {
   assert.deepStrictEqual(Array.from(display.explicitReceiptMonths || []), [], '明示指定は無いままにする');
 }
 
+function testAggregateDecisionIgnoresPreviousReceiptAmount() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const aggregate = context.buildInvoiceTemplateData_({
+    billingMonth: '202501',
+    previousReceiptAmount: 5000,
+    receiptMonths: ['202412']
+  });
+
+  assert.strictEqual(aggregate.isAggregateInvoice, false, '金額のみでは合算扱いにしない');
+}
+
+function testAggregateInvoiceHidesReceiptWhenSkipped() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const display = context.resolveInvoiceReceiptDisplay_({
+    billingMonth: '202501',
+    hasPreviousPrepared: true,
+    receiptMonths: ['202412', '202501'],
+    skipReceipt: true
+  });
+
+  assert.strictEqual(display.visible, false, '合算請求時は領収書を表示しない');
+}
+
 function testAggregateStatusDoesNotFinalizeWithoutConfirmation() {
   const context = createContext();
   vm.createContext(context);
@@ -869,6 +898,8 @@ function run() {
   testInvoiceTemplateSwitchesAggregateModeForUnpaid();
   testInvoiceTemplateIgnoresFallbackReceiptMonthForAggregate();
   testReceiptDisplayFallsBackToPreviousMonthWhenDefault();
+  testAggregateDecisionIgnoresPreviousReceiptAmount();
+  testAggregateInvoiceHidesReceiptWhenSkipped();
   testAggregateStatusDoesNotFinalizeWithoutConfirmation();
   testPreviousReceiptSettlementRequiresExplicitStatus();
   testPreviousReceiptVisibilityFollowsReceiptDecision();

@@ -967,16 +967,19 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     const hadAggregateInvoice = !!(previousUnpaid && aggregateUntilMonth);
 
     if (hadAggregateInvoice) {
-      const aggregateReceiptMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, aggregateUntilMonth, previousPrepared || prepared, monthCache);
+      const aggregateSourceMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, aggregateUntilMonth, previousPrepared || prepared, monthCache)
+        .concat(Array.isArray(previousEntry && previousEntry.aggregateTargetMonths) ? previousEntry.aggregateTargetMonths : []);
+      const aggregateReceiptMonths = normalizePastBillingMonths_(aggregateSourceMonths, monthKey);
+      const receiptMonths = Array.from(new Set(aggregateReceiptMonths));
       const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, aggregateReceiptMonths, previousPrepared || prepared, monthCache);
-      const aggregateRemark = formatAggregateReceiptDescription_(aggregateReceiptMonths);
+      const aggregateRemark = formatAggregateReceiptDescription_(receiptMonths);
       const previousReceipt = {
         addressee: '株式会社べるつりー',
         note: aggregateRemark
       };
       return Object.assign({}, entry, {
         hasPreviousReceiptSheet: true,
-        receiptMonths: aggregateReceiptMonths,
+        receiptMonths,
         receiptRemark: aggregateRemark,
         receiptMonthBreakdown: receiptBreakdown,
         previousReceipt: entry && entry.previousReceipt ? entry.previousReceipt : previousReceipt

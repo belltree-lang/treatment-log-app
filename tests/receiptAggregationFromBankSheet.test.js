@@ -39,11 +39,11 @@ function createContext() {
   );
   context.isPatientCheckedUnpaidInBankWithdrawalSheet_ = (patientId, monthKey) => patientId === 'P01' && monthKey === '202411';
   context.getPreparedBillingForMonthCached_ = monthKey => (monthKey === '202411'
-    ? { billingMonth: '202411', billingJson: [{ patientId: 'P01', aggregateUntilMonth: '202411' }], aggregateUntilMonth: '202411' }
+    ? { billingMonth: '202411', billingJson: [{ patientId: 'P01', aggregateUntilMonth: '202411', aggregateTargetMonths: ['202409', '202410', '202411'] }], aggregateUntilMonth: '202411' }
     : null
   );
   context.getPreparedBillingEntryForMonthCached_ = (monthKey, patientId) => (monthKey === '202411' && patientId === 'P01'
-    ? { patientId: 'P01', aggregateUntilMonth: '202411' }
+    ? { patientId: 'P01', aggregateUntilMonth: '202411', aggregateTargetMonths: ['202409', '202410', '202411'] }
     : null
   );
   context.buildReceiptMonthBreakdownForEntry_ = (patientId, months) => months.map((month, idx) => ({

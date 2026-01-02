@@ -1807,6 +1807,13 @@ function assertBillingAdmin_() {
   return email;
 }
 
+function getBillingAdminInfo() {
+  const email = normalizeEmailKeySafe_(getActiveUserEmail_());
+  const admins = getBillingAdminEmails_().map(normalizeEmailKeySafe_).filter(Boolean);
+  const isAdmin = email && admins.indexOf(email) !== -1;
+  return { isAdmin, email };
+}
+
 function buildPreparedBillingPayload_(billingMonth) {
   if (typeof clearTreatmentLogCache_ === 'function') {
     clearTreatmentLogCache_();
@@ -3448,7 +3455,7 @@ function finalizeBillingEntry(billingMonth, patientId) {
   return toClientBillingPayload_(updatedPrepared);
 }
 
-function unfinalizeBillingEntry(billingMonth, patientId) {
+function unfinalizeBillingEntry(billingMonth, patientId, reason) {
   const month = normalizeBillingMonthInput(billingMonth);
   const pid = billingNormalizePatientId_(patientId);
   if (!month || !pid) {
@@ -3456,6 +3463,10 @@ function unfinalizeBillingEntry(billingMonth, patientId) {
   }
 
   const adminEmail = assertBillingAdmin_();
+  const unfinalizeReason = String(reason || '').trim();
+  if (!unfinalizeReason) {
+    throw new Error('確定解除の理由を入力してください。');
+  }
 
   const loaded = loadPreparedBillingWithSheetFallback_(month.key, { allowInvalid: true });
   const prepared = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
@@ -3469,13 +3480,18 @@ function unfinalizeBillingEntry(billingMonth, patientId) {
   }
 
   const target = prepared.billingJson[index] || {};
+  if (!isBillingEntryFinalized_(target)) {
+    throw new Error('この請求は確定されていません。');
+  }
   const updatedEntry = Object.assign({}, target);
-  delete updatedEntry.billingFinalized;
   delete updatedEntry.finalizedAt;
   delete updatedEntry.finalizedBy;
   delete updatedEntry.finalizationSource;
+  updatedEntry.billingFinalized = false;
   updatedEntry.unfinalizedAt = new Date().toISOString();
   updatedEntry.unfinalizedBy = adminEmail;
+  updatedEntry.unfinalizeReason = unfinalizeReason;
+  updatedEntry.unfinalizationSource = 'UI';
 
   const updatedBillingJson = prepared.billingJson.slice();
   updatedBillingJson[index] = updatedEntry;

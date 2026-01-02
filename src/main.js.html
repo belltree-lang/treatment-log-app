@@ -5,6 +5,8 @@ const billingState = {
   prepared: null,
   statusMessage: '',
   errorMessage: '',
+  isBillingAdmin: false,
+  activeUserEmail: '',
   edits: {},
   patientInfoEdits: {},
   billingOverrideEdits: {},
@@ -135,6 +137,22 @@ function refreshPreparedBillingMonths(preferredMonth) {
       updateBillingControls();
     })
     .getPreparedBillingMonths();
+}
+
+function loadBillingAdminInfo() {
+  google.script.run
+    .withSuccessHandler(function(info) {
+      billingState.isBillingAdmin = !!(info && info.isAdmin);
+      billingState.activeUserEmail = info && info.email ? String(info.email).trim() : '';
+      updateBillingControls();
+      renderBillingResult();
+    })
+    .withFailureHandler(function(err) {
+      console.warn('Failed to load billing admin info', err);
+      billingState.isBillingAdmin = false;
+      billingState.activeUserEmail = '';
+    })
+    .getBillingAdminInfo();
 }
 
 function updateBillingControls() {
@@ -985,6 +1003,11 @@ function isBillingRowFinalized(item) {
   return flag === true || flag === 'true' || flag === 1 || flag === '1';
 }
 
+function isBillingRowUnfinalized(item) {
+  if (!item || isBillingRowFinalized(item)) return false;
+  return !!(item.unfinalizedAt || item.unfinalizedBy || item.unfinalizeReason);
+}
+
 function getFinalizationDetailParts(item) {
   const timestamp = formatDateTimeDisplay(item && item.finalizedAt);
   const actor = item && item.finalizedBy ? String(item.finalizedBy).trim() : '';
@@ -1069,8 +1092,28 @@ function renderReceiptStatusBadge(item) {
   return ` <span class="receipt-badge-group"><span class="${badgeClass}" title="${escapeHtml(titleLines.join(' / '))}">${label}</span>${subText}</span>`;
 }
 
+function renderUnfinalizedBadge(item) {
+  if (!isBillingRowUnfinalized(item)) return '';
+
+  const detailLines = [];
+  const timestamp = formatDateTimeDisplay(item && item.unfinalizedAt);
+  if (timestamp) detailLines.push(timestamp);
+  const actor = item && item.unfinalizedBy ? String(item.unfinalizedBy).trim() : '';
+  if (actor) detailLines.push(actor);
+  const reason = item && item.unfinalizeReason ? String(item.unfinalizeReason).trim() : '';
+  const sub = [
+    detailLines.length ? `<span class="receipt-badge-sub">${escapeHtml(detailLines.join(' / '))}</span>` : '',
+    reason ? `<span class="receipt-badge-sub">理由: ${escapeHtml(reason)}</span>` : ''
+  ].filter(Boolean).join('');
+  const titleParts = ['一度確定された請求が解除されています'];
+  if (detailLines.length) titleParts.push(detailLines.join(' / '));
+  if (reason) titleParts.push('理由: ' + reason);
+  return ` <span class="receipt-badge-group"><span class="receipt-badge unfinalized" title="${escapeHtml(titleParts.join(' / '))}">確定解除</span>${sub}</span>`;
+}
+
 function renderStatusBadges(item) {
   const badges = [
+    renderUnfinalizedBadge(item),
     renderAggregateStatusBadge(item),
     renderReceiptStatusBadge(item)
   ];
@@ -1889,7 +1932,7 @@ function handleBillingFinalize(patientId) {
   }
   const pid = String(patientId || '').trim();
   if (!pid) return;
-  if (!confirm('この患者の請求を確定します。確定解除はできません。')) return;
+  if (!confirm('この患者の請求を確定します。解除する場合は管理者による確定解除が必要です。')) return;
 
   setBillingLoading(true, '確定処理中…');
   google.script.run
@@ -1906,6 +1949,38 @@ function handleBillingFinalize(patientId) {
     })
     .withFailureHandler(onBillingFailed)
     .finalizeBillingEntry(billingState.prepared.billingMonth, pid);
+}
+
+function handleBillingUnfinalize(patientId) {
+  if (!billingState.prepared || !billingState.prepared.billingMonth) {
+    alert('先に「請求データを集計」を実行してください。');
+    return;
+  }
+  const pid = String(patientId || '').trim();
+  if (!pid) return;
+  const reason = prompt('確定解除の理由を入力してください。');
+  if (reason === null) return;
+  const trimmedReason = String(reason || '').trim();
+  if (!trimmedReason) {
+    alert('確定解除の理由を入力してください。');
+    return;
+  }
+  if (!confirm('この患者の請求確定を解除します。よろしいですか？')) return;
+  setBillingLoading(true, '確定解除中…');
+  google.script.run
+    .withSuccessHandler(function(result) {
+      const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
+      billingState.result = normalized;
+      billingState.prepared = normalized;
+      syncReceiptStateFromPayload(normalized);
+      billingState.loading = false;
+      billingState.statusMessage = '請求の確定を解除しました';
+      billingState.errorMessage = '';
+      resetBillingEdits();
+      renderBillingResult();
+    })
+    .withFailureHandler(onBillingFailed)
+    .unfinalizeBillingEntry(billingState.prepared.billingMonth, pid, trimmedReason);
 }
 
 function handleBankFlowAggregation() {
@@ -2330,17 +2405,30 @@ function renderBillingResult() {
       const source = item.finalizationSource ? String(item.finalizationSource).trim() : '';
       const sourceLabel = source ? ` (${escapeHtml(source)})` : '';
       const lockNote = '<div class="finalized-lock-note">確定済みのため再集計・PDF再生成はできません<small>解除しない限り内容を編集できません</small></div>';
+      const unfinalizeButton = billingState.isBillingAdmin
+        ? `<div class="unfinalize-controls"><button type="button" class="btn secondary small unfinalize-btn" data-unfinalize-patient="${item.patientId}" ${billingState.loading ? 'disabled' : ''}>確定解除</button><div class="unfinalize-note">管理者のみ実行できます。解除理由の入力が必要です。</div></div>`
+        : '';
       if (detailText) {
-        return `<div class="muted">確定済み${sourceLabel}<br><small>${detailText}</small>${lockNote}</div>`;
+        return `<div class="muted">確定済み${sourceLabel}<br><small>${detailText}</small>${lockNote}${unfinalizeButton}</div>`;
       }
-      return `<div class="muted">確定済み${sourceLabel}${lockNote}</div>`;
+      return `<div class="muted">確定済み${sourceLabel}${lockNote}${unfinalizeButton}</div>`;
     }
 
     const disabled = billingState.loading || !billingState.prepared || !billingState.prepared.billingMonth;
     const title = disabled
       ? '先に「請求データを集計」を実行してください'
       : '確定すると再集計や自動上書きの対象外になります';
-    return `<button type="button" class="btn small finalize-btn" data-finalize-patient="${item.patientId}" ${disabled ? 'disabled' : ''} title="${title}">確定</button>`;
+    const finalizeButton = `<button type="button" class="btn small finalize-btn" data-finalize-patient="${item.patientId}" ${disabled ? 'disabled' : ''} title="${title}">確定</button>`;
+    if (isBillingRowUnfinalized(item)) {
+      const detailParts = [];
+      const timestamp = formatDateTimeDisplay(item.unfinalizedAt);
+      if (timestamp) detailParts.push(escapeHtml(timestamp));
+      if (item.unfinalizedBy) detailParts.push(escapeHtml(String(item.unfinalizedBy).trim()));
+      const reason = item.unfinalizeReason ? `理由: ${escapeHtml(String(item.unfinalizeReason).trim())}` : '';
+      const detail = [detailParts.join(' / '), reason].filter(Boolean).join(' / ');
+      return `<div class="unfinalized-lock-note">一度確定→解除済み${detail ? `<br><small>${detail}</small>` : ''}</div>${finalizeButton}`;
+    }
+    return finalizeButton;
   }
 
   const bodyRows = [];
@@ -2389,6 +2477,7 @@ function renderBillingResult() {
   attachBillingEditHandlers();
   attachBillingSortHandlers();
   attachBillingFinalizeHandlers();
+  attachBillingUnfinalizeHandlers();
   updatePreparedMonthSelectors();
 }
 
@@ -2476,6 +2565,17 @@ function attachBillingFinalizeHandlers() {
   });
 }
 
+function attachBillingUnfinalizeHandlers() {
+  const box = qs('billingResult');
+  if (!box) return;
+  box.querySelectorAll('button.unfinalize-btn').forEach(btn => {
+    btn.onclick = function () {
+      const pid = this.getAttribute('data-unfinalize-patient');
+      handleBillingUnfinalize(pid);
+    };
+  });
+}
+
 function attachBillingSortHandlers() {
   const box = qs('billingResult');
   if (!box) return;
@@ -2514,6 +2614,7 @@ function initBillingPage() {
   updateSimpleBankControls();
   renderBillingResult();
   renderSimpleBankDetail();
+  loadBillingAdminInfo();
 }
 
 (function bootstrap() {
@@ -2538,6 +2639,7 @@ if (billingGlobal) {
   billingGlobal.handleBillingPdfGeneration = handleBillingPdfGeneration;
   billingGlobal.handleBillingSaveEdits = handleBillingSaveEdits;
   billingGlobal.handleBillingFinalize = handleBillingFinalize;
+  billingGlobal.handleBillingUnfinalize = handleBillingUnfinalize;
   billingGlobal.handleSimpleBankSheetGeneration = handleSimpleBankSheetGeneration;
 }
 </script>

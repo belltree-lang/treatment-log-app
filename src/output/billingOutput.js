@@ -284,6 +284,45 @@ function formatMonthWithReiwaEra_(yyyymm) {
   return `令和${eraYear}年${month}月`;
 }
 
+function buildInvoiceChargePeriodLabel_(data) {
+  const months = [];
+  const pushMonth = (value) => {
+    const key = normalizeInvoiceMonthKey_(value);
+    if (key) months.push(key);
+  };
+
+  const isAggregate = data && (data.isAggregateInvoice || data.invoiceMode === 'aggregate');
+  if (isAggregate && Array.isArray(data && data.aggregateMonthTotals)) {
+    data.aggregateMonthTotals.forEach(row => pushMonth(row && row.month));
+  }
+
+  if (isAggregate && !months.length && Array.isArray(data && data.receiptMonths)) {
+    data.receiptMonths.forEach(pushMonth);
+  }
+
+  if (!months.length && data && data.billingMonth) {
+    pushMonth(data.billingMonth);
+  }
+
+  const uniqueSorted = Array.from(new Set(months)).sort();
+  if (!uniqueSorted.length) return '';
+
+  const start = uniqueSorted[0];
+  const end = uniqueSorted[uniqueSorted.length - 1];
+  const startLabel = formatMonthWithReiwaEra_(start);
+  if (!startLabel) return '';
+  if (start === end) return `${startLabel}分`;
+
+  const startYear = start.slice(0, 4);
+  const endYear = end.slice(0, 4);
+  const endLabel = startYear === endYear
+    ? (end.slice(4, 6) ? `${end.slice(4, 6)}月` : '')
+    : formatMonthWithReiwaEra_(end);
+  if (!endLabel) return `${startLabel}分`;
+
+  return `${startLabel}分〜${endLabel}分`;
+}
+
 function buildInclusiveMonthRange_(fromYm, toYm) {
   const startKey = normalizeInvoiceMonthKey_(fromYm);
   const endKey = normalizeInvoiceMonthKey_(toYm);

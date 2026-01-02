@@ -46,6 +46,7 @@
       z-index: 0;
     }
     .wrapper { position: relative; z-index: 1; }
+    .charge-period-label { display: block; margin-top: 4px; color: #475569; font-weight: 400; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -57,6 +58,7 @@
     <header class="header">
       <? var isAggregateInvoice = data.isAggregateInvoice || data.invoiceMode === 'aggregate'; ?>
       <? var chargeMonthLabel = data.chargeMonthLabel || data.monthLabel; ?>
+      <? var chargePeriodLabel = buildInvoiceChargePeriodLabel_(data); ?>
       <div>
         <div class="brand">べるつりー訪問鍼灸マッサージ</div>
         <div class="note"><?= isAggregateInvoice ? '合算／未回収考慮モード' : '月次請求書' ?></div>
@@ -102,7 +104,12 @@
           <tfoot>
             <tr>
               <td>合算請求額</td>
-              <td class="amount"><?= formatBillingCurrency_(data.grandTotal) ?> 円</td>
+              <td class="amount">
+                <?= formatBillingCurrency_(data.grandTotal) ?> 円
+                <? if (chargePeriodLabel) { ?>
+                  <span class="charge-period-label">対象期間: <?= chargePeriodLabel ?></span>
+                <? } ?>
+              </td>
             </tr>
           </tfoot>
         </table>
@@ -123,7 +130,12 @@
           <tfoot>
             <tr>
               <td colspan="2">合計</td>
-              <td class="amount"><?= formatBillingCurrency_(data.grandTotal) ?> 円</td>
+              <td class="amount">
+                <?= formatBillingCurrency_(data.grandTotal) ?> 円
+                <? if (chargePeriodLabel) { ?>
+                  <span class="charge-period-label">対象期間: <?= chargePeriodLabel ?></span>
+                <? } ?>
+              </td>
             </tr>
           </tfoot>
         </table>

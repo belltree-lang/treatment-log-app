@@ -652,28 +652,6 @@ function buildInvoiceWatermark_(item) {
   return finalized ? { text: '確定済み' } : null;
 }
 
-function resolvePreparedBillingEntryForMonthAndPatient_(billingMonth, patientId) {
-  if (typeof loadPreparedBillingWithSheetFallback_ !== 'function') return null;
-  const prepared = loadPreparedBillingWithSheetFallback_(billingMonth, { allowInvalid: true, restoreCache: false });
-  const normalized = typeof normalizePreparedBilling_ === 'function'
-    ? normalizePreparedBilling_(prepared)
-    : prepared;
-  const billingJson = normalized && normalized.billingJson;
-  if (!Array.isArray(billingJson)) return null;
-
-  const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
-    ? billingNormalizePatientId_(patientId)
-    : String(patientId || '').trim();
-  if (!normalizedPatientId) return null;
-
-  return billingJson.find(entry => {
-    const entryId = typeof billingNormalizePatientId_ === 'function'
-      ? billingNormalizePatientId_(entry && entry.patientId)
-      : String(entry && entry.patientId || '').trim();
-    return entryId && entryId === normalizedPatientId;
-  }) || null;
-}
-
 function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const billingMonth = item && item.billingMonth;
   const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
@@ -686,28 +664,21 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const receiptDecisionMonths = receipt && Array.isArray(receipt.explicitReceiptMonths)
     ? receipt.explicitReceiptMonths
     : [];
-  const months = Array.from(new Set(
-    (Array.isArray(aggregateMonths) && aggregateMonths.length
+  const months = normalizeAggregateMonthsForInvoice_(
+    Array.isArray(aggregateMonths) && aggregateMonths.length
       ? aggregateMonths
-      : (receiptDecisionMonths.length
-        ? receiptDecisionMonths
-        : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])))
-      .map(normalizeInvoiceMonthKey_)
-      .filter(Boolean)
-  )).sort();
-  const aggregateMonthsForDisplay = months.length
-    ? months.slice()
-    : (normalizedBillingMonth ? [normalizedBillingMonth] : []);
-  const representativeMonthKey = (normalizedBillingMonth && aggregateMonthsForDisplay.includes(normalizedBillingMonth))
-    ? normalizedBillingMonth
-    : aggregateMonthsForDisplay[aggregateMonthsForDisplay.length - 1];
+    : (receiptDecisionMonths.length
+      ? receiptDecisionMonths
+      : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])),
+    billingMonth
+  );
   const aggregateRemark = formatAggregateInvoiceRemark_(months);
   const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(item && item.patientId)
     : String(item && item.patientId || '').trim();
   const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
   const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : aggregateStatus === 'confirmed';
-  const aggregateMonthTotals = aggregateMonthsForDisplay.map(monthKey => ({
+  const aggregateMonthTotals = months.map(monthKey => ({
     month: monthKey,
     monthLabel: normalizeBillingMonthLabel_(monthKey),
     total: resolveBillingAmountForMonthAndPatientForOutput_(
@@ -716,47 +687,6 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
       monthKey === normalizedBillingMonth ? item : null,
       {}
     )
-  }));
-  const aggregateInvoiceDetails = aggregateMonthsForDisplay.map(monthKey => {
-    const preparedEntry = resolvePreparedBillingEntryForMonthAndPatient_(monthKey, normalizedPatientId);
-    const baseEntry = monthKey === normalizedBillingMonth ? item : preparedEntry;
-    const entry = Object.assign({ billingMonth: monthKey }, baseEntry || {});
-    const includeCarryOver = monthKey === representativeMonthKey;
-    const breakdownSource = includeCarryOver
-      ? entry
-      : Object.assign({}, entry, { carryOverAmount: 0, carryOverFromHistory: 0 });
-    const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, breakdownSource, { billingMonth: monthKey }));
-    const visits = breakdown.visits || 0;
-    const unitPrice = breakdown.treatmentUnitPrice || 0;
-    const carryOverAmount = includeCarryOver ? normalizeBillingCarryOver_(entry) : 0;
-    const selfPayItems = Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
-    const rows = [];
-    if (includeCarryOver) {
-      rows.push({ label: '前月繰越', detail: '', amount: carryOverAmount });
-    }
-    rows.push({ label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount });
-    rows.push({ label: '交通費', detail: breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回'), amount: breakdown.transportAmount });
-    selfPayItems.forEach(entry => {
-      const amount = normalizeInvoiceMoney_(entry && entry.amount);
-      rows.push({ label: entry && entry.type ? entry.type : '自費', detail: '', amount });
-    });
-    const selfPayTotal = breakdown.selfPayTotal || 0;
-    const detailGrandTotal = carryOverAmount + breakdown.treatmentAmount + breakdown.transportAmount + selfPayTotal;
-    return {
-      month: monthKey,
-      rows,
-      treatmentAmount: breakdown.treatmentAmount,
-      transportAmount: breakdown.transportAmount,
-      selfPayTotal,
-      grandTotal: detailGrandTotal
-    };
-  });
-  const representativeInvoiceDetail = aggregateInvoiceDetails.find(detail => detail.month === representativeMonthKey)
-    || aggregateInvoiceDetails[aggregateInvoiceDetails.length - 1]
-    || null;
-  const aggregateSummaryRows = aggregateInvoiceDetails.map(detail => ({
-    month: detail.month,
-    subtotal: detail.treatmentAmount + detail.transportAmount + detail.selfPayTotal
   }));
   const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt);
   const previousReceipt = item && item.previousReceipt
@@ -796,9 +726,6 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     receiptRemark: aggregateRemark,
     aggregateRemark,
     aggregateMonthTotals,
-    aggregateInvoiceDetails,
-    representativeInvoiceDetail,
-    aggregateSummaryRows,
     showReceipt: !!(receipt && receipt.visible),
     rows: [
       { label: '合算請求額', detail: aggregateRemark, amount }

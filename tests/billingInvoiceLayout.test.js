@@ -155,15 +155,10 @@ function testAggregateInvoiceTemplateStacksPerMonth() {
 
   const data = buildAggregateInvoiceTemplateData_(entriesByMonth['202503'], ['202501', '202502', '202503']);
 
-  assert.strictEqual(data.aggregateInvoiceDetails.length, 3, '合算対象月ごとに明細が作成される');
-  assert.strictEqual(data.representativeInvoiceDetail.month, '202503', '代表月は billingMonth と一致する');
-  const januaryDetail = data.aggregateInvoiceDetails.find(detail => detail.month === '202501');
-  const marchDetail = data.aggregateInvoiceDetails.find(detail => detail.month === '202503');
-  assert(januaryDetail && marchDetail, '各月の明細が含まれる');
-  assert.strictEqual(januaryDetail.rows.some(row => row.label === '前月繰越'), false, '過去月の繰越は表示しない');
-  const carryOverRow = marchDetail.rows.find(row => row.label === '前月繰越');
-  assert(carryOverRow, '代表月には繰越行を表示する');
-  assert.strictEqual(carryOverRow.amount, 50, '代表月の繰越額を表示する');
+  assert.deepStrictEqual(Array.from(data.receiptMonths || []), ['202501', '202502'], '合算対象は billingMonth より前の月に限定される');
+  assert.strictEqual(data.aggregateMonthTotals.length, 2, '対象月の合計行のみが含まれる');
+  assert.strictEqual(data.aggregateRemark, '01月・02月分 施術料金として', '合算対象月の備考が付与される');
+  assert.strictEqual(data.chargeMonthLabel, '2025年03月', '請求対象月のラベルは billingMonth に基づく');
 }
 
 function testAggregateInvoiceTemplateSummarizesWhenManyMonths() {
@@ -187,22 +182,9 @@ function testAggregateInvoiceTemplateSummarizesWhenManyMonths() {
 
   const data = buildAggregateInvoiceTemplateData_(entriesByMonth['202504'], ['202501', '202502', '202503', '202504']);
 
-  assert.strictEqual(data.aggregateInvoiceDetails.length, 4, '全ての合算月の明細が収集される');
-  assert.strictEqual(data.aggregateSummaryRows.length, 4, '簡略内訳に月別行が含まれる');
-  const januaryDetail = data.aggregateInvoiceDetails.find(detail => detail.month === '202501');
-  const januarySummary = data.aggregateSummaryRows.find(row => row.month === '202501');
-  assert(januaryDetail && januarySummary, '1月分のデータが存在する');
-  assert.strictEqual(
-    januarySummary.subtotal,
-    januaryDetail.treatmentAmount + januaryDetail.transportAmount,
-    '簡略内訳では繰越を含めずに小計を計算する'
-  );
-  assert.strictEqual(januaryDetail.grandTotal, januarySummary.subtotal, '過去月の繰越を金額に加算しない');
-  assert.strictEqual(
-    data.representativeInvoiceDetail.rows.some(row => row.label === '前月繰越'),
-    true,
-    '代表月の詳細明細には繰越を表示する'
-  );
+  assert.deepStrictEqual(Array.from(data.receiptMonths || []), ['202501', '202502', '202503'], '請求対象月より前の3ヶ月が合算対象となる');
+  assert.strictEqual(data.aggregateMonthTotals.length, 3, '合算対象月の数だけ月別合計行が含まれる');
+  assert.strictEqual(data.aggregateRemark, '01月・02月・03月分 施術料金として', '対象月の備考に複数月が含まれる');
 }
 
 function testAggregateInvoiceRepresentativeMonthMatchesBillingMonth() {
@@ -225,13 +207,10 @@ function testAggregateInvoiceRepresentativeMonthMatchesBillingMonth() {
 
   const data = buildAggregateInvoiceTemplateData_(entriesByMonth['202502'], ['202503', '202501', '202502']);
 
-  assert.strictEqual(data.representativeInvoiceDetail.month, '202502', '代表月は billingMonth を優先する');
-  const februaryDetail = data.aggregateInvoiceDetails.find(detail => detail.month === '202502');
-  const marchDetail = data.aggregateInvoiceDetails.find(detail => detail.month === '202503');
-  const carryOverRow = februaryDetail.rows.find(row => row.label === '前月繰越');
-  assert(carryOverRow, 'billingMonth の月には繰越を表示する');
-  assert.strictEqual(carryOverRow.amount, 150, 'billingMonth の繰越額を表示する');
-  assert.strictEqual(marchDetail.rows.some(row => row.label === '前月繰越'), false, 'billingMonth 以外では繰越を表示しない');
+  assert.deepStrictEqual(Array.from(data.receiptMonths || []), ['202501'], 'billingMonth 以前の月のみが合算対象となる');
+  assert.strictEqual(data.aggregateMonthTotals.length, 1, '合算対象に含まれた月の数だけ行が生成される');
+  assert.strictEqual(data.chargeMonthLabel, '2025年02月', '合算請求の請求対象ラベルは billingMonth に従う');
+  assert.strictEqual(data.aggregateRemark, '01月分 施術料金として', '備考には合算対象の月が含まれる');
 }
 
 function testAggregateInvoiceFallsBackToLatestMonthWhenBillingMonthAbsent() {
@@ -257,14 +236,10 @@ function testAggregateInvoiceFallsBackToLatestMonthWhenBillingMonthAbsent() {
     ['202501', '202502', '202503']
   );
 
-  assert.strictEqual(data.representativeInvoiceDetail.month, '202503', 'billingMonth が含まれない場合は最新月を代表月とする');
-  const januaryDetail = data.aggregateInvoiceDetails.find(detail => detail.month === '202501');
-  const marchDetail = data.aggregateInvoiceDetails.find(detail => detail.month === '202503');
-  assert(januaryDetail && marchDetail, '各月の明細が存在する');
-  assert.strictEqual(januaryDetail.rows.some(row => row.label === '前月繰越'), false, '代表月以外では繰越を表示しない');
-  const carryOverRow = marchDetail.rows.find(row => row.label === '前月繰越');
-  assert(carryOverRow, '代表月には繰越行が含まれる');
-  assert.strictEqual(carryOverRow.amount, 0, '代表月の繰越額は対象月の値を用いる');
+  assert.deepStrictEqual(Array.from(data.receiptMonths || []), [], 'billingMonth より後の月のみが指定された場合は合算対象が空になる');
+  assert.strictEqual(data.aggregateMonthTotals.length, 0, '対象月が無ければ月別合計行も無い');
+  assert.strictEqual(data.aggregateRemark, '', '対象月が無い場合は備考を付与しない');
+  assert.strictEqual(data.chargeMonthLabel, '2024年12月', 'billingMonth が対象月に含まれなくても請求対象ラベルは billingMonth を用いる');
 }
 
 function testInvoiceTemplateDisplaysPeriodLabel() {
@@ -281,18 +256,22 @@ function testInvoiceTemplateDisplaysPeriodLabel() {
   const singleLabel = buildInvoiceChargePeriodLabel_(singleMonthData);
   assert.strictEqual(singleLabel, '令和6年04月分', '単月の請求では対象期間ラベルを単月表示する');
 
-  const aggregateData = buildAggregateInvoiceTemplateData_(
-    { billingMonth: '202502', patientId: 'patient-label', grandTotal: 1000 },
-    ['202412', '202501']
-  );
-  const aggregateLabel = buildInvoiceChargePeriodLabel_(aggregateData);
+  const aggregateLabel = buildInvoiceChargePeriodLabel_({
+    isAggregateInvoice: true,
+    aggregateMonthTotals: [
+      { month: '202412' },
+      { month: '202501' }
+    ]
+  });
   assert.strictEqual(aggregateLabel, '令和6年12月分〜令和7年01月分', '年跨ぎの合算は両方に年を含めて範囲表示する');
 
-  const sameYearAggregateData = buildAggregateInvoiceTemplateData_(
-    { billingMonth: '202506', patientId: 'patient-label-2', grandTotal: 2000 },
-    ['202503', '202505']
-  );
-  const sameYearLabel = buildInvoiceChargePeriodLabel_(sameYearAggregateData);
+  const sameYearLabel = buildInvoiceChargePeriodLabel_({
+    isAggregateInvoice: true,
+    aggregateMonthTotals: [
+      { month: '202503' },
+      { month: '202505' }
+    ]
+  });
   assert.strictEqual(sameYearLabel, '令和7年03月分〜05月分', '同一年内の合算は開始月のみ年を含める');
 }
 

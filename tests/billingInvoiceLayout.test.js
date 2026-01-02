@@ -25,7 +25,8 @@ const {
   calculateInvoiceChargeBreakdown_,
   buildAggregateInvoiceTemplateData_,
   buildBillingInvoiceHtml_,
-  buildInvoiceTemplateData_
+  buildInvoiceTemplateData_,
+  buildInvoiceChargePeriodLabel_
 } = context;
 
 if (typeof calculateInvoiceChargeBreakdown_ !== 'function' || typeof buildBillingInvoiceHtml_ !== 'function') {
@@ -116,12 +117,19 @@ function testInvoiceTemplateRecalculatesSelfPaidBreakdown() {
 function testInvoiceTemplateAddsReceiptDecision() {
   const unpaid = buildInvoiceTemplateData_({
     billingMonth: '202311',
-    receiptStatus: 'UNPAID'
+    receiptStatus: 'UNPAID',
+    receiptMonths: ['202310'],
+    hasPreviousReceiptSheet: true
   });
 
   assert.strictEqual(unpaid.showReceipt, false, 'UNPAID の月は領収書を表示しない');
 
-  const payable = buildInvoiceTemplateData_({ billingMonth: '202311', receiptStatus: 'PAID' });
+  const payable = buildInvoiceTemplateData_({
+    billingMonth: '202311',
+    receiptStatus: 'PAID',
+    receiptMonths: ['202310'],
+    hasPreviousReceiptSheet: true
+  });
   assert.strictEqual(payable.showReceipt, true, '未回収チェックが無ければ領収書を表示する');
   assert.deepStrictEqual(Array.from(payable.receiptMonths || []), ['202310'], '領収対象月は前月を指す');
   assert.strictEqual(payable.receiptRemark, '', '備考は付与しない');
@@ -259,6 +267,35 @@ function testAggregateInvoiceFallsBackToLatestMonthWhenBillingMonthAbsent() {
   assert.strictEqual(carryOverRow.amount, 0, '代表月の繰越額は対象月の値を用いる');
 }
 
+function testInvoiceTemplateDisplaysPeriodLabel() {
+  const templateHtml = fs.readFileSync(path.join(__dirname, '../src/invoice_template.html'), 'utf8');
+  const labelUsageCount = (templateHtml.match(/charge-period-label/g) || []).length;
+  assert(labelUsageCount >= 2, '対象期間ラベルの表示領域が合計近辺に用意されている');
+
+  const singleMonthData = buildInvoiceTemplateData_({
+    billingMonth: '202404',
+    visitCount: 2,
+    burdenRate: 1,
+    insuranceType: '鍼灸'
+  });
+  const singleLabel = buildInvoiceChargePeriodLabel_(singleMonthData);
+  assert.strictEqual(singleLabel, '令和6年04月分', '単月の請求では対象期間ラベルを単月表示する');
+
+  const aggregateData = buildAggregateInvoiceTemplateData_(
+    { billingMonth: '202502', patientId: 'patient-label', grandTotal: 1000 },
+    ['202412', '202501']
+  );
+  const aggregateLabel = buildInvoiceChargePeriodLabel_(aggregateData);
+  assert.strictEqual(aggregateLabel, '令和6年12月分〜令和7年01月分', '年跨ぎの合算は両方に年を含めて範囲表示する');
+
+  const sameYearAggregateData = buildAggregateInvoiceTemplateData_(
+    { billingMonth: '202506', patientId: 'patient-label-2', grandTotal: 2000 },
+    ['202503', '202505']
+  );
+  const sameYearLabel = buildInvoiceChargePeriodLabel_(sameYearAggregateData);
+  assert.strictEqual(sameYearLabel, '令和7年03月分〜05月分', '同一年内の合算は開始月のみ年を含める');
+}
+
 function run() {
   testInvoiceChargeBreakdown();
   testInvoiceChargeBreakdownUsesCustomTransportPrice();
@@ -270,6 +307,7 @@ function run() {
   testAggregateInvoiceTemplateSummarizesWhenManyMonths();
   testAggregateInvoiceRepresentativeMonthMatchesBillingMonth();
   testAggregateInvoiceFallsBackToLatestMonthWhenBillingMonthAbsent();
+  testInvoiceTemplateDisplaysPeriodLabel();
   console.log('billingInvoiceLayout tests passed');
 }
 

@@ -91,6 +91,10 @@ function getBillingMonthInputValue() {
   return normalizeYm(input && input.value ? input.value : '');
 }
 
+function getPreparedBillingMonth() {
+  return normalizeYm(billingState.prepared && billingState.prepared.billingMonth);
+}
+
 function updatePreparedMonthSelectors() {
   const selectors = Array.from(document.querySelectorAll('.billing-prepared-month-select'));
   if (!selectors.length) return;
@@ -164,28 +168,29 @@ function updateBillingControls() {
   const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
   const pdfTarget = getSelectedPreparedMonth();
   const hasPdfTarget = !!pdfTarget;
-  const finalizedLocked = hasFinalizedBillingRows();
   const billingMonthInput = getBillingMonthInputValue();
+  const finalizedLockedForBillingMonth = hasFinalizedBillingRows(billingMonthInput);
+  const finalizedLockedForPdfTarget = hasPdfTarget ? hasFinalizedBillingRows(pdfTarget) : false;
   const hasMonthMismatch = !!(billingMonthInput && hasPdfTarget && billingMonthInput !== pdfTarget);
 
   if (monthInput) {
     monthInput.disabled = loading;
   }
   if (aggregateBtn) {
-    const disabled = loading || finalizedLocked;
+    const disabled = loading || finalizedLockedForBillingMonth;
     aggregateBtn.disabled = disabled;
     aggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
-    aggregateBtn.title = disabled && finalizedLocked ? '確定済みの請求が含まれているため再集計できません' : '';
+    aggregateBtn.title = disabled && finalizedLockedForBillingMonth ? '確定済みの請求が含まれているため再集計できません' : '';
   }
   const reaggregateBtn = qs('billingReaggregateBtn');
   if (reaggregateBtn) {
-    const disabled = loading || finalizedLocked;
+    const disabled = loading || finalizedLockedForBillingMonth;
     reaggregateBtn.disabled = disabled;
     reaggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
-    reaggregateBtn.title = disabled && finalizedLocked ? '確定済みの請求が含まれているため再集計できません' : '指定月の既存請求データを削除して再集計します';
+    reaggregateBtn.title = disabled && finalizedLockedForBillingMonth ? '確定済みの請求が含まれているため再集計できません' : '指定月の既存請求データを削除して再集計します';
   }
   if (pdfBtn) {
-    const disabled = loading || !hasPdfTarget || finalizedLocked || hasMonthMismatch;
+    const disabled = loading || !hasPdfTarget || finalizedLockedForPdfTarget || hasMonthMismatch;
     pdfBtn.disabled = disabled;
     pdfBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     pdfBtn.title = disabled
@@ -193,7 +198,7 @@ function updateBillingControls() {
         ? 'PDF対象月を選択してください'
         : hasMonthMismatch
           ? `請求月 (${formatYmDisplay(billingMonthInput)}) とPDF対象月 (${formatYmDisplay(pdfTarget)}) が一致していません`
-          : (finalizedLocked ? '確定済みの請求が含まれているためPDF生成できません' : ''))
+          : (finalizedLockedForPdfTarget ? '確定済みの請求が含まれているためPDF生成できません' : ''))
       : '';
   }
   if (saveBtn) {
@@ -226,8 +231,14 @@ const BILLING_FINALIZED_LOCK_MESSAGE = '確定済み（合算確定）の請求�
 function renderFinalizedLockNotice() {
   const note = qs('finalizedLockNote');
   if (!note) return;
-  const hasPreparedMonth = !!(billingState.prepared && billingState.prepared.billingMonth);
-  const locked = hasPreparedMonth && hasFinalizedBillingRows();
+  const preparedMonth = getPreparedBillingMonth();
+  const billingMonth = getBillingMonthInputValue();
+  const selectedPreparedMonth = getSelectedPreparedMonth();
+  const locked = !!(
+    preparedMonth
+    && hasFinalizedBillingRows(preparedMonth)
+    && ((billingMonth && billingMonth === preparedMonth) || (selectedPreparedMonth && selectedPreparedMonth === preparedMonth))
+  );
   if (!locked) {
     note.style.display = 'none';
     note.textContent = '';
@@ -238,19 +249,23 @@ function renderFinalizedLockNotice() {
   note.innerHTML = `${escapeHtml(BILLING_FINALIZED_LOCK_MESSAGE)}<small>確定解除しない限り、再集計やPDFの再生成は行えません。</small>`;
 }
 
-function shouldBlockFinalizedBillingOperation() {
-  if (!hasFinalizedBillingRows()) return false;
+function shouldBlockFinalizedBillingOperation(targetMonth) {
+  const target = normalizeYm(targetMonth || getBillingMonthInputValue());
+  if (!hasFinalizedBillingRows(target)) return false;
   renderFinalizedLockNotice();
   return true;
 }
 
-function hasFinalizedBillingRows() {
+function hasFinalizedBillingRows(targetMonth) {
+  const preparedMonth = getPreparedBillingMonth();
+  const normalizedTarget = normalizeYm(targetMonth || preparedMonth);
+  if (!preparedMonth || !normalizedTarget || preparedMonth !== normalizedTarget) return false;
   const rows = billingState.prepared && billingState.prepared.billingJson;
   return Array.isArray(rows) && rows.some(isBillingRowFinalized);
 }
 
 function isReceiptEditingLocked() {
-  return hasFinalizedBillingRows();
+  return hasFinalizedBillingRows(getPreparedBillingMonth());
 }
 
 function updateInvoiceModeControls() {
@@ -1770,8 +1785,8 @@ function syncReceiptStateFromPayload(payload) {
 }
 
 function handleBillingAggregation() {
-  if (shouldBlockFinalizedBillingOperation()) return;
   const ym = normalizeYm(qs('billingMonth').value);
+  if (shouldBlockFinalizedBillingOperation(ym)) return;
   if (!ym) {
     alert('請求月を入力してください (YYYY-MM)');
     return;
@@ -1791,8 +1806,8 @@ function handleBillingAggregation() {
 }
 
 function handleBillingReaggregation() {
-  if (shouldBlockFinalizedBillingOperation()) return;
   const ym = normalizeYm(qs('billingMonth').value);
+  if (shouldBlockFinalizedBillingOperation(ym)) return;
   if (!ym) {
     alert('請求月を入力してください (YYYY-MM)');
     return;
@@ -1848,7 +1863,7 @@ function handleBillingPdfGeneration() {
     return;
   }
 
-  if (shouldBlockFinalizedBillingOperation()) return;
+  if (shouldBlockFinalizedBillingOperation(targetMonth)) return;
 
   const invoiceMode = getInvoiceMode();
   const invoicePatientIdsText = getInvoicePatientIdsInput();

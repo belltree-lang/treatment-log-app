@@ -401,25 +401,29 @@ function renderReceiptControls() {
   const aggregateInput = qs('receiptAggregateUntil');
   const display = qs('receiptAggregateDisplay');
   const prepared = !!(billingState.prepared && billingState.prepared.billingMonth);
-  const loading = billingState.loading || billingState.receiptSaving;
   const status = billingState.receiptStatus || '';
   const aggregate = billingState.aggregateUntilMonth || '';
-  const locked = isReceiptEditingLocked();
+  const hasAggregate = !!aggregate;
 
   if (statusSelect) {
-    statusSelect.value = status || '';
-    statusSelect.disabled = !prepared || loading || locked;
-    statusSelect.title = locked ? '確定済みの請求が含まれているため変更できません' : '';
+    statusSelect.value = prepared ? status || '未指定' : '集計前';
+    statusSelect.readOnly = true;
+    statusSelect.disabled = true;
+    statusSelect.title = '表示専用です（手動合算の編集は廃止されました）';
   }
 
   if (aggregateInput) {
-    aggregateInput.value = aggregate ? `${aggregate.slice(0, 4)}-${aggregate.slice(4, 6)}` : '';
-    aggregateInput.disabled = !prepared || loading || status !== 'AGGREGATE' || locked;
-    aggregateInput.title = locked ? '確定済みの請求が含まれているため変更できません' : '';
+    aggregateInput.value = hasAggregate ? `${aggregate.slice(0, 4)}-${aggregate.slice(4, 6)}` : '';
+    aggregateInput.readOnly = true;
+    aggregateInput.disabled = true;
+    aggregateInput.placeholder = prepared ? '—' : '集計後に表示';
+    aggregateInput.title = '表示専用です（手動合算の編集は廃止されました）';
   }
 
   if (display) {
-    display.textContent = aggregate ? formatYmDisplay(aggregate) : '—';
+    display.textContent = prepared
+      ? (hasAggregate ? formatYmDisplay(aggregate) : '—')
+      : '集計後に表示';
   }
 }
 
@@ -461,63 +465,16 @@ function handleInvoicePatientInput(event) {
 }
 
 function handleReceiptStatusChange(event) {
-  if (isReceiptEditingLocked()) {
-    renderReceiptControls();
-    return;
-  }
-  const value = event && event.target ? event.target.value : '';
-  const status = String(value || '').trim().toUpperCase();
-  billingState.receiptStatus = status;
   renderReceiptControls();
-  persistReceiptStatus();
 }
 
 function handleReceiptAggregateChange(event) {
-  if (isReceiptEditingLocked()) {
-    renderReceiptControls();
-    return;
-  }
-  const value = event && event.target ? event.target.value : '';
-  const ym = normalizeYm(value);
-  billingState.aggregateUntilMonth = ym;
   renderReceiptControls();
-  persistReceiptStatus();
 }
 
 function persistReceiptStatus() {
-  if (isReceiptEditingLocked()) {
-    renderReceiptControls();
-    return;
-  }
-  if (!billingState.prepared || !billingState.prepared.billingMonth) {
-    alert('先に「請求データを集計」を実行してください。');
-    return;
-  }
-  const status = billingState.receiptStatus || '';
-  const aggregateUntil = status === 'AGGREGATE' ? billingState.aggregateUntilMonth : '';
-  billingState.aggregateUntilMonth = aggregateUntil;
-  billingState.receiptSaving = true;
-  updateBillingControls();
-
-  google.script.run
-    .withSuccessHandler(function(result) {
-      const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
-      billingState.result = normalized;
-      billingState.prepared = normalized;
-      syncReceiptStateFromPayload(normalized);
-      billingState.receiptSaving = false;
-      renderBillingResult();
-    })
-    .withFailureHandler(function(err) {
-      billingState.receiptSaving = false;
-      const message = err && err.message ? err.message : '領収状態の保存に失敗しました';
-      setBillingError(message, err);
-      renderBillingResult();
-    })
-    .updateBillingReceiptStatus(billingState.prepared.billingMonth, {
-      receiptStatus: status,
-      aggregateUntil
-    });
+  billingState.receiptSaving = false;
+  renderReceiptControls();
 }
 
 function formatYmDisplay(ym) {

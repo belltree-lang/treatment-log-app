@@ -26,26 +26,30 @@ function createContext() {
     return String(prevYear).padStart(4, '0') + String(prevMonth).padStart(2, '0');
   };
   ctx.billingNormalizePatientId_ = pid => (pid ? String(pid).trim() : '');
-
+  ctx.preparedByMonth = {};
+  ctx.getPreparedBillingForMonthCached_ = monthKey => ctx.preparedByMonth[monthKey] || null;
+  ctx.getPreparedBillingEntryForMonthCached_ = (monthKey, patientId) => {
+    const payload = ctx.preparedByMonth[monthKey];
+    if (!payload || !Array.isArray(payload.billingJson)) return null;
+    return payload.billingJson.find(row => ctx.billingNormalizePatientId_(row && row.patientId) === ctx.billingNormalizePatientId_(patientId)) || null;
+  };
+  ctx.isPatientCheckedUnpaidInBankWithdrawalSheet_ = () => false;
   return ctx;
 }
 
-(function testAggregateReceiptGeneratedFromPreviousAggregateInvoice() {
+(function testAggregateReceiptGeneratedFromUnpaidHistory() {
   const context = createContext();
 
-  context.buildReceiptMonthsFromBankUnpaid_ = (patientId, anchorMonth) => (patientId === 'P01' && anchorMonth === '202411'
-    ? ['202409', '202410', '202411']
-    : []
-  );
-  context.isPatientCheckedUnpaidInBankWithdrawalSheet_ = (patientId, monthKey) => patientId === 'P01' && monthKey === '202411';
-  context.getPreparedBillingForMonthCached_ = monthKey => (monthKey === '202411'
-    ? { billingMonth: '202411', billingJson: [{ patientId: 'P01', aggregateUntilMonth: '202411', aggregateTargetMonths: ['202409', '202410', '202411'] }], aggregateUntilMonth: '202411' }
-    : null
-  );
-  context.getPreparedBillingEntryForMonthCached_ = (monthKey, patientId) => (monthKey === '202411' && patientId === 'P01'
-    ? { patientId: 'P01', aggregateUntilMonth: '202411', aggregateTargetMonths: ['202409', '202410', '202411'] }
-    : null
-  );
+  context.preparedByMonth['202410'] = {
+    billingMonth: '202410',
+    billingJson: [{ patientId: 'P01' }],
+    bankFlagsByPatient: { P01: { ae: true } }
+  };
+  context.preparedByMonth['202411'] = {
+    billingMonth: '202411',
+    billingJson: [{ patientId: 'P01' }],
+    bankFlagsByPatient: { P01: { ae: true } }
+  };
   context.buildReceiptMonthBreakdownForEntry_ = (patientId, months) => months.map((month, idx) => ({
     month,
     amount: (idx + 1) * 1000
@@ -56,7 +60,8 @@ function createContext() {
     billingJson: [
       { patientId: 'P01' },
       { patientId: 'P02' }
-    ]
+    ],
+    bankFlagsByPatient: { P01: { ae: false }, P02: { ae: false } }
   };
 
   const enriched = context.attachPreviousReceiptAmounts_(prepared);
@@ -65,8 +70,8 @@ function createContext() {
 
   assert.deepStrictEqual(
     Array.from(patientWithUnpaid.receiptMonths || []),
-    ['202409', '202410', '202411'],
-    'aggregate receipt includes designated month and unpaid history'
+    ['202410', '202411', '202412'],
+    'aggregate receipt includes consecutive unpaid history and current month'
   );
   assert.ok(
     Array.isArray(patientWithUnpaid.receiptMonthBreakdown) && patientWithUnpaid.receiptMonthBreakdown.length === 3,

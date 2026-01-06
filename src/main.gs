@@ -811,16 +811,15 @@ function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared,
 
   const normalized = getPreparedBillingForMonthCached_(monthKey, cache);
   if (!normalized) return null;
-
-  const flags = normalized.bankFlagsByPatient && normalized.bankFlagsByPatient[pid];
-  if (!flags || !flags.af) return null;
-
   const previousEntry = getPreparedBillingEntryForMonthCached_(monthKey, pid, cache);
-  const aggregateUntilMonth = normalizeBillingMonthKeySafe_(previousEntry && previousEntry.aggregateUntilMonth)
-    || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
-  const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, aggregateUntilMonth, cache);
-  const aggregateMonths = normalizePastBillingMonths_(aggregateSourceMonths, prepared && prepared.billingMonth)
-    .filter(month => month !== monthKey);
+
+  const aggregateMonths = resolveAggregateMonthsFromUnpaid_(
+    normalizeBillingMonthKeySafe_(prepared && prepared.billingMonth) || monthKey,
+    pid,
+    { useLegacyAggregate: false },
+    prepared || normalized,
+    cache
+  );
   if (!aggregateMonths.length) return null;
 
   const breakdown = [];
@@ -955,37 +954,33 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     bankWithdrawalAmountsByMonth: {}
   };
   const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, monthCache);
+  if (monthCache.preparedByMonth) {
+    monthCache.preparedByMonth[monthKey] = monthCache.preparedByMonth[monthKey] || prepared;
+    if (previousMonthKey) {
+      monthCache.preparedByMonth[previousMonthKey] = monthCache.preparedByMonth[previousMonthKey] || previousPrepared;
+    }
+  }
 
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
-    const previousEntry = previousPrepared
-      ? getPreparedBillingEntryForMonthCached_(previousMonthKey, pid, monthCache)
-      : null;
-    const aggregateUntilMonth = normalizeBillingMonthKeySafe_(previousEntry && previousEntry.aggregateUntilMonth)
-      || normalizeBillingMonthKeySafe_(previousPrepared && previousPrepared.aggregateUntilMonth);
-    const previousUnpaid = isPatientCheckedUnpaidInBankWithdrawalSheet_(pid, previousMonthKey, previousPrepared || prepared, monthCache);
-    const hadAggregateInvoice = !!(previousUnpaid && aggregateUntilMonth);
-
-    if (hadAggregateInvoice) {
-      const aggregateSourceMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, aggregateUntilMonth, previousPrepared || prepared, monthCache)
-        .concat(Array.isArray(previousEntry && previousEntry.aggregateTargetMonths) ? previousEntry.aggregateTargetMonths : []);
-      const aggregateReceiptMonths = normalizePastBillingMonths_(aggregateSourceMonths, monthKey);
-      const receiptMonths = Array.from(new Set(aggregateReceiptMonths));
-      const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, aggregateReceiptMonths, previousPrepared || prepared, monthCache);
-      const aggregateRemark = formatAggregateReceiptDescription_(receiptMonths);
-      const previousReceipt = {
+    const aggregateMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, { useLegacyAggregate: false }, prepared, monthCache);
+    if (aggregateMonths.length > 1) {
+      const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, aggregateMonths, previousPrepared || prepared, monthCache);
+      const aggregateRemark = formatAggregateReceiptDescription_(aggregateMonths);
+      const previousReceipt = entry && entry.previousReceipt ? entry.previousReceipt : {
         addressee: '株式会社べるつりー',
         note: aggregateRemark
       };
       return Object.assign({}, entry, {
         hasPreviousReceiptSheet: true,
-        receiptMonths,
+        receiptMonths: aggregateMonths,
         receiptRemark: aggregateRemark,
         receiptMonthBreakdown: receiptBreakdown,
-        previousReceipt: entry && entry.previousReceipt ? entry.previousReceipt : previousReceipt
+        previousReceipt
       });
     }
 
+    const previousUnpaid = isPatientCheckedUnpaidInBankWithdrawalSheet_(pid, previousMonthKey, previousPrepared || prepared, monthCache);
     if (previousUnpaid) {
       return Object.assign({}, entry, {
         hasPreviousReceiptSheet: !!previousPrepared,
@@ -995,7 +990,10 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
       });
     }
 
-    const receiptMonths = normalizePastBillingMonths_([previousMonthKey], monthKey);
+    const existingReceiptMonths = Array.isArray(entry && entry.receiptMonths) && (entry.receiptMonths || []).length
+      ? entry.receiptMonths
+      : [previousMonthKey];
+    const receiptMonths = normalizePastBillingMonths_(existingReceiptMonths, monthKey);
     const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptMonths, previousPrepared || prepared, monthCache);
 
     return Object.assign({}, entry, {
@@ -1185,7 +1183,6 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   const pid = billingNormalizePatientId_(patientId);
   if (!monthKey || !pid) return [];
 
-  const limitNum = Number(normalizeBillingMonthKeySafe_(aggregateUntilMonth)) || 0;
   const months = [];
   let cursor = resolvePreviousBillingMonthKey_(monthKey);
   let guard = 0;
@@ -1193,18 +1190,14 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   while (cursor && guard < 48) {
     const cursorKey = normalizeBillingMonthKeySafe_(cursor);
     if (!cursorKey) break;
-    const cursorNum = Number(cursorKey);
-    if (limitNum && cursorNum <= limitNum) break;
 
     const normalized = getPreparedBillingForMonthCached_(cursorKey, cache);
-    if (!normalized || !normalized.bankFlagsByPatient) {
-      cursor = resolvePreviousBillingMonthKey_(cursorKey);
-      guard += 1;
-      continue;
-    }
+    // 安全側仕様: 中間月で prepared/bankFlags が欠損している場合は履歴走査を打ち切る
+    // （不確実な状態での自動合算を防ぐ）
+    if (!normalized || !normalized.bankFlagsByPatient) break;
 
     const flags = normalized.bankFlagsByPatient[pid];
-    if (flags && (flags.ae || flags.af)) {
+    if (flags && flags.ae) {
       months.unshift(normalized.billingMonth || cursorKey);
       cursor = resolvePreviousBillingMonthKey_(normalized.billingMonth || cursorKey);
       guard += 1;
@@ -1240,26 +1233,95 @@ function formatAggregateBillingRemark_(months) {
   return labels.join('・') + ' 合算請求';
 }
 
-function resolveAggregateMonthsFromUnpaid_(billingMonth, patientId, aggregateUntilMonth, prepared, cache) {
-  // aggregateUntilMonth を起点に、過去の未回収月と指定の合算月を列挙する
+function hasAggregatedThisUnpaidCycle_(entry, flags, unpaidSet, monthKey) {
+  if (!entry || !Array.isArray(entry.aggregateTargetMonths) || !entry.aggregateTargetMonths.length) return false;
+  if (!flags || flags.ae) return false;
+  const normalizedMonthKey = normalizeBillingMonthKeySafe_(monthKey);
+  const normalizedTargets = entry.aggregateTargetMonths.map(normalizeBillingMonthKeySafe_).filter(Boolean);
+  return normalizedMonthKey && normalizedTargets.indexOf(normalizedMonthKey) >= 0
+    && normalizedTargets.some(target => unpaidSet.has(target));
+}
+
+function resolveAggregateMonthsFromUnpaid_(billingMonth, patientId, options, prepared, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const pid = billingNormalizePatientId_(patientId);
-  const anchorMonth = normalizeBillingMonthKeySafe_(aggregateUntilMonth);
-  if (!monthKey || !pid || !anchorMonth) return [];
+  if (!monthKey || !pid) return [];
 
-  const unpaidMonths = buildReceiptMonthsFromBankUnpaid_(pid, anchorMonth, prepared, cache);
-  const normalized = normalizePastBillingMonths_(unpaidMonths, monthKey);
-  if (unpaidMonths && unpaidMonths.indexOf(anchorMonth) >= 0 && normalized.indexOf(anchorMonth) < 0) {
-    normalized.push(anchorMonth);
+  const opts = options && typeof options === 'object' ? options : {};
+  const useLegacyAggregate = !!opts.useLegacyAggregate;
+  // useLegacyAggregate は後方互換用。現行フローでは明示的に false を渡すことで安全側の自動合算を選択する。
+  const anchorMonth = useLegacyAggregate ? normalizeBillingMonthKeySafe_(opts.aggregateUntilMonth) : '';
+  if (useLegacyAggregate && anchorMonth) {
+    const unpaidMonths = buildReceiptMonthsFromBankUnpaid_(pid, anchorMonth, prepared, cache);
+    const normalized = normalizePastBillingMonths_(unpaidMonths, monthKey);
+    if (unpaidMonths && unpaidMonths.indexOf(anchorMonth) >= 0 && normalized.indexOf(anchorMonth) < 0) {
+      normalized.push(anchorMonth);
+    }
+    const seen = new Set();
+    const unique = [];
+    normalized.forEach(ym => {
+      if (!seen.has(ym)) {
+        seen.add(ym);
+        unique.push(ym);
+      }
+    });
+    return unique;
   }
+
+  // 自動合算仕様:
+  // ・bankFlags.ae = true は「未回収月」を表す
+  // ・未回収が解消された月（ae=false）でのみ合算を行う
+  // ・合算対象は「直近の連続未回収月 + 当月」
+  // ・未回収中の月では請求・領収ともに合算しない
+  // 未定義: 中間月の Prepared や bankFlags が欠損している場合は未回収履歴を追えないため合算しない。
+  const unpaidHistory = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, null, cache);
+  if (!unpaidHistory.length) return [];
+
+  const existingEntry = prepared && Array.isArray(prepared.billingJson)
+    ? (prepared.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid)
+    : null;
+  const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
+  const currentUnpaid = !!(currentFlags && currentFlags.ae);
+  if (currentUnpaid) return [];
+
+  const unpaidSet = new Set(unpaidHistory.map(normalizeBillingMonthKeySafe_));
+  unpaidSet.add(monthKey);
+  if (hasAggregatedThisUnpaidCycle_(existingEntry, currentFlags, unpaidSet, monthKey)) return [];
+
+  const cachedPreparedStore = cache && cache.preparedByMonth && typeof cache.preparedByMonth === 'object'
+    ? cache.preparedByMonth
+    : null;
+  if (cachedPreparedStore) {
+    const monthNum = Number(monthKey) || 0;
+    const cachedMonths = Object.keys(cachedPreparedStore);
+    for (let i = 0; i < cachedMonths.length; i += 1) {
+      const cachedMonthKey = normalizeBillingMonthKeySafe_(cachedMonths[i]);
+      const cachedNum = Number(cachedMonthKey) || 0;
+      if (!cachedMonthKey || (monthNum && cachedNum >= monthNum)) continue;
+      const cached = cachedPreparedStore[cachedMonths[i]];
+      if (!cached || !Array.isArray(cached.billingJson)) continue;
+      const cachedEntry = cached.billingJson.find(row => billingNormalizePatientId_(row && row.patientId) === pid);
+      const cachedFlags = cached && cached.bankFlagsByPatient && cached.bankFlagsByPatient[pid];
+      if (hasAggregatedThisUnpaidCycle_(cachedEntry, cachedFlags, unpaidSet, monthKey)) {
+        return [];
+      }
+    }
+  }
+
   const seen = new Set();
   const unique = [];
-  normalized.forEach(ym => {
-    if (!seen.has(ym)) {
-      seen.add(ym);
-      unique.push(ym);
-    }
+  unpaidHistory.forEach(ym => {
+    const normalized = normalizeBillingMonthKeySafe_(ym);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    unique.push(normalized);
   });
+
+  if (!seen.has(monthKey)) {
+    seen.add(monthKey);
+    unique.push(monthKey);
+  }
+
   return unique;
 }
 
@@ -1279,14 +1341,9 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return entry;
 
-    const bankFlags = bankFlagsByPatient[pid] || {};
-    const aggregateUntilMonth = normalizeBillingMonthKeySafe_(entry && entry.aggregateUntilMonth)
-      || normalizeBillingMonthKeySafe_(normalized.aggregateUntilMonth);
-    const shouldAggregate = !!(bankFlags.ae && aggregateUntilMonth);
-    if (!shouldAggregate) return entry;
-
-    const targetMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, aggregateUntilMonth, normalized, monthCache);
-    if (!targetMonths.length) return entry;
+    // 自動合算では skipReceipt を立てず、合算済みであっても領収書対象とする。
+    const targetMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, { useLegacyAggregate: false }, normalized, monthCache);
+    if (targetMonths.length <= 1) return entry;
     const aggregateTotal = targetMonths.reduce(
       (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, null, monthCache),
       0
@@ -1302,7 +1359,7 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
       total: aggregateTotal,
       grandTotal: aggregateTotal,
       aggregateTargetMonths: targetMonths,
-      skipReceipt: true
+      skipReceipt: false
     });
   });
 

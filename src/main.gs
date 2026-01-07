@@ -1282,7 +1282,8 @@ function resolveAggregateMonthsFromUnpaid_(billingMonth, patientId, options, pre
     : null;
   const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
   const currentUnpaid = !!(currentFlags && currentFlags.ae);
-  if (currentUnpaid) return [];
+  const currentAggregate = !!(currentFlags && currentFlags.af);
+  if (currentUnpaid && !currentAggregate) return [];
 
   const unpaidSet = new Set(unpaidHistory.map(normalizeBillingMonthKeySafe_));
   unpaidSet.add(monthKey);

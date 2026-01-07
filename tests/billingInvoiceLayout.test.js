@@ -98,6 +98,33 @@ function testInvoiceHtmlEscapesUserInput() {
   assert(!html.includes('江東区'), '住所は出力に含まれない');
 }
 
+function testAggregateInvoiceHtmlSumsBreakdown() {
+  const patientId = 'patient-aggregate';
+  const aggregateEntries = {
+    '202501': { billingMonth: '202501', patientId, visitCount: 2, burdenRate: 1, insuranceType: '鍼灸' },
+    '202502': { billingMonth: '202502', patientId, visitCount: 3, burdenRate: 1, insuranceType: '鍼灸' }
+  };
+  const aggregateContext = createContext({
+    billingNormalizePatientId_: (value) => value,
+    getPreparedBillingEntryForMonthCached_: (monthKey, pid) => (pid === patientId ? aggregateEntries[monthKey] : null)
+  });
+  const { buildBillingInvoiceHtml_ } = aggregateContext;
+
+  const html = buildBillingInvoiceHtml_({
+    billingMonth: '202503',
+    patientId,
+    aggregateTargetMonths: ['202501', '202502'],
+    visitCount: 1,
+    burdenRate: 1,
+    insuranceType: '鍼灸',
+    nameKanji: '集計太郎'
+  }, '202503');
+
+  assert(html.includes('施術料（417円 × 5回）: 2,085円'), '合算対象月の施術料を合算して表示する');
+  assert(html.includes('交通費（33円 × 5回）: 165円'), '合算対象月の交通費を合算して表示する');
+  assert(html.includes('2,250円'), '合算対象月の合計を合算結果で表示する');
+}
+
 function testInvoiceTemplateRecalculatesSelfPaidBreakdown() {
   const data = buildInvoiceTemplateData_({
     billingMonth: '202501',
@@ -280,6 +307,7 @@ function run() {
   testInvoiceChargeBreakdownUsesCustomTransportPrice();
   testInvoiceHtmlIncludesBreakdown();
   testInvoiceHtmlEscapesUserInput();
+  testAggregateInvoiceHtmlSumsBreakdown();
   testInvoiceTemplateRecalculatesSelfPaidBreakdown();
   testInvoiceTemplateAddsReceiptDecision();
   testAggregateInvoiceTemplateStacksPerMonth();

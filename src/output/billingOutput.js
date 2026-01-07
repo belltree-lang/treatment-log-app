@@ -917,28 +917,104 @@ function calculateInvoiceChargeBreakdown_(params) {
   return { treatmentUnitPrice, treatmentAmount, transportAmount, transportDetail, grandTotal, visits, selfPayItems, selfPayTotal };
 }
 
-  function buildBillingInvoiceHtml_(item, billingMonth) {
-    const targetMonth = billingMonth || (item && item.billingMonth) || '';
-    const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth: targetMonth }));
-    const monthLabel = normalizeBillingMonthLabel_(targetMonth);
-    const visits = breakdown.visits || 0;
-  const treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
+function buildBillingInvoiceHtml_(item, billingMonth) {
+  const targetMonth = billingMonth || (item && item.billingMonth) || '';
+  const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth: targetMonth }));
+  const monthLabel = normalizeBillingMonthLabel_(targetMonth);
+  const aggregateMonths = Array.isArray(item && item.aggregateTargetMonths)
+    ? normalizeAggregateMonthsForInvoice_(item.aggregateTargetMonths, targetMonth)
+    : [];
   const transportUnitPrice = TRANSPORT_PRICE;
   const carryOverAmount = normalizeBillingCarryOver_(item);
-  const transportDetail = breakdown.transportDetail || (formatBillingCurrency_(transportUnitPrice) + '円 × ' + visits + '回');
-  const totalLabel = formatBillingCurrency_(breakdown.grandTotal) + '円';
+  let visits = breakdown.visits || 0;
+  let treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
+  let treatmentAmount = breakdown.treatmentAmount || 0;
+  let transportAmount = breakdown.transportAmount || 0;
+  let selfPayTotal = breakdown.selfPayTotal || 0;
+  let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(transportUnitPrice) + '円 × ' + visits + '回');
+  let grandTotal = breakdown.grandTotal;
 
-    const name = escapeHtml_((item && item.nameKanji) || '');
+  if (aggregateMonths.length) {
+    const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(item && item.patientId)
+      : (item && item.patientId ? String(item.patientId).trim() : '');
+    const monthCache = {};
+    // NOTE:
+    // 合算請求時のみ、表示用として過去月の prepared billing を参照する。
+    // 集計・判定ロジックには影響しない。
+    const aggregateEntries = aggregateMonths
+      .map(ym => normalizeInvoiceMonthKey_(ym))
+      .filter(Boolean)
+      .map(monthKey => {
+        let entry = null;
+        if (normalizedPatientId && typeof getPreparedBillingEntryForMonthCached_ === 'function') {
+          try {
+            entry = getPreparedBillingEntryForMonthCached_(monthKey, normalizedPatientId, monthCache);
+          } catch (e) {
+            entry = null;
+          }
+        }
+        if (!entry && typeof loadPreparedBillingWithSheetFallback_ === 'function') {
+          try {
+            const prepared = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
+            const payload = prepared && prepared.prepared !== undefined ? prepared.prepared : prepared;
+            const normalizedPrepared = typeof normalizePreparedBilling_ === 'function'
+              ? normalizePreparedBilling_(payload)
+              : payload;
+            const billingEntries = normalizedPrepared && normalizedPrepared.billingJson;
+            if (Array.isArray(billingEntries)) {
+              entry = billingEntries.find(row => {
+                const pid = typeof billingNormalizePatientId_ === 'function'
+                  ? billingNormalizePatientId_(row && row.patientId)
+                  : (row && row.patientId ? String(row.patientId).trim() : '');
+                return pid && pid === normalizedPatientId;
+              });
+            }
+          } catch (err) {
+            entry = null;
+          }
+        }
+        if (!entry && normalizeInvoiceMonthKey_(item && item.billingMonth) === monthKey) {
+          entry = item;
+        }
+        return entry ? Object.assign({ billingMonth: monthKey }, entry) : null;
+      })
+      .filter(Boolean);
 
-    return [
-      '<div class="billing-invoice">',
-      '<h1>べるつりー訪問鍼灸マッサージ</h1>',
-      `<h2>${escapeHtml_(monthLabel)} ご請求書</h2>`,
-      name ? `<p class="patient-name">${name} 様</p>` : '',
-      '<div class="charge-breakdown">',
+    if (aggregateEntries.length) {
+      const aggregateBreakdowns = aggregateEntries.map(entry => calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: entry.billingMonth })));
+      visits = aggregateBreakdowns.reduce((sum, b) => sum + (b.visits || 0), 0);
+      treatmentAmount = aggregateBreakdowns.reduce((sum, b) => sum + (Number(b.treatmentAmount) || 0), 0);
+      transportAmount = aggregateBreakdowns.reduce((sum, b) => sum + (Number(b.transportAmount) || 0), 0);
+      selfPayTotal = aggregateBreakdowns.reduce((sum, b) => sum + (Number(b.selfPayTotal) || 0), 0);
+      // NOTE:
+      // 合算請求時の表示用単価は、最初に取得できた月の単価を代表値として表示する。
+      // 月別単価の表示は行わない（最小変更方針）。
+      const unitPriceSource = aggregateBreakdowns.find(b => Number.isFinite(b && b.treatmentUnitPrice));
+      if (unitPriceSource) {
+        treatmentUnitPrice = unitPriceSource.treatmentUnitPrice || 0;
+      }
+      const hasManualTransport = aggregateBreakdowns.some(b => (b && b.transportDetail) === '手動入力');
+      transportDetail = hasManualTransport
+        ? '手動入力'
+        : formatBillingCurrency_(transportUnitPrice) + '円 × ' + visits + '回';
+      grandTotal = carryOverAmount + treatmentAmount + transportAmount + selfPayTotal;
+    }
+  }
+
+  const totalLabel = formatBillingCurrency_(grandTotal) + '円';
+
+  const name = escapeHtml_((item && item.nameKanji) || '');
+
+  return [
+    '<div class="billing-invoice">',
+    '<h1>べるつりー訪問鍼灸マッサージ</h1>',
+    `<h2>${escapeHtml_(monthLabel)} ご請求書</h2>`,
+    name ? `<p class="patient-name">${name} 様</p>` : '',
+    '<div class="charge-breakdown">',
     `<p>前月繰越: ${formatBillingCurrency_(carryOverAmount)}円</p>`,
-    `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(breakdown.treatmentAmount)}円</p>`,
-    `<p>交通費（${transportDetail}）: ${formatBillingCurrency_(breakdown.transportAmount)}円</p>`,
+    `<p>施術料（${formatBillingCurrency_(treatmentUnitPrice)}円 × ${visits}回）: ${formatBillingCurrency_(treatmentAmount)}円</p>`,
+    `<p>交通費（${transportDetail}）: ${formatBillingCurrency_(transportAmount)}円</p>`,
     `<p class="grand-total">合計: ${totalLabel}</p>`,
     '</div>',
     '</div>'

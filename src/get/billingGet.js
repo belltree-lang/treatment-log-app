@@ -1499,15 +1499,20 @@ function getBillingSourceData(billingMonth) {
   });
   const staffDirectory = loadBillingStaffDirectory_();
   const staffDisplayByPatient = buildStaffDisplayByPatient_(visitCountsResult.staffByPatient || {}, staffDirectory);
-    let carryOverLedger = [];
-    const carryOverLedgerMeta = {};
-    try {
-      carryOverLedger = loadCarryOverLedgerEntries_(month, carryOverLedgerMeta);
-    } catch (err) {
-      billingLogger_.log('[billing] CarryOverLedger missing or inaccessible → using empty fallback: ' + err);
-      carryOverLedger = [];
-      carryOverLedgerMeta.loadError = String(err);
-    }
+  const bankFlagsByPatient = getBankFlagsByPatientSafe_(month.key, mergedPatients);
+  const previousMonthKey = resolvePreviousBillingMonthKey_(month.key);
+  const previousBankFlagsByPatient = previousMonthKey
+    ? getBankFlagsByPatientSafe_(previousMonthKey, mergedPatients)
+    : {};
+  let carryOverLedger = [];
+  const carryOverLedgerMeta = {};
+  try {
+    carryOverLedger = loadCarryOverLedgerEntries_(month, carryOverLedgerMeta);
+  } catch (err) {
+    billingLogger_.log('[billing] CarryOverLedger missing or inaccessible → using empty fallback: ' + err);
+    carryOverLedger = [];
+    carryOverLedgerMeta.loadError = String(err);
+  }
 
   const carryOverLedgerByPatient = (carryOverLedger || []).reduce((map, entry) => {
     const pid = billingNormalizePatientId_(entry.patientId);
@@ -1521,6 +1526,16 @@ function getBillingSourceData(billingMonth) {
   } catch (err) {
     billingLogger_.log('[billing] unpaidHistory fallback (CarryOverLedger or history missing): ' + err);
     unpaidHistory = [];
+  }
+  if (!unpaidHistory.length) {
+    const fallbackUnpaidHistory = buildUnpaidHistoryFromBankFlags_(
+      previousMonthKey,
+      previousBankFlagsByPatient,
+      mergedPatients
+    );
+    if (fallbackUnpaidHistory.length) {
+      unpaidHistory = mergeUnpaidHistoryEntries_(unpaidHistory, fallbackUnpaidHistory);
+    }
   }
   const carryOverFromUnpaid = (unpaidHistory || []).reduce((map, entry) => {
     const pid = billingNormalizePatientId_(entry.patientId);
@@ -1546,14 +1561,14 @@ function getBillingSourceData(billingMonth) {
     treatmentVisitCountEntries: Object.keys(treatmentVisitCounts || {}).length,
     zeroVisitSamples,
     unpaidHistoryCount: (unpaidHistory || []).length,
-      carryOverLedgerCount: (carryOverLedger || []).length,
-      carryOverPatients: Object.keys(carryOverByPatient || {}).length,
-      staffByPatientCount: Object.keys(visitCountsResult.staffByPatient || {}).length,
-      staffDirectorySize: Object.keys(staffDirectory || {}).length
-    }));
-    billingLogger_.log('[billing] CarryOverLedger status=' + JSON.stringify(carryOverLedgerMeta));
+    carryOverLedgerCount: (carryOverLedger || []).length,
+    carryOverPatients: Object.keys(carryOverByPatient || {}).length,
+    staffByPatientCount: Object.keys(visitCountsResult.staffByPatient || {}).length,
+    staffDirectorySize: Object.keys(staffDirectory || {}).length
+  }));
+  billingLogger_.log('[billing] CarryOverLedger status=' + JSON.stringify(carryOverLedgerMeta));
   return {
-      billingMonth: month.key,
+    billingMonth: month.key,
     month,
     treatmentVisitCounts,
     visitCounts: treatmentVisitCounts,
@@ -1565,14 +1580,91 @@ function getBillingSourceData(billingMonth) {
     staffByPatient: visitCountsResult.staffByPatient || {},
     staffHistoryByPatient: visitCountsResult.staffHistoryByPatient || {},
     staffDirectory,
-      staffDisplayByPatient,
-      unpaidHistory,
-      carryOverLedger,
-      carryOverLedgerMeta,
-      carryOverLedgerByPatient,
-      carryOverByPatient,
-      billingOverrideFlags
+    staffDisplayByPatient,
+    bankFlagsByPatient,
+    previousBankFlagsByPatient,
+    unpaidHistory,
+    carryOverLedger,
+    carryOverLedgerMeta,
+    carryOverLedgerByPatient,
+    carryOverByPatient,
+    billingOverrideFlags
   };
+}
+
+function getBankFlagsByPatientSafe_(billingMonthKey, patients) {
+  if (typeof getBankFlagsByPatient_ !== 'function') return {};
+  try {
+    return getBankFlagsByPatient_(billingMonthKey, { patients: patients || {} }) || {};
+  } catch (err) {
+    billingLogger_.log('[billing] getBankFlagsByPatient_ failed for ' + billingMonthKey + ': ' + err);
+    return {};
+  }
+}
+
+function buildUnpaidHistoryFromBankFlags_(billingMonthKey, bankFlagsByPatient, patients) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonthKey);
+  if (!monthKey || !bankFlagsByPatient || typeof bankFlagsByPatient !== 'object') return [];
+  const unpaidIds = Object.keys(bankFlagsByPatient).filter(pid => bankFlagsByPatient[pid] && bankFlagsByPatient[pid].ae);
+  if (!unpaidIds.length) return [];
+  if (typeof collectBankWithdrawalUnpaidPatients_ !== 'function'
+    || typeof collectBankWithdrawalAmountsByPatient_ !== 'function') {
+    return [];
+  }
+
+  let unpaidMap = {};
+  let amountByPatient = {};
+  try {
+    unpaidMap = collectBankWithdrawalUnpaidPatients_(monthKey, { patients: patients || {} }) || {};
+  } catch (err) {
+    billingLogger_.log('[billing] collectBankWithdrawalUnpaidPatients_ failed for ' + monthKey + ': ' + err);
+    unpaidMap = {};
+  }
+  try {
+    amountByPatient = collectBankWithdrawalAmountsByPatient_(monthKey, { patients: patients || {} }) || {};
+  } catch (err) {
+    billingLogger_.log('[billing] collectBankWithdrawalAmountsByPatient_ failed for ' + monthKey + ': ' + err);
+    amountByPatient = {};
+  }
+
+  const reason = typeof BANK_WITHDRAWAL_UNPAID_HEADER !== 'undefined'
+    ? BANK_WITHDRAWAL_UNPAID_HEADER
+    : '未回収チェック';
+
+  return unpaidIds.map(pid => {
+    if (unpaidMap && Object.keys(unpaidMap).length && !unpaidMap[pid]) return null;
+    const amount = Number(amountByPatient[pid]) || 0;
+    if (!amount) return null;
+    return {
+      patientId: pid,
+      billingMonth: monthKey,
+      unpaidAmount: amount,
+      reason,
+      memo: ''
+    };
+  }).filter(Boolean);
+}
+
+function mergeUnpaidHistoryEntries_(current, next) {
+  const base = Array.isArray(current) ? current.slice() : [];
+  const existing = base.reduce((map, entry) => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    const monthKey = normalizeBillingMonthKeySafe_(entry && entry.billingMonth);
+    if (pid && monthKey) {
+      map[pid + '::' + monthKey] = true;
+    }
+    return map;
+  }, {});
+  (Array.isArray(next) ? next : []).forEach(entry => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    const monthKey = normalizeBillingMonthKeySafe_(entry && entry.billingMonth);
+    if (!pid || !monthKey) return;
+    const key = pid + '::' + monthKey;
+    if (existing[key]) return;
+    existing[key] = true;
+    base.push(entry);
+  });
+  return base;
 }
 
 function extractUnpaidBillingHistory(targetBillingMonth) {

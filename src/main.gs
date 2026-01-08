@@ -893,7 +893,8 @@ function collectBankWithdrawalUnpaidPatients_(billingMonth, prepared) {
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients || {});
+  const patients = resolvePreparedPatients_(prepared);
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
     : value => String(value || '').trim();
@@ -1034,7 +1035,8 @@ function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
     : value => String(value || '').trim();
-  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients || {});
+  const patients = resolvePreparedPatients_(prepared);
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
   const amounts = {};
 
   values.forEach(row => {
@@ -1113,7 +1115,8 @@ function collectBankWithdrawalAmountsByPatient_(billingMonth, prepared) {
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients || {});
+  const patients = resolvePreparedPatients_(prepared);
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
     : value => String(value || '').trim();
@@ -1283,7 +1286,8 @@ function resolveAggregateMonthsFromUnpaid_(billingMonth, patientId, options, pre
   const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
   const currentUnpaid = !!(currentFlags && currentFlags.ae);
   const currentAggregate = !!(currentFlags && currentFlags.af);
-  if (currentUnpaid && !currentAggregate) return [];
+  const allowAggregate = !currentUnpaid || currentAggregate;
+  if (!allowAggregate) return [];
 
   const unpaidSet = new Set(unpaidHistory.map(normalizeBillingMonthKeySafe_));
   unpaidSet.add(monthKey);
@@ -2031,7 +2035,8 @@ function generateSimpleBankSheet(billingMonth) {
   const nameValues = copied.getRange(2, nameCol, rowCount, 1).getDisplayValues();
   const kanaValues = kanaCol ? copied.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
   const pidValues = resolvedPidCol ? copied.getRange(2, resolvedPidCol, rowCount, 1).getDisplayValues() : [];
-  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
+  const patients = resolvePreparedPatients_(prepared);
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
 
   const missingAccounts = [];
@@ -2355,6 +2360,14 @@ function buildPatientNameToIdMap_(patients) {
   }, {});
 }
 
+function resolvePreparedPatients_(preparedOrPatients) {
+  if (!preparedOrPatients || typeof preparedOrPatients !== 'object') return {};
+  if (preparedOrPatients.patients && typeof preparedOrPatients.patients === 'object') {
+    return preparedOrPatients.patients || {};
+  }
+  return preparedOrPatients;
+}
+
 function normalizeBankFlagValue_(value) {
   if (value === true) return true;
   if (value === false || value === null || value === undefined) return false;
@@ -2388,7 +2401,8 @@ function getBankFlagsByPatient_(billingMonth, prepared) {
 
   const effectiveLastCol = sheet.getLastColumn();
   const values = sheet.getRange(2, 1, lastRow - 1, effectiveLastCol).getValues();
-  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
+  const patients = resolvePreparedPatients_(prepared);
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
   const flagsByPatient = {};
 
   values.forEach(row => {
@@ -2457,7 +2471,8 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const kanaValues = kanaCol ? sheet.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
   const pidValues = resolvedPidCol ? sheet.getRange(2, resolvedPidCol, rowCount, 1).getDisplayValues() : [];
   const existingAmountValues = sheet.getRange(2, amountCol, rowCount, 1).getValues();
-  const nameToPatientId = buildPatientNameToIdMap_(prepared && prepared.patients);
+  const patients = resolvePreparedPatients_(prepared);
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
   const isBlank_ = value => value === '' || value === null || value === undefined;
   const isSameAmount_ = (current, next) => {
@@ -2571,7 +2586,8 @@ function collectUnpaidWithdrawalRows_(billingMonth) {
   const effectiveLastCol = sheet.getLastColumn();
   const values = sheet.getRange(2, 1, lastRow - 1, effectiveLastCol).getValues();
   const prepared = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true }) || {};
-  const nameToPatientId = buildPatientNameToIdMap_(prepared.patients || {});
+  const patients = resolvePreparedPatients_(prepared);
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
   const entries = [];
   let checkedRows = 0;
 

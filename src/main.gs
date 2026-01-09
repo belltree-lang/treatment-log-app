@@ -1348,6 +1348,7 @@ function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepa
 
   if (previousFlags && previousFlags.af) {
     const unpaidMonths = collectAggregateBankFlagMonthsForPatient_(previousMonthKey, pid, null, cache);
+    if (!unpaidMonths.length) return [];
     return normalizePastBillingMonths_(unpaidMonths.concat(previousMonthKey), monthKey);
   }
 

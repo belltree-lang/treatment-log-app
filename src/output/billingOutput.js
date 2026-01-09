@@ -296,8 +296,8 @@ function buildInvoiceChargePeriodLabel_(data) {
     data.aggregateMonthTotals.forEach(row => pushMonth(row && row.month));
   }
 
-  if (isAggregate && !months.length && Array.isArray(data && data.receiptMonths)) {
-    data.receiptMonths.forEach(pushMonth);
+  if (isAggregate && !months.length && Array.isArray(data && data.months)) {
+    data.months.forEach(pushMonth);
   }
 
   if (!months.length && data && data.billingMonth) {
@@ -321,6 +321,221 @@ function buildInvoiceChargePeriodLabel_(data) {
   if (!endLabel) return `${startLabel}分`;
 
   return `${startLabel}分〜${endLabel}分`;
+}
+
+function normalizeBankFlagValueForOutput_(value) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  const num = Number(value);
+  if (Number.isFinite(num)) return num !== 0;
+  const normalized = String(value || '').trim();
+  if (!normalized) return false;
+  const lowered = normalized.toLowerCase();
+  if (lowered === 'true' || lowered === 'yes' || lowered === 'on') return true;
+  if (lowered === 'false' || lowered === 'no' || lowered === 'off') return false;
+  return lowered === '1' || normalized === '✓' || normalized === '✔' || normalized === '☑' || normalized === '◯';
+}
+
+function resolveBankWithdrawalSheetForInvoice_(billingMonth) {
+  const workbook = resolveBillingSpreadsheetForOutput_();
+  if (!workbook) return null;
+  const monthKey = normalizeInvoiceMonthKey_(billingMonth);
+  if (!monthKey) return null;
+  const sheetName = typeof formatBankWithdrawalSheetName_ === 'function'
+    ? formatBankWithdrawalSheetName_(monthKey)
+    : `銀行引落_${monthKey}`;
+  return workbook.getSheetByName(sheetName);
+}
+
+function resolveBankWithdrawalColumnsForInvoice_(headers) {
+  const workingHeaders = Array.isArray(headers) ? headers.slice() : [];
+  const fallbackResolve = (candidates) => {
+    const normalizedCandidates = candidates.map(label => String(label || '').trim());
+    for (let i = 0; i < workingHeaders.length; i += 1) {
+      const header = String(workingHeaders[i] || '').trim();
+      if (normalizedCandidates.indexOf(header) >= 0) return i + 1;
+    }
+    return 0;
+  };
+  const resolveColumn = (candidates, label, options) => {
+    if (typeof resolveBillingColumn_ === 'function') {
+      return resolveBillingColumn_(workingHeaders, candidates, label, options || {});
+    }
+    return fallbackResolve(candidates);
+  };
+
+  return {
+    unpaidCol: resolveColumn([BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {}),
+    aggregateCol: resolveColumn(['合算'], '合算', {}),
+    amountCol: resolveColumn(
+      ['金額', '請求金額', '引落額', '引落金額'],
+      '金額',
+      { fallbackLetter: typeof BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER !== 'undefined' ? BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER : undefined }
+    ),
+    pidCol: resolveColumn(
+      (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
+        ? BILLING_LABELS.recNo.concat(['患者ID', '患者番号'])
+        : ['患者ID', '患者番号'],
+      '患者ID',
+      {}
+    ),
+    nameCol: resolveColumn(
+      (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.name))
+        ? BILLING_LABELS.name
+        : ['名前', '氏名'],
+      '名前',
+      {}
+    ),
+    kanaCol: resolveColumn(
+      (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.furigana))
+        ? BILLING_LABELS.furigana
+        : ['フリガナ', 'ふりがな', '氏名（カナ）'],
+      'フリガナ',
+      {}
+    )
+  };
+}
+
+function readBankWithdrawalEntryForInvoice_(billingMonth, patientId) {
+  const monthKey = normalizeInvoiceMonthKey_(billingMonth);
+  const pid = patientId ? String(patientId).trim() : '';
+  if (!monthKey || !pid) return null;
+
+  const sheet = resolveBankWithdrawalSheetForInvoice_(monthKey);
+  if (!sheet) return null;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const columns = resolveBankWithdrawalColumnsForInvoice_(headers);
+  if (!columns.pidCol) return null;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+  for (let i = 0; i < values.length; i += 1) {
+    const row = values[i];
+    const rowPid = normalizePid(row[columns.pidCol - 1]);
+    if (!rowPid || rowPid !== pid) continue;
+
+    const nameKanji = columns.nameCol ? String(row[columns.nameCol - 1] || '').trim() : '';
+    const nameKana = columns.kanaCol ? String(row[columns.kanaCol - 1] || '').trim() : '';
+    const amount = columns.amountCol ? Number(row[columns.amountCol - 1]) || 0 : 0;
+    const ae = columns.unpaidCol ? normalizeBankFlagValueForOutput_(row[columns.unpaidCol - 1]) : false;
+    const af = columns.aggregateCol ? normalizeBankFlagValueForOutput_(row[columns.aggregateCol - 1]) : false;
+
+    return {
+      billingMonth: monthKey,
+      patientId: pid,
+      nameKanji,
+      nameKana,
+      amount,
+      flags: { ae, af }
+    };
+  }
+  return null;
+}
+
+function listInvoiceTargetsFromBankSheet_(billingMonth) {
+  const monthKey = normalizeInvoiceMonthKey_(billingMonth);
+  if (!monthKey) return [];
+  const sheet = resolveBankWithdrawalSheetForInvoice_(monthKey);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const columns = resolveBankWithdrawalColumnsForInvoice_(headers);
+  if (!columns.pidCol) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+
+  return values.map(row => {
+    const pid = normalizePid(row[columns.pidCol - 1]);
+    if (!pid) return null;
+    const nameKanji = columns.nameCol ? String(row[columns.nameCol - 1] || '').trim() : '';
+    const nameKana = columns.kanaCol ? String(row[columns.kanaCol - 1] || '').trim() : '';
+    return {
+      billingMonth: monthKey,
+      patientId: pid,
+      nameKanji,
+      nameKana
+    };
+  }).filter(Boolean);
+}
+
+function buildPreviousReceiptFromBankSheet_(billingMonth, patientId, addressee) {
+  const previousMonth = resolvePreviousBillingMonthKey_(billingMonth);
+  if (!previousMonth) {
+    return { visible: false, addressee: addressee || '' };
+  }
+  const previousEntry = readBankWithdrawalEntryForInvoice_(previousMonth, patientId);
+  if (!previousEntry) {
+    return { visible: false, addressee: addressee || '' };
+  }
+
+  const wasUnpaid = previousEntry.flags && previousEntry.flags.ae;
+  const amount = normalizeInvoiceMoney_(previousEntry.amount);
+  const visible = !wasUnpaid && amount > 0;
+  const receiptMonths = [previousMonth];
+  return {
+    visible,
+    addressee: addressee || '',
+    amount,
+    note: formatAggregatedReceiptRemark_(receiptMonths),
+    date: formatReceiptSettlementDate_(receiptMonths, formatInvoiceDateLabel_())
+  };
+}
+
+function buildInvoiceContextFromBankSheet(billingMonth, patientId) {
+  const monthKey = normalizeInvoiceMonthKey_(billingMonth);
+  const pid = patientId ? String(patientId).trim() : '';
+  if (!monthKey || !pid) return null;
+
+  const currentEntry = readBankWithdrawalEntryForInvoice_(monthKey, pid);
+  const unpaidMonths = [];
+  let cursor = resolvePreviousBillingMonthKey_(monthKey);
+  let guard = 0;
+
+  while (cursor && guard < 48) {
+    const entry = readBankWithdrawalEntryForInvoice_(cursor, pid);
+    if (!entry || !entry.flags || !entry.flags.ae) break;
+    unpaidMonths.unshift(cursor);
+    cursor = resolvePreviousBillingMonthKey_(cursor);
+    guard += 1;
+  }
+
+  const months = monthKey ? unpaidMonths.concat([monthKey]) : unpaidMonths;
+  const nameKanji = (currentEntry && currentEntry.nameKanji)
+    || (unpaidMonths.length ? (readBankWithdrawalEntryForInvoice_(unpaidMonths[0], pid) || {}).nameKanji : '')
+    || '';
+  const nameKana = (currentEntry && currentEntry.nameKana)
+    || (unpaidMonths.length ? (readBankWithdrawalEntryForInvoice_(unpaidMonths[0], pid) || {}).nameKana : '')
+    || '';
+  const monthTotals = months.map(month => {
+    const entry = readBankWithdrawalEntryForInvoice_(month, pid);
+    const total = entry ? normalizeInvoiceMoney_(entry.amount) : 0;
+    return { month, total, monthLabel: normalizeBillingMonthLabel_(month) };
+  });
+  const grandTotal = monthTotals.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+  const currentFlags = currentEntry && currentEntry.flags ? currentEntry.flags : { ae: false, af: false };
+  const isAggregateInvoice = !!currentFlags.af || months.length > 1;
+
+  return {
+    billingMonth: monthKey,
+    patientId: pid,
+    nameKanji,
+    nameKana,
+    months,
+    aggregateMonthTotals: monthTotals,
+    grandTotal,
+    isAggregateInvoice,
+    aggregateRemark: isAggregateInvoice ? formatAggregateInvoiceRemark_(months) : '',
+    previousReceipt: buildPreviousReceiptFromBankSheet_(monthKey, pid, nameKanji)
+  };
 }
 
 function buildInclusiveMonthRange_(fromYm, toYm) {
@@ -796,191 +1011,46 @@ function buildAggregateInvoiceBreakdowns_(item, aggregateMonths, options) {
 }
 
 function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
-  const billingMonth = item && item.billingMonth;
-  const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
-  const monthLabel = normalizeBillingMonthLabel_(billingMonth);
-  const aggregateLabel = monthLabel ? `${monthLabel}（合算）` : '合算請求';
-  const baseAmount = normalizeBillingAmount_(item);
-  const watermark = buildInvoiceWatermark_(item);
-  const initialReceipt = resolveInvoiceReceiptDisplay_(item);
-  const receiptDecisionMonths = initialReceipt && Array.isArray(initialReceipt.explicitReceiptMonths)
-    ? initialReceipt.explicitReceiptMonths
-    : [];
-  const months = normalizeAggregateMonthsForInvoice_(
-    Array.isArray(aggregateMonths) && aggregateMonths.length
-      ? aggregateMonths
-    : (receiptDecisionMonths.length
-      ? receiptDecisionMonths
-      : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])),
-    billingMonth
-  );
-  const monthCache = {};
-  const preparedAggregate = filterAggregateMonthsByPrepared_(item, months, { monthCache });
-  const filteredMonths = preparedAggregate.months;
-  const missingAggregateMonths = preparedAggregate.missingMonths;
-  const receipt = resolveInvoiceReceiptDisplay_(item, { aggregateMonths: filteredMonths });
-  const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
-  const aggregateRemark = formatAggregateInvoiceRemark_(filteredMonths);
-  const aggregateData = buildAggregateInvoiceBreakdowns_(item, filteredMonths, { monthCache });
-  const aggregateMonthTotals = aggregateData.breakdowns.map(row => ({
-    month: row.month,
-    monthLabel: normalizeBillingMonthLabel_(row.month),
-    total: row.breakdown ? row.breakdown.grandTotal : 0
-  }));
-  const aggregateTotal = aggregateMonthTotals.length
-    ? aggregateData.totals.grandTotal
-    : baseAmount;
-  const amount = aggregateTotal;
-  const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
-    ? billingNormalizePatientId_(item && item.patientId)
-    : String(item && item.patientId || '').trim();
-  const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : aggregateStatus === 'confirmed';
-  const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt, months);
-  const previousReceipt = item && item.previousReceipt
-    ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
-    : basePreviousReceipt;
-  if (previousReceipt) {
-    previousReceipt.settled = isPreviousReceiptSettled_(item);
-  }
-
-  if (previousReceipt) {
-    previousReceipt.visible = !!(receipt && receipt.visible);
-  }
-
-  const aggregateDecision = resolveAggregateInvoiceDecision_(item, receipt, billingMonth, { monthCache });
-  const aggregateDecisionTrace = Object.assign(
-    { decisionSources: aggregateDecision && aggregateDecision.decisionSources ? aggregateDecision.decisionSources : [] },
-    aggregateDecision && aggregateDecision.trace ? aggregateDecision.trace : {},
-    { isAggregateInvoice: true, aggregateMonthsForOutput: filteredMonths, missingAggregateMonths }
-  );
-  logAggregateDecisionTrace_('aggregate_template', Object.assign(
-    {
-      patientId: normalizedPatientId,
-      nameKanji: item && item.nameKanji ? String(item.nameKanji) : ''
-    },
-    aggregateDecisionTrace
-  ));
-
-  return Object.assign({}, item, {
-    monthLabel: aggregateLabel,
-    chargeMonthLabel: monthLabel,
-    isAggregateInvoice: true,
-    invoiceMode: 'aggregate',
-    watermark,
-    aggregateStatus,
-    aggregateConfirmed,
-    receiptMonths: filteredMonths,
-    receiptRemark: aggregateRemark,
-    aggregateRemark,
-    aggregateMonthTotals,
-    showReceipt: !!(receipt && receipt.visible),
-    rows: [
-      { label: '合算請求額', detail: aggregateRemark, amount }
-    ],
-    grandTotal: aggregateTotal,
-    previousReceipt,
-    finalized: !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled)),
-    aggregateDecisionTrace
+  const months = Array.isArray(aggregateMonths) && aggregateMonths.length
+    ? aggregateMonths
+    : (item && Array.isArray(item.months) ? item.months : []);
+  const context = Object.assign({}, item, {
+    months,
+    isAggregateInvoice: true
   });
+  return buildInvoiceTemplateData_(context);
 }
 
 function buildInvoiceTemplateData_(item) {
   const billingMonth = item && item.billingMonth;
-  const monthLabel = normalizeBillingMonthLabel_(billingMonth);
-  const watermark = buildInvoiceWatermark_(item);
-
-  const initialReceipt = resolveInvoiceReceiptDisplay_(item);
-  const aggregateStatus = initialReceipt ? initialReceipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = initialReceipt ? initialReceipt.aggregateConfirmed : aggregateStatus === 'confirmed';
-  const monthCache = {};
-  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
-  const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
-    ? aggregateDecision.aggregateDecisionMonths
-    : [];
-  const receipt = resolveInvoiceReceiptDisplay_(item, { aggregateMonths: aggregateDecisionMonths });
-  const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
-  const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt, aggregateDecisionMonths);
-  const previousReceipt = item && item.previousReceipt
-    ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
-    : basePreviousReceipt;
+  const baseMonthLabel = normalizeBillingMonthLabel_(billingMonth);
+  const months = Array.isArray(item && item.months) ? item.months : [];
+  const isAggregateInvoice = !!(item && item.isAggregateInvoice);
+  const monthLabel = isAggregateInvoice && baseMonthLabel ? `${baseMonthLabel}（合算）` : baseMonthLabel;
+  const aggregateMonthTotals = Array.isArray(item && item.aggregateMonthTotals)
+    ? item.aggregateMonthTotals
+    : months.map(month => ({ month, monthLabel: normalizeBillingMonthLabel_(month), total: 0 }));
+  const grandTotal = item && item.grandTotal != null
+    ? Number(item.grandTotal) || 0
+    : aggregateMonthTotals.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+  const rows = isAggregateInvoice
+    ? [{ label: '合算請求額', detail: item && item.aggregateRemark ? item.aggregateRemark : '', amount: grandTotal }]
+    : [{ label: '請求額', detail: monthLabel, amount: grandTotal }];
+  const previousReceipt = item && item.previousReceipt ? item.previousReceipt : { visible: false, addressee: '' };
   if (previousReceipt) {
-    previousReceipt.settled = isPreviousReceiptSettled_(item);
+    previousReceipt.visible = !!previousReceipt.visible;
   }
-
-  if (previousReceipt) {
-    previousReceipt.visible = !!(receipt && receipt.visible);
-  }
-
-  const aggregateDecisionTrace = Object.assign(
-    { decisionSources: aggregateDecision && aggregateDecision.decisionSources ? aggregateDecision.decisionSources : [] },
-    aggregateDecision && aggregateDecision.trace ? aggregateDecision.trace : {},
-    { isAggregateInvoice: aggregateDecision && aggregateDecision.isAggregateInvoice }
-  );
-  logAggregateDecisionTrace_('invoice_template', Object.assign(
-    {
-      patientId: item && item.patientId ? String(item.patientId) : '',
-      nameKanji: item && item.nameKanji ? String(item.nameKanji) : ''
-    },
-    aggregateDecisionTrace
-  ));
-  const isAggregateInvoice = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
-  const chargeMonthLabel = monthLabel;
-  let breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
-  let visits = breakdown.visits || 0;
-  let unitPrice = breakdown.treatmentUnitPrice || 0;
-  let carryOverAmount = normalizeBillingCarryOver_(item);
-  let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
-  let aggregateMonthTotals = [];
-  let grandTotal = breakdown.grandTotal;
-
-  if (isAggregateInvoice && aggregateDecisionMonths.length > 1) {
-    const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, { monthCache });
-    const totals = aggregateData.totals || {};
-    visits = totals.visits || 0;
-    carryOverAmount = totals.carryOverAmount || 0;
-    unitPrice = aggregateData.unitPriceSource ? aggregateData.unitPriceSource.breakdown.treatmentUnitPrice || 0 : unitPrice;
-    breakdown = Object.assign({}, breakdown, {
-      visits,
-      treatmentAmount: totals.treatmentAmount || 0,
-      transportAmount: totals.transportAmount || 0,
-      selfPayTotal: totals.selfPayTotal || 0,
-      grandTotal: totals.grandTotal || 0
-    });
-    transportDetail = aggregateData.hasManualTransport
-      ? '手動入力'
-      : formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回';
-    aggregateMonthTotals = aggregateData.breakdowns.map(row => ({
-      month: row.month,
-      monthLabel: normalizeBillingMonthLabel_(row.month),
-      total: row.breakdown ? row.breakdown.grandTotal : 0
-    }));
-    grandTotal = breakdown.grandTotal;
-  }
-
-  const rows = [
-    { label: '前月繰越', detail: '', amount: carryOverAmount },
-    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
-    { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
-  ];
 
   return Object.assign({}, item, {
     monthLabel,
-    chargeMonthLabel,
+    chargeMonthLabel: baseMonthLabel,
     isAggregateInvoice,
     invoiceMode: isAggregateInvoice ? 'aggregate' : 'standard',
-    watermark,
-    aggregateStatus,
-    aggregateConfirmed,
-    receiptMonths,
-    receiptRemark: (receipt && receipt.receiptRemark) || '',
-    showReceipt: !!(receipt && receipt.visible),
+    watermark: buildInvoiceWatermark_(item),
     rows,
     grandTotal,
     previousReceipt,
-    finalized: !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled)),
-    aggregateMonthTotals,
-    aggregateDecisionTrace
+    aggregateMonthTotals
   });
 }
 
@@ -988,13 +1058,15 @@ function createInvoicePdfBlob_(item, options) {
   const template = HtmlService.createTemplateFromFile('invoice_template');
   template.data = buildInvoiceTemplateData_(item || {});
   const html = template.evaluate().setWidth(1240).setHeight(1754);
-  const fileName = formatInvoiceFileName_(item, options);
+  const fileName = item && item.isAggregateInvoice
+    ? formatAggregateInvoiceFileName_(item, item && item.monthLabel ? item.monthLabel.replace(/請求書?\s*/g, '') : '')
+    : formatInvoiceFileName_(item, options);
   return html.getBlob().getAs(MimeType.PDF).setName(fileName);
 }
 
 function createAggregateInvoicePdfBlob_(item, options) {
-  const months = options && options.aggregateMonths ? options.aggregateMonths : (item && item.receiptMonths);
   const template = HtmlService.createTemplateFromFile('invoice_template');
+  const months = options && options.aggregateMonths ? options.aggregateMonths : (item && item.months);
   const templateData = buildAggregateInvoiceTemplateData_(item || {}, months);
   template.data = templateData;
   const html = template.evaluate().setWidth(1240).setHeight(1754);
@@ -1172,23 +1244,30 @@ function saveInvoicePdf(item, pdfBlob, options) {
 }
 
 function generateInvoicePdf(item, options) {
-  const billingMonth = item && item.billingMonth;
-  const initialReceipt = resolveInvoiceReceiptDisplay_(item);
-  const monthCache = {};
-  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
-  const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
-    ? aggregateDecision.aggregateDecisionMonths
-    : [];
-  const shouldUseAggregateTemplate = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
+  const billingMonth = (options && options.billingMonth) || (item && item.billingMonth);
+  const pid = item && item.patientId ? String(item.patientId).trim() : '';
+  const context = buildInvoiceContextFromBankSheet(billingMonth, pid);
+  if (!context) {
+    throw new Error('銀行引落シートから請求情報を取得できませんでした。患者IDと請求月を確認してください。');
+  }
+  const months = context.months || [];
+  const shouldUseAggregateTemplate = !!context.isAggregateInvoice;
   const blob = shouldUseAggregateTemplate
-    ? createAggregateInvoicePdfBlob_(item, Object.assign({}, options, { aggregateMonths: aggregateDecisionMonths }))
-    : createInvoicePdfBlob_(item, options);
-  return saveInvoicePdf(item, blob, options);
+    ? createAggregateInvoicePdfBlob_(context, Object.assign({}, options, { aggregateMonths: months }))
+    : createInvoicePdfBlob_(context, options);
+  return saveInvoicePdf(context, blob, options);
 }
 
 function generateAggregateInvoicePdf(item, options) {
-  const blob = createAggregateInvoicePdfBlob_(item, options);
-  return saveInvoicePdf(item, blob, options);
+  const billingMonth = (options && options.billingMonth) || (item && item.billingMonth);
+  const pid = item && item.patientId ? String(item.patientId).trim() : '';
+  const context = buildInvoiceContextFromBankSheet(billingMonth, pid);
+  if (!context) {
+    throw new Error('銀行引落シートから請求情報を取得できませんでした。患者IDと請求月を確認してください。');
+  }
+  const months = context.months || [];
+  const blob = createAggregateInvoicePdfBlob_(Object.assign({}, context, { isAggregateInvoice: true }), Object.assign({}, options, { aggregateMonths: months }));
+  return saveInvoicePdf(context, blob, options);
 }
 
 function generateInvoicePdfs(billingJson, options) {
@@ -1200,7 +1279,8 @@ function generateInvoicePdfs(billingJson, options) {
   const isPartialGeneration = patientIds.length > 0;
   const invoiceFileOptions = {
     overwriteExisting: !isPartialGeneration,
-    fileNameSuffix: isPartialGeneration ? (options && options.reissueSuffix ? options.reissueSuffix : '_再発行') : ''
+    fileNameSuffix: isPartialGeneration ? (options && options.reissueSuffix ? options.reissueSuffix : '_再発行') : '',
+    billingMonth: billingMonth
   };
   const files = targets.map(item => {
     const meta = generateInvoicePdf(item, invoiceFileOptions);

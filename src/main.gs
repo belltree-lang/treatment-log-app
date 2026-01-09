@@ -3120,84 +3120,32 @@ function filterBillingJsonForInvoice_(billingJson, patientIds) {
 
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
-  const monthCache = createBillingMonthCache_();
-  const aggregateApplied = applyAggregateInvoiceRulesFromBankFlags_(normalized, monthCache);
-  const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied, monthCache);
-  if (!receiptEnriched || !receiptEnriched.billingJson) {
-    throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
+  const billingMonth = normalizeBillingMonthKeySafe_(normalized && normalized.billingMonth);
+  if (!billingMonth) {
+    throw new Error('請求月が特定できません。請求データを再集計してください。');
   }
+
   const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(options && options.invoicePatientIds);
-  const targetBillingRows = filterBillingJsonForInvoice_(
-    (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
-    targetPatientIds
-  );
-  // 'scheduled' represents the confirmed state that allows automatic aggregate invoice
-  // generation. Entries flagged here skipped standard invoices earlier and are now
-  // eligible for aggregate PDFs without additional manual triggers.
-  const aggregateTargets = (receiptEnriched.billingJson || []).filter(row => row && row.skipInvoice && row.aggregateStatus === 'scheduled');
-  const aggregateFiles = aggregateTargets.map(entry => {
-    const pid = billingNormalizePatientId_(entry && entry.patientId);
-    if (!pid) return null;
-
-    const baseEntry = (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid) || entry;
-    const aggregateUntilMonth = normalizeBillingMonthKeySafe_(baseEntry.aggregateUntilMonth || normalized.aggregateUntilMonth);
-    const aggregateSourceMonths = resolveAggregateMonthsFromBankSheet_(
-      normalized.billingMonth,
-      pid,
-      { useLegacyAggregate: false, aggregateUntilMonth },
-      normalized,
-      monthCache
-    );
-    const aggregateMonths = normalizeAggregateInvoiceMonths_(aggregateSourceMonths, normalized, normalized.billingMonth);
-    const uniqueAggregateMonths = Array.from(new Set(aggregateMonths))
-      .filter(month => month !== normalized.billingMonth);
-    const aggregateTotal = uniqueAggregateMonths.reduce(
-      (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(
-        ym,
-        pid,
-        null,
-        monthCache
-      ),
-      0
-    );
-    const aggregateRemark = formatAggregateBillingRemark_(uniqueAggregateMonths);
-    const aggregateEntry = Object.assign({}, baseEntry, {
-      billingMonth: normalized.billingMonth,
-      receiptMonths: uniqueAggregateMonths,
-      aggregateRemark,
-      billingAmount: aggregateTotal,
-      transportAmount: 0,
-      total: aggregateTotal,
-      grandTotal: aggregateTotal,
-      aggregateTargetMonths: uniqueAggregateMonths
-    });
-
-    const meta = generateAggregateInvoicePdf(aggregateEntry, { aggregateMonths: uniqueAggregateMonths, billingMonth: normalized.billingMonth });
-    return Object.assign({}, meta, { patientId: aggregateEntry.patientId, nameKanji: aggregateEntry.nameKanji });
-  }).filter(Boolean);
-  const matchedIds = new Set(
-    targetBillingRows
-      .concat(aggregateFiles.map(file => ({ patientId: file && file.patientId })))
-      .map(row => String(row && row.patientId ? row.patientId : '').trim())
-      .filter(Boolean)
-  );
+  const invoiceTargets = listInvoiceTargetsFromBankSheet_(billingMonth);
+  const filteredTargets = targetPatientIds.length
+    ? invoiceTargets.filter(row => targetPatientIds.indexOf(String(row && row.patientId ? row.patientId : '').trim()) >= 0)
+    : invoiceTargets;
+  const matchedIds = new Set(filteredTargets.map(row => String(row && row.patientId ? row.patientId : '').trim()).filter(Boolean));
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
-  const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
-  const pdfs = generateInvoicePdfs(targetBillingRows, outputOptions);
-  const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
-  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(aggregateApplied) : null;
+  const outputOptions = Object.assign({}, options, { billingMonth, patientIds: targetPatientIds });
+  const pdfs = generateInvoicePdfs(filteredTargets, outputOptions);
   return {
-    billingMonth: normalized.billingMonth,
-    billingJson: receiptEnriched.billingJson,
-    receiptStatus: normalized.receiptStatus || '',
-    aggregateUntilMonth: normalized.aggregateUntilMonth || '',
-    files: pdfs.files.concat(aggregateFiles),
+    billingMonth,
+    billingJson: normalized && normalized.billingJson ? normalized.billingJson : [],
+    receiptStatus: normalized && normalized.receiptStatus ? normalized.receiptStatus : '',
+    aggregateUntilMonth: normalized && normalized.aggregateUntilMonth ? normalized.aggregateUntilMonth : '',
+    files: pdfs.files,
     invoicePatientIds: targetPatientIds,
     missingInvoicePatientIds: missingPatientIds,
     invoiceGenerationMode: targetPatientIds.length ? 'partial' : 'bulk',
-    bankOutput,
-    preparedAt: normalized.preparedAt || null
+    bankOutput: null,
+    preparedAt: normalized && normalized.preparedAt ? normalized.preparedAt : null
   };
 }
 
@@ -3266,25 +3214,13 @@ function generateAggregatedInvoice(billingMonth, options) {
     throw new Error('患者IDを指定してください');
   }
 
-  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true, restoreCache: true });
-  const validation = loaded && loaded.validation ? loaded.validation : null;
-  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
-  if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
-    throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
+  const context = buildInvoiceContextFromBankSheet(month.key, patientId);
+  if (!context) {
+    throw new Error('銀行引落シートから請求情報を取得できませんでした。患者IDと請求月を確認してください。');
   }
 
-  const entry = (prepared.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === patientId);
-  if (!entry) {
-    throw new Error('対象患者の請求データが見つかりません');
-  }
-
-  const mergedMonths = []
-    .concat(opts.aggregateMonths || [])
-    .concat(entry.aggregateMonths || [])
-    .concat(entry.receiptMonths || []);
-  const aggregateMonths = normalizeAggregateInvoiceMonths_(mergedMonths, prepared, month.key);
-
-  const file = generateAggregateInvoicePdf(entry, { aggregateMonths, billingMonth: month.key });
+  const aggregateMonths = Array.isArray(context.months) ? context.months : [];
+  const file = generateAggregateInvoicePdf(context, { aggregateMonths, billingMonth: month.key });
   return { billingMonth: month.key, patientId, aggregateMonths, file };
 }
 

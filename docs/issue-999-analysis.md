@@ -1,0 +1,1 @@
+- ログ確認の結果、合算テンプレート分岐には入っており months は配列として渡っているが、過去月の prepared billing entry が取得できず breakdown が null になっているため、grandTotal が当月分のままになっていた。

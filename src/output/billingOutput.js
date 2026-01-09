@@ -503,6 +503,23 @@ function logAggregateDecisionTrace_(label, payload) {
   }
 }
 
+function logInvoiceDebug_(label, payload) {
+  const logger = typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function'
+    ? billingLogger_
+    : null;
+  if (!logger) return;
+
+  try {
+    logger.log(JSON.stringify(Object.assign({ label }, payload || {})));
+  } catch (err) {
+    try {
+      logger.log({ label, payload });
+    } catch (e) {
+      // ignore logging failures
+    }
+  }
+}
+
 function resolvePreviousBillingMonthKey_(billingMonth) {
   const key = normalizeInvoiceMonthKey_(billingMonth);
   if (!key) return '';
@@ -709,6 +726,11 @@ function resolveAggregatePreparedBillingEntry_(monthKey, patientId, fallbackItem
 function buildAggregateInvoiceBreakdowns_(item, aggregateMonths, options) {
   const billingMonth = item && item.billingMonth;
   const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
+  logInvoiceDebug_('buildAggregateInvoiceBreakdowns.entry', {
+    billingMonth,
+    months,
+    aggregateMonths
+  });
   if (!months.length) {
     return {
       months: [],
@@ -726,11 +748,20 @@ function buildAggregateInvoiceBreakdowns_(item, aggregateMonths, options) {
 
   const breakdowns = months.map(monthKey => {
     const entry = resolveAggregatePreparedBillingEntry_(monthKey, normalizedPatientId, item, monthCache);
+    let breakdown = null;
+    let carryOverAmount = 0;
+    if (entry) {
+      breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: monthKey }));
+      carryOverAmount = normalizeBillingCarryOver_(entry);
+    }
+    logInvoiceDebug_('buildAggregateInvoiceBreakdowns.month', {
+      month: monthKey,
+      entryFound: !!entry,
+      breakdownGrandTotal: breakdown ? breakdown.grandTotal : null
+    });
     if (!entry) {
       return { month: monthKey, entry: null, breakdown: null, carryOverAmount: 0 };
     }
-    const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: monthKey }));
-    const carryOverAmount = normalizeBillingCarryOver_(entry);
     return { month: monthKey, entry, breakdown, carryOverAmount };
   });
 
@@ -960,6 +991,10 @@ function createAggregateInvoicePdfBlob_(item, options) {
   const months = options && options.aggregateMonths ? options.aggregateMonths : (item && item.receiptMonths);
   const template = HtmlService.createTemplateFromFile('invoice_template');
   const templateData = buildAggregateInvoiceTemplateData_(item || {}, months);
+  logInvoiceDebug_('createAggregateInvoicePdfBlob', {
+    months,
+    templateReceiptMonths: templateData && templateData.receiptMonths ? templateData.receiptMonths : null
+  });
   template.data = templateData;
   const html = template.evaluate().setWidth(1240).setHeight(1754);
   const fileName = formatAggregateInvoiceFileName_(
@@ -1141,6 +1176,18 @@ function generateInvoicePdf(item, options) {
     ? aggregateDecision.aggregateDecisionMonths
     : [];
   const shouldUseAggregateTemplate = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
+  logInvoiceDebug_('generateInvoicePdf', {
+    billingMonth: item && item.billingMonth,
+    patientId: item && item.patientId,
+    aggregateTargetMonths: item && item.aggregateTargetMonths,
+    receiptMonths: item && item.receiptMonths,
+    initialReceiptMonths: initialReceipt && initialReceipt.receiptMonths,
+    initialReceiptExplicitReceiptMonths: initialReceipt && initialReceipt.explicitReceiptMonths,
+    aggregateDecisionIsAggregateInvoice: aggregateDecision && aggregateDecision.isAggregateInvoice,
+    aggregateDecisionMonths: aggregateDecision && aggregateDecision.aggregateDecisionMonths,
+    shouldUseAggregateTemplate,
+    optionsAggregateMonths: options && options.aggregateMonths
+  });
   const blob = shouldUseAggregateTemplate
     ? createAggregateInvoicePdfBlob_(item, Object.assign({}, options, { aggregateMonths: aggregateDecisionMonths }))
     : createInvoicePdfBlob_(item, options);

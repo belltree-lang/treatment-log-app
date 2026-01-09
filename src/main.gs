@@ -1081,25 +1081,30 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
 
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
-    const aggregateMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, { useLegacyAggregate: false }, prepared, monthCache);
-    if (aggregateMonths.length > 1) {
-      const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, aggregateMonths, previousPrepared || prepared, monthCache);
-      const aggregateRemark = formatAggregateReceiptDescription_(aggregateMonths);
+    const explicitReceiptMonths = Array.isArray(entry && entry.receiptMonths) && (entry.receiptMonths || []).length
+      ? entry.receiptMonths
+      : null;
+    const receiptTargetMonths = explicitReceiptMonths
+      ? normalizePastBillingMonths_(explicitReceiptMonths, monthKey)
+      : resolveReceiptTargetMonthsFromBankFlags_(pid, monthKey, prepared, monthCache);
+
+    if (receiptTargetMonths.length > 1) {
+      const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
+      const aggregateRemark = formatAggregateReceiptDescription_(receiptTargetMonths);
       const previousReceipt = entry && entry.previousReceipt ? entry.previousReceipt : {
         addressee: '株式会社べるつりー',
         note: aggregateRemark
       };
       return Object.assign({}, entry, {
         hasPreviousReceiptSheet: true,
-        receiptMonths: aggregateMonths,
+        receiptMonths: receiptTargetMonths,
         receiptRemark: aggregateRemark,
         receiptMonthBreakdown: receiptBreakdown,
         previousReceipt
       });
     }
 
-    const previousUnpaid = isPatientCheckedUnpaidInBankWithdrawalSheet_(pid, previousMonthKey, previousPrepared || prepared, monthCache);
-    if (previousUnpaid) {
+    if (!receiptTargetMonths.length) {
       return Object.assign({}, entry, {
         hasPreviousReceiptSheet: !!previousPrepared,
         receiptMonths: [],
@@ -1108,15 +1113,11 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
       });
     }
 
-    const existingReceiptMonths = Array.isArray(entry && entry.receiptMonths) && (entry.receiptMonths || []).length
-      ? entry.receiptMonths
-      : [previousMonthKey];
-    const receiptMonths = normalizePastBillingMonths_(existingReceiptMonths, monthKey);
-    const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptMonths, previousPrepared || prepared, monthCache);
+    const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
 
     return Object.assign({}, entry, {
       hasPreviousReceiptSheet: !!previousPrepared,
-      receiptMonths,
+      receiptMonths: receiptTargetMonths,
       receiptRemark: entry && entry.receiptRemark,
       receiptMonthBreakdown: receiptBreakdown
     });
@@ -1327,6 +1328,30 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   }
 
   return months;
+}
+
+function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepared, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(currentMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return [];
+
+  const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
+  if (currentFlags && currentFlags.af) return [];
+
+  const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
+  if (!previousMonthKey) return [];
+
+  const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, cache);
+  const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
+
+  if (previousFlags && previousFlags.ae) return [];
+
+  if (previousFlags && previousFlags.af) {
+    const unpaidMonths = collectAggregateBankFlagMonthsForPatient_(previousMonthKey, pid, null, cache);
+    return normalizePastBillingMonths_(unpaidMonths.concat(previousMonthKey), monthKey);
+  }
+
+  return normalizePastBillingMonths_([previousMonthKey], monthKey);
 }
 
 function formatAggregateBillingRemark_(months) {

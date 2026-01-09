@@ -997,6 +997,40 @@ function getBankWithdrawalStatusByPatient(billingMonth, patientId) {
   return getBankWithdrawalStatusByPatient_(billingMonth, patientId);
 }
 
+function resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+
+  if (!monthKey || !pid) {
+    return { mode: 'standard', months: [] };
+  }
+
+  const flags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
+  const ae = !!(flags && flags.ae);
+  const af = !!(flags && flags.af);
+
+  if (!ae && !af) {
+    return { mode: 'standard', months: [] };
+  }
+  if (ae && !af) {
+    return { mode: 'skip', months: [] };
+  }
+
+  const pastMonths = collectAggregateBankFlagMonthsForPatient_(monthKey, pid, null, cache);
+  const months = pastMonths.concat(monthKey);
+  const seen = new Set();
+  const uniqueMonths = months.filter(ym => {
+    const normalized = normalizeBillingMonthKeySafe_(ym);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+
+  return { mode: 'aggregate', months: uniqueMonths };
+}
+
 function getBankWithdrawalUnpaidMapCached_(billingMonth, prepared, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey) return {};

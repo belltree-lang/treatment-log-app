@@ -914,6 +914,89 @@ function collectBankWithdrawalUnpaidPatients_(billingMonth, prepared) {
   return unpaidMap;
 }
 
+function collectBankWithdrawalStatusByPatient_(billingMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return {};
+
+  const workbook = billingSs();
+  const sheetName = formatBankWithdrawalSheetName_(monthKey);
+  const sheet = workbook.getSheetByName(sheetName);
+  if (!sheet) return {};
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return {};
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
+  const aggregateCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
+  const amountCol = resolveBillingColumn_(
+    headers,
+    ['金額', '請求金額', '引落額', '引落金額'],
+    '金額',
+    { fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
+  );
+  const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
+  if (!pidCol) return {};
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+  const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
+    ? normalizeMoneyNumber_
+    : value => Number(value) || 0;
+  const statusByPatient = {};
+
+  values.forEach(row => {
+    const pid = normalizePid(row[pidCol - 1]);
+    if (!pid) return;
+
+    const ae = unpaidCol ? normalizeBankFlagValue_(row[unpaidCol - 1]) : false;
+    const af = aggregateCol ? normalizeBankFlagValue_(row[aggregateCol - 1]) : false;
+    const amount = amountCol ? normalizeAmount(row[amountCol - 1]) : 0;
+    const current = statusByPatient[pid] || { ae: false, af: false, amount: 0 };
+    statusByPatient[pid] = {
+      ae: current.ae || ae,
+      af: current.af || af,
+      amount: current.amount + (Number.isFinite(amount) ? amount : 0)
+    };
+  });
+
+  return statusByPatient;
+}
+
+function getBankWithdrawalStatusByPatient_(billingMonth, patientId, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+
+  if (!monthKey || !pid) return { ae: false, af: false, amount: 0 };
+
+  const store = cache && cache.bankWithdrawalStatusByMonth
+    ? cache.bankWithdrawalStatusByMonth
+    : null;
+  const statusByPatient = store
+    ? (Object.prototype.hasOwnProperty.call(store, monthKey)
+      ? store[monthKey]
+      : (store[monthKey] = collectBankWithdrawalStatusByPatient_(monthKey) || {}))
+    : collectBankWithdrawalStatusByPatient_(monthKey);
+
+  const entry = statusByPatient && statusByPatient[pid];
+  if (!entry) return { ae: false, af: false, amount: 0 };
+
+  return {
+    ae: !!entry.ae,
+    af: !!entry.af,
+    amount: Number(entry.amount) || 0
+  };
+}
+
+function getBankWithdrawalStatusByPatient(billingMonth, patientId) {
+  return getBankWithdrawalStatusByPatient_(billingMonth, patientId);
+}
+
 function getBankWithdrawalUnpaidMapCached_(billingMonth, prepared, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey) return {};

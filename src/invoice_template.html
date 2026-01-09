@@ -50,14 +50,15 @@
   </style>
 </head>
 <body>
-  <? var watermark = data && data.watermark; ?>
+  <? var amount = data && data.amount ? data.amount : {}; ?>
+  <? var watermark = amount && amount.watermark; ?>
   <? if (watermark && watermark.text) { ?>
     <div class="watermark"><?= watermark.text ?></div>
   <? } ?>
   <div class="wrapper">
     <header class="header">
-      <? var isAggregateInvoice = data.isAggregateInvoice || data.invoiceMode === 'aggregate'; ?>
-      <? var chargeMonthLabel = data.chargeMonthLabel || data.monthLabel; ?>
+      <? var isAggregateInvoice = data.isAggregateInvoice; ?>
+      <? var chargeMonthLabel = (amount && amount.chargeMonthLabel) || normalizeBillingMonthLabel_(data.billingMonth); ?>
       <? var chargePeriodLabel = buildInvoiceChargePeriodLabel_(data); ?>
       <div>
         <div class="brand">べるつりー訪問鍼灸マッサージ</div>
@@ -73,9 +74,9 @@
       <h3 class="section-title">請求先</h3>
       <div class="info">
         <div class="label">氏名</div>
-        <div><?= data.nameKanji ?></div>
+        <div><?= data.name ?></div>
         <div class="label">保険区分</div>
-        <div><?= data.insuranceType || '―' ?> / <?= data.burdenRate ? data.burdenRate + '割' : '―' ?></div>
+        <div><?= amount.insuranceType || '―' ?> / <?= amount.burdenRate ? amount.burdenRate + '割' : '―' ?></div>
       <div class="label">対象期間</div>
       <div><?= chargeMonthLabel || '―' ?></div>
     </div>
@@ -83,8 +84,8 @@
 
   <section class="card">
     <h3 class="section-title">ご請求内容（<?= isAggregateInvoice ? '未回収合算' : '当月' ?>）</h3>
-      <? var aggregateMonthTotals = Array.isArray(data.aggregateMonthTotals)
-        ? data.aggregateMonthTotals
+      <? var aggregateMonthTotals = Array.isArray(amount.aggregateMonthTotals)
+        ? amount.aggregateMonthTotals
         : [];
       ?>
       <? if (isAggregateInvoice) { ?>
@@ -105,7 +106,7 @@
             <tr>
               <td>合算請求額</td>
               <td class="amount">
-                <?= formatBillingCurrency_(data.grandTotal) ?> 円
+                <?= formatBillingCurrency_(amount.grandTotal) ?> 円
                 <? if (chargePeriodLabel) { ?>
                   <span class="charge-period-label">対象期間: <?= chargePeriodLabel ?></span>
                 <? } ?>
@@ -119,7 +120,7 @@
             <tr><th>項目</th><th>詳細</th><th class="amount">金額</th></tr>
           </thead>
           <tbody>
-            <? data.rows.forEach(function(row) { ?>
+            <? amount.rows.forEach(function(row) { ?>
               <tr>
                 <td><?= row.label ?></td>
                 <td><?= row.detail || '' ?></td>
@@ -131,7 +132,7 @@
             <tr>
               <td colspan="2">合計</td>
               <td class="amount">
-                <?= formatBillingCurrency_(data.grandTotal) ?> 円
+                <?= formatBillingCurrency_(amount.grandTotal) ?> 円
                 <? if (chargePeriodLabel) { ?>
                   <span class="charge-period-label">対象期間: <?= chargePeriodLabel ?></span>
                 <? } ?>
@@ -141,22 +142,22 @@
         </table>
       <? } ?>
       <div class="note"><?= isAggregateInvoice ? '未回収期間を含めた合計金額です。（前月未回収分を含む）' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
-      <? if (data.aggregateRemark) { ?>
-        <div class="note"><strong>備考:</strong> <?= data.aggregateRemark ?></div>
+      <? if (amount.aggregateRemark) { ?>
+        <div class="note"><strong>備考:</strong> <?= amount.aggregateRemark ?></div>
       <? } ?>
     </section>
 
     <hr class="divider">
 
-    <? var receipt = data.previousReceipt || data.receipt || {}; ?>
+    <? var receipt = amount.previousReceipt || amount.receipt || {}; ?>
     <?
       var showReceipt = !!receipt.visible;
     ?>
-    <? var receiptAddressee = receipt.addressee || data.nameKanji || ''; ?>
+    <? var receiptAddressee = receipt.addressee || data.name || ''; ?>
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptAmount = receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price; ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
-    <? if (!data.forceHideReceipt) { ?>
+    <? if (!amount.forceHideReceipt) { ?>
       <section class="card">
         <h3 class="section-title">前月分領収書</h3>
         <? if (showReceipt) { ?>

@@ -3109,6 +3109,123 @@ function filterBillingJsonForInvoice_(billingJson, patientIds) {
   return billingJson.filter(item => targetSet.has(String(item && item.patientId ? item.patientId : '').trim()));
 }
 
+function buildStandardInvoiceAmountDataForPdf_(entry, billingMonth) {
+  const targetMonth = normalizeBillingMonthKeySafe_(billingMonth || (entry && entry.billingMonth));
+  const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: targetMonth }));
+  const visits = breakdown.visits || 0;
+  const carryOverAmount = normalizeBillingCarryOver_(entry);
+  const unitPrice = breakdown.treatmentUnitPrice || 0;
+  const transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
+  const rows = [
+    { label: '前月繰越', detail: '', amount: carryOverAmount },
+    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount || 0 },
+    { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount || 0 }
+  ];
+
+  return {
+    rows,
+    grandTotal: breakdown.grandTotal || 0
+  };
+}
+
+function buildAggregateInvoiceAmountDataForPdf_(aggregateMonths, billingMonth, patientId, cache) {
+  const pid = billingNormalizePatientId_(patientId);
+  const months = normalizePastBillingMonths_(aggregateMonths, billingMonth);
+  const aggregateMonthTotals = months.map(month => ({
+    month,
+    monthLabel: normalizeBillingMonthLabel_(month),
+    total: resolveBillingAmountForMonthAndPatient_(month, pid, null, cache)
+  }));
+  const grandTotal = aggregateMonthTotals.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+  return {
+    aggregateMonthTotals,
+    aggregateRemark: formatAggregateBillingRemark_(months),
+    grandTotal
+  };
+}
+
+function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, isAggregateInvoice, cache) {
+  const normalizedAggregateMonths = normalizePastBillingMonths_(aggregateMonths, billingMonth);
+  const baseAmount = isAggregateInvoice
+    ? buildAggregateInvoiceAmountDataForPdf_(normalizedAggregateMonths, billingMonth, entry && entry.patientId, cache)
+    : buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
+  const amount = Object.assign({}, baseAmount, {
+    insuranceType: entry && entry.insuranceType ? String(entry.insuranceType).trim() : '',
+    burdenRate: entry && entry.burdenRate != null ? entry.burdenRate : '',
+    chargeMonthLabel: normalizeBillingMonthLabel_(billingMonth),
+    forceHideReceipt: !!(entry && entry.forceHideReceipt)
+  });
+
+  const receiptDisplay = resolveInvoiceReceiptDisplay_(entry, { aggregateMonths: normalizedAggregateMonths });
+  const basePreviousReceipt = buildInvoicePreviousReceipt_(entry, receiptDisplay, normalizedAggregateMonths);
+  const previousReceipt = entry && entry.previousReceipt
+    ? Object.assign({}, basePreviousReceipt, entry.previousReceipt)
+    : basePreviousReceipt;
+  if (previousReceipt) {
+    previousReceipt.settled = isPreviousReceiptSettled_(entry);
+    previousReceipt.visible = !!(receiptDisplay && receiptDisplay.visible);
+  }
+
+  const aggregateStatus = receiptDisplay ? receiptDisplay.aggregateStatus : normalizeAggregateStatus_(entry && entry.aggregateStatus);
+  const aggregateConfirmed = receiptDisplay ? receiptDisplay.aggregateConfirmed : aggregateStatus === 'confirmed';
+  const watermark = buildInvoiceWatermark_(entry);
+  const finalized = !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled));
+
+  return Object.assign({}, amount, {
+    aggregateStatus,
+    aggregateConfirmed,
+    receiptMonths: receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [],
+    receiptRemark: receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '',
+    showReceipt: !!(receiptDisplay && receiptDisplay.visible),
+    previousReceipt,
+    watermark,
+    finalized
+  });
+}
+
+function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
+  if (!entry) return null;
+  const billingMonth = normalizeBillingMonthKeySafe_(prepared && prepared.billingMonth ? prepared.billingMonth : entry.billingMonth);
+  const patientId = billingNormalizePatientId_(entry && entry.patientId);
+  if (!billingMonth || !patientId) return null;
+
+  const decision = resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache);
+  const decisionMonths = decision && Array.isArray(decision.months) ? decision.months : [];
+  const aggregateMonths = normalizePastBillingMonths_(decisionMonths, billingMonth);
+  const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
+  const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, isAggregateInvoice, cache);
+
+  return {
+    patientId,
+    billingMonth,
+    months: isAggregateInvoice ? aggregateMonths : [],
+    amount,
+    name: entry && entry.nameKanji ? String(entry.nameKanji) : '',
+    isAggregateInvoice,
+    responsibleName: entry && entry.responsibleName ? String(entry.responsibleName) : ''
+  };
+}
+
+function buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, cache) {
+  if (!entry) return null;
+  const billingMonth = normalizeBillingMonthKeySafe_(prepared && prepared.billingMonth ? prepared.billingMonth : entry.billingMonth);
+  const patientId = billingNormalizePatientId_(entry && entry.patientId);
+  if (!billingMonth || !patientId) return null;
+
+  const normalizedMonths = normalizePastBillingMonths_(aggregateMonths, billingMonth);
+  const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, normalizedMonths, true, cache);
+
+  return {
+    patientId,
+    billingMonth,
+    months: normalizedMonths,
+    amount,
+    name: entry && entry.nameKanji ? String(entry.nameKanji) : '',
+    isAggregateInvoice: true,
+    responsibleName: entry && entry.responsibleName ? String(entry.responsibleName) : ''
+  };
+}
+
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
   const monthCache = createBillingMonthCache_();
@@ -3122,6 +3239,8 @@ function generatePreparedInvoices_(prepared, options) {
     (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
     targetPatientIds
   );
+  const invoiceContexts = targetBillingRows.map(row => buildInvoicePdfContextForEntry_(row, receiptEnriched, monthCache))
+    .filter(Boolean);
   // 'scheduled' represents the confirmed state that allows automatic aggregate invoice
   // generation. Entries flagged here skipped standard invoices earlier and are now
   // eligible for aggregate PDFs without additional manual triggers.
@@ -3156,8 +3275,8 @@ function generatePreparedInvoices_(prepared, options) {
       grandTotal: aggregateTotal,
       aggregateTargetMonths: uniqueAggregateMonths
     });
-
-    const meta = generateAggregateInvoicePdf(aggregateEntry, { aggregateMonths: uniqueAggregateMonths, billingMonth: normalized.billingMonth });
+    const aggregateContext = buildAggregateInvoicePdfContext_(aggregateEntry, uniqueAggregateMonths, receiptEnriched, monthCache);
+    const meta = generateAggregateInvoicePdf(aggregateContext, { billingMonth: normalized.billingMonth });
     return Object.assign({}, meta, { patientId: aggregateEntry.patientId, nameKanji: aggregateEntry.nameKanji });
   }).filter(Boolean);
   const matchedIds = new Set(
@@ -3169,7 +3288,7 @@ function generatePreparedInvoices_(prepared, options) {
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
   const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
-  const pdfs = generateInvoicePdfs(targetBillingRows, outputOptions);
+  const pdfs = generateInvoicePdfs(invoiceContexts, outputOptions);
   const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
   const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(aggregateApplied) : null;
   return {
@@ -3269,7 +3388,9 @@ function generateAggregatedInvoice(billingMonth, options) {
     .concat(entry.receiptMonths || []);
   const aggregateMonths = normalizeAggregateInvoiceMonths_(mergedMonths, prepared, month.key);
 
-  const file = generateAggregateInvoicePdf(entry, { aggregateMonths, billingMonth: month.key });
+  const monthCache = createBillingMonthCache_();
+  const aggregateContext = buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, monthCache);
+  const file = generateAggregateInvoicePdf(aggregateContext, { billingMonth: month.key });
   return { billingMonth: month.key, patientId, aggregateMonths, file };
 }
 

@@ -1134,7 +1134,16 @@ function saveInvoicePdf(item, pdfBlob, options) {
 }
 
 function generateInvoicePdf(item, options) {
-  const blob = createInvoicePdfBlob_(item, options);
+  const billingMonth = item && item.billingMonth;
+  const initialReceipt = resolveInvoiceReceiptDisplay_(item);
+  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth);
+  const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
+    ? aggregateDecision.aggregateDecisionMonths
+    : [];
+  const shouldUseAggregateTemplate = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
+  const blob = shouldUseAggregateTemplate
+    ? createAggregateInvoicePdfBlob_(item, Object.assign({}, options, { aggregateMonths: aggregateDecisionMonths }))
+    : createInvoicePdfBlob_(item, options);
   return saveInvoicePdf(item, blob, options);
 }
 

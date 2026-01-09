@@ -291,13 +291,18 @@ function buildInvoiceChargePeriodLabel_(data) {
     if (key) months.push(key);
   };
 
+  const amount = data && data.amount ? data.amount : data;
   const isAggregate = data && (data.isAggregateInvoice || data.invoiceMode === 'aggregate');
-  if (isAggregate && Array.isArray(data && data.aggregateMonthTotals)) {
-    data.aggregateMonthTotals.forEach(row => pushMonth(row && row.month));
+  if (isAggregate && Array.isArray(amount && amount.aggregateMonthTotals)) {
+    amount.aggregateMonthTotals.forEach(row => pushMonth(row && row.month));
   }
 
-  if (isAggregate && !months.length && Array.isArray(data && data.receiptMonths)) {
-    data.receiptMonths.forEach(pushMonth);
+  if (isAggregate && !months.length && Array.isArray(amount && amount.receiptMonths)) {
+    amount.receiptMonths.forEach(pushMonth);
+  }
+
+  if (isAggregate && !months.length && Array.isArray(data && data.months)) {
+    data.months.forEach(pushMonth);
   }
 
   if (!months.length && data && data.billingMonth) {
@@ -641,8 +646,51 @@ function normalizeInvoicePatientIdsForOutput_(patientIds) {
   return unique;
 }
 
+function normalizeInvoicePdfContext_(context) {
+  const source = context && typeof context === 'object' ? context : {};
+  const amount = source.amount && typeof source.amount === 'object' ? source.amount : {};
+  const months = Array.isArray(source.months) ? source.months : [];
+  return {
+    patientId: source.patientId ? String(source.patientId) : '',
+    billingMonth: source.billingMonth ? String(source.billingMonth) : '',
+    months,
+    amount: Object.assign({
+      rows: Array.isArray(amount.rows) ? amount.rows : [],
+      aggregateMonthTotals: Array.isArray(amount.aggregateMonthTotals) ? amount.aggregateMonthTotals : [],
+      aggregateRemark: amount.aggregateRemark || '',
+      grandTotal: Number.isFinite(amount.grandTotal) ? amount.grandTotal : 0,
+      insuranceType: amount.insuranceType || '',
+      burdenRate: amount.burdenRate || '',
+      chargeMonthLabel: amount.chargeMonthLabel || '',
+      receiptMonths: Array.isArray(amount.receiptMonths) ? amount.receiptMonths : [],
+      receiptRemark: amount.receiptRemark || '',
+      showReceipt: !!amount.showReceipt,
+      previousReceipt: amount.previousReceipt || null,
+      forceHideReceipt: !!amount.forceHideReceipt,
+      watermark: amount.watermark || null,
+      finalized: !!amount.finalized,
+      aggregateStatus: amount.aggregateStatus || '',
+      aggregateConfirmed: !!amount.aggregateConfirmed
+    }, amount),
+    name: source.name || source.nameKanji || '',
+    isAggregateInvoice: !!source.isAggregateInvoice,
+    responsibleName: source.responsibleName || ''
+  };
+}
+
+function buildInvoiceTemplateContext_(normalizedContext) {
+  return {
+    patientId: normalizedContext.patientId,
+    billingMonth: normalizedContext.billingMonth,
+    months: normalizedContext.months,
+    amount: normalizedContext.amount,
+    name: normalizedContext.name,
+    isAggregateInvoice: normalizedContext.isAggregateInvoice
+  };
+}
+
 function formatInvoiceFileName_(item, options) {
-  const baseName = sanitizeFileName_(item && (item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
+  const baseName = sanitizeFileName_(item && (item.name || item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
   const dateLabel = formatInvoiceDateLabel_();
   const suffix = options && options.fileNameSuffix ? String(options.fileNameSuffix).trim() : '';
   const base = baseName + '_' + (dateLabel || 'YYYYMMDD') + '_請求書';
@@ -650,7 +698,7 @@ function formatInvoiceFileName_(item, options) {
 }
 
 function formatAggregateInvoiceFileName_(item, billingMonthLabel) {
-  const addressee = sanitizeFileName_(item && (item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
+  const addressee = sanitizeFileName_(item && (item.name || item.nameKanji || item.patientId || INVOICE_FILE_PREFIX));
   const monthLabel = sanitizeFileName_(billingMonthLabel || formatBillingMonthForFile_(item && item.billingMonth));
   return `${INVOICE_FILE_PREFIX}_${addressee}_${monthLabel}（合算）.pdf`;
 }
@@ -984,23 +1032,25 @@ function buildInvoiceTemplateData_(item) {
   });
 }
 
-function createInvoicePdfBlob_(item, options) {
+function createInvoicePdfBlob_(context, options) {
   const template = HtmlService.createTemplateFromFile('invoice_template');
-  template.data = buildInvoiceTemplateData_(item || {});
+  const normalizedContext = normalizeInvoicePdfContext_(context || {});
+  template.data = buildInvoiceTemplateContext_(normalizedContext);
   const html = template.evaluate().setWidth(1240).setHeight(1754);
-  const fileName = formatInvoiceFileName_(item, options);
+  const fileName = formatInvoiceFileName_(normalizedContext, options);
   return html.getBlob().getAs(MimeType.PDF).setName(fileName);
 }
 
-function createAggregateInvoicePdfBlob_(item, options) {
-  const months = options && options.aggregateMonths ? options.aggregateMonths : (item && item.receiptMonths);
+function createAggregateInvoicePdfBlob_(context, options) {
+  const normalizedContext = normalizeInvoicePdfContext_(context || {});
   const template = HtmlService.createTemplateFromFile('invoice_template');
-  const templateData = buildAggregateInvoiceTemplateData_(item || {}, months);
-  template.data = templateData;
+  template.data = buildInvoiceTemplateContext_(normalizedContext);
   const html = template.evaluate().setWidth(1240).setHeight(1754);
+  const billingLabel = normalizedContext.billingMonth ? normalizeBillingMonthLabel_(normalizedContext.billingMonth) : '';
+  const aggregateLabel = billingLabel ? `${billingLabel}（合算）` : '合算請求';
   const fileName = formatAggregateInvoiceFileName_(
-    item,
-    templateData && templateData.monthLabel ? templateData.monthLabel.replace(/請求書?\s*/g, '') : ''
+    normalizedContext,
+    aggregateLabel.replace(/請求書?\s*/g, '')
   );
   return html.getBlob().getAs(MimeType.PDF).setName(fileName);
 }
@@ -1171,32 +1221,27 @@ function saveInvoicePdf(item, pdfBlob, options) {
   return { fileId: file.getId(), url: file.getUrl(), name: file.getName() };
 }
 
-function generateInvoicePdf(item, options) {
-  const billingMonth = item && item.billingMonth;
-  const initialReceipt = resolveInvoiceReceiptDisplay_(item);
-  const monthCache = {};
-  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
-  const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
-    ? aggregateDecision.aggregateDecisionMonths
-    : [];
-  const shouldUseAggregateTemplate = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
-  const blob = shouldUseAggregateTemplate
-    ? createAggregateInvoicePdfBlob_(item, Object.assign({}, options, { aggregateMonths: aggregateDecisionMonths }))
-    : createInvoicePdfBlob_(item, options);
-  return saveInvoicePdf(item, blob, options);
+function generateInvoicePdf(context, options) {
+  const normalizedContext = normalizeInvoicePdfContext_(context || {});
+  const blob = normalizedContext.isAggregateInvoice
+    ? createAggregateInvoicePdfBlob_(normalizedContext, options)
+    : createInvoicePdfBlob_(normalizedContext, options);
+  return saveInvoicePdf(normalizedContext, blob, options);
 }
 
-function generateAggregateInvoicePdf(item, options) {
-  const blob = createAggregateInvoicePdfBlob_(item, options);
-  return saveInvoicePdf(item, blob, options);
+function generateAggregateInvoicePdf(context, options) {
+  const normalizedContext = normalizeInvoicePdfContext_(context || {});
+  const blob = createAggregateInvoicePdfBlob_(normalizedContext, options);
+  return saveInvoicePdf(normalizedContext, blob, options);
 }
 
-function generateInvoicePdfs(billingJson, options) {
-  const billingMonth = (options && options.billingMonth) || (Array.isArray(billingJson) && billingJson.length && billingJson[0].billingMonth) || '';
+function generateInvoicePdfs(invoiceContexts, options) {
+  const list = Array.isArray(invoiceContexts) ? invoiceContexts : [];
+  const billingMonth = (options && options.billingMonth) || (list.length && list[0].billingMonth) || '';
   const patientIds = normalizeInvoicePatientIdsForOutput_(options && options.patientIds);
   const targets = patientIds.length
-    ? (billingJson || []).filter(item => patientIds.indexOf(String(item && item.patientId ? item.patientId : '').trim()) >= 0)
-    : (billingJson || []);
+    ? list.filter(item => patientIds.indexOf(String(item && item.patientId ? item.patientId : '').trim()) >= 0)
+    : list;
   const isPartialGeneration = patientIds.length > 0;
   const invoiceFileOptions = {
     overwriteExisting: !isPartialGeneration,
@@ -1204,7 +1249,7 @@ function generateInvoicePdfs(billingJson, options) {
   };
   const files = targets.map(item => {
     const meta = generateInvoicePdf(item, invoiceFileOptions);
-    return Object.assign({}, meta, { patientId: item && item.patientId, nameKanji: item && item.nameKanji });
+    return Object.assign({}, meta, { patientId: item && item.patientId, nameKanji: item && (item.name || item.nameKanji) });
   });
   const matchedIds = new Set(files.map(f => String(f.patientId || '').trim()).filter(Boolean));
   const missingPatientIds = patientIds.filter(id => !matchedIds.has(id));

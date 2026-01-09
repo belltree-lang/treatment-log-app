@@ -184,6 +184,8 @@ function testAggregateInvoiceTemplateStacksPerMonth() {
 
   assert.deepStrictEqual(Array.from(data.receiptMonths || []), ['202501', '202502'], '合算対象は billingMonth より前の月に限定される');
   assert.strictEqual(data.aggregateMonthTotals.length, 2, '対象月の合計行のみが含まれる');
+  assert.strictEqual(data.aggregateMonthTotals[0].total, 1000, '合算対象月の前月繰越を含めて月別合計を再計算する');
+  assert.strictEqual(data.aggregateMonthTotals[1].total, 1350, '合算対象月の施術料・交通費を再計算する');
   assert.strictEqual(data.aggregateRemark, '01月・02月分 施術料金として', '合算対象月の備考が付与される');
   assert.strictEqual(data.chargeMonthLabel, '2025年03月', '請求対象月のラベルは billingMonth に基づく');
 }

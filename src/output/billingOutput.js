@@ -652,12 +652,111 @@ function buildInvoiceWatermark_(item) {
   return finalized ? { text: '確定済み' } : null;
 }
 
+function resolveAggregatePreparedBillingEntry_(monthKey, patientId, fallbackItem, monthCache) {
+  const normalizedPatientId = patientId ? String(patientId).trim() : '';
+  const cache = monthCache || {};
+  let entry = null;
+
+  if (normalizedPatientId && typeof getPreparedBillingEntryForMonthCached_ === 'function') {
+    try {
+      entry = getPreparedBillingEntryForMonthCached_(monthKey, normalizedPatientId, cache);
+    } catch (e) {
+      entry = null;
+    }
+  }
+
+  if (!entry && typeof loadPreparedBillingWithSheetFallback_ === 'function') {
+    try {
+      const prepared = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
+      const payload = prepared && prepared.prepared !== undefined ? prepared.prepared : prepared;
+      const normalizedPrepared = typeof normalizePreparedBilling_ === 'function'
+        ? normalizePreparedBilling_(payload)
+        : payload;
+      const billingEntries = normalizedPrepared && normalizedPrepared.billingJson;
+      if (Array.isArray(billingEntries)) {
+        entry = billingEntries.find(row => {
+          const pid = typeof billingNormalizePatientId_ === 'function'
+            ? billingNormalizePatientId_(row && row.patientId)
+            : (row && row.patientId ? String(row.patientId).trim() : '');
+          return pid && pid === normalizedPatientId;
+        });
+      }
+    } catch (err) {
+      entry = null;
+    }
+  }
+
+  if (!entry && fallbackItem && normalizeInvoiceMonthKey_(fallbackItem.billingMonth) === monthKey) {
+    entry = fallbackItem;
+  }
+
+  return entry ? Object.assign({ billingMonth: monthKey }, entry) : null;
+}
+
+function buildAggregateInvoiceBreakdowns_(item, aggregateMonths, options) {
+  const billingMonth = item && item.billingMonth;
+  const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
+  if (!months.length) {
+    return {
+      months: [],
+      breakdowns: [],
+      totals: null,
+      unitPriceSource: null,
+      hasManualTransport: false
+    };
+  }
+
+  const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(item && item.patientId)
+    : (item && item.patientId ? String(item.patientId).trim() : '');
+  const monthCache = options && options.monthCache ? options.monthCache : {};
+
+  const breakdowns = months.map(monthKey => {
+    const entry = resolveAggregatePreparedBillingEntry_(monthKey, normalizedPatientId, item, monthCache);
+    if (!entry) {
+      return { month: monthKey, entry: null, breakdown: null, carryOverAmount: 0 };
+    }
+    const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: monthKey }));
+    const carryOverAmount = normalizeBillingCarryOver_(entry);
+    return { month: monthKey, entry, breakdown, carryOverAmount };
+  });
+
+  const totals = breakdowns.reduce((sum, row) => {
+    const breakdown = row.breakdown || {};
+    sum.visits += breakdown.visits || 0;
+    sum.treatmentAmount += Number(breakdown.treatmentAmount) || 0;
+    sum.transportAmount += Number(breakdown.transportAmount) || 0;
+    sum.selfPayTotal += Number(breakdown.selfPayTotal) || 0;
+    sum.grandTotal += Number(breakdown.grandTotal) || 0;
+    sum.carryOverAmount += Number(row.carryOverAmount) || 0;
+    return sum;
+  }, {
+    visits: 0,
+    treatmentAmount: 0,
+    transportAmount: 0,
+    selfPayTotal: 0,
+    grandTotal: 0,
+    carryOverAmount: 0
+  });
+
+  const unitPriceSource = breakdowns.find(row => Number.isFinite(row.breakdown && row.breakdown.treatmentUnitPrice));
+  const hasManualTransport = breakdowns.some(row => row.breakdown && row.breakdown.transportDetail === '手動入力');
+
+  return {
+    months,
+    breakdowns,
+    totals,
+    unitPriceSource,
+    hasManualTransport
+  };
+}
+
 function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const billingMonth = item && item.billingMonth;
   const normalizedBillingMonth = normalizeInvoiceMonthKey_(billingMonth);
   const monthLabel = normalizeBillingMonthLabel_(billingMonth);
   const aggregateLabel = monthLabel ? `${monthLabel}（合算）` : '合算請求';
-  const amount = normalizeBillingAmount_(item);
+  const baseAmount = normalizeBillingAmount_(item);
   const watermark = buildInvoiceWatermark_(item);
   const receipt = resolveInvoiceReceiptDisplay_(item);
   const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
@@ -673,21 +772,21 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     billingMonth
   );
   const aggregateRemark = formatAggregateInvoiceRemark_(months);
+  const aggregateData = buildAggregateInvoiceBreakdowns_(item, months, {});
+  const aggregateMonthTotals = aggregateData.breakdowns.map(row => ({
+    month: row.month,
+    monthLabel: normalizeBillingMonthLabel_(row.month),
+    total: row.breakdown ? row.breakdown.grandTotal : 0
+  }));
+  const aggregateTotal = aggregateMonthTotals.length
+    ? aggregateData.totals.grandTotal
+    : baseAmount;
+  const amount = aggregateTotal;
   const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(item && item.patientId)
     : String(item && item.patientId || '').trim();
   const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
   const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : aggregateStatus === 'confirmed';
-  const aggregateMonthTotals = months.map(monthKey => ({
-    month: monthKey,
-    monthLabel: normalizeBillingMonthLabel_(monthKey),
-    total: resolveBillingAmountForMonthAndPatientForOutput_(
-      monthKey,
-      normalizedPatientId,
-      monthKey === normalizedBillingMonth ? item : null,
-      {}
-    )
-  }));
   const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt);
   const previousReceipt = item && item.previousReceipt
     ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
@@ -730,7 +829,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     rows: [
       { label: '合算請求額', detail: aggregateRemark, amount }
     ],
-    grandTotal: amount,
+    grandTotal: aggregateTotal,
     previousReceipt,
     finalized: !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled)),
     aggregateDecisionTrace
@@ -740,15 +839,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
 function buildInvoiceTemplateData_(item) {
   const billingMonth = item && item.billingMonth;
   const monthLabel = normalizeBillingMonthLabel_(billingMonth);
-  const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
-  const visits = breakdown.visits || 0;
-  const unitPrice = breakdown.treatmentUnitPrice || 0;
   const watermark = buildInvoiceWatermark_(item);
-  const rows = [
-    { label: '前月繰越', detail: '', amount: normalizeBillingCarryOver_(item) },
-    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
-    { label: '交通費', detail: breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回'), amount: breakdown.transportAmount }
-  ];
 
   const receipt = resolveInvoiceReceiptDisplay_(item);
   const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
@@ -784,18 +875,43 @@ function buildInvoiceTemplateData_(item) {
     : [];
   const isAggregateInvoice = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
   const chargeMonthLabel = monthLabel;
-  const aggregateMonthTotals = isAggregateInvoice
-    ? aggregateDecisionMonths.map(monthKey => ({
-      month: monthKey,
-      monthLabel: normalizeBillingMonthLabel_(monthKey),
-      total: resolveBillingAmountForMonthAndPatientForOutput_(
-        monthKey,
-        item && item.patientId,
-        monthKey === normalizeInvoiceMonthKey_(billingMonth) ? item : null,
-        {}
-      )
-    }))
-    : [];
+  let breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
+  let visits = breakdown.visits || 0;
+  let unitPrice = breakdown.treatmentUnitPrice || 0;
+  let carryOverAmount = normalizeBillingCarryOver_(item);
+  let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
+  let aggregateMonthTotals = [];
+  let grandTotal = breakdown.grandTotal;
+
+  if (isAggregateInvoice && aggregateDecisionMonths.length > 1) {
+    const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, {});
+    const totals = aggregateData.totals || {};
+    visits = totals.visits || 0;
+    carryOverAmount = totals.carryOverAmount || 0;
+    unitPrice = aggregateData.unitPriceSource ? aggregateData.unitPriceSource.breakdown.treatmentUnitPrice || 0 : unitPrice;
+    breakdown = Object.assign({}, breakdown, {
+      visits,
+      treatmentAmount: totals.treatmentAmount || 0,
+      transportAmount: totals.transportAmount || 0,
+      selfPayTotal: totals.selfPayTotal || 0,
+      grandTotal: totals.grandTotal || 0
+    });
+    transportDetail = aggregateData.hasManualTransport
+      ? '手動入力'
+      : formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回';
+    aggregateMonthTotals = aggregateData.breakdowns.map(row => ({
+      month: row.month,
+      monthLabel: normalizeBillingMonthLabel_(row.month),
+      total: row.breakdown ? row.breakdown.grandTotal : 0
+    }));
+    grandTotal = breakdown.grandTotal;
+  }
+
+  const rows = [
+    { label: '前月繰越', detail: '', amount: carryOverAmount },
+    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
+    { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
+  ];
 
   return Object.assign({}, item, {
     monthLabel,
@@ -809,7 +925,7 @@ function buildInvoiceTemplateData_(item) {
     receiptRemark: (receipt && receipt.receiptRemark) || '',
     showReceipt: !!(receipt && receipt.visible),
     rows,
-    grandTotal: breakdown.grandTotal,
+    grandTotal,
     previousReceipt,
     finalized: !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled)),
     aggregateMonthTotals,
@@ -919,13 +1035,13 @@ function calculateInvoiceChargeBreakdown_(params) {
 
 function buildBillingInvoiceHtml_(item, billingMonth) {
   const targetMonth = billingMonth || (item && item.billingMonth) || '';
-  const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth: targetMonth }));
+  let breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth: targetMonth }));
   const monthLabel = normalizeBillingMonthLabel_(targetMonth);
   const aggregateMonths = Array.isArray(item && item.aggregateTargetMonths)
     ? normalizeAggregateMonthsForInvoice_(item.aggregateTargetMonths, targetMonth)
     : [];
   const transportUnitPrice = TRANSPORT_PRICE;
-  const carryOverAmount = normalizeBillingCarryOver_(item);
+  let carryOverAmount = normalizeBillingCarryOver_(item);
   let visits = breakdown.visits || 0;
   let treatmentUnitPrice = breakdown.treatmentUnitPrice || 0;
   let treatmentAmount = breakdown.treatmentAmount || 0;
@@ -935,70 +1051,22 @@ function buildBillingInvoiceHtml_(item, billingMonth) {
   let grandTotal = breakdown.grandTotal;
 
   if (aggregateMonths.length) {
-    const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
-      ? billingNormalizePatientId_(item && item.patientId)
-      : (item && item.patientId ? String(item.patientId).trim() : '');
-    const monthCache = {};
-    // NOTE:
-    // 合算請求時のみ、表示用として過去月の prepared billing を参照する。
-    // 集計・判定ロジックには影響しない。
-    const aggregateEntries = aggregateMonths
-      .map(ym => normalizeInvoiceMonthKey_(ym))
-      .filter(Boolean)
-      .map(monthKey => {
-        let entry = null;
-        if (normalizedPatientId && typeof getPreparedBillingEntryForMonthCached_ === 'function') {
-          try {
-            entry = getPreparedBillingEntryForMonthCached_(monthKey, normalizedPatientId, monthCache);
-          } catch (e) {
-            entry = null;
-          }
-        }
-        if (!entry && typeof loadPreparedBillingWithSheetFallback_ === 'function') {
-          try {
-            const prepared = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
-            const payload = prepared && prepared.prepared !== undefined ? prepared.prepared : prepared;
-            const normalizedPrepared = typeof normalizePreparedBilling_ === 'function'
-              ? normalizePreparedBilling_(payload)
-              : payload;
-            const billingEntries = normalizedPrepared && normalizedPrepared.billingJson;
-            if (Array.isArray(billingEntries)) {
-              entry = billingEntries.find(row => {
-                const pid = typeof billingNormalizePatientId_ === 'function'
-                  ? billingNormalizePatientId_(row && row.patientId)
-                  : (row && row.patientId ? String(row.patientId).trim() : '');
-                return pid && pid === normalizedPatientId;
-              });
-            }
-          } catch (err) {
-            entry = null;
-          }
-        }
-        if (!entry && normalizeInvoiceMonthKey_(item && item.billingMonth) === monthKey) {
-          entry = item;
-        }
-        return entry ? Object.assign({ billingMonth: monthKey }, entry) : null;
-      })
-      .filter(Boolean);
-
-    if (aggregateEntries.length) {
-      const aggregateBreakdowns = aggregateEntries.map(entry => calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: entry.billingMonth })));
-      visits = aggregateBreakdowns.reduce((sum, b) => sum + (b.visits || 0), 0);
-      treatmentAmount = aggregateBreakdowns.reduce((sum, b) => sum + (Number(b.treatmentAmount) || 0), 0);
-      transportAmount = aggregateBreakdowns.reduce((sum, b) => sum + (Number(b.transportAmount) || 0), 0);
-      selfPayTotal = aggregateBreakdowns.reduce((sum, b) => sum + (Number(b.selfPayTotal) || 0), 0);
-      // NOTE:
-      // 合算請求時の表示用単価は、最初に取得できた月の単価を代表値として表示する。
-      // 月別単価の表示は行わない（最小変更方針）。
-      const unitPriceSource = aggregateBreakdowns.find(b => Number.isFinite(b && b.treatmentUnitPrice));
+    const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateMonths, {});
+    if (aggregateData && aggregateData.breakdowns.length) {
+      const totals = aggregateData.totals || {};
+      visits = totals.visits || 0;
+      carryOverAmount = totals.carryOverAmount || 0;
+      treatmentAmount = totals.treatmentAmount || 0;
+      transportAmount = totals.transportAmount || 0;
+      selfPayTotal = totals.selfPayTotal || 0;
+      const unitPriceSource = aggregateData.unitPriceSource;
       if (unitPriceSource) {
-        treatmentUnitPrice = unitPriceSource.treatmentUnitPrice || 0;
+        treatmentUnitPrice = unitPriceSource.breakdown.treatmentUnitPrice || 0;
       }
-      const hasManualTransport = aggregateBreakdowns.some(b => (b && b.transportDetail) === '手動入力');
-      transportDetail = hasManualTransport
+      transportDetail = aggregateData.hasManualTransport
         ? '手動入力'
         : formatBillingCurrency_(transportUnitPrice) + '円 × ' + visits + '回';
-      grandTotal = carryOverAmount + treatmentAmount + transportAmount + selfPayTotal;
+      grandTotal = totals.grandTotal || 0;
     }
   }
 

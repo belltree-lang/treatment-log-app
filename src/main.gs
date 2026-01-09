@@ -578,6 +578,7 @@ function createBillingMonthCache_() {
   return {
     preparedByMonth: {},
     preparedEntriesByMonth: {},
+    bankFlagsByMonth: {},
     bankWithdrawalUnpaidByMonth: {},
     bankWithdrawalAmountsByMonth: {}
   };
@@ -813,7 +814,7 @@ function resolveAggregateReceiptForEntry_(patientId, previousMonthKey, prepared,
   if (!normalized) return null;
   const previousEntry = getPreparedBillingEntryForMonthCached_(monthKey, pid, cache);
 
-  const aggregateMonths = resolveAggregateMonthsFromUnpaid_(
+  const aggregateMonths = resolveAggregateMonthsFromBankSheet_(
     normalizeBillingMonthKeySafe_(prepared && prepared.billingMonth) || monthKey,
     pid,
     { useLegacyAggregate: false },
@@ -951,6 +952,7 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     : value => String(value || '').trim();
   const monthCache = cache || {
     preparedByMonth: {},
+    bankFlagsByMonth: {},
     bankWithdrawalUnpaidByMonth: {},
     bankWithdrawalAmountsByMonth: {}
   };
@@ -964,7 +966,7 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
 
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
-    const aggregateMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, { useLegacyAggregate: false }, prepared, monthCache);
+    const aggregateMonths = resolveAggregateMonthsFromBankSheet_(monthKey, pid, { useLegacyAggregate: false }, prepared, monthCache);
     if (aggregateMonths.length > 1) {
       const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, aggregateMonths, previousPrepared || prepared, monthCache);
       const aggregateRemark = formatAggregateReceiptDescription_(aggregateMonths);
@@ -1212,6 +1214,129 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   return months;
 }
 
+function getBankFlagsByPatientCached_(billingMonth, prepared, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return {};
+  const store = cache && cache.bankFlagsByMonth ? cache.bankFlagsByMonth : null;
+  if (store && Object.prototype.hasOwnProperty.call(store, monthKey)) {
+    return store[monthKey] || {};
+  }
+  const preparedForMonth = prepared || getPreparedBillingForMonthCached_(monthKey, cache);
+  const flags = getBankFlagsByPatient_(monthKey, preparedForMonth);
+  if (store) {
+    store[monthKey] = flags || {};
+  }
+  return flags || {};
+}
+
+function collectAggregateBankFlagMonthsFromSheet_(billingMonth, patientId, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return [];
+
+  const months = [];
+  let cursor = resolvePreviousBillingMonthKey_(monthKey);
+  let guard = 0;
+
+  while (cursor && guard < 48) {
+    const cursorKey = normalizeBillingMonthKeySafe_(cursor);
+    if (!cursorKey) break;
+
+    const flagsByPatient = getBankFlagsByPatientCached_(cursorKey, null, cache);
+    if (!flagsByPatient || !Object.keys(flagsByPatient).length) break;
+    const flags = flagsByPatient[pid];
+    if (flags && flags.ae) {
+      months.unshift(cursorKey);
+      cursor = resolvePreviousBillingMonthKey_(cursorKey);
+      guard += 1;
+      continue;
+    }
+    break;
+  }
+
+  return months;
+}
+
+function resolveAggregateMonthsFromBankSheet_(billingMonth, patientId, options, prepared, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return [];
+
+  const opts = options && typeof options === 'object' ? options : {};
+  const useLegacyAggregate = !!opts.useLegacyAggregate;
+  const anchorMonth = useLegacyAggregate ? normalizeBillingMonthKeySafe_(opts.aggregateUntilMonth) : '';
+  if (useLegacyAggregate && anchorMonth) {
+    const unpaidMonths = buildReceiptMonthsFromBankUnpaid_(pid, anchorMonth, prepared, cache);
+    const normalized = normalizePastBillingMonths_(unpaidMonths, monthKey);
+    if (unpaidMonths && unpaidMonths.indexOf(anchorMonth) >= 0 && normalized.indexOf(anchorMonth) < 0) {
+      normalized.push(anchorMonth);
+    }
+    const seen = new Set();
+    const unique = [];
+    normalized.forEach(ym => {
+      if (!seen.has(ym)) {
+        seen.add(ym);
+        unique.push(ym);
+      }
+    });
+    return unique;
+  }
+
+  const unpaidHistory = collectAggregateBankFlagMonthsFromSheet_(monthKey, pid, cache);
+  if (!unpaidHistory.length) return [];
+
+  const currentFlagsByPatient = getBankFlagsByPatientCached_(monthKey, prepared, cache);
+  const currentFlags = currentFlagsByPatient && currentFlagsByPatient[pid] ? currentFlagsByPatient[pid] : null;
+  const currentUnpaid = !!(currentFlags && currentFlags.ae);
+  const currentAggregate = !!(currentFlags && currentFlags.af);
+  const allowAggregate = !currentUnpaid || currentAggregate;
+  if (!allowAggregate) return [];
+
+  const existingEntry = prepared && Array.isArray(prepared.billingJson)
+    ? (prepared.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid)
+    : null;
+  const unpaidSet = new Set(unpaidHistory.map(normalizeBillingMonthKeySafe_));
+  unpaidSet.add(monthKey);
+  if (hasAggregatedThisUnpaidCycle_(existingEntry, currentFlags, unpaidSet, monthKey)) return [];
+
+  const cachedPreparedStore = cache && cache.preparedByMonth && typeof cache.preparedByMonth === 'object'
+    ? cache.preparedByMonth
+    : null;
+  if (cachedPreparedStore) {
+    const monthNum = Number(monthKey) || 0;
+    const cachedMonths = Object.keys(cachedPreparedStore);
+    for (let i = 0; i < cachedMonths.length; i += 1) {
+      const cachedMonthKey = normalizeBillingMonthKeySafe_(cachedMonths[i]);
+      const cachedNum = Number(cachedMonthKey) || 0;
+      if (!cachedMonthKey || (monthNum && cachedNum >= monthNum)) continue;
+      const cached = cachedPreparedStore[cachedMonths[i]];
+      if (!cached || !Array.isArray(cached.billingJson)) continue;
+      const cachedEntry = cached.billingJson.find(row => billingNormalizePatientId_(row && row.patientId) === pid);
+      const cachedFlagsByPatient = getBankFlagsByPatientCached_(cachedMonthKey, cached, cache);
+      const cachedFlags = cachedFlagsByPatient ? cachedFlagsByPatient[pid] : null;
+      if (hasAggregatedThisUnpaidCycle_(cachedEntry, cachedFlags, unpaidSet, monthKey)) {
+        return [];
+      }
+    }
+  }
+
+  const seen = new Set();
+  const unique = [];
+  unpaidHistory.forEach(ym => {
+    const normalized = normalizeBillingMonthKeySafe_(ym);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    unique.push(normalized);
+  });
+
+  if (!seen.has(monthKey)) {
+    seen.add(monthKey);
+    unique.push(monthKey);
+  }
+
+  return unique;
+}
+
 function formatAggregateBillingRemark_(months) {
   const normalized = (Array.isArray(months) ? months : [])
     .map(value => normalizeBillingMonthKeySafe_(value))
@@ -1338,6 +1463,7 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
   const bankFlagsByPatient = normalized.bankFlagsByPatient || {};
   const monthCache = cache || {
     preparedByMonth: {},
+    bankFlagsByMonth: {},
     bankWithdrawalUnpaidByMonth: {},
     bankWithdrawalAmountsByMonth: {}
   };
@@ -1347,7 +1473,7 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
     if (!pid) return entry;
 
     // 自動合算では skipReceipt を立てず、合算済みであっても領収書対象とする。
-    const targetMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, { useLegacyAggregate: false }, normalized, monthCache);
+    const targetMonths = resolveAggregateMonthsFromBankSheet_(monthKey, pid, { useLegacyAggregate: false }, normalized, monthCache);
     if (targetMonths.length <= 1) return entry;
     const aggregateTotal = targetMonths.reduce(
       (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, null, monthCache),
@@ -3015,7 +3141,13 @@ function generatePreparedInvoices_(prepared, options) {
 
     const baseEntry = (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid) || entry;
     const aggregateUntilMonth = normalizeBillingMonthKeySafe_(baseEntry.aggregateUntilMonth || normalized.aggregateUntilMonth);
-    const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(normalized.billingMonth, pid, aggregateUntilMonth, monthCache);
+    const aggregateSourceMonths = resolveAggregateMonthsFromBankSheet_(
+      normalized.billingMonth,
+      pid,
+      { useLegacyAggregate: false, aggregateUntilMonth },
+      normalized,
+      monthCache
+    );
     const aggregateMonths = normalizeAggregateInvoiceMonths_(aggregateSourceMonths, normalized, normalized.billingMonth);
     const uniqueAggregateMonths = Array.from(new Set(aggregateMonths))
       .filter(month => month !== normalized.billingMonth);

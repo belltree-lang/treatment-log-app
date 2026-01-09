@@ -448,7 +448,7 @@ function resolveInvoiceReceiptDisplay_(item, options) {
   };
 }
 
-function resolveAggregateInvoiceDecision_(item, receipt, billingMonth) {
+function resolveAggregateInvoiceDecision_(item, receipt, billingMonth, options) {
   const billingMonthKey = normalizeInvoiceMonthKey_(billingMonth);
   const explicitReceiptMonths = Array.isArray(receipt && receipt.explicitReceiptMonths)
     ? normalizeAggregateMonthsForInvoice_(receipt.explicitReceiptMonths, billingMonthKey)
@@ -456,12 +456,19 @@ function resolveAggregateInvoiceDecision_(item, receipt, billingMonth) {
   const aggregateTargetMonths = Array.isArray(item && item.aggregateTargetMonths)
     ? normalizeAggregateMonthsForInvoice_(item.aggregateTargetMonths, billingMonthKey)
     : [];
-  const aggregateDecisionMonths = normalizeAggregateMonthsForInvoice_(
+  const requestedAggregateMonths = normalizeAggregateMonthsForInvoice_(
     explicitReceiptMonths.length ? explicitReceiptMonths : aggregateTargetMonths,
     billingMonthKey
   );
+  const preparedAggregate = filterAggregateMonthsByPrepared_(
+    item,
+    requestedAggregateMonths,
+    options
+  );
+  const aggregateDecisionMonths = preparedAggregate.months;
+  const missingAggregateMonths = preparedAggregate.missingMonths;
   const usesExplicitReceiptMonths = explicitReceiptMonths.length > 0;
-  const usesAggregateTargetMonths = !usesExplicitReceiptMonths && aggregateDecisionMonths.length > 0;
+  const usesAggregateTargetMonths = !usesExplicitReceiptMonths && requestedAggregateMonths.length > 0;
   const decisionSources = [];
   if (usesExplicitReceiptMonths) decisionSources.push('explicitReceiptMonths');
   if (usesAggregateTargetMonths) decisionSources.push('aggregateTargetMonths');
@@ -475,6 +482,8 @@ function resolveAggregateInvoiceDecision_(item, receipt, billingMonth) {
     explicitReceiptMonths,
     aggregateTargetMonths,
     aggregateDecisionMonths,
+    requestedAggregateMonths,
+    missingAggregateMonths,
     aggregateMonthsSource
   };
 
@@ -706,6 +715,28 @@ function resolveAggregatePreparedBillingEntry_(monthKey, patientId, fallbackItem
   return entry ? Object.assign({ billingMonth: monthKey }, entry) : null;
 }
 
+function filterAggregateMonthsByPrepared_(item, aggregateMonths, options) {
+  const billingMonth = item && item.billingMonth;
+  const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(item && item.patientId)
+    : (item && item.patientId ? String(item.patientId).trim() : '');
+  const monthCache = options && options.monthCache ? options.monthCache : {};
+  const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
+  const availableMonths = [];
+  const missingMonths = [];
+
+  months.forEach(monthKey => {
+    const entry = resolveAggregatePreparedBillingEntry_(monthKey, normalizedPatientId, item, monthCache);
+    if (entry) {
+      availableMonths.push(monthKey);
+    } else {
+      missingMonths.push(monthKey);
+    }
+  });
+
+  return { months: availableMonths, missingMonths, monthCache };
+}
+
 function buildAggregateInvoiceBreakdowns_(item, aggregateMonths, options) {
   const billingMonth = item && item.billingMonth;
   const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
@@ -783,10 +814,14 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
       : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])),
     billingMonth
   );
-  const receipt = resolveInvoiceReceiptDisplay_(item, { aggregateMonths: months });
+  const monthCache = {};
+  const preparedAggregate = filterAggregateMonthsByPrepared_(item, months, { monthCache });
+  const filteredMonths = preparedAggregate.months;
+  const missingAggregateMonths = preparedAggregate.missingMonths;
+  const receipt = resolveInvoiceReceiptDisplay_(item, { aggregateMonths: filteredMonths });
   const receiptMonths = receipt && receipt.receiptMonths ? receipt.receiptMonths : [];
-  const aggregateRemark = formatAggregateInvoiceRemark_(months);
-  const aggregateData = buildAggregateInvoiceBreakdowns_(item, months, {});
+  const aggregateRemark = formatAggregateInvoiceRemark_(filteredMonths);
+  const aggregateData = buildAggregateInvoiceBreakdowns_(item, filteredMonths, { monthCache });
   const aggregateMonthTotals = aggregateData.breakdowns.map(row => ({
     month: row.month,
     monthLabel: normalizeBillingMonthLabel_(row.month),
@@ -813,11 +848,11 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     previousReceipt.visible = !!(receipt && receipt.visible);
   }
 
-  const aggregateDecision = resolveAggregateInvoiceDecision_(item, receipt, billingMonth);
+  const aggregateDecision = resolveAggregateInvoiceDecision_(item, receipt, billingMonth, { monthCache });
   const aggregateDecisionTrace = Object.assign(
     { decisionSources: aggregateDecision && aggregateDecision.decisionSources ? aggregateDecision.decisionSources : [] },
     aggregateDecision && aggregateDecision.trace ? aggregateDecision.trace : {},
-    { isAggregateInvoice: true, aggregateMonthsForOutput: months }
+    { isAggregateInvoice: true, aggregateMonthsForOutput: filteredMonths, missingAggregateMonths }
   );
   logAggregateDecisionTrace_('aggregate_template', Object.assign(
     {
@@ -835,7 +870,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     watermark,
     aggregateStatus,
     aggregateConfirmed,
-    receiptMonths: months,
+    receiptMonths: filteredMonths,
     receiptRemark: aggregateRemark,
     aggregateRemark,
     aggregateMonthTotals,
@@ -858,7 +893,8 @@ function buildInvoiceTemplateData_(item) {
   const initialReceipt = resolveInvoiceReceiptDisplay_(item);
   const aggregateStatus = initialReceipt ? initialReceipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
   const aggregateConfirmed = initialReceipt ? initialReceipt.aggregateConfirmed : aggregateStatus === 'confirmed';
-  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth);
+  const monthCache = {};
+  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
   const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
     ? aggregateDecision.aggregateDecisionMonths
     : [];
@@ -899,7 +935,7 @@ function buildInvoiceTemplateData_(item) {
   let grandTotal = breakdown.grandTotal;
 
   if (isAggregateInvoice && aggregateDecisionMonths.length > 1) {
-    const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, {});
+    const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, { monthCache });
     const totals = aggregateData.totals || {};
     visits = totals.visits || 0;
     carryOverAmount = totals.carryOverAmount || 0;
@@ -1055,6 +1091,8 @@ function buildBillingInvoiceHtml_(item, billingMonth) {
   const aggregateMonths = Array.isArray(item && item.aggregateTargetMonths)
     ? normalizeAggregateMonthsForInvoice_(item.aggregateTargetMonths, targetMonth)
     : [];
+  const preparedAggregate = filterAggregateMonthsByPrepared_(item, aggregateMonths, {});
+  const filteredAggregateMonths = preparedAggregate.months;
   const transportUnitPrice = TRANSPORT_PRICE;
   let carryOverAmount = normalizeBillingCarryOver_(item);
   let visits = breakdown.visits || 0;
@@ -1065,8 +1103,8 @@ function buildBillingInvoiceHtml_(item, billingMonth) {
   let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(transportUnitPrice) + '円 × ' + visits + '回');
   let grandTotal = breakdown.grandTotal;
 
-  if (aggregateMonths.length) {
-    const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateMonths, {});
+  if (filteredAggregateMonths.length) {
+    const aggregateData = buildAggregateInvoiceBreakdowns_(item, filteredAggregateMonths, {});
     if (aggregateData && aggregateData.breakdowns.length) {
       const totals = aggregateData.totals || {};
       visits = totals.visits || 0;
@@ -1136,7 +1174,8 @@ function saveInvoicePdf(item, pdfBlob, options) {
 function generateInvoicePdf(item, options) {
   const billingMonth = item && item.billingMonth;
   const initialReceipt = resolveInvoiceReceiptDisplay_(item);
-  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth);
+  const monthCache = {};
+  const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
   const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
     ? aggregateDecision.aggregateDecisionMonths
     : [];

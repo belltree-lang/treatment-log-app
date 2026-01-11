@@ -24,6 +24,11 @@ function getTodayVisits(options) {
   if (notesResult && Array.isArray(notesResult.warnings)) warnings.push.apply(warnings, notesResult.warnings);
   const setupIncomplete = !!(treatment && treatment.setupIncomplete)
     || !!(notesResult && notesResult.setupIncomplete);
+  if (typeof dashboardLogContext_ === 'function') {
+    dashboardLogContext_('getTodayVisits:setupIncomplete', `treatmentLogs=${!!(treatment && treatment.setupIncomplete)} notes=${!!(notesResult && notesResult.setupIncomplete)}`);
+  } else if (typeof dashboardWarn_ === 'function') {
+    dashboardWarn_(`[getTodayVisits:setupIncomplete] treatmentLogs=${!!(treatment && treatment.setupIncomplete)} notes=${!!(notesResult && notesResult.setupIncomplete)}`);
+  }
 
   const visits = [];
   logs.forEach(entry => {

@@ -6,6 +6,14 @@
  */
 function getDashboardData(options) {
   const opts = options || {};
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
   if (opts.mock && typeof buildDashboardMockData_ === 'function') {
     const mockOptions = buildDashboardMockData_(opts) || {};
     const normalized = Object.assign({}, mockOptions);
@@ -18,23 +26,31 @@ function getDashboardData(options) {
     user: opts.user || dashboardResolveUser_(),
     setupIncomplete: false
   };
+  logContext('getDashboardData:start', `user=${meta.user || 'unknown'} cache=${opts.cache === false ? 'false' : 'true'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
     const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo(cacheOptions) : { patients: {}, nameToId: {}, warnings: [] });
+    logContext('getDashboardData:loadPatientInfo', `patients=${Object.keys(patientInfo && patientInfo.patients ? patientInfo.patients : {}).length} warnings=${(patientInfo && patientInfo.warnings ? patientInfo.warnings.length : 0)} setupIncomplete=${!!(patientInfo && patientInfo.setupIncomplete)}`);
     const notes = opts.notes || (typeof loadNotes === 'function' ? loadNotes(Object.assign({ email: meta.user }, cacheOptions)) : { notes: {}, warnings: [] });
+    logContext('getDashboardData:loadNotes', `notes=${Object.keys(notes && notes.notes ? notes.notes : {}).length} warnings=${(notes && notes.warnings ? notes.warnings.length : 0)} setupIncomplete=${!!(notes && notes.setupIncomplete)}`);
     const aiReports = opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports(cacheOptions) : { reports: {}, warnings: [] });
+    logContext('getDashboardData:loadAIReports', `reports=${Object.keys(aiReports && aiReports.reports ? aiReports.reports : {}).length} warnings=${(aiReports && aiReports.warnings ? aiReports.warnings.length : 0)} setupIncomplete=${!!(aiReports && aiReports.setupIncomplete)}`);
     const invoices = opts.invoices || (typeof loadInvoices === 'function'
       ? loadInvoices(Object.assign({ patientInfo, now: opts.now }, cacheOptions))
       : { invoices: {}, warnings: [] });
+    logContext('getDashboardData:loadInvoices', `invoices=${Object.keys(invoices && invoices.invoices ? invoices.invoices : {}).length} warnings=${(invoices && invoices.warnings ? invoices.warnings.length : 0)} setupIncomplete=${!!(invoices && invoices.setupIncomplete)}`);
     const treatmentLogs = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
       ? loadTreatmentLogs(Object.assign({ patientInfo, now: opts.now }, cacheOptions))
       : { logs: [], warnings: [] });
+    logContext('getDashboardData:loadTreatmentLogs', `logs=${(treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0)} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
     const responsible = opts.responsible || (typeof assignResponsibleStaff === 'function'
       ? assignResponsibleStaff(Object.assign({ patientInfo, treatmentLogs, now: opts.now }, cacheOptions))
       : { responsible: {}, warnings: [] });
+    logContext('getDashboardData:assignResponsible', `responsible=${Object.keys(responsible && responsible.responsible ? responsible.responsible : {}).length} warnings=${(responsible && responsible.warnings ? responsible.warnings.length : 0)} setupIncomplete=${!!(responsible && responsible.setupIncomplete)}`);
     const unpaidAlertsResult = opts.unpaidAlerts || (typeof loadUnpaidAlerts === 'function'
       ? loadUnpaidAlerts(Object.assign({ patientInfo, now: opts.now }, cacheOptions))
       : { alerts: [], warnings: [] });
+    logContext('getDashboardData:loadUnpaidAlerts', `alerts=${(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts.length : 0)} warnings=${(unpaidAlertsResult && unpaidAlertsResult.warnings ? unpaidAlertsResult.warnings.length : 0)} setupIncomplete=${!!(unpaidAlertsResult && unpaidAlertsResult.setupIncomplete)}`);
 
     const tasksResult = opts.tasksResult || (typeof getTasks === 'function' ? getTasks({
       patientInfo,
@@ -43,12 +59,14 @@ function getDashboardData(options) {
       invoiceConfirmations: opts.invoiceConfirmations,
       now: opts.now
     }) : { tasks: [], warnings: [] });
+    logContext('getDashboardData:getTasks', `tasks=${(tasksResult && tasksResult.tasks ? tasksResult.tasks.length : 0)} warnings=${(tasksResult && tasksResult.warnings ? tasksResult.warnings.length : 0)} setupIncomplete=${!!(tasksResult && tasksResult.setupIncomplete)}`);
 
     const visitsResult = opts.visitsResult || (typeof getTodayVisits === 'function' ? getTodayVisits({
       treatmentLogs,
       notes,
       now: opts.now
     }) : { visits: [], warnings: [] });
+    logContext('getDashboardData:getTodayVisits', `visits=${(visitsResult && visitsResult.visits ? visitsResult.visits.length : 0)} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
 
     const patients = buildDashboardPatients_(patientInfo, {
       notes,
@@ -71,6 +89,7 @@ function getDashboardData(options) {
     ]);
 
     meta.setupIncomplete = warningState.setupIncomplete;
+    logContext('getDashboardData:setupIncomplete', `result=${meta.setupIncomplete} warnings=${warningState.warnings.length}`);
 
     return {
       tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
@@ -82,6 +101,7 @@ function getDashboardData(options) {
     };
   } catch (err) {
     meta.error = err && err.message ? err.message : String(err);
+    logContext('getDashboardData:error', meta.error);
     return { tasks: [], todayVisits: [], patients: [], warnings: [], meta };
   }
 }
@@ -148,14 +168,28 @@ function collectDashboardWarnings_(results) {
   let setupIncomplete = false;
 
   (results || []).forEach(entry => {
-    if (entry && entry.setupIncomplete) setupIncomplete = true;
+    if (entry && entry.setupIncomplete) {
+      setupIncomplete = true;
+      if (typeof dashboardLogContext_ === 'function') {
+        dashboardLogContext_('collectDashboardWarnings', 'setupIncomplete from entry');
+      } else if (typeof dashboardWarn_ === 'function') {
+        dashboardWarn_('[collectDashboardWarnings] setupIncomplete from entry');
+      }
+    }
     if (entry && Array.isArray(entry.warnings)) {
       entry.warnings.forEach(warning => {
         const normalized = normalizeDashboardWarning_(warning);
         if (!normalized || seen.has(normalized)) return;
         seen.add(normalized);
         warnings.push(normalized);
-        if (isDashboardSetupIncompleteWarning_(normalized)) setupIncomplete = true;
+        if (isDashboardSetupIncompleteWarning_(normalized)) {
+          setupIncomplete = true;
+          if (typeof dashboardLogContext_ === 'function') {
+            dashboardLogContext_('collectDashboardWarnings', `setupIncomplete warning=${normalized}`);
+          } else if (typeof dashboardWarn_ === 'function') {
+            dashboardWarn_(`[collectDashboardWarnings] setupIncomplete warning=${normalized}`);
+          }
+        }
       });
     }
   });

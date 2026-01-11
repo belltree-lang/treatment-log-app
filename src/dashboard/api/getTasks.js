@@ -26,6 +26,11 @@ function getTasks(options) {
   const setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete)
     || !!(notesResult && notesResult.setupIncomplete)
     || !!(aiReports && aiReports.setupIncomplete);
+  if (typeof dashboardLogContext_ === 'function') {
+    dashboardLogContext_('getTasks:setupIncomplete', `patientInfo=${!!(patientInfo && patientInfo.setupIncomplete)} notes=${!!(notesResult && notesResult.setupIncomplete)} aiReports=${!!(aiReports && aiReports.setupIncomplete)}`);
+  } else if (typeof dashboardWarn_ === 'function') {
+    dashboardWarn_(`[getTasks:setupIncomplete] patientInfo=${!!(patientInfo && patientInfo.setupIncomplete)} notes=${!!(notesResult && notesResult.setupIncomplete)} aiReports=${!!(aiReports && aiReports.setupIncomplete)}`);
+  }
 
   const notesByPatient = notesResult && notesResult.notes ? notesResult.notes : {};
   const reportsByPatient = aiReports && aiReports.reports ? aiReports.reports : {};

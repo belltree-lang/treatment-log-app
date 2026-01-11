@@ -3237,20 +3237,42 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
   const patientId = billingNormalizePatientId_(entry && entry.patientId);
   if (!billingMonth || !patientId) return null;
 
+  const ensurePreviousReceiptAmount = () => {
+    if (entry && entry.previousReceiptAmount != null) return entry;
+    if (entry && Array.isArray(entry.receiptMonthBreakdown) && entry.receiptMonthBreakdown.length) return entry;
+    const previousMonthKey = resolvePreviousBillingMonthKey_(billingMonth);
+    if (!previousMonthKey) return entry;
+    const monthCache = cache || {
+      preparedByMonth: {},
+      bankWithdrawalUnpaidByMonth: {},
+      bankWithdrawalAmountsByMonth: {}
+    };
+    const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, monthCache);
+    if (!previousPrepared || !Array.isArray(previousPrepared.billingJson)) return entry;
+    const previousEntry = previousPrepared.billingJson.find(item => billingNormalizePatientId_(item && item.patientId) === patientId);
+    if (!previousEntry) return entry;
+    const previousAmount = previousEntry.grandTotal != null && previousEntry.grandTotal !== ''
+      ? normalizeMoneyNumber_(previousEntry.grandTotal)
+      : normalizeMoneyNumber_(previousEntry.billingAmount);
+    if (previousAmount == null) return entry;
+    return Object.assign({}, entry, { previousReceiptAmount: previousAmount });
+  };
+
+  const receiptEntry = ensurePreviousReceiptAmount();
   const decision = resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache);
   const decisionMonths = decision && Array.isArray(decision.months) ? decision.months : [];
   const aggregateMonths = normalizePastBillingMonths_(decisionMonths, billingMonth);
   const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
-  const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, isAggregateInvoice, cache);
+  const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache);
 
   return {
     patientId,
     billingMonth,
     months: isAggregateInvoice ? aggregateMonths : [],
     amount,
-    name: entry && entry.nameKanji ? String(entry.nameKanji) : '',
+    name: receiptEntry && receiptEntry.nameKanji ? String(receiptEntry.nameKanji) : '',
     isAggregateInvoice,
-    responsibleName: entry && entry.responsibleName ? String(entry.responsibleName) : ''
+    responsibleName: receiptEntry && receiptEntry.responsibleName ? String(receiptEntry.responsibleName) : ''
   };
 }
 

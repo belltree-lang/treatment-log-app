@@ -3435,7 +3435,10 @@ function generateAggregatedInvoice(billingMonth, options) {
   const aggregateMonths = normalizeAggregateInvoiceMonths_(mergedMonths, prepared, month.key);
 
   const monthCache = createBillingMonthCache_();
-  const aggregateContext = buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, monthCache);
+  const receiptPrepared = attachPreviousReceiptAmounts_(prepared, monthCache);
+  const receiptEntry = (receiptPrepared && receiptPrepared.billingJson || [])
+    .find(row => billingNormalizePatientId_(row && row.patientId) === patientId) || entry;
+  const aggregateContext = buildAggregateInvoicePdfContext_(receiptEntry, aggregateMonths, receiptPrepared || prepared, monthCache);
   const file = generateAggregateInvoicePdf(aggregateContext, { billingMonth: month.key });
   return { billingMonth: month.key, patientId, aggregateMonths, file };
 }

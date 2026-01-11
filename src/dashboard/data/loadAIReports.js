@@ -3,9 +3,7 @@
  * @return {{reports: Object<string, string>, warnings: string[]}}
  */
 function loadAIReports(options) {
-  const opts = options || {};
-  const fetchFn = () => loadAIReportsUncached_();
-  return dashboardCacheFetch_(dashboardCacheKey_('aiReports:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
+  return loadAIReportsUncached_();
 }
 
 function loadAIReportsUncached_() {

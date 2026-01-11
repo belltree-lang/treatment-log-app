@@ -1237,6 +1237,22 @@ function buildReceiptMonthBreakdownForEntry_(patientId, months, prepared, cache)
       const amount = amountByPatient[pid];
       if (Number.isFinite(amount)) {
         breakdown.push({ month: monthKey, amount });
+        return;
+      }
+    }
+
+    if (preparedMonthKey && Number(monthKey) < Number(preparedMonthKey)) {
+      const previousPrepared = getPreparedBillingForMonthCached_(monthKey, store);
+      if (previousPrepared && Array.isArray(previousPrepared.billingJson)) {
+        const match = previousPrepared.billingJson.find(item => normalizePid(item && item.patientId) === pid);
+        if (match) {
+          const amount = match.grandTotal != null && match.grandTotal !== ''
+            ? normalizeMoneyNumber_(match.grandTotal)
+            : normalizeMoneyNumber_(match.billingAmount);
+          if (Number.isFinite(amount)) {
+            breakdown.push({ month: monthKey, amount });
+          }
+        }
       }
     }
   });

@@ -4,8 +4,7 @@
 function loadNotes(options) {
   const opts = options || {};
   const email = opts.email;
-  const fetchFn = () => loadNotesUncached_(opts);
-  const base = dashboardCacheFetch_(dashboardCacheKey_('notes:v1'), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, opts);
+  const base = loadNotesUncached_(opts);
 
   const lastReadAt = loadHandoverLastRead_(email);
   const notes = {};

@@ -11,12 +11,7 @@ function loadInvoices(options) {
   const opts = options || {};
   const now = dashboardCoerceDate_(opts.now) || new Date();
   const fetchOptions = Object.assign({}, opts, { now });
-  const fetchFn = () => loadInvoicesUncached_(fetchOptions);
-  if (typeof dashboardCacheFetch_ === 'function') {
-    const keyMonth = dashboardFormatDate_(now, dashboardResolveTimeZone_(), 'yyyyMM');
-    return dashboardCacheFetch_(dashboardCacheKey_(`invoices:v1:${keyMonth}`), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, fetchOptions);
-  }
-  return fetchFn();
+  return loadInvoicesUncached_(fetchOptions);
 }
 
 function loadInvoicesUncached_(options) {

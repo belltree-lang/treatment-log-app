@@ -11,13 +11,7 @@ function loadUnpaidAlerts(options) {
   const normalizedThreshold = normalizeUnpaidThreshold_(opts.consecutiveMonths);
   const now = dashboardCoerceDate_(opts.now) || new Date();
   const fetchOptions = Object.assign({}, opts, { consecutiveMonths: normalizedThreshold, now });
-  const fetchFn = () => loadUnpaidAlertsUncached_(fetchOptions);
-  return dashboardCacheFetch_(
-    dashboardCacheKey_(`unpaidAlerts:v1:${normalizedThreshold}`),
-    fetchFn,
-    DASHBOARD_CACHE_TTL_SECONDS,
-    fetchOptions
-  );
+  return loadUnpaidAlertsUncached_(fetchOptions);
 }
 
 function loadUnpaidAlertsUncached_(options) {

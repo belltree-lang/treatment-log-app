@@ -5,12 +5,7 @@ function loadTreatmentLogs(options) {
   const opts = options || {};
   const now = dashboardCoerceDate_(opts.now) || new Date();
   const fetchOptions = Object.assign({}, opts, { now });
-  const fetchFn = () => loadTreatmentLogsUncached_(fetchOptions);
-  if (typeof dashboardCacheFetch_ === 'function') {
-    const keyMonth = dashboardFormatDate_(now, dashboardResolveTimeZone_(), 'yyyyMM');
-    return dashboardCacheFetch_(dashboardCacheKey_(`treatmentLogs:v1:${keyMonth}`), fetchFn, DASHBOARD_CACHE_TTL_SECONDS, fetchOptions);
-  }
-  return fetchFn();
+  return loadTreatmentLogsUncached_(fetchOptions);
 }
 
 function loadTreatmentLogsUncached_(options) {

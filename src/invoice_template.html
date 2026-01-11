@@ -155,7 +155,10 @@
     ?>
     <? var receiptAddressee = receipt.addressee || data.name || ''; ?>
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
-    <? var receiptAmount = receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price; ?>
+    <? var receiptBreakdown = Array.isArray(amount && amount.receiptMonthBreakdown) ? amount.receiptMonthBreakdown : (Array.isArray(receipt && receipt.receiptMonthBreakdown) ? receipt.receiptMonthBreakdown : []); ?>
+    <? var receiptBreakdownAmount = receiptBreakdown.length ? receiptBreakdown.reduce(function(sum, row) { return sum + (Number(row && row.amount) || 0); }, 0) : null; ?>
+    <? var previousReceiptAmount = amount && amount.previousReceiptAmount != null ? Number(amount.previousReceiptAmount) : (receipt && receipt.previousReceiptAmount != null ? Number(receipt.previousReceiptAmount) : null); ?>
+    <? var receiptAmount = receiptBreakdownAmount != null ? receiptBreakdownAmount : previousReceiptAmount != null ? previousReceiptAmount : (receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price); ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
     <? if (!amount.forceHideReceipt) { ?>
       <section class="card">

@@ -1121,8 +1121,18 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
       });
     }
 
+    const resolveLegacyPreviousReceiptAmount = () => {
+      if (!previousPrepared || !Array.isArray(previousPrepared.billingJson)) return 0;
+      const legacyEntry = previousPrepared.billingJson.find(item => normalizePid(item && item.patientId) === pid);
+      if (!legacyEntry) return 0;
+      if (legacyEntry.grandTotal != null && legacyEntry.grandTotal !== '') {
+        return normalizeMoneyNumber_(legacyEntry.grandTotal);
+      }
+      return normalizeMoneyNumber_(legacyEntry.billingAmount);
+    };
+
     const receiptBreakdown = useLegacyPreviousReceipt
-      ? [{ month: previousMonthKey, amount: resolveBillingAmountForMonthAndPatient_(previousMonthKey, pid, null, monthCache) }]
+      ? [{ month: previousMonthKey, amount: resolveLegacyPreviousReceiptAmount() }]
       : buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
 
     return Object.assign({}, entry, {

@@ -27,6 +27,7 @@ function dashboardResolveActiveUserEmail_() {
 
 function dashboardGetSpreadsheet_() {
   const activeUser = dashboardResolveActiveUserEmail_();
+  dashboardLogContext_('dashboardGetSpreadsheet', `start user=${activeUser || 'unknown'}`);
   if (typeof DASHBOARD_SPREADSHEET_ID !== 'undefined' && DASHBOARD_SPREADSHEET_ID) {
     try {
       if (typeof SpreadsheetApp !== 'undefined'
@@ -64,6 +65,7 @@ function dashboardGetSpreadsheet_() {
 
 function dashboardGetInvoiceRootFolder_() {
   const activeUser = dashboardResolveActiveUserEmail_();
+  dashboardLogContext_('dashboardGetInvoiceRootFolder', `start user=${activeUser || 'unknown'}`);
   if (typeof DASHBOARD_INVOICE_FOLDER_ID !== 'undefined' && DASHBOARD_INVOICE_FOLDER_ID) {
     try {
       if (typeof DriveApp !== 'undefined' && DriveApp && typeof DriveApp.getFolderById === 'function') {

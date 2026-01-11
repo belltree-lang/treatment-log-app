@@ -10,49 +10,91 @@ function dashboardWarn_(message) {
   }
 }
 
+function dashboardLogContext_(label, details) {
+  const payload = details ? ` ${details}` : '';
+  dashboardWarn_(`[${label}]${payload}`);
+}
+
+function dashboardResolveActiveUserEmail_() {
+  if (typeof Session !== 'undefined' && Session && typeof Session.getActiveUser === 'function') {
+    try {
+      const email = Session.getActiveUser().getEmail();
+      if (email) return String(email).trim();
+    } catch (e) { /* ignore */ }
+  }
+  return '';
+}
+
 function dashboardGetSpreadsheet_() {
+  const activeUser = dashboardResolveActiveUserEmail_();
   if (typeof DASHBOARD_SPREADSHEET_ID !== 'undefined' && DASHBOARD_SPREADSHEET_ID) {
     try {
       if (typeof SpreadsheetApp !== 'undefined'
         && SpreadsheetApp
         && typeof SpreadsheetApp.openById === 'function') {
-        return SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+        const spreadsheet = SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+        dashboardLogContext_('dashboardGetSpreadsheet', `opened by ID (${DASHBOARD_SPREADSHEET_ID}) user=${activeUser || 'unknown'}`);
+        return spreadsheet;
       }
     } catch (e) {
-      dashboardWarn_('[dashboardGetSpreadsheet] failed to open by ID: ' + (e && e.message ? e.message : e));
+      dashboardWarn_('[dashboardGetSpreadsheet] failed to open by ID: ' + (e && e.message ? e.message : e)
+        + ` id=${DASHBOARD_SPREADSHEET_ID} user=${activeUser || 'unknown'}`);
     }
+  } else {
+    dashboardLogContext_('dashboardGetSpreadsheet', `missing DASHBOARD_SPREADSHEET_ID user=${activeUser || 'unknown'}`);
   }
 
   if (typeof ss === 'function') {
-    try { return ss(); } catch (e) { /* ignore */ }
+    try {
+      const spreadsheet = ss();
+      dashboardLogContext_('dashboardGetSpreadsheet', `resolved by ss() user=${activeUser || 'unknown'}`);
+      return spreadsheet;
+    } catch (e) {
+      dashboardWarn_('[dashboardGetSpreadsheet] failed to open via ss(): ' + (e && e.message ? e.message : e));
+    }
   }
   if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp.getActiveSpreadsheet) {
-    return SpreadsheetApp.getActiveSpreadsheet();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    dashboardLogContext_('dashboardGetSpreadsheet', `resolved by getActiveSpreadsheet user=${activeUser || 'unknown'}`);
+    return spreadsheet;
   }
+  dashboardLogContext_('dashboardGetSpreadsheet', `no spreadsheet resolved user=${activeUser || 'unknown'}`);
   return null;
 }
 
 function dashboardGetInvoiceRootFolder_() {
+  const activeUser = dashboardResolveActiveUserEmail_();
   if (typeof DASHBOARD_INVOICE_FOLDER_ID !== 'undefined' && DASHBOARD_INVOICE_FOLDER_ID) {
     try {
       if (typeof DriveApp !== 'undefined' && DriveApp && typeof DriveApp.getFolderById === 'function') {
-        return DriveApp.getFolderById(DASHBOARD_INVOICE_FOLDER_ID);
+        const folder = DriveApp.getFolderById(DASHBOARD_INVOICE_FOLDER_ID);
+        dashboardLogContext_('dashboardGetInvoiceRootFolder', `opened by DASHBOARD_INVOICE_FOLDER_ID (${DASHBOARD_INVOICE_FOLDER_ID}) user=${activeUser || 'unknown'}`);
+        return folder;
       }
     } catch (e) {
-      dashboardWarn_('[dashboardGetInvoiceRootFolder] failed to open by ID: ' + (e && e.message ? e.message : e));
+      dashboardWarn_('[dashboardGetInvoiceRootFolder] failed to open by ID: ' + (e && e.message ? e.message : e)
+        + ` id=${DASHBOARD_INVOICE_FOLDER_ID} user=${activeUser || 'unknown'}`);
     }
+  } else {
+    dashboardLogContext_('dashboardGetInvoiceRootFolder', `missing DASHBOARD_INVOICE_FOLDER_ID user=${activeUser || 'unknown'}`);
   }
 
   if (typeof INVOICE_PARENT_FOLDER_ID !== 'undefined' && INVOICE_PARENT_FOLDER_ID) {
     try {
       if (typeof DriveApp !== 'undefined' && DriveApp && typeof DriveApp.getFolderById === 'function') {
-        return DriveApp.getFolderById(INVOICE_PARENT_FOLDER_ID);
+        const folder = DriveApp.getFolderById(INVOICE_PARENT_FOLDER_ID);
+        dashboardLogContext_('dashboardGetInvoiceRootFolder', `opened by INVOICE_PARENT_FOLDER_ID (${INVOICE_PARENT_FOLDER_ID}) user=${activeUser || 'unknown'}`);
+        return folder;
       }
     } catch (e) {
-      dashboardWarn_('[dashboardGetInvoiceRootFolder] failed to open fallback ID: ' + (e && e.message ? e.message : e));
+      dashboardWarn_('[dashboardGetInvoiceRootFolder] failed to open fallback ID: ' + (e && e.message ? e.message : e)
+        + ` id=${INVOICE_PARENT_FOLDER_ID} user=${activeUser || 'unknown'}`);
     }
+  } else {
+    dashboardLogContext_('dashboardGetInvoiceRootFolder', `missing INVOICE_PARENT_FOLDER_ID user=${activeUser || 'unknown'}`);
   }
 
+  dashboardLogContext_('dashboardGetInvoiceRootFolder', `no invoice folder resolved user=${activeUser || 'unknown'}`);
   return null;
 }
 

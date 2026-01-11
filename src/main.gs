@@ -1087,6 +1087,14 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     const receiptTargetMonths = explicitReceiptMonths
       ? normalizePastBillingMonths_(explicitReceiptMonths, monthKey)
       : resolveReceiptTargetMonthsFromBankFlags_(pid, monthKey, prepared, monthCache);
+    const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
+    const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
+    const useLegacyPreviousReceipt = !explicitReceiptMonths
+      && receiptTargetMonths.length === 1
+      && receiptTargetMonths[0] === previousMonthKey
+      && !(currentFlags && currentFlags.af)
+      && !(previousFlags && previousFlags.ae)
+      && !(previousFlags && previousFlags.af);
 
     if (receiptTargetMonths.length > 1) {
       const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
@@ -1113,7 +1121,9 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
       });
     }
 
-    const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
+    const receiptBreakdown = useLegacyPreviousReceipt
+      ? [{ month: previousMonthKey, amount: resolveBillingAmountForMonthAndPatient_(previousMonthKey, pid, null, monthCache) }]
+      : buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
 
     return Object.assign({}, entry, {
       hasPreviousReceiptSheet: !!previousPrepared,

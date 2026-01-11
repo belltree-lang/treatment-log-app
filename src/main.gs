@@ -3287,8 +3287,13 @@ function generatePreparedInvoices_(prepared, options) {
     (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
     targetPatientIds
   );
-  const invoiceContexts = targetBillingRows.map(row => buildInvoicePdfContextForEntry_(row, receiptEnriched, monthCache))
-    .filter(Boolean);
+  const invoiceContexts = targetBillingRows.map(row => {
+    const pid = billingNormalizePatientId_(row && row.patientId);
+    const receiptEntry = pid
+      ? (receiptEnriched.billingJson || []).find(item => billingNormalizePatientId_(item && item.patientId) === pid) || row
+      : row;
+    return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache);
+  }).filter(Boolean);
   // 'scheduled' represents the confirmed state that allows automatic aggregate invoice
   // generation. Entries flagged here skipped standard invoices earlier and are now
   // eligible for aggregate PDFs without additional manual triggers.
@@ -3297,7 +3302,9 @@ function generatePreparedInvoices_(prepared, options) {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return null;
 
-    const baseEntry = (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid) || entry;
+    const baseEntry = (receiptEnriched.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid)
+      || (normalized.billingJson || []).find(row => billingNormalizePatientId_(row && row.patientId) === pid)
+      || entry;
     const aggregateUntilMonth = normalizeBillingMonthKeySafe_(baseEntry.aggregateUntilMonth || normalized.aggregateUntilMonth);
     const aggregateSourceMonths = collectAggregateBankFlagMonthsForPatient_(normalized.billingMonth, pid, aggregateUntilMonth, monthCache);
     const aggregateMonths = normalizeAggregateInvoiceMonths_(aggregateSourceMonths, normalized, normalized.billingMonth);

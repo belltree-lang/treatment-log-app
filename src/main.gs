@@ -3195,6 +3195,16 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const baseAmount = isAggregateInvoice
     ? buildAggregateInvoiceAmountDataForPdf_(normalizedAggregateMonths, billingMonth, entry && entry.patientId, cache)
     : buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
+  if (entry && entry.previousReceiptAmount == null) {
+    if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+      billingLogger_.log('[billing] finalizeInvoiceAmountDataForPdf_ missing previousReceiptAmount: ' + JSON.stringify({
+        patientId: entry.patientId,
+        billingMonth,
+        hasReceiptMonthBreakdown: Array.isArray(entry.receiptMonthBreakdown),
+        receiptMonthBreakdownLength: Array.isArray(entry.receiptMonthBreakdown) ? entry.receiptMonthBreakdown.length : 0
+      }));
+    }
+  }
   const amount = Object.assign({}, baseAmount, {
     insuranceType: entry && entry.insuranceType ? String(entry.insuranceType).trim() : '',
     burdenRate: entry && entry.burdenRate != null ? entry.burdenRate : '',
@@ -3239,7 +3249,24 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
 
   const ensurePreviousReceiptAmount = () => {
     if (entry && entry.previousReceiptAmount != null) return entry;
-    if (entry && Array.isArray(entry.receiptMonthBreakdown) && entry.receiptMonthBreakdown.length) return entry;
+    if (entry && Array.isArray(entry.receiptMonthBreakdown) && entry.receiptMonthBreakdown.length) {
+      const hasBreakdownAmount = entry.receiptMonthBreakdown.some(item => item && item.amount != null && item.amount !== '');
+      if (hasBreakdownAmount) {
+        const breakdownAmount = entry.receiptMonthBreakdown.reduce((sum, item) => {
+          const normalized = normalizeMoneyNumber_(item && item.amount);
+          return normalized != null ? sum + normalized : sum;
+        }, 0);
+        if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+          billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ filled previousReceiptAmount from receiptMonthBreakdown: ' + JSON.stringify({
+            patientId,
+            billingMonth,
+            breakdownAmount
+          }));
+        }
+        return Object.assign({}, entry, { previousReceiptAmount: breakdownAmount });
+      }
+      return entry;
+    }
     const previousMonthKey = resolvePreviousBillingMonthKey_(billingMonth);
     if (!previousMonthKey) return entry;
     const monthCache = cache || {
@@ -3255,10 +3282,28 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
       ? normalizeMoneyNumber_(previousEntry.grandTotal)
       : normalizeMoneyNumber_(previousEntry.billingAmount);
     if (previousAmount == null) return entry;
+    if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+      billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ filled previousReceiptAmount from previous month: ' + JSON.stringify({
+        patientId,
+        billingMonth,
+        previousMonthKey,
+        previousAmount
+      }));
+    }
     return Object.assign({}, entry, { previousReceiptAmount: previousAmount });
   };
 
   const receiptEntry = ensurePreviousReceiptAmount();
+  if (receiptEntry && receiptEntry.previousReceiptAmount == null) {
+    if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+      billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ previousReceiptAmount still missing before finalize: ' + JSON.stringify({
+        patientId,
+        billingMonth,
+        hasReceiptMonthBreakdown: Array.isArray(receiptEntry.receiptMonthBreakdown),
+        receiptMonthBreakdownLength: Array.isArray(receiptEntry.receiptMonthBreakdown) ? receiptEntry.receiptMonthBreakdown.length : 0
+      }));
+    }
+  }
   const decision = resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache);
   const decisionMonths = decision && Array.isArray(decision.months) ? decision.months : [];
   const aggregateMonths = normalizePastBillingMonths_(decisionMonths, billingMonth);

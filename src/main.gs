@@ -2853,29 +2853,6 @@ function generateBankWithdrawalSheetFromCache(billingMonth) {
   });
 }
 
-function confirmBankWithdrawalDataReady(billingMonth) {
-  const month = normalizeBillingMonthInput(billingMonth);
-  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true, restoreCache: true });
-  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
-  const validation = loaded && loaded.validation ? loaded.validation : null;
-
-  if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
-    throw new Error('請求データが未集計です。先に「請求データ集計」を実行してください。');
-  }
-
-  ensureBankWithdrawalSheet_(month, {
-    refreshFromTemplate: false,
-    billingJson: prepared && prepared.billingJson,
-    bankRecords: prepared && prepared.bankRecords
-  });
-  const sheetSummary = summarizeBankWithdrawalSheet_(month);
-
-  return summarizeBankWithdrawalState_(month, prepared, sheetSummary, {
-    ready: true,
-    validation
-  });
-}
-
 function applyBankWithdrawalUnpaidFromUi(billingMonth) {
   const result = applyBankWithdrawalUnpaidEntries(billingMonth);
   const summary = summarizeBankWithdrawalSheet_(billingMonth);
@@ -4003,7 +3980,7 @@ function updateBillingReceiptStatus(billingMonth, options) {
     }
 
     if (!month) {
-      throw new Error('銀行データを出力できません。請求月が指定されていません。先に請求データを集計・確定してください。');
+      throw new Error('銀行データを出力できません。請求月が指定されていません。先に請求データを集計してください。');
     }
 
     if (!validation || !validation.ok || !normalizedPrepared || !Array.isArray(normalizedPrepared.billingJson)) {
@@ -4042,13 +4019,13 @@ function resolveBankExportErrorMessage_(validation) {
     return '銀行データを生成できません。繰越金データを確認してください。';
   }
   if (missingReasons.indexOf(reason) >= 0 || !reason) {
-    return '銀行データを出力できません。請求データが見つかりません。先に請求データを集計・確定してください。';
+    return '銀行データを出力できません。請求データが見つかりません。先に請求データを集計してください。';
   }
   if (corruptReasons.indexOf(reason) >= 0) {
     return '銀行データを生成できません。請求データが破損しています。再集計してください。';
   }
   if (reason === 'billingMonth mismatch') {
-    return '銀行データを生成できません。請求月が一致する請求データを集計・確定してください。';
+    return '銀行データを生成できません。請求月が一致する請求データを集計してください。';
   }
   return '銀行データを生成できません。請求データは存在しますが、検証に失敗しました。';
 }

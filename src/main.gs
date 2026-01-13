@@ -1579,7 +1579,7 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
     const aggregateRemark = formatAggregateBillingRemark_(targetMonths);
 
     return Object.assign({}, entry, {
-      aggregateStatus: 'confirmed',
+      aggregateAutoConfirmed: true,
       aggregateRemark,
       receiptMonths: targetMonths,
       billingAmount: aggregateTotal,

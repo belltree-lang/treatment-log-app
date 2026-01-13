@@ -559,6 +559,7 @@ function normalizePastBillingMonths_(months, billingMonth) {
   const monthList = Array.isArray(months) ? months : [];
   const billingKey = normalizeBillingMonthKeySafe_(billingMonth);
   const billingNum = Number(billingKey) || 0;
+  const isAggregate = monthList.length > 1;
   const seen = new Set();
   const normalized = [];
 
@@ -566,7 +567,10 @@ function normalizePastBillingMonths_(months, billingMonth) {
     const ym = normalizeBillingMonthKeySafe_(value);
     if (!ym || seen.has(ym)) return;
     const ymNum = Number(ym) || 0;
-    if (billingNum && ymNum >= billingNum) return;
+    if (billingNum) {
+      if (ymNum > billingNum) return;
+      if (!isAggregate && ymNum === billingNum) return;
+    }
     seen.add(ym);
     normalized.push(ym);
   });

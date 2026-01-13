@@ -383,6 +383,7 @@ function normalizePastInvoiceMonths_(months, billingMonth) {
   const list = Array.isArray(months) ? months : [];
   const billingKey = normalizeInvoiceMonthKey_(billingMonth);
   const billingNum = Number(billingKey) || 0;
+  const isAggregate = list.length > 1;
   const seen = new Set();
   const normalized = [];
 
@@ -390,23 +391,15 @@ function normalizePastInvoiceMonths_(months, billingMonth) {
     const ym = normalizeInvoiceMonthKey_(value);
     if (!ym || seen.has(ym)) return;
     const ymNum = Number(ym) || 0;
-    if (billingNum && ymNum >= billingNum) return;
+    if (billingNum) {
+      if (ymNum > billingNum) return;
+      if (!isAggregate && ymNum === billingNum) return;
+    }
     seen.add(ym);
     normalized.push(ym);
   });
 
   return normalized.sort();
-}
-
-function resolveHasPreviousReceiptSheet_(item) {
-  if (!item) return false;
-  if (Object.prototype.hasOwnProperty.call(item, 'hasPreviousReceiptSheet')) {
-    return !!item.hasPreviousReceiptSheet;
-  }
-  if (Object.prototype.hasOwnProperty.call(item, 'hasPreviousPrepared')) {
-    return !!item.hasPreviousPrepared;
-  }
-  return false;
 }
 
 function normalizeAggregateStatus_(status) {
@@ -419,7 +412,6 @@ function isAggregateConfirmedByBankFlags_(item) {
 }
 
 function resolveInvoiceReceiptDisplay_(item, options) {
-  const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const billingMonthKey = normalizeInvoiceMonthKey_(item && item.billingMonth);
   const explicitReceiptMonths = normalizePastInvoiceMonths_(
     normalizeReceiptMonths_(item && item.receiptMonths),
@@ -434,21 +426,17 @@ function resolveInvoiceReceiptDisplay_(item, options) {
   const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
   const aggregateStatus = aggregateEligible ? normalizeAggregateStatus_(item && item.aggregateStatus) : '';
   const aggregateConfirmed = aggregateEligible;
-  const receiptMonths = aggregateEligible
-    ? (aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths)
-    : [];
+  const receiptMonths = aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
     : '');
   const receiptStatus = item && item.receiptStatus ? String(item.receiptStatus).toUpperCase() : '';
   const shouldHideByStatus = receiptStatus === 'UNPAID' || receiptStatus === 'HOLD';
-  const visible = !shouldHideByStatus && !item.skipReceipt && receiptMonths.length > 0 && hasPreviousReceiptSheet;
-  const receiptMonthsSource = aggregateEligible
-    ? (aggregateDecisionMonths.length
-      ? 'aggregateDecisionMonths'
-      : (receiptMonths.length ? 'explicit' : 'none'))
-    : 'none';
+  const visible = !shouldHideByStatus && !item.skipReceipt && receiptMonths.length > 0;
+  const receiptMonthsSource = aggregateDecisionMonths.length
+    ? 'aggregateDecisionMonths'
+    : (receiptMonths.length ? 'explicit' : 'none');
 
   return {
     visible,

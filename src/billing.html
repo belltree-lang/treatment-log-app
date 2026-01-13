@@ -63,24 +63,10 @@
   .pill.warn{ background:#fef2f2; color:#b91c1c; }
   .pill.ok{ background:#ecfeff; color:#0f172a; }
   .pill.neutral{ background:#e5e7eb; color:#111827; }
-  .pill.finalized{ background:#eef2ff; color:#4338ca; }
   .receipt-badge-group{ display:inline-flex; flex-direction:column; align-items:flex-start; gap:2px; margin-left:8px; }
   .receipt-badge{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:0.82rem; font-weight:800; letter-spacing:0.01em; box-shadow:0 10px 24px rgba(0,0,0,0.08); border:1px solid transparent; }
   .receipt-badge.aggregate{ background:#fff7ed; color:#c2410c; border-color:#fdba74; }
-  .receipt-badge.finalized{ background:#eef2ff; color:#312e81; border-color:#c7d2fe; }
-  .receipt-badge.unfinalized{ background:#fef2f2; color:#991b1b; border-color:#fecdd3; }
   .receipt-badge-sub{ font-size:0.75rem; color:var(--muted); line-height:1.2; }
-  .finalized-badge{ display:inline-flex; flex-direction:column; align-items:flex-start; gap:2px; margin-left:6px; }
-  .finalized-sub{ font-size:0.75rem; color:var(--muted); line-height:1.2; }
-  .finalized-row td{ background:#f8fafc; color:#4b5563; }
-  .locked-text{ color:#6b7280; display:inline-flex; align-items:center; gap:6px; }
-  .locked-text::before{ content:'\26D4'; font-size:0.85rem; }
-  .finalized-lock-note{ font-size:0.9rem; color:#991b1b; margin:6px 0 0; }
-  .finalized-lock-note small{ display:block; color:var(--muted); margin-top:2px; }
-  .unfinalized-lock-note{ font-size:0.9rem; color:#92400e; margin:6px 0 6px; }
-  .unfinalized-lock-note small{ display:block; color:#7f1d1d; margin-top:2px; }
-  .unfinalize-controls{ margin-top:8px; display:flex; flex-direction:column; gap:4px; align-items:flex-start; }
-  .unfinalize-note{ font-size:0.85rem; color:#991b1b; }
   .downloads{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .download-link{ display:inline-flex; align-items:center; gap:8px; padding:10px 12px; border-radius:10px; background:#eff6ff; color:#1d4ed8; font-weight:600; text-decoration:none; }
   .download-link svg{ width:16px; height:16px; }
@@ -186,7 +172,6 @@
           <div id="carryOverLedgerStatus" class="pill neutral" style="display:none"></div>
         </div>
         <p class="field-note warn" style="margin-top:0">※ 「初期化して再集計」は指定月の既存請求データをキャッシュ・シートともに削除します。誤操作にご注意ください。</p>
-        <p class="finalized-lock-note" id="finalizedLockNote" style="display:none"></p>
         <div id="billingError" class="alert danger" style="display:none"></div>
       </div>
       <div class="generation-options">

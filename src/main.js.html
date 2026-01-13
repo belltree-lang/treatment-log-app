@@ -169,28 +169,26 @@ function updateBillingControls() {
   const pdfTarget = getSelectedPreparedMonth();
   const hasPdfTarget = !!pdfTarget;
   const billingMonthInput = getBillingMonthInputValue();
-  const finalizedLockedForBillingMonth = hasFinalizedBillingRows(billingMonthInput);
-  const finalizedLockedForPdfTarget = hasPdfTarget ? hasFinalizedBillingRows(pdfTarget) : false;
   const hasMonthMismatch = !!(billingMonthInput && hasPdfTarget && billingMonthInput !== pdfTarget);
 
   if (monthInput) {
     monthInput.disabled = loading;
   }
   if (aggregateBtn) {
-    const disabled = loading || finalizedLockedForBillingMonth;
+    const disabled = loading;
     aggregateBtn.disabled = disabled;
     aggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
-    aggregateBtn.title = disabled && finalizedLockedForBillingMonth ? '確定済みの請求が含まれているため再集計できません' : '';
+    aggregateBtn.title = '';
   }
   const reaggregateBtn = qs('billingReaggregateBtn');
   if (reaggregateBtn) {
-    const disabled = loading || finalizedLockedForBillingMonth;
+    const disabled = loading;
     reaggregateBtn.disabled = disabled;
     reaggregateBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
-    reaggregateBtn.title = disabled && finalizedLockedForBillingMonth ? '確定済みの請求が含まれているため再集計できません' : '指定月の既存請求データを削除して再集計します';
+    reaggregateBtn.title = '指定月の既存請求データを削除して再集計します';
   }
   if (pdfBtn) {
-    const disabled = loading || !hasPdfTarget || finalizedLockedForPdfTarget || hasMonthMismatch;
+    const disabled = loading || !hasPdfTarget || hasMonthMismatch;
     pdfBtn.disabled = disabled;
     pdfBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     pdfBtn.title = disabled
@@ -198,7 +196,7 @@ function updateBillingControls() {
         ? 'PDF対象月を選択してください'
         : hasMonthMismatch
           ? `請求月 (${formatYmDisplay(billingMonthInput)}) とPDF対象月 (${formatYmDisplay(pdfTarget)}) が一致していません`
-          : (finalizedLockedForPdfTarget ? '確定済みの請求が含まれているためPDF生成できません' : ''))
+          : '')
       : '';
   }
   if (saveBtn) {
@@ -210,7 +208,6 @@ function updateBillingControls() {
   updatePreparedMonthSelectors();
   updateInvoiceModeControls();
   renderReceiptControls();
-  renderFinalizedLockNotice();
   renderPreparedMonthInfo();
 }
 
@@ -224,48 +221,6 @@ function getBankTargetMonth() {
 function getSimpleBankMonth() {
   const input = qs('bankWithdrawalMonth');
   return input && input.value ? normalizeYm(input.value) : '';
-}
-
-const BILLING_FINALIZED_LOCK_MESSAGE = '確定済み（合算確定）の請求が含まれているため、再集計とPDF再生成はできません。';
-
-function renderFinalizedLockNotice() {
-  const note = qs('finalizedLockNote');
-  if (!note) return;
-  const preparedMonth = getPreparedBillingMonth();
-  const billingMonth = getBillingMonthInputValue();
-  const selectedPreparedMonth = getSelectedPreparedMonth();
-  const locked = !!(
-    preparedMonth
-    && hasFinalizedBillingRows(preparedMonth)
-    && ((billingMonth && billingMonth === preparedMonth) || (selectedPreparedMonth && selectedPreparedMonth === preparedMonth))
-  );
-  if (!locked) {
-    note.style.display = 'none';
-    note.textContent = '';
-    return;
-  }
-  note.style.display = '';
-  note.textContent = BILLING_FINALIZED_LOCK_MESSAGE;
-  note.innerHTML = `${escapeHtml(BILLING_FINALIZED_LOCK_MESSAGE)}<small>確定解除しない限り、再集計やPDFの再生成は行えません。</small>`;
-}
-
-function shouldBlockFinalizedBillingOperation(targetMonth) {
-  const target = normalizeYm(targetMonth || getBillingMonthInputValue());
-  if (!hasFinalizedBillingRows(target)) return false;
-  renderFinalizedLockNotice();
-  return true;
-}
-
-function hasFinalizedBillingRows(targetMonth) {
-  const preparedMonth = getPreparedBillingMonth();
-  const normalizedTarget = normalizeYm(targetMonth || preparedMonth);
-  if (!preparedMonth || !normalizedTarget || preparedMonth !== normalizedTarget) return false;
-  const rows = billingState.prepared && billingState.prepared.billingJson;
-  return Array.isArray(rows) && rows.some(isBillingRowFinalized);
-}
-
-function isReceiptEditingLocked() {
-  return hasFinalizedBillingRows(getPreparedBillingMonth());
 }
 
 function updateInvoiceModeControls() {
@@ -933,11 +888,8 @@ function getMergedBillingRows() {
   return baseRows.map(row => {
     try {
       const baseRow = row && typeof row === 'object' ? row : {};
-      const finalized = isBillingRowFinalized(baseRow);
-      const edits = finalized ? {} : billingState.edits[baseRow.patientId] || {};
-      const calculated = finalized
-        ? {}
-        : (billingState.previewTotals && billingState.previewTotals[baseRow.patientId]) || {};
+      const edits = billingState.edits[baseRow.patientId] || {};
+      const calculated = (billingState.previewTotals && billingState.previewTotals[baseRow.patientId]) || {};
       return Object.assign({}, baseRow, edits, calculated);
     } catch (err) {
       console.error('Failed to merge billing row', err, row);
@@ -960,39 +912,8 @@ function formatPaidStatus(item) {
   return item.paidStatus || item.bankStatus || '';
 }
 
-function normalizeReceiptStatus(status) {
-  return String(status || '').trim().toUpperCase();
-}
-
-function normalizeAggregateStatus(status) {
-  const normalized = String(status || '').trim().toLowerCase();
-  if (!normalized) return '';
-  return normalized;
-}
-
 function isAggregateEligible(item) {
   return !!(item && item.bankFlags && item.bankFlags.af === true);
-}
-
-function isBillingRowFinalized(item) {
-  if (!isAggregateEligible(item)) return false;
-  const flag = item && item.billingFinalized;
-  return flag === true || flag === 'true' || flag === 1 || flag === '1';
-}
-
-function isBillingRowUnfinalized(item) {
-  if (!item || isBillingRowFinalized(item)) return false;
-  return !!(item.unfinalizedAt || item.unfinalizedBy || item.unfinalizeReason);
-}
-
-function getFinalizationDetailParts(item) {
-  const timestamp = formatDateTimeDisplay(item && item.finalizedAt);
-  const actor = item && item.finalizedBy ? String(item.finalizedBy).trim() : '';
-  return [timestamp, actor].filter(Boolean);
-}
-
-function getFinalizationDetailText(item) {
-  return getFinalizationDetailParts(item).join(' / ');
 }
 
 function resolveAggregateTargetMonths(item) {
@@ -1003,98 +924,26 @@ function resolveAggregateTargetMonths(item) {
 
 function renderAggregateStatusBadge(item) {
   if (!isAggregateEligible(item)) return '';
-  const status = normalizeAggregateStatus(item && item.aggregateStatus);
   const targetMonths = resolveAggregateTargetMonths(item);
   const targetLabel = targetMonths
     .map(formatYmDisplay)
     .filter(Boolean)
     .join('・');
 
-  if (status === 'scheduled') {
-    const title = '銀行シートで未回収/合算フラグがONのため、この月の請求はスキップされます';
-    const sub = targetLabel ? `<span class="receipt-badge-sub">対象: ${escapeHtml(targetLabel)}</span>` : '';
-    return ` <span class="receipt-badge-group"><span class="receipt-badge aggregate" title="${escapeHtml(title)}">合算待ち</span>${sub}</span>`;
-  }
-
-  if (status === 'confirmed') {
-    const titleLines = ['未回収分をこの月の請求に合算しています'];
-    if (targetLabel) titleLines.push(`${targetLabel} 請求分`);
-    const sub = targetLabel ? `<span class="receipt-badge-sub">${escapeHtml(targetLabel)} 合算</span>` : '';
-    return ` <span class="receipt-badge-group"><span class="receipt-badge finalized" title="${escapeHtml(titleLines.join(' / '))}">合算計上</span>${sub}</span>`;
-  }
-
   if (item && item.skipInvoice) {
-    const title = 'この患者は合算待ちなどの理由で請求生成の対象外です';
+    const title = '銀行シートで合算・未回収フラグがONのため、この月の請求はスキップされます';
     return ` <span class="receipt-badge-group"><span class="receipt-badge aggregate" title="${escapeHtml(title)}">請求スキップ</span></span>`;
   }
 
-  return '';
-}
-
-function renderReceiptStatusBadge(item) {
-  if (!isAggregateEligible(item)) return '';
-  const finalized = isBillingRowFinalized(item);
-  const status = normalizeReceiptStatus(item && item.receiptStatus);
-  const aggregateLabel = status === 'AGGREGATE'
-    ? (item && item.aggregateUntilMonth ? formatYmDisplay(item.aggregateUntilMonth) : '')
-    : '';
-
-  if (!finalized && status !== 'AGGREGATE') return '';
-
-  const titleLines = finalized
-    ? ['この請求は合算確定です']
-    : ['この請求は合算請求として処理予定です'];
-
-  const subText = (() => {
-    if (finalized) {
-      const finalizedNote = 'この月は合算請求が確定しています';
-      const detail = getFinalizationDetailText(item);
-      const subLines = [finalizedNote];
-      if (detail) {
-        titleLines.push(detail);
-        subLines.push(detail);
-      }
-      return subLines
-        .filter(Boolean)
-        .map(line => `<span class="receipt-badge-sub">${escapeHtml(line)}</span>`)
-        .join('');
-    }
-    if (aggregateLabel) {
-      titleLines.push(`${aggregateLabel}までの合算を予定`);
-      return `<span class="receipt-badge-sub">〜${escapeHtml(aggregateLabel)}合算</span>`;
-    }
-    return '';
-  })();
-
-  const badgeClass = finalized ? 'receipt-badge finalized' : 'receipt-badge aggregate';
-  const label = finalized ? '合算確定' : '合算予定';
-  return ` <span class="receipt-badge-group"><span class="${badgeClass}" title="${escapeHtml(titleLines.join(' / '))}">${label}</span>${subText}</span>`;
-}
-
-function renderUnfinalizedBadge(item) {
-  if (!isBillingRowUnfinalized(item)) return '';
-
-  const detailLines = [];
-  const timestamp = formatDateTimeDisplay(item && item.unfinalizedAt);
-  if (timestamp) detailLines.push(timestamp);
-  const actor = item && item.unfinalizedBy ? String(item.unfinalizedBy).trim() : '';
-  if (actor) detailLines.push(actor);
-  const reason = item && item.unfinalizeReason ? String(item.unfinalizeReason).trim() : '';
-  const sub = [
-    detailLines.length ? `<span class="receipt-badge-sub">${escapeHtml(detailLines.join(' / '))}</span>` : '',
-    reason ? `<span class="receipt-badge-sub">理由: ${escapeHtml(reason)}</span>` : ''
-  ].filter(Boolean).join('');
-  const titleParts = ['一度確定された請求が解除されています'];
-  if (detailLines.length) titleParts.push(detailLines.join(' / '));
-  if (reason) titleParts.push('理由: ' + reason);
-  return ` <span class="receipt-badge-group"><span class="receipt-badge unfinalized" title="${escapeHtml(titleParts.join(' / '))}">確定解除</span>${sub}</span>`;
+  const titleLines = ['銀行シートの合算・未回収フラグがONのため合算対象です'];
+  if (targetLabel) titleLines.push(`${targetLabel} 請求分`);
+  const sub = targetLabel ? `<span class="receipt-badge-sub">対象: ${escapeHtml(targetLabel)}</span>` : '';
+  return ` <span class="receipt-badge-group"><span class="receipt-badge aggregate" title="${escapeHtml(titleLines.join(' / '))}">合算・未回収</span>${sub}</span>`;
 }
 
 function renderStatusBadges(item) {
   const badges = [
-    renderUnfinalizedBadge(item),
-    renderAggregateStatusBadge(item),
-    renderReceiptStatusBadge(item)
+    renderAggregateStatusBadge(item)
   ];
   return badges.filter(Boolean).join('');
 }
@@ -1199,13 +1048,10 @@ function calculateAggregateStatusCounts(rows) {
   return (rows || []).reduce((acc, row) => {
     if (!row || typeof row !== 'object') return acc;
     if (!isAggregateEligible(row)) return acc;
-    const aggregateStatus = normalizeAggregateStatus(row.aggregateStatus);
-    if (aggregateStatus === 'scheduled') acc.scheduled += 1;
-    if (aggregateStatus === 'confirmed') acc.confirmed += 1;
+    acc.aggregate += 1;
     if (row.skipInvoice) acc.skipped += 1;
-    if (isBillingRowFinalized(row)) acc.finalized += 1;
     return acc;
-  }, { scheduled: 0, confirmed: 0, skipped: 0, finalized: 0 });
+  }, { aggregate: 0, skipped: 0 });
 }
 
 function toggleBillingSort(field) {
@@ -1751,7 +1597,6 @@ function syncReceiptStateFromPayload(payload) {
 
 function handleBillingAggregation() {
   const ym = normalizeYm(qs('billingMonth').value);
-  if (shouldBlockFinalizedBillingOperation(ym)) return;
   if (!ym) {
     alert('請求月を入力してください (YYYY-MM)');
     return;
@@ -1772,7 +1617,6 @@ function handleBillingAggregation() {
 
 function handleBillingReaggregation() {
   const ym = normalizeYm(qs('billingMonth').value);
-  if (shouldBlockFinalizedBillingOperation(ym)) return;
   if (!ym) {
     alert('請求月を入力してください (YYYY-MM)');
     return;
@@ -1828,7 +1672,6 @@ function handleBillingPdfGeneration() {
     return;
   }
 
-  if (shouldBlockFinalizedBillingOperation(targetMonth)) return;
 
   const invoiceMode = getInvoiceMode();
   const invoicePatientIdsText = getInvoicePatientIdsInput();
@@ -1903,64 +1746,6 @@ function onBillingSaveCompleted(result) {
     : 0;
   logBillingState('onBillingSaveCompleted', { rows: rowCount });
   renderBillingResult();
-}
-
-function handleBillingFinalize(patientId) {
-  if (!billingState.prepared || !billingState.prepared.billingMonth) {
-    alert('先に「請求データを集計」を実行してください。');
-    return;
-  }
-  const pid = String(patientId || '').trim();
-  if (!pid) return;
-  if (!confirm('この患者の請求を確定します。解除する場合は管理者による確定解除が必要です。')) return;
-
-  setBillingLoading(true, '確定処理中…');
-  google.script.run
-    .withSuccessHandler(function(result) {
-      const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
-      billingState.result = normalized;
-      billingState.prepared = normalized;
-      syncReceiptStateFromPayload(normalized);
-      billingState.loading = false;
-      billingState.statusMessage = '請求を確定しました';
-      billingState.errorMessage = '';
-      resetBillingEdits();
-      renderBillingResult();
-    })
-    .withFailureHandler(onBillingFailed)
-    .finalizeBillingEntry(billingState.prepared.billingMonth, pid);
-}
-
-function handleBillingUnfinalize(patientId) {
-  if (!billingState.prepared || !billingState.prepared.billingMonth) {
-    alert('先に「請求データを集計」を実行してください。');
-    return;
-  }
-  const pid = String(patientId || '').trim();
-  if (!pid) return;
-  const reason = prompt('確定解除の理由を入力してください。');
-  if (reason === null) return;
-  const trimmedReason = String(reason || '').trim();
-  if (!trimmedReason) {
-    alert('確定解除の理由を入力してください。');
-    return;
-  }
-  if (!confirm('この患者の請求確定を解除します。よろしいですか？')) return;
-  setBillingLoading(true, '確定解除中…');
-  google.script.run
-    .withSuccessHandler(function(result) {
-      const normalized = normalizeBillingResultPayload(result) || billingState.prepared || null;
-      billingState.result = normalized;
-      billingState.prepared = normalized;
-      syncReceiptStateFromPayload(normalized);
-      billingState.loading = false;
-      billingState.statusMessage = '請求の確定を解除しました';
-      billingState.errorMessage = '';
-      resetBillingEdits();
-      renderBillingResult();
-    })
-    .withFailureHandler(onBillingFailed)
-    .unfinalizeBillingEntry(billingState.prepared.billingMonth, pid, trimmedReason);
 }
 
 function handleBankFlowAggregation() {
@@ -2209,17 +1994,13 @@ function renderBillingSummary(rows) {
     { label: '請求合計金額', value: formatCurrency(summary.totalGrandTotal) }
   ];
 
-  if (aggregate.confirmed) {
-    cards.push({ label: '今回の合算計上', value: `${aggregate.confirmed} 件` });
+  if (aggregate.aggregate) {
+    cards.push({ label: '合算・未回収', value: `${aggregate.aggregate} 件` });
   }
 
-  const skippedCount = (aggregate.skipped || 0) + (aggregate.scheduled || 0);
+  const skippedCount = aggregate.skipped || 0;
   if (skippedCount) {
     cards.push({ label: '合算待ち（請求スキップ）', value: `${skippedCount} 件` });
-  }
-
-  if (aggregate.finalized) {
-    cards.push({ label: '確定済み行', value: `${aggregate.finalized} 件` });
   }
 
   box.style.display = '';
@@ -2278,8 +2059,7 @@ function renderBillingResult() {
     { key: 'grandTotal', label: '合計', sortable: true },
     { key: 'paidStatus', label: '領収状態', sortable: false },
     { key: 'bankInfo', label: '口座情報', sortable: false },
-    { key: 'isNew', label: '新規', sortable: false },
-    { key: 'finalize', label: '確定', sortable: false }
+    { key: 'isNew', label: '新規', sortable: false }
   ];
 
   const columnCount = header.length;
@@ -2295,9 +2075,7 @@ function renderBillingResult() {
   }
 
   function renderEditableCell(item, field, alignRight) {
-    const finalized = isBillingRowFinalized(item);
-    const editing = !finalized
-      && billingState.editing
+    const editing = billingState.editing
       && billingState.editing.patientId === item.patientId
       && billingState.editing.field === field;
     const baseAttrs = `data-edit-field="${field}" data-edit-patient="${item.patientId}"`;
@@ -2369,57 +2147,17 @@ function renderBillingResult() {
       }
     })();
 
-    if (finalized) {
-      const locked = `<span class="locked-text" title="確定済みのため編集不可" aria-disabled="true">${display}</span>`;
-      return wrapWithOverrideBadge(locked, item.patientId, field, alignRight);
-    }
-
     const view = `<button type="button" class="${viewClass}" ${baseAttrs} aria-label="${field} を編集">${display}</button>`;
     return wrapWithOverrideBadge(view, item.patientId, field, alignRight);
-  }
-
-  function renderFinalizeAction(item) {
-    const finalized = isBillingRowFinalized(item);
-    if (finalized) {
-      const detailText = escapeHtml(getFinalizationDetailText(item));
-      const source = item.finalizationSource ? String(item.finalizationSource).trim() : '';
-      const sourceLabel = source ? ` (${escapeHtml(source)})` : '';
-      const lockNote = '<div class="finalized-lock-note">確定済みのため再集計・PDF再生成はできません<small>解除しない限り内容を編集できません</small></div>';
-      const unfinalizeButton = billingState.isBillingAdmin
-        ? `<div class="unfinalize-controls"><button type="button" class="btn secondary small unfinalize-btn" data-unfinalize-patient="${item.patientId}" ${billingState.loading ? 'disabled' : ''}>確定解除</button><div class="unfinalize-note">管理者のみ実行できます。解除理由の入力が必要です。</div></div>`
-        : '';
-      if (detailText) {
-        return `<div class="muted">確定済み${sourceLabel}<br><small>${detailText}</small>${lockNote}${unfinalizeButton}</div>`;
-      }
-      return `<div class="muted">確定済み${sourceLabel}${lockNote}${unfinalizeButton}</div>`;
-    }
-
-    const disabled = billingState.loading || !billingState.prepared || !billingState.prepared.billingMonth;
-    const title = disabled
-      ? '先に「請求データを集計」を実行してください'
-      : '確定すると再集計や自動上書きの対象外になります';
-    const finalizeButton = `<button type="button" class="btn small finalize-btn" data-finalize-patient="${item.patientId}" ${disabled ? 'disabled' : ''} title="${title}">確定</button>`;
-    if (isBillingRowUnfinalized(item)) {
-      const detailParts = [];
-      const timestamp = formatDateTimeDisplay(item.unfinalizedAt);
-      if (timestamp) detailParts.push(escapeHtml(timestamp));
-      if (item.unfinalizedBy) detailParts.push(escapeHtml(String(item.unfinalizedBy).trim()));
-      const reason = item.unfinalizeReason ? `理由: ${escapeHtml(String(item.unfinalizeReason).trim())}` : '';
-      const detail = [detailParts.join(' / '), reason].filter(Boolean).join(' / ');
-      return `<div class="unfinalized-lock-note">一度確定→解除済み${detail ? `<br><small>${detail}</small>` : ''}</div>${finalizeButton}`;
-    }
-    return finalizeButton;
   }
 
   const bodyRows = [];
   rows.forEach(item => {
     try {
       const safeItem = item && typeof item === 'object' ? item : {};
-      const finalized = isBillingRowFinalized(safeItem);
-      const rowClass = finalized ? ' class="finalized-row"' : '';
       const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
       bodyRows.push(`
-      <tr${rowClass}>
+      <tr>
         <td>${safeItem.patientId || ''}</td>
         <td>${nameWithBadge}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
@@ -2435,7 +2173,6 @@ function renderBillingResult() {
         <td>${formatPaidStatus(safeItem) || '—'}</td>
         <td>${formatBankInfo(safeItem) || '—'}</td>
         <td>${formatNewFlag(safeItem) || ''}</td>
-        <td>${renderFinalizeAction(safeItem)}</td>
       </tr>`);
     } catch (err) {
       console.error('Failed to render billing row', err, item);
@@ -2456,8 +2193,6 @@ function renderBillingResult() {
   box.innerHTML = tableHtml;
   attachBillingEditHandlers();
   attachBillingSortHandlers();
-  attachBillingFinalizeHandlers();
-  attachBillingUnfinalizeHandlers();
   updatePreparedMonthSelectors();
 }
 
@@ -2534,28 +2269,6 @@ function attachBillingEditHandlers() {
   });
 }
 
-function attachBillingFinalizeHandlers() {
-  const box = qs('billingResult');
-  if (!box) return;
-  box.querySelectorAll('button.finalize-btn').forEach(btn => {
-    btn.onclick = function () {
-      const pid = this.getAttribute('data-finalize-patient');
-      handleBillingFinalize(pid);
-    };
-  });
-}
-
-function attachBillingUnfinalizeHandlers() {
-  const box = qs('billingResult');
-  if (!box) return;
-  box.querySelectorAll('button.unfinalize-btn').forEach(btn => {
-    btn.onclick = function () {
-      const pid = this.getAttribute('data-unfinalize-patient');
-      handleBillingUnfinalize(pid);
-    };
-  });
-}
-
 function attachBillingSortHandlers() {
   const box = qs('billingResult');
   if (!box) return;
@@ -2618,8 +2331,6 @@ if (billingGlobal) {
   billingGlobal.handleBillingAggregation = handleBillingAggregation;
   billingGlobal.handleBillingPdfGeneration = handleBillingPdfGeneration;
   billingGlobal.handleBillingSaveEdits = handleBillingSaveEdits;
-  billingGlobal.handleBillingFinalize = handleBillingFinalize;
-  billingGlobal.handleBillingUnfinalize = handleBillingUnfinalize;
   billingGlobal.handleSimpleBankSheetGeneration = handleSimpleBankSheetGeneration;
 }
 </script>

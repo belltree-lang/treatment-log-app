@@ -385,7 +385,7 @@ function testAggregateInvoiceHidesReceiptWhenSkipped() {
   assert.strictEqual(display.visible, false, '合算請求時は領収書を表示しない');
 }
 
-function testAggregateStatusDoesNotFinalizeWithoutConfirmation() {
+function testAggregateEligibilityUsesBankFlags() {
   const context = createContext();
   vm.createContext(context);
   vm.runInContext(billingOutputCode, context);
@@ -395,19 +395,18 @@ function testAggregateStatusDoesNotFinalizeWithoutConfirmation() {
   const aggregate = buildInvoiceTemplateData_({
     billingMonth: '202501',
     aggregateTargetMonths: ['202411', '202412'],
-    aggregateStatus: 'scheduled'
+    aggregateStatus: 'scheduled',
+    bankFlags: { af: true }
   });
   assert.strictEqual(aggregate.isAggregateInvoice, true, '明示的な合算対象があれば合算判定は true');
-  assert.strictEqual(aggregate.aggregateConfirmed, false, 'scheduled では確定扱いにしない');
-  assert.strictEqual(aggregate.finalized, false, '合算でも confirmed でなければ確定扱いにしない');
+  assert.strictEqual(aggregate.aggregateConfirmed, true, 'bankFlags.af があれば合算扱いにする');
 
-  const confirmed = buildInvoiceTemplateData_({
+  const noFlags = buildInvoiceTemplateData_({
     billingMonth: '202501',
     aggregateTargetMonths: ['202411', '202412'],
     aggregateStatus: 'confirmed'
   });
-  assert.strictEqual(confirmed.aggregateConfirmed, true, 'confirmed のときのみ確定扱いにする');
-  assert.strictEqual(confirmed.finalized, true, 'confirmed なら確定扱い');
+  assert.strictEqual(noFlags.aggregateConfirmed, false, 'bankFlags.af が無ければ合算扱いにしない');
 }
 
 function testPreviousReceiptSettlementRequiresExplicitStatus() {
@@ -415,7 +414,7 @@ function testPreviousReceiptSettlementRequiresExplicitStatus() {
   vm.createContext(context);
   vm.runInContext(billingOutputCode, context);
 
-  const { isPreviousReceiptSettled_, buildInvoicePreviousReceipt_, buildInvoiceTemplateData_ } = context;
+  const { isPreviousReceiptSettled_, buildInvoicePreviousReceipt_ } = context;
   assert.strictEqual(isPreviousReceiptSettled_({}), false, 'ステータス不明なら未確定扱い');
   assert.strictEqual(isPreviousReceiptSettled_({ previousReceiptStatus: 'SETTLED' }), true, 'previousReceiptStatus=SETTLED を settled とみなす');
   assert.strictEqual(isPreviousReceiptSettled_({ receiptStatus: 'settled' }), true, '領収ステータスでも settled を認める');
@@ -423,18 +422,6 @@ function testPreviousReceiptSettlementRequiresExplicitStatus() {
 
   const receipt = buildInvoicePreviousReceipt_({ billingMonth: '202501', previousReceiptStatus: 'SETTLED' });
   assert.strictEqual(receipt.settled, true, '前月領収情報に settled フラグを含める');
-
-  const finalizedByReceipt = buildInvoiceTemplateData_({
-    billingMonth: '202501',
-    previousReceiptStatus: 'SETTLED'
-  });
-  assert.strictEqual(finalizedByReceipt.finalized, true, '前月領収ステータスが SETTLED のとき確定扱いにする');
-
-  const injectedSettled = buildInvoiceTemplateData_({
-    billingMonth: '202501',
-    previousReceipt: { settled: true }
-  });
-  assert.strictEqual(injectedSettled.finalized, false, '明示的なステータスなしの settled=true では確定扱いにしない');
 }
 
 function testPreviousReceiptVisibilityFollowsReceiptDecision() {

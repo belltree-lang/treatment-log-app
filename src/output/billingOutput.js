@@ -433,7 +433,7 @@ function resolveInvoiceReceiptDisplay_(item, options) {
     : [];
   const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
   const aggregateStatus = aggregateEligible ? normalizeAggregateStatus_(item && item.aggregateStatus) : '';
-  const aggregateConfirmed = aggregateStatus === 'confirmed' && aggregateEligible;
+  const aggregateConfirmed = aggregateEligible;
   const receiptMonths = aggregateEligible
     ? (aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths)
     : [];
@@ -677,7 +677,6 @@ function normalizeInvoicePdfContext_(context) {
       previousReceipt: amount.previousReceipt || null,
       forceHideReceipt: !!amount.forceHideReceipt,
       watermark: amount.watermark || null,
-      finalized: !!amount.finalized,
       aggregateStatus: amount.aggregateStatus || '',
       aggregateConfirmed: !!amount.aggregateConfirmed
     }, amount),
@@ -726,9 +725,8 @@ function formatAggregateInvoiceRemark_(months) {
   return labels.join('・') + '分 施術料金として';
 }
 
-function buildInvoiceWatermark_(item) {
-  const finalized = !!(item && item.billingFinalized);
-  return finalized ? { text: '確定済み' } : null;
+function buildInvoiceWatermark_() {
+  return null;
 }
 
 function resolveAggregatePreparedBillingEntry_(monthKey, patientId, fallbackItem, monthCache) {
@@ -895,7 +893,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const aggregateStatus = aggregateEligible
     ? (receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus))
     : '';
-  const aggregateConfirmed = aggregateStatus === 'confirmed' && aggregateEligible;
+  const aggregateConfirmed = aggregateEligible;
   const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt, months);
   const previousReceipt = item && item.previousReceipt
     ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
@@ -940,7 +938,6 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     ],
     grandTotal: aggregateTotal,
     previousReceipt,
-    finalized: !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled)),
     aggregateDecisionTrace
   });
 }
@@ -955,7 +952,7 @@ function buildInvoiceTemplateData_(item) {
   const aggregateStatus = aggregateEligible
     ? (initialReceipt ? initialReceipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus))
     : '';
-  const aggregateConfirmed = aggregateStatus === 'confirmed' && aggregateEligible;
+  const aggregateConfirmed = aggregateEligible;
   const monthCache = {};
   const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
   const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
@@ -1041,7 +1038,6 @@ function buildInvoiceTemplateData_(item) {
     rows,
     grandTotal,
     previousReceipt,
-    finalized: !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled)),
     aggregateMonthTotals,
     aggregateDecisionTrace
   });

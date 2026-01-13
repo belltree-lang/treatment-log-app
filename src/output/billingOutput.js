@@ -414,6 +414,10 @@ function normalizeAggregateStatus_(status) {
   return normalized || '';
 }
 
+function isAggregateConfirmedByBankFlags_(item) {
+  return !!(item && item.bankFlags && item.bankFlags.af === true);
+}
+
 function resolveInvoiceReceiptDisplay_(item, options) {
   const hasPreviousReceiptSheet = resolveHasPreviousReceiptSheet_(item);
   const billingMonthKey = normalizeInvoiceMonthKey_(item && item.billingMonth);
@@ -428,7 +432,7 @@ function resolveInvoiceReceiptDisplay_(item, options) {
     ? normalizeAggregateMonthsForInvoice_(overrideMonths, billingMonthKey)
     : [];
   const aggregateStatus = normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = aggregateStatus === 'confirmed';
+  const aggregateConfirmed = aggregateStatus === 'confirmed' && isAggregateConfirmedByBankFlags_(item);
   const receiptMonths = aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
@@ -883,7 +887,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     ? billingNormalizePatientId_(item && item.patientId)
     : String(item && item.patientId || '').trim();
   const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : aggregateStatus === 'confirmed';
+  const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : (aggregateStatus === 'confirmed' && isAggregateConfirmedByBankFlags_(item));
   const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt, months);
   const previousReceipt = item && item.previousReceipt
     ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
@@ -940,7 +944,7 @@ function buildInvoiceTemplateData_(item) {
 
   const initialReceipt = resolveInvoiceReceiptDisplay_(item);
   const aggregateStatus = initialReceipt ? initialReceipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = initialReceipt ? initialReceipt.aggregateConfirmed : aggregateStatus === 'confirmed';
+  const aggregateConfirmed = initialReceipt ? initialReceipt.aggregateConfirmed : (aggregateStatus === 'confirmed' && isAggregateConfirmedByBankFlags_(item));
   const monthCache = {};
   const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
   const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths

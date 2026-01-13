@@ -970,7 +970,12 @@ function normalizeAggregateStatus(status) {
   return normalized;
 }
 
+function isAggregateEligible(item) {
+  return !!(item && item.bankFlags && item.bankFlags.af === true);
+}
+
 function isBillingRowFinalized(item) {
+  if (!isAggregateEligible(item)) return false;
   const flag = item && item.billingFinalized;
   return flag === true || flag === 'true' || flag === 1 || flag === '1';
 }
@@ -997,6 +1002,7 @@ function resolveAggregateTargetMonths(item) {
 }
 
 function renderAggregateStatusBadge(item) {
+  if (!isAggregateEligible(item)) return '';
   const status = normalizeAggregateStatus(item && item.aggregateStatus);
   const targetMonths = resolveAggregateTargetMonths(item);
   const targetLabel = targetMonths
@@ -1026,6 +1032,7 @@ function renderAggregateStatusBadge(item) {
 }
 
 function renderReceiptStatusBadge(item) {
+  if (!isAggregateEligible(item)) return '';
   const finalized = isBillingRowFinalized(item);
   const status = normalizeReceiptStatus(item && item.receiptStatus);
   const aggregateLabel = status === 'AGGREGATE'
@@ -1191,6 +1198,7 @@ function calculateBillingSummary(rows) {
 function calculateAggregateStatusCounts(rows) {
   return (rows || []).reduce((acc, row) => {
     if (!row || typeof row !== 'object') return acc;
+    if (!isAggregateEligible(row)) return acc;
     const aggregateStatus = normalizeAggregateStatus(row.aggregateStatus);
     if (aggregateStatus === 'scheduled') acc.scheduled += 1;
     if (aggregateStatus === 'confirmed') acc.confirmed += 1;

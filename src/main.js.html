@@ -29,7 +29,6 @@ const bankFlowState = {
   error: '',
   aggregation: null,
   sheet: null,
-  finalized: null,
   unpaid: null,
   targetMonth: ''
 };
@@ -451,7 +450,6 @@ function formatDateTimeDisplay(value) {
 
 function getBankSheetSummary() {
   if (bankFlowState.sheet && bankFlowState.sheet.sheetSummary) return bankFlowState.sheet.sheetSummary;
-  if (bankFlowState.finalized && bankFlowState.finalized.sheetSummary) return bankFlowState.finalized.sheetSummary;
   if (bankFlowState.aggregation && bankFlowState.aggregation.sheetSummary) return bankFlowState.aggregation.sheetSummary;
   return null;
 }
@@ -460,7 +458,6 @@ function updateBankControls() {
   const monthInput = qs('bankWithdrawalMonth');
   const aggregateBtn = qs('bankAggregateBtn');
   const sheetBtn = qs('bankSheetBtn');
-  const finalizeBtn = qs('bankFinalizeBtn');
   const unpaidBtn = qs('bankUnpaidBtn');
   const loading = bankFlowState.loading;
   const selectedMonth = getBankTargetMonth();
@@ -495,12 +492,6 @@ function updateBankControls() {
     unpaidBtn.disabled = disabled;
     unpaidBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
     unpaidBtn.title = disabled && !hasSheet ? '銀行引落シート生成後に実行できます' : '';
-  }
-  if (finalizeBtn) {
-    const disabled = loading || !hasMonth || !hasAggregation;
-    finalizeBtn.disabled = disabled;
-    finalizeBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
-    finalizeBtn.title = disabled && !hasAggregation ? '先に「請求データ集計」を実行してください' : '';
   }
   renderBankFlowSummary();
 }
@@ -540,11 +531,6 @@ function renderBankFlowDetail() {
       if (summary.unpaidChecked) {
         lines.push(`未回収チェック: ${summary.unpaidChecked} 件`);
       }
-    }
-    if (bankFlowState.finalized) {
-      const finalized = bankFlowState.finalized;
-      const summary = finalized.sheetSummary || {};
-      lines.push(`確定済み: ${finalized.billingMonth || ''}（行数 ${summary.rows || 0}）`);
     }
     if (bankFlowState.unpaid) {
       const unpaid = bankFlowState.unpaid;
@@ -1760,7 +1746,6 @@ function handleBankFlowAggregation() {
     .withSuccessHandler(function(result) {
       bankFlowState.aggregation = result || null;
       bankFlowState.sheet = null;
-      bankFlowState.finalized = null;
       bankFlowState.status = '請求データ集計が完了しました。銀行引落シート生成へ進んでください。';
       bankFlowState.loading = false;
       renderBankFlowDetail();
@@ -1798,29 +1783,6 @@ function handleBankSheetGeneration() {
       setBankError('銀行引落シート生成に失敗しました', err);
     })
     .generateBankWithdrawalSheetFromCache(ym);
-}
-
-function handleBankFinalize() {
-  const ym = getBankTargetMonth();
-  if (!ym) {
-    alert('対象月を入力してください (YYYY-MM)');
-    return;
-  }
-  bankFlowState.targetMonth = ym;
-  setBankLoading(true, '確定処理中…');
-  google.script.run
-    .withSuccessHandler(function(result) {
-      bankFlowState.finalized = result || null;
-      bankFlowState.status = '当月の銀行引落データを確定としてマークしました。';
-      bankFlowState.loading = false;
-      markReaggregationRequired(ym);
-      renderBankFlowDetail();
-      updateBankControls();
-    })
-    .withFailureHandler(function(err) {
-      setBankError('確定処理に失敗しました', err);
-    })
-    .confirmBankWithdrawalDataReady(ym);
 }
 
 function handleBankUnpaidApply() {

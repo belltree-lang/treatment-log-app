@@ -1564,6 +1564,10 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
   const transformed = normalized.billingJson.map(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return entry;
+    const flags = bankFlagsByPatient && Object.prototype.hasOwnProperty.call(bankFlagsByPatient, pid)
+      ? bankFlagsByPatient[pid]
+      : null;
+    if (!(flags && flags.af === true)) return entry;
 
     // 自動合算では skipReceipt を立てず、合算済みであっても領収書対象とする。
     const targetMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, { useLegacyAggregate: false }, normalized, monthCache);

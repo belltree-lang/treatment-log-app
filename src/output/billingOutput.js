@@ -379,11 +379,11 @@ function normalizeReceiptMonths_(months) {
   return normalized;
 }
 
-function normalizePastInvoiceMonths_(months, billingMonth) {
+function normalizePastInvoiceMonths_(months, billingMonth, allowAggregate) {
   const list = Array.isArray(months) ? months : [];
   const billingKey = normalizeInvoiceMonthKey_(billingMonth);
   const billingNum = Number(billingKey) || 0;
-  const isAggregate = list.length > 1;
+  const isAggregate = allowAggregate !== false && list.length > 1;
   const seen = new Set();
   const normalized = [];
 
@@ -413,9 +413,11 @@ function isAggregateConfirmedByBankFlags_(item) {
 
 function resolveInvoiceReceiptDisplay_(item, options) {
   const billingMonthKey = normalizeInvoiceMonthKey_(item && item.billingMonth);
+  const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
   const explicitReceiptMonths = normalizePastInvoiceMonths_(
     normalizeReceiptMonths_(item && item.receiptMonths),
-    billingMonthKey
+    billingMonthKey,
+    aggregateEligible
   );
   const overrideMonths = options && Array.isArray(options.aggregateMonths)
     ? options.aggregateMonths
@@ -423,7 +425,6 @@ function resolveInvoiceReceiptDisplay_(item, options) {
   const aggregateDecisionMonths = overrideMonths.length
     ? normalizeAggregateMonthsForInvoice_(overrideMonths, billingMonthKey)
     : [];
-  const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
   const aggregateStatus = aggregateEligible ? normalizeAggregateStatus_(item && item.aggregateStatus) : '';
   const aggregateConfirmed = aggregateEligible;
   const receiptMonths = aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths;

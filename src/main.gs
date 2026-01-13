@@ -1091,6 +1091,13 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     const hasPreviousReceiptSheet = !!(previousPrepared && hasFinalizedPrevious);
     const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
     const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
+    if (!(currentFlags && currentFlags.af === true)) {
+      return sanitizeAggregateFieldsForBankFlags_(Object.assign({}, entry, {
+        hasPreviousReceiptSheet,
+        receiptRemark: '',
+        receiptMonthBreakdown: []
+      }), currentFlags);
+    }
     const useLegacyPreviousReceipt = !explicitReceiptMonths
       && receiptTargetMonths.length === 1
       && receiptTargetMonths[0] === previousMonthKey
@@ -1549,6 +1556,17 @@ function resolveAggregateMonthsFromUnpaid_(billingMonth, patientId, options, pre
   return unique;
 }
 
+function sanitizeAggregateFieldsForBankFlags_(entry, bankFlags) {
+  const flags = bankFlags || {};
+  if (flags.af === true) return entry;
+  const sanitized = Object.assign({}, entry || {});
+  delete sanitized.aggregateStatus;
+  delete sanitized.aggregateRemark;
+  delete sanitized.receiptMonths;
+  delete sanitized.aggregateTargetMonths;
+  return sanitized;
+}
+
 function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
   const normalized = normalizePreparedBilling_(prepared);
   const monthKey = normalizeBillingMonthKeySafe_(normalized && normalized.billingMonth);
@@ -1567,7 +1585,9 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
     const flags = bankFlagsByPatient && Object.prototype.hasOwnProperty.call(bankFlagsByPatient, pid)
       ? bankFlagsByPatient[pid]
       : null;
-    if (!(flags && flags.af === true)) return entry;
+    if (!(flags && flags.af === true)) {
+      return sanitizeAggregateFieldsForBankFlags_(entry, flags);
+    }
 
     // 自動合算では skipReceipt を立てず、合算済みであっても領収書対象とする。
     const targetMonths = resolveAggregateMonthsFromUnpaid_(monthKey, pid, { useLegacyAggregate: false }, normalized, monthCache);
@@ -1929,6 +1949,22 @@ function savePreparedBilling_(payload) {
   }
   const payloadToCache = Object.assign({}, normalizedPayload, { billingMonth: resolvedMonthKey });
   const billingJsonLength = Array.isArray(payloadToCache.billingJson) ? payloadToCache.billingJson.length : 0;
+  const confirmedAggregateEntries = Array.isArray(payloadToCache.billingJson)
+    ? payloadToCache.billingJson
+      .filter(entry => String(entry && entry.aggregateStatus || '').trim().toLowerCase() === 'confirmed')
+      .map(entry => ({
+        patientId: entry && entry.patientId ? entry.patientId : '',
+        aggregateStatus: entry && entry.aggregateStatus ? entry.aggregateStatus : '',
+        bankFlagsAf: !!(entry && entry.bankFlags && entry.bankFlags.af === true)
+      }))
+    : [];
+  if (confirmedAggregateEntries.length) {
+    billingLogger_.log('[billing] savePreparedBilling_ confirmed aggregateStatus entries=' + JSON.stringify({
+      billingMonth: payloadToCache.billingMonth,
+      count: confirmedAggregateEntries.length,
+      entries: confirmedAggregateEntries
+    }));
+  }
   billingLogger_.log('[billing] savePreparedBilling_ summary=' + JSON.stringify({
     billingMonth: payloadToCache.billingMonth,
     billingJsonLength
@@ -2962,9 +2998,10 @@ function coerceBillingJsonArray_(raw) {
       const bankFlags = pid && bankFlagsByPatient && Object.prototype.hasOwnProperty.call(bankFlagsByPatient, pid)
         ? bankFlagsByPatient[pid]
         : null;
-      return Object.assign({}, entry || {}, {
+      const normalizedEntry = Object.assign({}, entry || {}, {
         bankFlags: normalizeBankFlags_(bankFlags)
       });
+      return sanitizeAggregateFieldsForBankFlags_(normalizedEntry, normalizedEntry.bankFlags);
     });
     const schemaVersion = Number(payload.schemaVersion);
     const normalized = {
@@ -3295,8 +3332,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   }
 
   const aggregateStatus = receiptDisplay ? receiptDisplay.aggregateStatus : normalizeAggregateStatus_(entry && entry.aggregateStatus);
-  const aggregateConfirmedBase = receiptDisplay ? receiptDisplay.aggregateConfirmed : aggregateStatus === 'confirmed';
-  const aggregateConfirmed = !!(aggregateConfirmedBase && entry && entry.bankFlags && entry.bankFlags.af === true);
+  const aggregateConfirmed = !!(aggregateStatus === 'confirmed' && entry && entry.bankFlags && entry.bankFlags.af === true);
   const watermark = buildInvoiceWatermark_(entry);
   const finalized = !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled));
 

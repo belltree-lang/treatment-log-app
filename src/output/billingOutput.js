@@ -431,9 +431,12 @@ function resolveInvoiceReceiptDisplay_(item, options) {
   const aggregateDecisionMonths = overrideMonths.length
     ? normalizeAggregateMonthsForInvoice_(overrideMonths, billingMonthKey)
     : [];
-  const aggregateStatus = normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = aggregateStatus === 'confirmed' && isAggregateConfirmedByBankFlags_(item);
-  const receiptMonths = aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths;
+  const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
+  const aggregateStatus = aggregateEligible ? normalizeAggregateStatus_(item && item.aggregateStatus) : '';
+  const aggregateConfirmed = aggregateStatus === 'confirmed' && aggregateEligible;
+  const receiptMonths = aggregateEligible
+    ? (aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths)
+    : [];
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
@@ -441,9 +444,11 @@ function resolveInvoiceReceiptDisplay_(item, options) {
   const receiptStatus = item && item.receiptStatus ? String(item.receiptStatus).toUpperCase() : '';
   const shouldHideByStatus = receiptStatus === 'UNPAID' || receiptStatus === 'HOLD';
   const visible = !shouldHideByStatus && !item.skipReceipt && receiptMonths.length > 0 && hasPreviousReceiptSheet;
-  const receiptMonthsSource = aggregateDecisionMonths.length
-    ? 'aggregateDecisionMonths'
-    : (receiptMonths.length ? 'explicit' : 'none');
+  const receiptMonthsSource = aggregateEligible
+    ? (aggregateDecisionMonths.length
+      ? 'aggregateDecisionMonths'
+      : (receiptMonths.length ? 'explicit' : 'none'))
+    : 'none';
 
   return {
     visible,
@@ -886,8 +891,11 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(item && item.patientId)
     : String(item && item.patientId || '').trim();
-  const aggregateStatus = receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = receipt ? receipt.aggregateConfirmed : (aggregateStatus === 'confirmed' && isAggregateConfirmedByBankFlags_(item));
+  const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
+  const aggregateStatus = aggregateEligible
+    ? (receipt ? receipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus))
+    : '';
+  const aggregateConfirmed = aggregateStatus === 'confirmed' && aggregateEligible;
   const basePreviousReceipt = buildInvoicePreviousReceipt_(item, receipt, months);
   const previousReceipt = item && item.previousReceipt
     ? Object.assign({}, basePreviousReceipt, item.previousReceipt)
@@ -943,8 +951,11 @@ function buildInvoiceTemplateData_(item) {
   const watermark = buildInvoiceWatermark_(item);
 
   const initialReceipt = resolveInvoiceReceiptDisplay_(item);
-  const aggregateStatus = initialReceipt ? initialReceipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus);
-  const aggregateConfirmed = initialReceipt ? initialReceipt.aggregateConfirmed : (aggregateStatus === 'confirmed' && isAggregateConfirmedByBankFlags_(item));
+  const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
+  const aggregateStatus = aggregateEligible
+    ? (initialReceipt ? initialReceipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus))
+    : '';
+  const aggregateConfirmed = aggregateStatus === 'confirmed' && aggregateEligible;
   const monthCache = {};
   const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
   const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths

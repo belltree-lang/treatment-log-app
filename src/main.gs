@@ -1106,14 +1106,6 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
       && !(previousFlags && previousFlags.af);
 
     if (receiptTargetMonths.length > 1) {
-      if (!hasPreviousReceiptSheet && receiptTargetMonths.indexOf(previousMonthKey) >= 0) {
-        return Object.assign({}, entry, {
-          hasPreviousReceiptSheet: false,
-          receiptMonths: [],
-          receiptRemark: '',
-          receiptMonthBreakdown: []
-        });
-      }
       const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
       const aggregateRemark = formatAggregateReceiptDescription_(receiptTargetMonths);
       const previousReceipt = entry && entry.previousReceipt ? entry.previousReceipt : {
@@ -1132,7 +1124,6 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     if (!receiptTargetMonths.length) {
       return Object.assign({}, entry, {
         hasPreviousReceiptSheet,
-        receiptMonths: [],
         receiptRemark: '',
         receiptMonthBreakdown: hasPreviousReceiptSheet ? (entry && entry.receiptMonthBreakdown) : []
       });
@@ -1141,7 +1132,6 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     if (!hasPreviousReceiptSheet && receiptTargetMonths[0] === previousMonthKey) {
       return Object.assign({}, entry, {
         hasPreviousReceiptSheet: false,
-        receiptMonths: [],
         receiptRemark: '',
         receiptMonthBreakdown: []
       });
@@ -1416,9 +1406,6 @@ function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepa
   const monthKey = normalizeBillingMonthKeySafe_(currentMonth);
   const pid = billingNormalizePatientId_(patientId);
   if (!monthKey || !pid) return [];
-
-  const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
-  if (currentFlags && currentFlags.af) return [];
 
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return [];

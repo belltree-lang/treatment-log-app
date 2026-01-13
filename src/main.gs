@@ -1081,14 +1081,14 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
 
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
-    const hasFinalizedPrevious = isPreparedBillingEntryFinalizedForPatient_(previousPrepared, pid);
+    const hasPreviousPreparedEntry = !!(previousPrepared && getPreparedBillingEntryForPatient_(previousPrepared, pid));
     const explicitReceiptMonths = Array.isArray(entry && entry.receiptMonths) && (entry.receiptMonths || []).length
       ? entry.receiptMonths
       : null;
     const receiptTargetMonths = explicitReceiptMonths
       ? normalizePastBillingMonths_(explicitReceiptMonths, monthKey)
       : resolveReceiptTargetMonthsFromBankFlags_(pid, monthKey, prepared, monthCache);
-    const hasPreviousReceiptSheet = !!(previousPrepared && hasFinalizedPrevious);
+    const hasPreviousReceiptSheet = hasPreviousPreparedEntry;
     const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
     const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
     if (!(currentFlags && currentFlags.af === true)) {
@@ -1397,7 +1397,7 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
     if (!normalized || !normalized.bankFlagsByPatient) break;
 
     const preparedEntry = getPreparedBillingEntryForPatient_(normalized, pid);
-    if (!preparedEntry || !isBillingEntryFinalized_(preparedEntry)) break;
+    if (!preparedEntry) break;
 
     const flags = normalized.bankFlagsByPatient[pid];
     if (flags && flags.ae) {
@@ -1424,7 +1424,7 @@ function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepa
   if (!previousMonthKey) return [];
 
   const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, cache);
-  if (!isPreparedBillingEntryFinalizedForPatient_(previousPrepared, pid)) return [];
+  if (!getPreparedBillingEntryForPatient_(previousPrepared, pid)) return [];
   const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
 
   if (previousFlags && previousFlags.ae) return [];
@@ -1599,7 +1599,6 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
     const aggregateRemark = formatAggregateBillingRemark_(targetMonths);
 
     return Object.assign({}, entry, {
-      aggregateAutoConfirmed: true,
       aggregateRemark,
       receiptMonths: targetMonths,
       billingAmount: aggregateTotal,
@@ -1949,22 +1948,6 @@ function savePreparedBilling_(payload) {
   }
   const payloadToCache = Object.assign({}, normalizedPayload, { billingMonth: resolvedMonthKey });
   const billingJsonLength = Array.isArray(payloadToCache.billingJson) ? payloadToCache.billingJson.length : 0;
-  const confirmedAggregateEntries = Array.isArray(payloadToCache.billingJson)
-    ? payloadToCache.billingJson
-      .filter(entry => String(entry && entry.aggregateStatus || '').trim().toLowerCase() === 'confirmed')
-      .map(entry => ({
-        patientId: entry && entry.patientId ? entry.patientId : '',
-        aggregateStatus: entry && entry.aggregateStatus ? entry.aggregateStatus : '',
-        bankFlagsAf: !!(entry && entry.bankFlags && entry.bankFlags.af === true)
-      }))
-    : [];
-  if (confirmedAggregateEntries.length) {
-    billingLogger_.log('[billing] savePreparedBilling_ confirmed aggregateStatus entries=' + JSON.stringify({
-      billingMonth: payloadToCache.billingMonth,
-      count: confirmedAggregateEntries.length,
-      entries: confirmedAggregateEntries
-    }));
-  }
   billingLogger_.log('[billing] savePreparedBilling_ summary=' + JSON.stringify({
     billingMonth: payloadToCache.billingMonth,
     billingJsonLength
@@ -2028,52 +2011,11 @@ function loadBillingCachePayload_(cache, key) {
   return merged;
 }
 
-function isBillingEntryFinalized_(entry) {
-  const flag = entry && entry.billingFinalized;
-  return flag === true || flag === 'true' || flag === 1 || flag === '1';
-}
-
 function getPreparedBillingEntryForPatient_(prepared, patientId) {
   if (!prepared || !Array.isArray(prepared.billingJson)) return null;
   const pid = billingNormalizePatientId_(patientId);
   if (!pid) return null;
   return prepared.billingJson.find(entry => billingNormalizePatientId_(entry && entry.patientId) === pid) || null;
-}
-
-function isPreparedBillingEntryFinalizedForPatient_(prepared, patientId) {
-  const entry = getPreparedBillingEntryForPatient_(prepared, patientId);
-  return !!(entry && isBillingEntryFinalized_(entry));
-}
-
-function extractFinalizedBillingEntries_(prepared) {
-  const normalized = normalizePreparedBilling_(prepared);
-  if (!normalized || !Array.isArray(normalized.billingJson)) return {};
-  return normalized.billingJson.reduce((map, entry) => {
-    const pid = billingNormalizePatientId_(entry && entry.patientId);
-    if (!pid || !isBillingEntryFinalized_(entry)) return map;
-    map[pid] = Object.assign({}, entry);
-    return map;
-  }, {});
-}
-
-function mergeFinalizedBillingEntries_(billingJson, finalizedEntries) {
-  const baseList = Array.isArray(billingJson) ? billingJson : [];
-  const finalizedMap = finalizedEntries && typeof finalizedEntries === 'object' ? finalizedEntries : {};
-  const merged = baseList.map(entry => {
-    const pid = billingNormalizePatientId_(entry && entry.patientId);
-    const finalized = pid && Object.prototype.hasOwnProperty.call(finalizedMap, pid)
-      ? finalizedMap[pid]
-      : null;
-    return finalized ? Object.assign({}, finalized) : entry;
-  });
-  const existingPids = new Set(
-    merged.map(entry => billingNormalizePatientId_(entry && entry.patientId)).filter(Boolean)
-  );
-  Object.keys(finalizedMap).forEach(pid => {
-    if (existingPids.has(pid)) return;
-    merged.push(Object.assign({}, finalizedMap[pid]));
-  });
-  return merged;
 }
 
 function getActiveUserEmail_() {
@@ -2159,8 +2101,7 @@ function buildPreparedBillingPayload_(billingMonth) {
     source.billingMonth || (source.month && source.month.key) || resolvedMonthKey
   );
   const billingJson = generateBillingJsonFromSource(source);
-  const finalizedEntries = extractFinalizedBillingEntries_(normalizedExistingPrepared);
-  const billingJsonArray = mergeFinalizedBillingEntries_(billingJson, finalizedEntries);
+  const billingJsonArray = Array.isArray(billingJson) ? billingJson : [];
   const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
   const visitCountKeys = Object.keys(visitCounts || {});
   const normalizeNumber_ = value => {
@@ -2203,15 +2144,6 @@ function buildPreparedBillingPayload_(billingMonth) {
     };
     return map;
   }, {});
-  if (finalizedEntries && normalizedExistingPrepared && normalizedExistingPrepared.bankFlagsByPatient) {
-    const finalizedIds = Object.keys(finalizedEntries);
-    const existingFlags = normalizedExistingPrepared.bankFlagsByPatient;
-    finalizedIds.forEach(pid => {
-      if (Object.prototype.hasOwnProperty.call(existingFlags, pid)) {
-        bankFlagsByPatient[pid] = existingFlags[pid];
-      }
-    });
-  }
   const zeroVisitSamples = visitCountKeys
     .filter(pid => {
       const entry = visitCounts[pid];
@@ -3332,9 +3264,8 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   }
 
   const aggregateStatus = receiptDisplay ? receiptDisplay.aggregateStatus : normalizeAggregateStatus_(entry && entry.aggregateStatus);
-  const aggregateConfirmed = !!(aggregateStatus === 'confirmed' && entry && entry.bankFlags && entry.bankFlags.af === true);
+  const aggregateConfirmed = !!(entry && entry.bankFlags && entry.bankFlags.af === true);
   const watermark = buildInvoiceWatermark_(entry);
-  const finalized = !!(aggregateConfirmed || (previousReceipt && previousReceipt.settled));
 
   return Object.assign({}, amount, {
     aggregateStatus,
@@ -3345,8 +3276,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceiptAmount: entry && entry.previousReceiptAmount != null ? entry.previousReceiptAmount : undefined,
     showReceipt: !!(receiptDisplay && receiptDisplay.visible),
     previousReceipt,
-    watermark,
-    finalized
+    watermark
   });
 }
 
@@ -3384,7 +3314,6 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
       bankWithdrawalAmountsByMonth: {}
     };
     const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, monthCache);
-    if (!isPreparedBillingEntryFinalizedForPatient_(previousPrepared, patientId)) return entry;
     const previousEntry = getPreparedBillingEntryForPatient_(previousPrepared, patientId);
     if (!previousEntry) return entry;
     const previousAmount = previousEntry.grandTotal != null && previousEntry.grandTotal !== ''
@@ -3470,10 +3399,14 @@ function generatePreparedInvoices_(prepared, options) {
       : row;
     return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache);
   }).filter(Boolean);
-  // 'scheduled' represents the confirmed state that allows automatic aggregate invoice
-  // generation. Entries flagged here skipped standard invoices earlier and are now
-  // eligible for aggregate PDFs without additional manual triggers.
-  const aggregateTargets = (receiptEnriched.billingJson || []).filter(row => row && row.skipInvoice && row.aggregateStatus === 'scheduled');
+  // 'scheduled' represents bank-flag-driven aggregate entries that skipped standard
+  // invoices earlier and are now eligible for aggregate PDFs without additional triggers.
+  const aggregateTargets = (receiptEnriched.billingJson || []).filter(
+    row => row
+      && row.skipInvoice
+      && row.bankFlags
+      && row.bankFlags.af === true
+  );
   const aggregateFiles = aggregateTargets.map(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return null;
@@ -3961,93 +3894,6 @@ function applyBillingOverrideEdits_(billingMonthKey, edits) {
   return { updated: updatedCount };
 }
 
-function finalizeBillingEntry(billingMonth, patientId) {
-  const month = normalizeBillingMonthInput(billingMonth);
-  const pid = billingNormalizePatientId_(patientId);
-  if (!month || !pid) {
-    throw new Error('請求月と患者IDを指定してください');
-  }
-
-  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { withValidation: true });
-  const validation = loaded && loaded.validation ? loaded.validation : null;
-  if (validation && validation.ok === false) {
-    throw new Error('請求データが正しくありません。先に再集計を実行してください。');
-  }
-
-  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
-  if (!prepared || !Array.isArray(prepared.billingJson)) {
-    throw new Error('請求データが見つかりません。先に「請求データを集計」を実行してください。');
-  }
-
-  const index = prepared.billingJson.findIndex(row => billingNormalizePatientId_(row && row.patientId) === pid);
-  if (index < 0) {
-    throw new Error('指定された患者IDの請求データが見つかりません。');
-  }
-
-  const target = prepared.billingJson[index] || {};
-  const updatedEntry = Object.assign({}, target, {
-    billingFinalized: true,
-    finalizedAt: new Date().toISOString(),
-    finalizedBy: getActiveUserEmail_(),
-    finalizationSource: 'manual'
-  });
-  const updatedBillingJson = prepared.billingJson.slice();
-  updatedBillingJson[index] = updatedEntry;
-  const updatedPrepared = Object.assign({}, prepared, { billingJson: updatedBillingJson });
-
-  savePreparedBilling_(updatedPrepared);
-  savePreparedBillingToSheet_(month.key, updatedPrepared);
-
-  return toClientBillingPayload_(updatedPrepared);
-}
-
-function unfinalizeBillingEntry(billingMonth, patientId, reason) {
-  const month = normalizeBillingMonthInput(billingMonth);
-  const pid = billingNormalizePatientId_(patientId);
-  if (!month || !pid) {
-    throw new Error('請求月と患者IDを指定してください');
-  }
-
-  const adminEmail = assertBillingAdmin_();
-  const unfinalizeReason = String(reason || '').trim();
-  if (!unfinalizeReason) {
-    throw new Error('確定解除の理由を入力してください。');
-  }
-
-  const loaded = loadPreparedBillingWithSheetFallback_(month.key, { allowInvalid: true });
-  const prepared = normalizePreparedBilling_(loaded && loaded.prepared !== undefined ? loaded.prepared : loaded);
-  if (!prepared || !Array.isArray(prepared.billingJson)) {
-    throw new Error('請求データが見つかりません。先に「請求データを集計」を実行してください。');
-  }
-
-  const index = prepared.billingJson.findIndex(row => billingNormalizePatientId_(row && row.patientId) === pid);
-  if (index < 0) {
-    throw new Error('指定された患者IDの請求データが見つかりません。');
-  }
-
-  const target = prepared.billingJson[index] || {};
-  if (!isBillingEntryFinalized_(target)) {
-    throw new Error('この請求は確定されていません。');
-  }
-  const updatedEntry = Object.assign({}, target);
-  delete updatedEntry.finalizedAt;
-  delete updatedEntry.finalizedBy;
-  delete updatedEntry.finalizationSource;
-  updatedEntry.billingFinalized = false;
-  updatedEntry.unfinalizedAt = new Date().toISOString();
-  updatedEntry.unfinalizedBy = adminEmail;
-  updatedEntry.unfinalizeReason = unfinalizeReason;
-  updatedEntry.unfinalizationSource = 'UI';
-
-  const updatedBillingJson = prepared.billingJson.slice();
-  updatedBillingJson[index] = updatedEntry;
-  const updatedPrepared = Object.assign({}, prepared, { billingJson: updatedBillingJson });
-
-  savePreparedBilling_(updatedPrepared);
-  savePreparedBillingToSheet_(month.key, updatedPrepared);
-
-  return toClientBillingPayload_(updatedPrepared);
-}
 
 function applyBillingEdits(billingMonth, options) {
   const opts = options || {};

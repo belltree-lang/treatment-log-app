@@ -1147,12 +1147,7 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
         receiptTargetMonths,
         receiptMonths: []
       });
-      return Object.assign({}, entry, {
-        hasPreviousReceiptSheet,
-        receiptMonths: [],
-        receiptRemark: '',
-        receiptMonthBreakdown: hasPreviousReceiptSheet ? (entry && entry.receiptMonthBreakdown) : []
-      });
+      return entry;
     }
 
     if (!hasPreviousReceiptSheet && receiptTargetMonths[0] === previousMonthKey) {
@@ -1163,21 +1158,7 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
       });
     }
 
-    const resolveLegacyPreviousReceiptAmount = () => {
-      if (!previousPrepared || !Array.isArray(previousPrepared.billingJson)) return 0;
-      const legacyEntry = previousPrepared.billingJson.find(item => normalizePid(item && item.patientId) === pid);
-      if (!legacyEntry) return 0;
-      if (legacyEntry.grandTotal != null && legacyEntry.grandTotal !== '') {
-        return normalizeMoneyNumber_(legacyEntry.grandTotal);
-      }
-      return normalizeMoneyNumber_(legacyEntry.billingAmount);
-    };
-
-    const receiptBreakdown = receiptTargetMonths.length === 1
-      && receiptTargetMonths[0] === previousMonthKey
-      && !hasPreviousReceiptSheet
-      ? [{ month: previousMonthKey, amount: resolveLegacyPreviousReceiptAmount() }]
-      : buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
+    const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
 
     logReceiptDebug_(pid, {
       step: 'attachPreviousReceiptAmounts_',

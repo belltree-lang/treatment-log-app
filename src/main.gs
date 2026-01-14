@@ -1148,7 +1148,7 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
     const hasPreviousPreparedEntry = !!(previousPrepared && getPreparedBillingEntryForPatient_(previousPrepared, pid));
-    const receiptTargetMonths = resolveReceiptTargetMonths(pid, monthKey);
+    const receiptTargetMonths = resolveReceiptTargetMonths(pid, monthKey, cache);
     const hasPreviousReceiptSheet = hasPreviousPreparedEntry;
 
     if (!receiptTargetMonths.length) {
@@ -1430,12 +1430,55 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   return months;
 }
 
-function resolveReceiptTargetMonths(patientId, billingMonth) {
+function resolveReceiptTargetMonthsByBankFlags_(patientId, billingMonth, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+  if (!monthKey || !pid) return [];
+
+  const currentFlags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
+  if (currentFlags && (currentFlags.ae || currentFlags.af)) return [];
+
+  const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
+  if (!previousMonthKey) return [];
+
+  const previousFlags = getBankWithdrawalStatusByPatient_(previousMonthKey, pid, cache);
+  if (previousFlags && previousFlags.ae) return [];
+
+  if (previousFlags && previousFlags.af) {
+    const aeMonths = [];
+    let cursor = resolvePreviousBillingMonthKey_(previousMonthKey);
+    let guard = 0;
+
+    while (cursor && guard < 48) {
+      const cursorKey = normalizeBillingMonthKeySafe_(cursor);
+      if (!cursorKey) break;
+      const flags = getBankWithdrawalStatusByPatient_(cursorKey, pid, cache);
+      if (flags && flags.ae) {
+        aeMonths.unshift(cursorKey);
+        cursor = resolvePreviousBillingMonthKey_(cursorKey);
+        guard += 1;
+        continue;
+      }
+      break;
+    }
+
+    return normalizePastBillingMonths_(aeMonths.concat(previousMonthKey), monthKey);
+  }
+
+  return [previousMonthKey];
+}
+
+function resolveReceiptTargetMonths(patientId, billingMonth, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey) return [];
 
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return [];
+
+  const receiptMonths = resolveReceiptTargetMonthsByBankFlags_(patientId, monthKey, cache);
+  if (!receiptMonths.length) return [];
 
   const loaded = loadPreparedBillingWithSheetFallback_(previousMonthKey, { withValidation: true, restoreCache: true });
   const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
@@ -1452,7 +1495,7 @@ function resolveReceiptTargetMonths(patientId, billingMonth) {
   ) === pid);
   if (!hasEntry) return [];
 
-  return [previousMonthKey];
+  return receiptMonths;
 }
 
 function formatAggregateBillingRemark_(months) {
@@ -3221,7 +3264,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const aggregateStatus = receiptDisplay ? receiptDisplay.aggregateStatus : normalizeAggregateStatus_(entry && entry.aggregateStatus);
   const aggregateConfirmed = !!(receiptDisplay && receiptDisplay.aggregateConfirmed);
   const watermark = buildInvoiceWatermark_(entry);
-  const receiptMonths = resolveReceiptTargetMonths(entry && entry.patientId, billingMonth);
+  const receiptMonths = resolveReceiptTargetMonths(entry && entry.patientId, billingMonth, cache);
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',

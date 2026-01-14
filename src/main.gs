@@ -3228,7 +3228,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
       }));
     }
   }
-  const amount = Object.assign({}, baseAmount, {
+  let amount = Object.assign({}, baseAmount, {
     insuranceType: entry && entry.insuranceType ? String(entry.insuranceType).trim() : '',
     burdenRate: entry && entry.burdenRate != null ? entry.burdenRate : '',
     chargeMonthLabel: normalizeBillingMonthLabel_(billingMonth),
@@ -3249,6 +3249,16 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const aggregateConfirmed = !!(entry && entry.bankFlags && entry.bankFlags.af === true);
   const watermark = buildInvoiceWatermark_(entry);
   const receiptMonths = receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [];
+  const carryOverAmount = normalizeBillingCarryOver_(entry);
+  if (carryOverAmount === 0 && Array.isArray(amount.rows)) {
+    const filteredRows = amount.rows.filter(row => row && row.label !== '前月繰越');
+    if (filteredRows.length !== amount.rows.length) {
+      amount = Object.assign({}, amount, { rows: filteredRows });
+    }
+  }
+  if (!receiptMonths.length) {
+    amount = Object.assign({}, amount, { forceHideReceipt: true });
+  }
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,

@@ -407,20 +407,15 @@ function normalizeAggregateStatus_(status) {
   return normalized || '';
 }
 
-function isAggregateConfirmedByBankFlags_(item) {
-  return !!(item && item.bankFlags && item.bankFlags.af === true);
-}
-
 function resolveInvoiceReceiptDisplay_(item, options) {
   const billingMonthKey = normalizeInvoiceMonthKey_(item && item.billingMonth);
-  const aggregateEligible = isAggregateConfirmedByBankFlags_(item);
   const explicitReceiptMonths = normalizePastInvoiceMonths_(
     normalizeReceiptMonths_(item && item.receiptMonths),
     billingMonthKey,
-    aggregateEligible
+    false
   );
-  const aggregateStatus = aggregateEligible ? normalizeAggregateStatus_(item && item.aggregateStatus) : '';
-  const aggregateConfirmed = aggregateEligible;
+  const aggregateStatus = '';
+  const aggregateConfirmed = false;
   const receiptMonths = explicitReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1

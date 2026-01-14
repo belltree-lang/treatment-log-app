@@ -1096,7 +1096,8 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     bankWithdrawalUnpaidByMonth: {},
     bankWithdrawalAmountsByMonth: {}
   };
-  const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, monthCache);
+  const previousLoaded = loadPreparedBillingWithSheetFallback_(previousMonthKey, { withValidation: true, restoreCache: true });
+  const previousPrepared = normalizePreparedBilling_(previousLoaded && previousLoaded.prepared);
   if (monthCache.preparedByMonth) {
     monthCache.preparedByMonth[monthKey] = monthCache.preparedByMonth[monthKey] || prepared;
     if (previousMonthKey) {
@@ -1107,43 +1108,14 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
     const hasPreviousPreparedEntry = !!(previousPrepared && getPreparedBillingEntryForPatient_(previousPrepared, pid));
-    const receiptTargetMonths = resolveReceiptTargetMonthsFromBankFlags_(pid, monthKey, prepared, monthCache);
+    const receiptTargetMonths = resolveReceiptTargetMonths(pid, monthKey);
     const hasPreviousReceiptSheet = hasPreviousPreparedEntry;
-    const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
-    const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
-
-    if (receiptTargetMonths.length > 1) {
-      const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, previousPrepared || prepared, monthCache);
-      const aggregateRemark = formatAggregateReceiptDescription_(receiptTargetMonths);
-      const previousReceipt = entry && entry.previousReceipt ? entry.previousReceipt : {
-        addressee: '株式会社べるつりー',
-        note: aggregateRemark
-      };
-      logReceiptDebug_(pid, {
-        step: 'attachPreviousReceiptAmounts_',
-        billingMonth: monthKey,
-        patientId: pid,
-        currentFlags,
-        previousFlags,
-        receiptTargetMonths,
-        receiptMonths: receiptTargetMonths
-      });
-      return Object.assign({}, entry, {
-        hasPreviousReceiptSheet,
-        receiptMonths: receiptTargetMonths,
-        receiptRemark: aggregateRemark,
-        receiptMonthBreakdown: receiptBreakdown,
-        previousReceipt
-      });
-    }
 
     if (!receiptTargetMonths.length) {
       logReceiptDebug_(pid, {
         step: 'attachPreviousReceiptAmounts_',
         billingMonth: monthKey,
         patientId: pid,
-        currentFlags,
-        previousFlags,
         receiptTargetMonths,
         receiptMonths: []
       });
@@ -1164,8 +1136,6 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
       step: 'attachPreviousReceiptAmounts_',
       billingMonth: monthKey,
       patientId: pid,
-      currentFlags,
-      previousFlags,
       receiptTargetMonths,
       receiptMonths: receiptTargetMonths
     });
@@ -1420,70 +1390,29 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   return months;
 }
 
-function resolveReceiptTargetMonths_(patientId, currentMonth, prepared, cache) {
-  const monthKey = normalizeBillingMonthKeySafe_(currentMonth);
-  const pid = billingNormalizePatientId_(patientId);
-  if (!monthKey || !pid) return [];
+function resolveReceiptTargetMonths(patientId, billingMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  if (!monthKey) return [];
 
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return [];
 
-  const monthCache = cache || createBillingMonthCache_();
-  const currentPrepared = prepared || getPreparedBillingForMonthCached_(monthKey, monthCache);
-  const currentFlags = currentPrepared && currentPrepared.bankFlagsByPatient && currentPrepared.bankFlagsByPatient[pid];
+  const loaded = loadPreparedBillingWithSheetFallback_(previousMonthKey, { withValidation: true, restoreCache: true });
+  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
+  if (!prepared || !Array.isArray(prepared.billingJson)) return [];
 
-  if (currentFlags && (currentFlags.ae || currentFlags.af)) return [];
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+  if (!pid) return [];
+  const hasEntry = prepared.billingJson.some(entry => (
+    typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(entry && entry.patientId)
+      : String(entry && entry.patientId || '').trim()
+  ) === pid);
+  if (!hasEntry) return [];
 
-  let aggregateMonthKey = '';
-  let cursor = previousMonthKey;
-  let guard = 0;
-  while (cursor && guard < 48) {
-    const cursorKey = normalizeBillingMonthKeySafe_(cursor);
-    if (!cursorKey) break;
-    const normalized = getPreparedBillingForMonthCached_(cursorKey, monthCache);
-    if (!normalized || !normalized.bankFlagsByPatient) break;
-    const flags = normalized.bankFlagsByPatient[pid];
-    if (flags && flags.af) {
-      aggregateMonthKey = normalized.billingMonth || cursorKey;
-      break;
-    }
-    cursor = resolvePreviousBillingMonthKey_(normalized.billingMonth || cursorKey);
-    guard += 1;
-  }
-
-  if (!aggregateMonthKey) {
-    const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, monthCache);
-    const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
-    if (previousFlags && previousFlags.ae) return [];
-    return [previousMonthKey];
-  }
-
-  const unpaidMonths = collectAggregateBankFlagMonthsForPatient_(aggregateMonthKey, pid, null, monthCache);
-  return normalizePastBillingMonths_(unpaidMonths.concat(aggregateMonthKey), monthKey);
-}
-
-function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepared, cache) {
-  const monthKey = normalizeBillingMonthKeySafe_(currentMonth);
-  const pid = billingNormalizePatientId_(patientId);
-  if (!monthKey || !pid) return [];
-
-  const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
-  if (!previousMonthKey) return [];
-
-  const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, cache);
-  const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
-  const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
-  const receiptTargetMonths = resolveReceiptTargetMonths_(pid, monthKey, prepared, cache);
-
-  logReceiptDebug_(pid, {
-    step: 'resolveReceiptTargetMonthsFromBankFlags_',
-    billingMonth: monthKey,
-    patientId: pid,
-    currentFlags,
-    previousFlags,
-    receiptTargetMonths
-  });
-  return receiptTargetMonths;
+  return [previousMonthKey];
 }
 
 function formatAggregateBillingRemark_(months) {
@@ -3250,16 +3179,14 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   }
 
   const aggregateStatus = receiptDisplay ? receiptDisplay.aggregateStatus : normalizeAggregateStatus_(entry && entry.aggregateStatus);
-  const aggregateConfirmed = !!(entry && entry.bankFlags && entry.bankFlags.af === true);
+  const aggregateConfirmed = !!(receiptDisplay && receiptDisplay.aggregateConfirmed);
   const watermark = buildInvoiceWatermark_(entry);
-  const receiptMonths = resolveReceiptTargetMonths_(entry && entry.patientId, billingMonth, prepared, cache);
+  const receiptMonths = resolveReceiptTargetMonths(entry && entry.patientId, billingMonth);
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,
     patientId: entry && entry.patientId,
-    currentFlags: entry && entry.bankFlags,
-    previousFlags: entry && entry.previousBankFlags,
     receiptTargetMonths: normalizedAggregateMonths,
     receiptMonths
   });
@@ -3273,8 +3200,8 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceiptAmount: entry && entry.previousReceiptAmount != null ? entry.previousReceiptAmount : undefined,
     receiptMonths,
     receiptDisplayVisible: !!(receiptDisplay && receiptDisplay.visible),
-    bankFlags: entry && entry.bankFlags,
-    previousBankFlags: entry && entry.previousBankFlags
+    aggregateStatus,
+    aggregateConfirmed
   });
 
   return Object.assign({}, amount, {

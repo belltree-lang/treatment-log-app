@@ -1417,8 +1417,13 @@ function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepa
   const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, cache);
   if (!getPreparedBillingEntryForPatient_(previousPrepared, pid)) return [];
   const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
+  const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
 
-  if (previousFlags && previousFlags.ae) return [];
+  if (previousFlags && previousFlags.ae) {
+    if (!(currentFlags && currentFlags.af)) return [];
+    const unpaidMonths = collectAggregateBankFlagMonthsForPatient_(previousMonthKey, pid, null, cache);
+    return normalizePastBillingMonths_(unpaidMonths.concat(previousMonthKey), monthKey);
+  }
 
   if (previousFlags && previousFlags.af) {
     const unpaidMonths = collectAggregateBankFlagMonthsForPatient_(previousMonthKey, pid, null, cache);

@@ -1023,6 +1023,46 @@ function getBankWithdrawalStatusByPatient(billingMonth, patientId) {
   return getBankWithdrawalStatusByPatient_(billingMonth, patientId);
 }
 
+function resolveInvoiceGenerationMode(patientId, billingMonth, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+
+  if (!monthKey || !pid) {
+    return { mode: 'standard', aggregateMonths: [] };
+  }
+
+  const currentFlags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
+  if (!(currentFlags && currentFlags.af)) {
+    return { mode: 'standard', aggregateMonths: [] };
+  }
+
+  const aeMonths = [];
+  let cursor = resolvePreviousBillingMonthKey_(monthKey);
+  let guard = 0;
+
+  while (cursor && guard < 48) {
+    const cursorKey = normalizeBillingMonthKeySafe_(cursor);
+    if (!cursorKey) break;
+    const flags = getBankWithdrawalStatusByPatient_(cursorKey, pid, cache);
+    if (flags && flags.ae) {
+      aeMonths.unshift(cursorKey);
+      cursor = resolvePreviousBillingMonthKey_(cursorKey);
+      guard += 1;
+      continue;
+    }
+    break;
+  }
+
+  if (!aeMonths.length) {
+    return { mode: 'standard', aggregateMonths: [] };
+  }
+
+  const aggregateMonths = normalizePastBillingMonths_(aeMonths.concat(monthKey), monthKey);
+  return { mode: 'aggregate', aggregateMonths };
+}
+
 function resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const pid = typeof billingNormalizePatientId_ === 'function'
@@ -3279,8 +3319,8 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
       }));
     }
   }
-  const decision = resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache);
-  const decisionMonths = decision && Array.isArray(decision.months) ? decision.months : [];
+  const decision = resolveInvoiceGenerationMode(patientId, billingMonth, cache);
+  const decisionMonths = decision && Array.isArray(decision.aggregateMonths) ? decision.aggregateMonths : [];
   const aggregateMonths = normalizePastBillingMonths_(decisionMonths, billingMonth);
   const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
   const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache, prepared);

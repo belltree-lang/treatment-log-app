@@ -1397,6 +1397,61 @@ function resolveBillingAmountForMonthAndPatient_(billingMonth, patientId, fallba
   return resolveBillingAmountForEntry_(found);
 }
 
+function resolveAggregateEntryTotalsForMonths_(aggregateMonths, patientId, fallbackEntry, cache) {
+  const pid = billingNormalizePatientId_(patientId);
+  const months = normalizePastBillingMonths_(
+    Array.isArray(aggregateMonths) ? aggregateMonths : [],
+    fallbackEntry && fallbackEntry.billingMonth
+  );
+  if (!pid || !months.length) {
+    return {
+      visitCount: 0,
+      treatmentAmount: 0,
+      transportAmount: 0,
+      billingAmount: 0,
+      total: 0,
+      grandTotal: 0
+    };
+  }
+
+  const fallbackMonthKey = normalizeBillingMonthKeySafe_(fallbackEntry && fallbackEntry.billingMonth);
+  const normalizeVisits = value => (typeof billingNormalizeVisitCount_ === 'function'
+    ? billingNormalizeVisitCount_(value)
+    : (Number(value) || 0));
+
+  return months.reduce((sum, monthKey) => {
+    const normalizedMonth = normalizeBillingMonthKeySafe_(monthKey);
+    if (!normalizedMonth) return sum;
+    const entry = (fallbackEntry && fallbackMonthKey && normalizedMonth === fallbackMonthKey)
+      ? pickPreparedBillingEntrySummary_(fallbackEntry)
+      : getPreparedBillingEntryForMonthCached_(normalizedMonth, pid, cache);
+    if (!entry) return sum;
+
+    const fallbackAmount = resolveBillingAmountForEntry_(entry);
+    const totalValue = entry.total != null && entry.total !== ''
+      ? normalizeMoneyNumber_(entry.total)
+      : fallbackAmount;
+    const grandTotalValue = entry.grandTotal != null && entry.grandTotal !== ''
+      ? normalizeMoneyNumber_(entry.grandTotal)
+      : fallbackAmount;
+
+    sum.visitCount += normalizeVisits(entry.visitCount);
+    sum.treatmentAmount += normalizeMoneyNumber_(entry.treatmentAmount);
+    sum.transportAmount += normalizeMoneyNumber_(entry.transportAmount);
+    sum.billingAmount += normalizeMoneyNumber_(entry.billingAmount);
+    sum.total += totalValue;
+    sum.grandTotal += grandTotalValue;
+    return sum;
+  }, {
+    visitCount: 0,
+    treatmentAmount: 0,
+    transportAmount: 0,
+    billingAmount: 0,
+    total: 0,
+    grandTotal: 0
+  });
+}
+
 function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggregateUntilMonth, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   const pid = billingNormalizePatientId_(patientId);
@@ -1644,10 +1699,7 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
         receiptMonths: []
       });
     }
-    const aggregateTotal = targetMonths.reduce(
-      (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(ym, pid, null, monthCache),
-      0
-    );
+    const aggregateTotals = resolveAggregateEntryTotalsForMonths_(targetMonths, pid, entry, monthCache);
     const aggregateRemark = formatAggregateBillingRemark_(targetMonths);
 
     logReceiptDebug_(pid, {
@@ -1660,12 +1712,14 @@ function applyAggregateInvoiceRulesFromBankFlags_(prepared, cache) {
       receiptMonths: targetMonths
     });
     return Object.assign({}, entry, {
+      visitCount: aggregateTotals.visitCount,
+      treatmentAmount: aggregateTotals.treatmentAmount,
+      transportAmount: aggregateTotals.transportAmount,
+      billingAmount: aggregateTotals.billingAmount,
+      total: aggregateTotals.total,
+      grandTotal: aggregateTotals.grandTotal,
       aggregateRemark,
       receiptMonths: targetMonths,
-      billingAmount: aggregateTotal,
-      transportAmount: 0,
-      total: aggregateTotal,
-      grandTotal: aggregateTotal,
       aggregateTargetMonths: targetMonths,
       skipReceipt: false
     });

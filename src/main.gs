@@ -3249,6 +3249,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const aggregateConfirmed = !!(entry && entry.bankFlags && entry.bankFlags.af === true);
   const watermark = buildInvoiceWatermark_(entry);
   const receiptMonths = receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [];
+  const carryOverAmount = normalizeBillingCarryOver_(entry);
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,
@@ -3257,6 +3258,19 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousFlags: entry && entry.previousBankFlags,
     receiptTargetMonths: normalizedAggregateMonths,
     receiptMonths
+  });
+  logReceiptDebug_(entry && entry.patientId, {
+    step: 'finalizeInvoiceAmountDataForPdf_ pre-return',
+    billingMonth,
+    patientId: entry && entry.patientId,
+    isAggregateInvoice,
+    carryOverAmount,
+    previousReceipt,
+    previousReceiptAmount: entry && entry.previousReceiptAmount != null ? entry.previousReceiptAmount : undefined,
+    receiptMonths,
+    receiptDisplayVisible: !!(receiptDisplay && receiptDisplay.visible),
+    bankFlags: entry && entry.bankFlags,
+    previousBankFlags: entry && entry.previousBankFlags
   });
 
   return Object.assign({}, amount, {

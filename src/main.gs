@@ -1415,7 +1415,6 @@ function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepa
   if (!previousMonthKey) return [];
 
   const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, cache);
-  if (!getPreparedBillingEntryForPatient_(previousPrepared, pid)) return [];
   const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
   const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
 

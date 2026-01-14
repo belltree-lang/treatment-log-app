@@ -419,32 +419,22 @@ function resolveInvoiceReceiptDisplay_(item, options) {
     billingMonthKey,
     aggregateEligible
   );
-  const overrideMonths = options && Array.isArray(options.aggregateMonths)
-    ? options.aggregateMonths
-    : [];
-  const aggregateDecisionMonths = overrideMonths.length
-    ? normalizeAggregateMonthsForInvoice_(overrideMonths, billingMonthKey)
-    : [];
   const aggregateStatus = aggregateEligible ? normalizeAggregateStatus_(item && item.aggregateStatus) : '';
   const aggregateConfirmed = aggregateEligible;
-  const receiptMonths = aggregateDecisionMonths.length ? aggregateDecisionMonths : explicitReceiptMonths;
+  const receiptMonths = explicitReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
   const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
     ? formatAggregatedReceiptRemark_(receiptMonths)
     : '');
-  const receiptStatus = item && item.receiptStatus ? String(item.receiptStatus).toUpperCase() : '';
-  const shouldHideByStatus = receiptStatus === 'UNPAID' || receiptStatus === 'HOLD';
-  const visible = !shouldHideByStatus && !item.skipReceipt && receiptMonths.length > 0;
-  const receiptMonthsSource = aggregateDecisionMonths.length
-    ? 'aggregateDecisionMonths'
-    : (receiptMonths.length ? 'explicit' : 'none');
+  const visible = receiptMonths.length > 0;
+  const receiptMonthsSource = receiptMonths.length ? 'explicit' : 'none';
 
   return {
     visible,
     receiptRemark,
     receiptMonths,
     explicitReceiptMonths,
-    aggregateDecisionMonths,
+    aggregateDecisionMonths: [],
     receiptMonthsSource,
     aggregateStatus,
     aggregateConfirmed

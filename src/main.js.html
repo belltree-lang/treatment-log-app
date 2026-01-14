@@ -2252,23 +2252,9 @@ function initBillingPage() {
     input.onchange = updateBillingControls;
     input.oninput = updateBillingControls;
   }
-  const bankMonthInput = qs('bankWithdrawalMonth');
-  if (bankMonthInput && !bankMonthInput.value) {
-    bankMonthInput.value = input && input.value ? input.value : getDefaultMonth();
-  }
-  if (bankMonthInput) {
-    simpleBankState.targetMonth = normalizeYm(bankMonthInput.value);
-    bankMonthInput.onchange = function () {
-      simpleBankState.targetMonth = normalizeYm(this.value);
-      updateSimpleBankControls();
-      renderSimpleBankSummary();
-    };
-  }
   updateBillingControls();
   refreshPreparedBillingMonths();
-  updateSimpleBankControls();
   renderBillingResult();
-  renderSimpleBankDetail();
   loadBillingAdminInfo();
 }
 
@@ -2293,6 +2279,5 @@ if (billingGlobal) {
   billingGlobal.handleBillingAggregation = handleBillingAggregation;
   billingGlobal.handleBillingPdfGeneration = handleBillingPdfGeneration;
   billingGlobal.handleBillingSaveEdits = handleBillingSaveEdits;
-  billingGlobal.handleSimpleBankSheetGeneration = handleSimpleBankSheetGeneration;
 }
 </script>

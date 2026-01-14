@@ -1489,7 +1489,7 @@ function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepa
     return [];
   }
 
-  const receiptTargetMonths = normalizePastBillingMonths_([previousMonthKey], monthKey);
+  const receiptTargetMonths = [];
   logReceiptDebug_(pid, {
     step: 'resolveReceiptTargetMonthsFromBankFlags_',
     billingMonth: monthKey,

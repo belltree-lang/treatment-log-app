@@ -3217,7 +3217,7 @@ function buildAggregateInvoiceAmountDataForPdf_(aggregateMonths, billingMonth, p
   };
 }
 
-function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, isAggregateInvoice, cache) {
+function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, isAggregateInvoice, cache, prepared) {
   const normalizedAggregateMonths = normalizePastBillingMonths_(aggregateMonths, billingMonth);
   const baseAmount = isAggregateInvoice
     ? buildAggregateInvoiceAmountDataForPdf_(normalizedAggregateMonths, billingMonth, entry && entry.patientId, cache)
@@ -3252,7 +3252,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const aggregateStatus = receiptDisplay ? receiptDisplay.aggregateStatus : normalizeAggregateStatus_(entry && entry.aggregateStatus);
   const aggregateConfirmed = !!(entry && entry.bankFlags && entry.bankFlags.af === true);
   const watermark = buildInvoiceWatermark_(entry);
-  const receiptMonths = receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [];
+  const receiptMonths = resolveReceiptTargetMonths_(entry && entry.patientId, billingMonth, prepared, cache);
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
@@ -3356,7 +3356,7 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
   const decisionMonths = decision && Array.isArray(decision.months) ? decision.months : [];
   const aggregateMonths = normalizePastBillingMonths_(decisionMonths, billingMonth);
   const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
-  const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache);
+  const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache, prepared);
 
   return {
     patientId,
@@ -3376,7 +3376,7 @@ function buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, cach
   if (!billingMonth || !patientId) return null;
 
   const normalizedMonths = normalizePastBillingMonths_(aggregateMonths, billingMonth);
-  const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, normalizedMonths, true, cache);
+  const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, normalizedMonths, true, cache, prepared);
 
   return {
     patientId,

@@ -291,6 +291,35 @@ function testReceiptVisibilityRespectsBankFlagsAndStatus() {
   assert.strictEqual(withSkipReceipt.visible, false, 'skipReceipt が指定された場合は非表示にする');
 }
 
+function testReceiptRemarkUsesNormalizedMonths() {
+  const context = createContext();
+  vm.createContext(context);
+  vm.runInContext(billingOutputCode, context);
+
+  const { formatReceiptRemarkFromMonths_ } = context;
+
+  assert.strictEqual(
+    formatReceiptRemarkFromMonths_(['202509']),
+    '2025年9月分施術料金として',
+    '単月は西暦で領収書但し書きを生成する'
+  );
+  assert.strictEqual(
+    formatReceiptRemarkFromMonths_(['202509', '202510']),
+    '2025年9月・10月分施術料金として',
+    '同一年の連続月は年を省略して表記する'
+  );
+  assert.strictEqual(
+    formatReceiptRemarkFromMonths_(['202509', '202510', '202511', '202512', '202601']),
+    '2025年9月から2026年1月分施術料金として',
+    '年跨ぎの連続月は期間表記にする'
+  );
+  assert.strictEqual(
+    formatReceiptRemarkFromMonths_(['202509', '202511', '202601']),
+    '2025年9月・11月・2026年1月分施術料金として',
+    '非連続月は年ごとに区切って表記する'
+  );
+}
+
 function testInvoiceTemplateSwitchesAggregateModeForUnpaid() {
   const context = createContext();
   vm.createContext(context);

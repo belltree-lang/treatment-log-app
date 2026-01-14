@@ -353,18 +353,79 @@ function buildInclusiveMonthRange_(fromYm, toYm) {
   return months;
 }
 
-function formatAggregatedReceiptRemark_(months) {
-  if (!Array.isArray(months) || !months.length) return '';
-  const parts = months.map((ym, idx) => {
-    const label = formatMonthWithReiwaEra_(ym);
-    if (!label) return '';
-    if (idx === 0) return label + '分';
-    const month = normalizeInvoiceMonthKey_(ym).slice(4, 6);
-    return month ? month + '月分' : '';
-  }).filter(Boolean);
+function formatReceiptRemarkFromMonths_(receiptMonths) {
+  const source = Array.isArray(receiptMonths) ? receiptMonths : [];
+  const normalized = source
+    .map(value => normalizeInvoiceMonthKey_(value))
+    .filter(Boolean);
+  if (!normalized.length) return '施術料金として';
 
-  if (!parts.length) return '';
-  return parts.join('・') + '施術料金として';
+  const seen = new Set();
+  const months = [];
+  normalized.forEach(ym => {
+    if (seen.has(ym)) return;
+    seen.add(ym);
+    months.push(ym);
+  });
+  months.sort();
+
+  const formatYearMonth = (ym) => {
+    const year = ym.slice(0, 4);
+    const monthNum = Number(ym.slice(4, 6));
+    if (!year || !Number.isFinite(monthNum) || monthNum < 1) return '';
+    return `${year}年${monthNum}月`;
+  };
+
+  if (months.length === 1) {
+    const single = formatYearMonth(months[0]);
+    return single ? `${single}分施術料金として` : '施術料金として';
+  }
+
+  const start = months[0];
+  const end = months[months.length - 1];
+  const consecutive = buildInclusiveMonthRange_(start, end).length === months.length;
+
+  if (consecutive) {
+    const startYear = start.slice(0, 4);
+    const endYear = end.slice(0, 4);
+    if (startYear === endYear) {
+      const parts = months.map((ym, idx) => {
+        const monthNum = Number(ym.slice(4, 6));
+        if (!Number.isFinite(monthNum) || monthNum < 1) return '';
+        if (idx === 0) return formatYearMonth(ym);
+        return `${monthNum}月`;
+      }).filter(Boolean);
+      return parts.length ? `${parts.join('・')}分施術料金として` : '施術料金として';
+    }
+    const startLabel = formatYearMonth(start);
+    const endLabel = formatYearMonth(end);
+    if (startLabel && endLabel) {
+      return `${startLabel}から${endLabel}分施術料金として`;
+    }
+    return '施術料金として';
+  }
+
+  const yearMap = new Map();
+  months.forEach(ym => {
+    const year = ym.slice(0, 4);
+    const monthNum = Number(ym.slice(4, 6));
+    if (!year || !Number.isFinite(monthNum) || monthNum < 1) return;
+    if (!yearMap.has(year)) yearMap.set(year, []);
+    yearMap.get(year).push(monthNum);
+  });
+
+  const yearLabels = [];
+  Array.from(yearMap.keys()).sort().forEach(year => {
+    const monthNumbers = yearMap.get(year).sort((a, b) => a - b);
+    if (!monthNumbers.length) return;
+    const parts = monthNumbers.map((monthNum, idx) => {
+      if (idx === 0) return `${year}年${monthNum}月`;
+      return `${monthNum}月`;
+    });
+    yearLabels.push(parts.join('・'));
+  });
+
+  return yearLabels.length ? `${yearLabels.join('・')}分施術料金として` : '施術料金として';
 }
 
 function normalizeReceiptMonths_(months) {
@@ -418,8 +479,8 @@ function resolveInvoiceReceiptDisplay_(item, options) {
   const aggregateConfirmed = false;
   const receiptMonths = explicitReceiptMonths;
   const customReceiptRemark = item && item.receiptRemark ? String(item.receiptRemark) : '';
-  const receiptRemark = customReceiptRemark || (receiptMonths.length > 1
-    ? formatAggregatedReceiptRemark_(receiptMonths)
+  const receiptRemark = customReceiptRemark || (receiptMonths.length
+    ? formatReceiptRemarkFromMonths_(receiptMonths)
     : '');
   const visible = receiptMonths.length > 0;
   const receiptMonthsSource = receiptMonths.length ? 'explicit' : 'none';

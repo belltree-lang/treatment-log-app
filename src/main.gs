@@ -1420,6 +1420,48 @@ function collectAggregateBankFlagMonthsForPatient_(billingMonth, patientId, aggr
   return months;
 }
 
+function resolveReceiptTargetMonths_(patientId, currentMonth, prepared, cache) {
+  const monthKey = normalizeBillingMonthKeySafe_(currentMonth);
+  const pid = billingNormalizePatientId_(patientId);
+  if (!monthKey || !pid) return [];
+
+  const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
+  if (!previousMonthKey) return [];
+
+  const monthCache = cache || createBillingMonthCache_();
+  const currentPrepared = prepared || getPreparedBillingForMonthCached_(monthKey, monthCache);
+  const currentFlags = currentPrepared && currentPrepared.bankFlagsByPatient && currentPrepared.bankFlagsByPatient[pid];
+
+  if (currentFlags && (currentFlags.ae || currentFlags.af)) return [];
+
+  let aggregateMonthKey = '';
+  let cursor = previousMonthKey;
+  let guard = 0;
+  while (cursor && guard < 48) {
+    const cursorKey = normalizeBillingMonthKeySafe_(cursor);
+    if (!cursorKey) break;
+    const normalized = getPreparedBillingForMonthCached_(cursorKey, monthCache);
+    if (!normalized || !normalized.bankFlagsByPatient) break;
+    const flags = normalized.bankFlagsByPatient[pid];
+    if (flags && flags.af) {
+      aggregateMonthKey = normalized.billingMonth || cursorKey;
+      break;
+    }
+    cursor = resolvePreviousBillingMonthKey_(normalized.billingMonth || cursorKey);
+    guard += 1;
+  }
+
+  if (!aggregateMonthKey) {
+    const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, monthCache);
+    const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
+    if (previousFlags && previousFlags.ae) return [];
+    return [previousMonthKey];
+  }
+
+  const unpaidMonths = collectAggregateBankFlagMonthsForPatient_(aggregateMonthKey, pid, null, monthCache);
+  return normalizePastBillingMonths_(unpaidMonths.concat(aggregateMonthKey), monthKey);
+}
+
 function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepared, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(currentMonth);
   const pid = billingNormalizePatientId_(patientId);
@@ -1431,46 +1473,8 @@ function resolveReceiptTargetMonthsFromBankFlags_(patientId, currentMonth, prepa
   const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, cache);
   const previousFlags = previousPrepared && previousPrepared.bankFlagsByPatient && previousPrepared.bankFlagsByPatient[pid];
   const currentFlags = prepared && prepared.bankFlagsByPatient && prepared.bankFlagsByPatient[pid];
+  const receiptTargetMonths = resolveReceiptTargetMonths_(pid, monthKey, prepared, cache);
 
-  if (currentFlags && (currentFlags.ae || currentFlags.af)) {
-    logReceiptDebug_(pid, {
-      step: 'resolveReceiptTargetMonthsFromBankFlags_',
-      billingMonth: monthKey,
-      patientId: pid,
-      currentFlags,
-      previousFlags,
-      receiptTargetMonths: []
-    });
-    return [];
-  }
-
-  if (previousFlags && previousFlags.af) {
-    const unpaidMonths = collectAggregateBankFlagMonthsForPatient_(previousMonthKey, pid, null, cache);
-    const receiptTargetMonths = normalizePastBillingMonths_(unpaidMonths.concat(previousMonthKey), monthKey);
-    logReceiptDebug_(pid, {
-      step: 'resolveReceiptTargetMonthsFromBankFlags_',
-      billingMonth: monthKey,
-      patientId: pid,
-      currentFlags,
-      previousFlags,
-      receiptTargetMonths
-    });
-    return receiptTargetMonths;
-  }
-
-  if (previousFlags && previousFlags.ae) {
-    logReceiptDebug_(pid, {
-      step: 'resolveReceiptTargetMonthsFromBankFlags_',
-      billingMonth: monthKey,
-      patientId: pid,
-      currentFlags,
-      previousFlags,
-      receiptTargetMonths: []
-    });
-    return [];
-  }
-
-  const receiptTargetMonths = [];
   logReceiptDebug_(pid, {
     step: 'resolveReceiptTargetMonthsFromBankFlags_',
     billingMonth: monthKey,

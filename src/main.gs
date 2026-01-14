@@ -173,6 +173,7 @@ if (typeof globalThis !== 'undefined') {
 }
 
 const BILLING_MONTH_KEY_CACHE_ = {};
+const RECEIPT_TARGET_MONTHS_BY_BANK_FLAGS_CACHE_ = {};
 
 function shouldLogReceiptDebug_(patientId) {
   const debugPid = String(BILLING_DEBUG_PID || '').trim();
@@ -1437,53 +1438,63 @@ function resolveReceiptTargetMonthsByBankFlags_(patientId, billingMonth, cache) 
     : String(patientId || '').trim();
   if (!monthKey || !pid) return [];
 
-  const currentFlags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
-  if (currentFlags && currentFlags.ae) return [];
-  if (currentFlags && currentFlags.af) return [];
-
-  const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
-  if (!previousMonthKey) return [];
-
-  let afMonthKey = null;
-  let cursor = previousMonthKey;
-  let guard = 0;
-
-  while (cursor && guard < 48) {
-    const cursorKey = normalizeBillingMonthKeySafe_(cursor);
-    if (!cursorKey) break;
-    const flags = getBankWithdrawalStatusByPatient_(cursorKey, pid, cache);
-    if (flags && flags.af) {
-      afMonthKey = cursorKey;
-      break;
-    }
-    cursor = resolvePreviousBillingMonthKey_(cursorKey);
-    guard += 1;
+  const cacheKey = pid + ':' + monthKey;
+  if (Object.prototype.hasOwnProperty.call(RECEIPT_TARGET_MONTHS_BY_BANK_FLAGS_CACHE_, cacheKey)) {
+    return RECEIPT_TARGET_MONTHS_BY_BANK_FLAGS_CACHE_[cacheKey].slice();
   }
 
-  if (afMonthKey) {
-    if (!isNextMonth_(afMonthKey, monthKey)) return [];
+  const result = (function resolveReceiptTargetMonthsByBankFlagsWithCache_() {
+    const currentFlags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
+    if (currentFlags && currentFlags.ae) return [];
+    if (currentFlags && currentFlags.af) return [];
 
-    const aeMonths = [];
-    cursor = resolvePreviousBillingMonthKey_(afMonthKey);
-    guard = 0;
+    const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
+    if (!previousMonthKey) return [];
+
+    let afMonthKey = null;
+    let cursor = previousMonthKey;
+    let guard = 0;
 
     while (cursor && guard < 48) {
       const cursorKey = normalizeBillingMonthKeySafe_(cursor);
       if (!cursorKey) break;
       const flags = getBankWithdrawalStatusByPatient_(cursorKey, pid, cache);
-      if (flags && flags.ae) {
-        aeMonths.unshift(cursorKey);
-        cursor = resolvePreviousBillingMonthKey_(cursorKey);
-        guard += 1;
-        continue;
+      if (flags && flags.af) {
+        afMonthKey = cursorKey;
+        break;
       }
-      break;
+      cursor = resolvePreviousBillingMonthKey_(cursorKey);
+      guard += 1;
     }
 
-    return normalizePastBillingMonths_(aeMonths.concat(afMonthKey), monthKey);
-  }
+    if (afMonthKey) {
+      if (!isNextMonth_(afMonthKey, monthKey)) return [];
 
-  return [previousMonthKey];
+      const aeMonths = [];
+      cursor = resolvePreviousBillingMonthKey_(afMonthKey);
+      guard = 0;
+
+      while (cursor && guard < 48) {
+        const cursorKey = normalizeBillingMonthKeySafe_(cursor);
+        if (!cursorKey) break;
+        const flags = getBankWithdrawalStatusByPatient_(cursorKey, pid, cache);
+        if (flags && flags.ae) {
+          aeMonths.unshift(cursorKey);
+          cursor = resolvePreviousBillingMonthKey_(cursorKey);
+          guard += 1;
+          continue;
+        }
+        break;
+      }
+
+      return normalizePastBillingMonths_(aeMonths.concat(afMonthKey), monthKey);
+    }
+
+    return [previousMonthKey];
+  })();
+
+  RECEIPT_TARGET_MONTHS_BY_BANK_FLAGS_CACHE_[cacheKey] = result.slice();
+  return result;
 }
 
 function isNextMonth_(fromMonthKey, toMonthKey) {

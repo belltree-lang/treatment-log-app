@@ -229,6 +229,12 @@ function normalizeBillingMonthKeySafe_(value) {
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     if (!candidate) continue;
+    if (typeof candidate === 'string' || typeof candidate === 'number') {
+      const raw = String(candidate).trim();
+      if (/^\d{6}$/.test(raw)) {
+        return raw;
+      }
+    }
     const cacheKey = buildBillingMonthKeyCacheKey_(candidate);
     if (cacheKey && Object.prototype.hasOwnProperty.call(BILLING_MONTH_KEY_CACHE_, cacheKey)) {
       return BILLING_MONTH_KEY_CACHE_[cacheKey];
@@ -1567,7 +1573,10 @@ function isNextMonth_(fromMonthKey, toMonthKey) {
 
 function resolveReceiptTargetMonths(patientId, billingMonth, cache) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
-  if (!monthKey) return [];
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+  if (!monthKey || !pid) return [];
 
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return [];
@@ -1579,10 +1588,6 @@ function resolveReceiptTargetMonths(patientId, billingMonth, cache) {
   const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
   if (!prepared || !Array.isArray(prepared.billingJson)) return [];
 
-  const pid = typeof billingNormalizePatientId_ === 'function'
-    ? billingNormalizePatientId_(patientId)
-    : String(patientId || '').trim();
-  if (!pid) return [];
   const hasEntry = prepared.billingJson.some(entry => (
     typeof billingNormalizePatientId_ === 'function'
       ? billingNormalizePatientId_(entry && entry.patientId)
@@ -3533,24 +3538,18 @@ function generatePreparedInvoices_(prepared, options) {
     const aggregateMonths = normalizeAggregateInvoiceMonths_(aggregateSourceMonths, normalized, normalized.billingMonth);
     const uniqueAggregateMonths = Array.from(new Set(aggregateMonths))
       .filter(month => month !== normalized.billingMonth);
-    const aggregateTotal = uniqueAggregateMonths.reduce(
-      (sum, ym) => sum + resolveBillingAmountForMonthAndPatient_(
-        ym,
-        pid,
-        null,
-        monthCache
-      ),
-      0
-    );
+    const aggregateTotals = resolveAggregateEntryTotalsForMonths_(uniqueAggregateMonths, pid, baseEntry, monthCache);
     const aggregateRemark = formatAggregateBillingRemark_(uniqueAggregateMonths);
     const aggregateEntry = Object.assign({}, baseEntry, {
       billingMonth: normalized.billingMonth,
       receiptMonths: uniqueAggregateMonths,
       aggregateRemark,
-      billingAmount: aggregateTotal,
-      transportAmount: 0,
-      total: aggregateTotal,
-      grandTotal: aggregateTotal,
+      visitCount: aggregateTotals.visitCount,
+      treatmentAmount: aggregateTotals.treatmentAmount,
+      transportAmount: aggregateTotals.transportAmount,
+      billingAmount: aggregateTotals.billingAmount,
+      total: aggregateTotals.total,
+      grandTotal: aggregateTotals.grandTotal,
       aggregateTargetMonths: uniqueAggregateMonths
     });
     const aggregateContext = buildAggregateInvoicePdfContext_(aggregateEntry, uniqueAggregateMonths, receiptEnriched, monthCache);
@@ -4037,7 +4036,8 @@ function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
 }
 
 function generatePreparedInvoicesForMonth(billingMonth, options) {
-  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const month = normalizeBillingMonthInput(billingMonth);
+  const monthKey = month && month.key ? month.key : '';
   if (!monthKey) {
     throw new Error('PDF対象月が指定されていません。');
   }

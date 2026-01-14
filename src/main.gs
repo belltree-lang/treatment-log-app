@@ -1438,18 +1438,34 @@ function resolveReceiptTargetMonthsByBankFlags_(patientId, billingMonth, cache) 
   if (!monthKey || !pid) return [];
 
   const currentFlags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
-  if (currentFlags && (currentFlags.ae || currentFlags.af)) return [];
+  if (currentFlags && currentFlags.ae) return [];
+  if (currentFlags && currentFlags.af) return [];
 
   const previousMonthKey = resolvePreviousBillingMonthKey_(monthKey);
   if (!previousMonthKey) return [];
 
-  const previousFlags = getBankWithdrawalStatusByPatient_(previousMonthKey, pid, cache);
-  if (previousFlags && previousFlags.ae) return [];
+  let afMonthKey = null;
+  let cursor = previousMonthKey;
+  let guard = 0;
 
-  if (previousFlags && previousFlags.af) {
+  while (cursor && guard < 48) {
+    const cursorKey = normalizeBillingMonthKeySafe_(cursor);
+    if (!cursorKey) break;
+    const flags = getBankWithdrawalStatusByPatient_(cursorKey, pid, cache);
+    if (flags && flags.af) {
+      afMonthKey = cursorKey;
+      break;
+    }
+    cursor = resolvePreviousBillingMonthKey_(cursorKey);
+    guard += 1;
+  }
+
+  if (afMonthKey) {
+    if (!isNextMonth_(afMonthKey, monthKey)) return [];
+
     const aeMonths = [];
-    let cursor = resolvePreviousBillingMonthKey_(previousMonthKey);
-    let guard = 0;
+    cursor = resolvePreviousBillingMonthKey_(afMonthKey);
+    guard = 0;
 
     while (cursor && guard < 48) {
       const cursorKey = normalizeBillingMonthKeySafe_(cursor);
@@ -1464,10 +1480,23 @@ function resolveReceiptTargetMonthsByBankFlags_(patientId, billingMonth, cache) 
       break;
     }
 
-    return normalizePastBillingMonths_(aeMonths.concat(previousMonthKey), monthKey);
+    return normalizePastBillingMonths_(aeMonths.concat(afMonthKey), monthKey);
   }
 
   return [previousMonthKey];
+}
+
+function isNextMonth_(fromMonthKey, toMonthKey) {
+  const fromKey = normalizeBillingMonthKeySafe_(fromMonthKey);
+  const toKey = normalizeBillingMonthKeySafe_(toMonthKey);
+  if (!fromKey || !toKey) return false;
+  const fromYear = Number(fromKey.slice(0, 4));
+  const fromMonth = Number(fromKey.slice(4, 6));
+  if (!fromYear || !fromMonth) return false;
+  const nextMonth = fromMonth === 12 ? 1 : fromMonth + 1;
+  const nextYear = fromMonth === 12 ? fromYear + 1 : fromYear;
+  const nextKey = `${String(nextYear)}${String(nextMonth).padStart(2, '0')}`;
+  return nextKey === toKey;
 }
 
 function resolveReceiptTargetMonths(patientId, billingMonth, cache) {

@@ -150,9 +150,6 @@
     <hr class="divider">
 
     <? var receipt = amount.previousReceipt || amount.receipt || {}; ?>
-    <?
-      var showReceipt = !!receipt.visible;
-    ?>
     <? var receiptAddressee = receipt.addressee || data.name || ''; ?>
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptBreakdown = Array.isArray(amount && amount.receiptMonthBreakdown) ? amount.receiptMonthBreakdown : (Array.isArray(receipt && receipt.receiptMonthBreakdown) ? receipt.receiptMonthBreakdown : []); ?>
@@ -160,10 +157,9 @@
     <? var previousReceiptAmount = amount && amount.previousReceiptAmount != null ? Number(amount.previousReceiptAmount) : (receipt && receipt.previousReceiptAmount != null ? Number(receipt.previousReceiptAmount) : null); ?>
     <? var receiptAmount = receiptBreakdownAmount != null ? receiptBreakdownAmount : previousReceiptAmount != null ? previousReceiptAmount : (receipt.amount != null ? receipt.amount : receipt.total != null ? receipt.total : receipt.price); ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
-    <? if (!amount.forceHideReceipt) { ?>
+    <? if (!amount.forceHideReceipt && amount.showReceipt === true) { ?>
       <section class="card">
         <h3 class="section-title">前月分領収書</h3>
-        <? if (showReceipt) { ?>
         <div class="info">
           <div class="label">宛名</div>
           <div><?= receiptAddressee || '―' ?></div>
@@ -176,9 +172,6 @@
           <div class="label">発行者</div>
           <div>株式会社べるつりー</div>
         </div>
-      <? } else { ?>
-          <div class="note">前月分は未入金のため、後日合算して請求されます</div>
-        <? } ?>
       </section>
     <? } ?>
   </div>

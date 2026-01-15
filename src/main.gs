@@ -1621,16 +1621,9 @@ function resolveReceiptTargetMonths(patientId, billingMonth, cache) {
   const receiptMonths = resolveReceiptTargetMonthsByBankFlags_(patientId, monthKey, cache);
   if (!receiptMonths.length) return [];
 
-  const loaded = loadPreparedBillingWithSheetFallback_(previousMonthKey, { withValidation: true, restoreCache: true });
-  const prepared = normalizePreparedBilling_(loaded && loaded.prepared);
-  if (!prepared || !Array.isArray(prepared.billingJson)) return [];
-
-  const hasEntry = prepared.billingJson.some(entry => (
-    typeof billingNormalizePatientId_ === 'function'
-      ? billingNormalizePatientId_(entry && entry.patientId)
-      : String(entry && entry.patientId || '').trim()
-  ) === pid);
-  if (!hasEntry) return [];
+  const previousPrepared = getPreparedBillingForMonthCached_(previousMonthKey, cache);
+  const totals = previousPrepared && previousPrepared.totalsByPatient;
+  if (!totals || !Object.prototype.hasOwnProperty.call(totals, pid)) return [];
 
   return receiptMonths;
 }

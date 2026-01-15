@@ -3611,8 +3611,7 @@ function generatePreparedInvoices_(prepared, options) {
 
   const outputOptions = Object.assign({}, opts, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
   const pdfs = generateInvoicePdfs(invoiceContexts, outputOptions);
-  const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
-  const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(aggregateApplied) : null;
+  const bankOutput = null;
   return {
     billingMonth: normalized.billingMonth,
     billingJson: receiptEnriched.billingJson,

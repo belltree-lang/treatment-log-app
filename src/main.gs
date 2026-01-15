@@ -3294,7 +3294,10 @@ function generateInvoices(billingMonth, options) {
     const prepared = buildPreparedBillingPayload_(billingMonth);
     savePreparedBilling_(prepared);
     savePreparedBillingToSheet_(billingMonth, prepared);
-    return generatePreparedInvoices_(prepared, options);
+    const monthCache = createBillingMonthCache_();
+    loadPreparedBillingSummariesIntoCache_(monthCache);
+    loadBankWithdrawalAmountsIntoCache_(monthCache, prepared);
+    return generatePreparedInvoices_(prepared, Object.assign({}, options || {}, { monthCache }));
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     const stack = err && err.stack ? '\n' + err.stack : '';
@@ -3546,13 +3549,10 @@ function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
   const opts = options || {};
   const monthCache = opts.monthCache || createBillingMonthCache_();
-  // Preload prepared summaries once for this generation flow.
-  loadPreparedBillingSummariesIntoCache_(monthCache);
   if (normalized && normalized.billingMonth && monthCache.preparedByMonth) {
     monthCache.preparedByMonth[normalized.billingMonth] = monthCache.preparedByMonth[normalized.billingMonth]
       || reducePreparedBillingSummary_(normalized);
   }
-  loadBankWithdrawalAmountsIntoCache_(monthCache, normalized);
   const aggregateApplied = applyAggregateInvoiceRulesFromBankFlags_(normalized, monthCache);
   const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied, monthCache);
   if (!receiptEnriched || !receiptEnriched.billingJson) {
@@ -3641,7 +3641,10 @@ function generateInvoicesFromCache(billingMonth, options) {
   if (!prepared || !prepared.billingJson || (validation && validation.ok === false)) {
     throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
   }
-  return generatePreparedInvoices_(prepared, options);
+  const monthCache = createBillingMonthCache_();
+  loadPreparedBillingSummariesIntoCache_(monthCache);
+  loadBankWithdrawalAmountsIntoCache_(monthCache, prepared);
+  return generatePreparedInvoices_(prepared, Object.assign({}, options || {}, { monthCache }));
 }
 
 function normalizeAggregateInvoiceMonths_(months, prepared, billingMonth) {
@@ -4083,7 +4086,10 @@ function applyBillingEdits(billingMonth, options) {
 
 function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
   const prepared = applyBillingEdits(billingMonth, options);
-  return generatePreparedInvoices_(prepared, options || {});
+  const monthCache = createBillingMonthCache_();
+  loadPreparedBillingSummariesIntoCache_(monthCache);
+  loadBankWithdrawalAmountsIntoCache_(monthCache, prepared);
+  return generatePreparedInvoices_(prepared, Object.assign({}, options || {}, { monthCache }));
 }
 
 function generatePreparedInvoicesForMonth(billingMonth, options) {
@@ -4112,6 +4118,8 @@ function generatePreparedInvoicesForMonth(billingMonth, options) {
   if (monthCache.preparedByMonth) {
     monthCache.preparedByMonth[monthKey] = reducePreparedBillingSummary_(prepared);
   }
+  loadPreparedBillingSummariesIntoCache_(monthCache);
+  loadBankWithdrawalAmountsIntoCache_(monthCache, prepared);
 
   return generatePreparedInvoices_(prepared, Object.assign({}, opts, { monthCache }));
 }

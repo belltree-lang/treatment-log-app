@@ -608,6 +608,7 @@ function buildInvoicePreviousReceipt_(item, display, aggregateMonths) {
     : (Array.isArray(aggregateBreakdown) && aggregateBreakdown.length
       ? Number(aggregateBreakdown[0] && aggregateBreakdown[0].amount) || 0
       : 0);
+  const receiptMonthBreakdown = isAggregateInvoice ? aggregateBreakdown : null;
 
   return {
     visible: !!(receiptDisplay && receiptDisplay.visible),
@@ -616,6 +617,7 @@ function buildInvoicePreviousReceipt_(item, display, aggregateMonths) {
     amount: Number.isFinite(resolvedAmount) ? resolvedAmount : 0,
     note,
     receiptMonths: receiptDisplay && receiptDisplay.receiptMonths ? receiptDisplay.receiptMonths : [],
+    receiptMonthBreakdown,
     aggregateStatus: receiptDisplay && receiptDisplay.aggregateStatus ? receiptDisplay.aggregateStatus : '',
     aggregateConfirmed: !!(receiptDisplay && receiptDisplay.aggregateConfirmed),
     settled: isPreviousReceiptSettled_(item)
@@ -646,7 +648,17 @@ function formatReceiptSettlementDate_(receiptMonths, fallbackDate) {
 
 function resolveReceiptMonthBreakdown_(item, receiptMonths) {
   const precomputed = item && Array.isArray(item.receiptMonthBreakdown) ? item.receiptMonthBreakdown : [];
-  if (item && item.hasOwnProperty('receiptMonthBreakdown')) return precomputed;
+  const requestedMonths = Array.isArray(receiptMonths) ? receiptMonths : [];
+  if (item && item.hasOwnProperty('receiptMonthBreakdown')) {
+    if (!requestedMonths.length) return precomputed;
+    const coveredMonths = new Set(precomputed.map(row => row && row.month).filter(Boolean));
+    const hasAllMonths = requestedMonths.every(month => coveredMonths.has(month));
+    if (hasAllMonths) {
+      return requestedMonths
+        .map(month => precomputed.find(row => row && row.month === month))
+        .filter(Boolean);
+    }
+  }
 
   try {
     return buildReceiptMonthBreakdownForEntry_(

@@ -789,24 +789,36 @@ function resolveAggregatePreparedBillingEntry_(monthKey, patientId, fallbackItem
     }
   }
 
-  if (!entry && typeof loadPreparedBillingWithSheetFallback_ === 'function') {
-    try {
-      const prepared = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
-      const payload = prepared && prepared.prepared !== undefined ? prepared.prepared : prepared;
-      const normalizedPrepared = typeof normalizePreparedBilling_ === 'function'
-        ? normalizePreparedBilling_(payload)
-        : payload;
-      const billingEntries = normalizedPrepared && normalizedPrepared.billingJson;
-      if (Array.isArray(billingEntries)) {
-        entry = billingEntries.find(row => {
-          const pid = typeof billingNormalizePatientId_ === 'function'
-            ? billingNormalizePatientId_(row && row.patientId)
-            : (row && row.patientId ? String(row.patientId).trim() : '');
-          return pid && pid === normalizedPatientId;
-        });
+  if (!entry) {
+    const fallbackStore = cache.preparedEntriesByMonth || (cache.preparedEntriesByMonth = {});
+    let fallbackEntries = null;
+    if (Object.prototype.hasOwnProperty.call(fallbackStore, monthKey)) {
+      fallbackEntries = fallbackStore[monthKey];
+    } else if (typeof loadPreparedBillingWithSheetFallback_ === 'function') {
+      try {
+        const prepared = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
+        const payload = prepared && prepared.prepared !== undefined ? prepared.prepared : prepared;
+        const normalizedPrepared = typeof normalizePreparedBilling_ === 'function'
+          ? normalizePreparedBilling_(payload)
+          : payload;
+        const billingEntries = normalizedPrepared && normalizedPrepared.billingJson;
+        if (Array.isArray(billingEntries)) {
+          fallbackEntries = {};
+          billingEntries.forEach(row => {
+            const pid = typeof billingNormalizePatientId_ === 'function'
+              ? billingNormalizePatientId_(row && row.patientId)
+              : (row && row.patientId ? String(row.patientId).trim() : '');
+            if (!pid || Object.prototype.hasOwnProperty.call(fallbackEntries, pid)) return;
+            fallbackEntries[pid] = row;
+          });
+        }
+      } catch (err) {
+        fallbackEntries = null;
       }
-    } catch (err) {
-      entry = null;
+      fallbackStore[monthKey] = fallbackEntries;
+    }
+    if (!entry && fallbackEntries && normalizedPatientId) {
+      entry = fallbackEntries[normalizedPatientId] || null;
     }
   }
 

@@ -174,6 +174,7 @@ if (typeof globalThis !== 'undefined') {
 
 const BILLING_MONTH_KEY_CACHE_ = {};
 const RECEIPT_TARGET_MONTHS_BY_BANK_FLAGS_CACHE_ = {};
+const BILLING_CACHE_PAYLOAD_MEMO_ = {};
 
 function shouldLogReceiptDebug_(patientId) {
   const debugPid = String(BILLING_DEBUG_PID || '').trim();
@@ -2138,6 +2139,11 @@ function loadBillingCachePayload_(cache, key) {
   const chunkCount = parseBillingCacheChunkCount_(cached);
   if (!chunkCount) return cached;
 
+  const memoized = BILLING_CACHE_PAYLOAD_MEMO_[key];
+  if (memoized && memoized.marker === cached && typeof memoized.payload === 'string') {
+    return memoized.payload;
+  }
+
   const chunks = [];
   for (let idx = 1; idx <= chunkCount; idx++) {
     const chunkValue = cache.get(buildBillingCacheChunkKey_(key, idx));
@@ -2151,6 +2157,7 @@ function loadBillingCachePayload_(cache, key) {
   } catch (err) {
     // ignore logging errors
   }
+  BILLING_CACHE_PAYLOAD_MEMO_[key] = { marker: cached, payload: merged };
   return merged;
 }
 

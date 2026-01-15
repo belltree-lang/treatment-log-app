@@ -1950,13 +1950,6 @@ function loadPreparedBilling_(billingMonthKey, options) {
     return wrapResult(null, { ok: false, reason: 'cache miss' });
   }
   try {
-    if (isBillingDebugEnabled_()) {
-      Logger.log('[billing] loadPreparedBilling_ raw cache for ' + key + ': ' + cached);
-    }
-  } catch (err) {
-    // ignore logging errors in non-GAS environments
-  }
-  try {
     const parsed = JSON.parse(cached);
     const rawLength = Array.isArray(parsed && parsed.billingJson) ? parsed.billingJson.length : 0;
     const validation = validatePreparedBillingPayload_(parsed, expectedMonthKey);
@@ -3500,13 +3493,18 @@ function buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, cach
 
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
-  const monthCache = createBillingMonthCache_();
+  const opts = options || {};
+  const monthCache = opts.monthCache || createBillingMonthCache_();
+  if (normalized && normalized.billingMonth && monthCache.preparedByMonth) {
+    monthCache.preparedByMonth[normalized.billingMonth] = monthCache.preparedByMonth[normalized.billingMonth]
+      || reducePreparedBillingSummary_(normalized);
+  }
   const aggregateApplied = applyAggregateInvoiceRulesFromBankFlags_(normalized, monthCache);
   const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied, monthCache);
   if (!receiptEnriched || !receiptEnriched.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
-  const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(options && options.invoicePatientIds);
+  const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(opts.invoicePatientIds);
   const targetBillingRows = filterBillingJsonForInvoice_(
     (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
     targetPatientIds
@@ -3564,7 +3562,7 @@ function generatePreparedInvoices_(prepared, options) {
   );
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
-  const outputOptions = Object.assign({}, options, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
+  const outputOptions = Object.assign({}, opts, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
   const pdfs = generateInvoicePdfs(invoiceContexts, outputOptions);
   const shouldExportBank = !outputOptions || outputOptions.skipBankExport !== true;
   const bankOutput = shouldExportBank ? exportBankTransferDataForPrepared_(aggregateApplied) : null;
@@ -4054,7 +4052,12 @@ function generatePreparedInvoicesForMonth(billingMonth, options) {
     throw new Error('事前集計が見つかりません。先に「請求データを集計」ボタンを実行してください。');
   }
 
-  return generatePreparedInvoices_(prepared, opts);
+  const monthCache = createBillingMonthCache_();
+  if (monthCache.preparedByMonth) {
+    monthCache.preparedByMonth[monthKey] = reducePreparedBillingSummary_(prepared);
+  }
+
+  return generatePreparedInvoices_(prepared, Object.assign({}, opts, { monthCache }));
 }
 
 function updateBillingReceiptStatus(billingMonth, options) {

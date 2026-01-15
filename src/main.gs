@@ -3365,6 +3365,33 @@ function filterBillingJsonForInvoice_(billingJson, patientIds) {
   return billingJson.filter(item => targetSet.has(String(item && item.patientId ? item.patientId : '').trim()));
 }
 
+function shouldGenerateInvoicePdfForEntry_(entry, prepared) {
+  if (!entry) return false;
+  const patientId = billingNormalizePatientId_(entry && entry.patientId);
+  if (!patientId) return false;
+
+  const patientMap = prepared && prepared.patients ? prepared.patients : null;
+  const patient = patientMap && Object.prototype.hasOwnProperty.call(patientMap, patientId)
+    ? patientMap[patientId]
+    : null;
+  if (patient && typeof normalizeMedicalSubsidyFlag_ === 'function') {
+    const hasMedicalSubsidy = normalizeMedicalSubsidyFlag_(patient.medicalSubsidy);
+    if (hasMedicalSubsidy) return false;
+  }
+
+  const normalizeVisits = typeof billingNormalizeVisitCount_ === 'function'
+    ? billingNormalizeVisitCount_
+    : value => Number(value) || 0;
+  const visitCount = normalizeVisits(entry && entry.visitCount);
+  if (!visitCount) return false;
+
+  const billingAmount = normalizeMoneyNumber_(entry && entry.billingAmount);
+  const grandTotal = normalizeMoneyNumber_(entry && entry.grandTotal);
+  if (!billingAmount || !grandTotal) return false;
+
+  return true;
+}
+
 function buildStandardInvoiceAmountDataForPdf_(entry, billingMonth) {
   const targetMonth = normalizeBillingMonthKeySafe_(billingMonth || (entry && entry.billingMonth));
   const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: targetMonth }));
@@ -3554,7 +3581,8 @@ function generatePreparedInvoices_(prepared, options) {
     (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
     targetPatientIds
   );
-  const invoiceContexts = targetBillingRows.map(row => {
+  const invoiceTargets = targetBillingRows.filter(row => shouldGenerateInvoicePdfForEntry_(row, receiptEnriched));
+  const invoiceContexts = invoiceTargets.map(row => {
     const pid = billingNormalizePatientId_(row && row.patientId);
     const receiptEntry = pid
       ? (receiptEnriched.billingJson || []).find(item => billingNormalizePatientId_(item && item.patientId) === pid) || row

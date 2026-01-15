@@ -1199,6 +1199,7 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
     const hasPreviousPreparedEntry = !!getPreparedBillingEntryForMonthCached_(previousMonthKey, pid, monthCache);
     const receiptTargetMonths = resolveReceiptTargetMonths(pid, monthKey, cache);
     const hasPreviousReceiptSheet = hasPreviousPreparedEntry;
+    let nextEntry = entry;
 
     if (!receiptTargetMonths.length) {
       logReceiptDebug_(pid, {
@@ -1208,32 +1209,66 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
         receiptTargetMonths,
         receiptMonths: []
       });
-      return entry;
-    }
-
-    if (!hasPreviousReceiptSheet && receiptTargetMonths[0] === previousMonthKey) {
-      return Object.assign({}, entry, {
+    } else if (!hasPreviousReceiptSheet && receiptTargetMonths[0] === previousMonthKey) {
+      nextEntry = Object.assign({}, entry, {
         hasPreviousReceiptSheet: false,
         receiptRemark: '',
         receiptMonthBreakdown: []
       });
+    } else {
+      const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, prepared, monthCache);
+
+      logReceiptDebug_(pid, {
+        step: 'attachPreviousReceiptAmounts_',
+        billingMonth: monthKey,
+        patientId: pid,
+        receiptTargetMonths,
+        receiptMonths: receiptTargetMonths
+      });
+      nextEntry = Object.assign({}, entry, {
+        hasPreviousReceiptSheet,
+        receiptMonths: receiptTargetMonths,
+        receiptRemark: entry && entry.receiptRemark,
+        receiptMonthBreakdown: receiptBreakdown
+      });
     }
 
-    const receiptBreakdown = buildReceiptMonthBreakdownForEntry_(pid, receiptTargetMonths, prepared, monthCache);
+    if (nextEntry && nextEntry.previousReceiptAmount == null) {
+      if (nextEntry && Array.isArray(nextEntry.receiptMonthBreakdown) && nextEntry.receiptMonthBreakdown.length) {
+        const hasBreakdownAmount = nextEntry.receiptMonthBreakdown.some(item => item && item.amount != null && item.amount !== '');
+        if (hasBreakdownAmount) {
+          const breakdownAmount = nextEntry.receiptMonthBreakdown.reduce((sum, item) => {
+            const normalized = normalizeMoneyNumber_(item && item.amount);
+            return normalized != null ? sum + normalized : sum;
+          }, 0);
+          if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+            billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ filled previousReceiptAmount from receiptMonthBreakdown: ' + JSON.stringify({
+              patientId: pid,
+              billingMonth: monthKey,
+              breakdownAmount
+            }));
+          }
+          return Object.assign({}, nextEntry, { previousReceiptAmount: breakdownAmount });
+        }
+      }
+      const previousEntry = getPreparedBillingEntryForMonthCached_(previousMonthKey, pid, monthCache);
+      if (!previousEntry) return nextEntry;
+      const previousAmount = previousEntry.grandTotal != null && previousEntry.grandTotal !== ''
+        ? normalizeMoneyNumber_(previousEntry.grandTotal)
+        : normalizeMoneyNumber_(previousEntry.billingAmount);
+      if (previousAmount == null) return nextEntry;
+      if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+        billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ filled previousReceiptAmount from previous month: ' + JSON.stringify({
+          patientId: pid,
+          billingMonth: monthKey,
+          previousMonthKey,
+          previousAmount
+        }));
+      }
+      return Object.assign({}, nextEntry, { previousReceiptAmount: previousAmount });
+    }
 
-    logReceiptDebug_(pid, {
-      step: 'attachPreviousReceiptAmounts_',
-      billingMonth: monthKey,
-      patientId: pid,
-      receiptTargetMonths,
-      receiptMonths: receiptTargetMonths
-    });
-    return Object.assign({}, entry, {
-      hasPreviousReceiptSheet,
-      receiptMonths: receiptTargetMonths,
-      receiptRemark: entry && entry.receiptRemark,
-      receiptMonthBreakdown: receiptBreakdown
-    });
+    return nextEntry;
   });
 
   return Object.assign({}, prepared, {
@@ -3453,51 +3488,7 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
   const patientId = billingNormalizePatientId_(entry && entry.patientId);
   if (!billingMonth || !patientId) return null;
 
-  const ensurePreviousReceiptAmount = () => {
-    if (entry && entry.previousReceiptAmount != null) return entry;
-    if (entry && Array.isArray(entry.receiptMonthBreakdown) && entry.receiptMonthBreakdown.length) {
-      const hasBreakdownAmount = entry.receiptMonthBreakdown.some(item => item && item.amount != null && item.amount !== '');
-      if (hasBreakdownAmount) {
-        const breakdownAmount = entry.receiptMonthBreakdown.reduce((sum, item) => {
-          const normalized = normalizeMoneyNumber_(item && item.amount);
-          return normalized != null ? sum + normalized : sum;
-        }, 0);
-        if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
-          billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ filled previousReceiptAmount from receiptMonthBreakdown: ' + JSON.stringify({
-            patientId,
-            billingMonth,
-            breakdownAmount
-          }));
-        }
-        return Object.assign({}, entry, { previousReceiptAmount: breakdownAmount });
-      }
-      return entry;
-    }
-    const previousMonthKey = resolvePreviousBillingMonthKey_(billingMonth);
-    if (!previousMonthKey) return entry;
-    const monthCache = cache || {
-      preparedByMonth: {},
-      bankWithdrawalUnpaidByMonth: {},
-      bankWithdrawalAmountsByMonth: {}
-    };
-    const previousEntry = getPreparedBillingEntryForMonthCached_(previousMonthKey, patientId, monthCache);
-    if (!previousEntry) return entry;
-    const previousAmount = previousEntry.grandTotal != null && previousEntry.grandTotal !== ''
-      ? normalizeMoneyNumber_(previousEntry.grandTotal)
-      : normalizeMoneyNumber_(previousEntry.billingAmount);
-    if (previousAmount == null) return entry;
-    if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
-      billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ filled previousReceiptAmount from previous month: ' + JSON.stringify({
-        patientId,
-        billingMonth,
-        previousMonthKey,
-        previousAmount
-      }));
-    }
-    return Object.assign({}, entry, { previousReceiptAmount: previousAmount });
-  };
-
-  const receiptEntry = ensurePreviousReceiptAmount();
+  const receiptEntry = entry;
   if (receiptEntry && receiptEntry.previousReceiptAmount == null) {
     if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
       billingLogger_.log('[billing] buildInvoicePdfContextForEntry_ previousReceiptAmount still missing before finalize: ' + JSON.stringify({

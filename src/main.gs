@@ -528,16 +528,23 @@ function savePreparedBillingMetaJson_(billingMonth, metaPayload) {
   if (!sheet) return { billingMonth: monthKey, inserted: 0 };
 
   const lastRow = sheet.getLastRow();
-  const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
-
-  for (let i = existingRows.length - 1; i >= 0; i--) {
-    if (String(existingRows[i][0] || '').trim() === monthKey) {
-      sheet.deleteRow(i + 2);
+  const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 3).getValues() : [];
+  const existingIndexes = [];
+  existingRows.forEach((row, idx) => {
+    if (String(row[0] || '').trim() === monthKey) {
+      existingIndexes.push(idx);
     }
-  }
+  });
 
   if (!metaPayload || typeof metaPayload !== 'object') {
-    return { billingMonth: monthKey, inserted: 0 };
+    let cleared = 0;
+    if (existingIndexes.length) {
+      existingIndexes.forEach(idx => {
+        sheet.getRange(idx + 2, 1, 1, 3).setValues([['', '', '']]);
+        cleared += 1;
+      });
+    }
+    return { billingMonth: monthKey, inserted: 0, updated: 0, appended: 0, cleared };
   }
 
   const payloadJson = JSON.stringify(metaPayload);
@@ -549,10 +556,29 @@ function savePreparedBillingMetaJson_(billingMonth, metaPayload) {
 
   if (!chunks.length) return { billingMonth: monthKey, inserted: 0 };
 
-  sheet.insertRows(2, chunks.length);
   const rows = chunks.map((chunk, idx) => [monthKey, idx + 1, chunk]);
-  sheet.getRange(2, 1, rows.length, 3).setValues(rows);
-  return { billingMonth: monthKey, inserted: rows.length };
+  const updateCount = Math.min(existingIndexes.length, rows.length);
+  for (let i = 0; i < updateCount; i++) {
+    const rowIndex = existingIndexes[i] + 2;
+    sheet.getRange(rowIndex, 1, 1, 3).setValues([rows[i]]);
+  }
+
+  const appendCount = rows.length - updateCount;
+  if (appendCount > 0) {
+    const appendStart = sheet.getLastRow() + 1;
+    sheet.getRange(appendStart, 1, appendCount, 3).setValues(rows.slice(updateCount));
+  }
+
+  let cleared = 0;
+  if (existingIndexes.length > rows.length) {
+    for (let i = rows.length; i < existingIndexes.length; i++) {
+      const rowIndex = existingIndexes[i] + 2;
+      sheet.getRange(rowIndex, 1, 1, 3).setValues([['', '', '']]);
+      cleared += 1;
+    }
+  }
+
+  return { billingMonth: monthKey, inserted: rows.length, updated: updateCount, appended: appendCount, cleared };
 }
 
 function getPreparedBillingMonths() {
@@ -1912,15 +1938,13 @@ function savePreparedBillingJsonRows_(billingMonth, billingJson) {
   const sheet = ensurePreparedBillingJsonSheet_();
   if (!sheet) return { billingMonth: monthKey, inserted: 0 };
   const lastRow = sheet.getLastRow();
-  const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 1).getValues() : [];
-
-  for (let i = existingRows.length - 1; i >= 0; i--) {
-    if (String(existingRows[i][0] || '').trim() === monthKey) {
-      sheet.deleteRow(i + 2);
+  const existingRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 3).getValues() : [];
+  const existingIndexes = [];
+  existingRows.forEach((row, idx) => {
+    if (String(row[0] || '').trim() === monthKey) {
+      existingIndexes.push(idx);
     }
-  }
-
-  if (!billingJson.length) return { billingMonth: monthKey, inserted: 0 };
+  });
 
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
@@ -1932,9 +1956,28 @@ function savePreparedBillingJsonRows_(billingMonth, billingJson) {
     return [monthKey, pid || '', JSON.stringify(rowPayload)];
   });
 
-  sheet.insertRows(2, rows.length);
-  sheet.getRange(2, 1, rows.length, 3).setValues(rows);
-  return { billingMonth: monthKey, inserted: rows.length };
+  const updateCount = Math.min(existingIndexes.length, rows.length);
+  for (let i = 0; i < updateCount; i++) {
+    const rowIndex = existingIndexes[i] + 2;
+    sheet.getRange(rowIndex, 1, 1, 3).setValues([rows[i]]);
+  }
+
+  const appendCount = rows.length - updateCount;
+  if (appendCount > 0) {
+    const appendStart = sheet.getLastRow() + 1;
+    sheet.getRange(appendStart, 1, appendCount, 3).setValues(rows.slice(updateCount));
+  }
+
+  let cleared = 0;
+  if (existingIndexes.length > rows.length) {
+    for (let i = rows.length; i < existingIndexes.length; i++) {
+      const rowIndex = existingIndexes[i] + 2;
+      sheet.getRange(rowIndex, 1, 1, 3).setValues([['', '', '']]);
+      cleared += 1;
+    }
+  }
+
+  return { billingMonth: monthKey, inserted: rows.length, updated: updateCount, appended: appendCount, cleared };
 }
 
 function savePreparedBillingToSheet_(billingMonth, preparedPayload) {
@@ -3368,7 +3411,7 @@ function deletePreparedBillingDataForMonth_(billingMonth) {
   return summary;
 }
 
-function resetPreparedBillingAndPrepare(billingMonth) {
+function resetPreparedBillingAndPrepare(billingMonth, options) {
   const normalizedMonth = normalizeBillingMonthInput ? normalizeBillingMonthInput(billingMonth) : null;
   const monthKey = normalizedMonth && normalizedMonth.key
     ? normalizedMonth.key
@@ -3377,19 +3420,18 @@ function resetPreparedBillingAndPrepare(billingMonth) {
     throw new Error('請求月をYYYY-MM形式で指定してください。');
   }
 
-  deletePreparedBillingDataForMonth_(monthKey);
   try {
     if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
-      billingLogger_.log('[billing] resetPreparedBillingAndPrepare clearing existing data for ' + monthKey);
+      billingLogger_.log('[billing] resetPreparedBillingAndPrepare updating existing data for ' + monthKey);
     }
   } catch (err) {
     // ignore logging issues in non-GAS environments
   }
 
-  return prepareBillingData(monthKey);
+  return prepareBillingData(monthKey, options);
 }
 
-function prepareBillingData(billingMonth) {
+function prepareBillingData(billingMonth, options) {
   const normalizedMonth = normalizeBillingMonthInput(billingMonth);
   const existingResult = loadPreparedBillingWithSheetFallback_(normalizedMonth.key, { withValidation: true });
   const existingPrepared = existingResult && existingResult.prepared !== undefined ? existingResult.prepared : existingResult;
@@ -3426,8 +3468,14 @@ function prepareBillingData(billingMonth) {
     : { billingMonth: normalizedMonth.key };
   savePreparedBilling_(cachePayload);
   savePreparedBillingToSheet_(normalizedMonth.key, cachePayload);
-  const bankSheetResult = syncBankWithdrawalSheetForMonth_(normalizedMonth, prepared);
-  billingLogger_.log('[billing] Bank withdrawal sheet synced: ' + JSON.stringify(bankSheetResult));
+  const shouldSyncBank = !(options && options.syncBankWithdrawal === false);
+  let bankSheetResult = null;
+  if (shouldSyncBank) {
+    bankSheetResult = syncBankWithdrawalSheetForMonth_(normalizedMonth, prepared);
+    billingLogger_.log('[billing] Bank withdrawal sheet synced: ' + JSON.stringify(bankSheetResult));
+  } else {
+    billingLogger_.log('[billing] Bank withdrawal sheet sync skipped for ' + normalizedMonth.key);
+  }
   return cachePayload;
 }
 

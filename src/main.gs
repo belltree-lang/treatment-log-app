@@ -164,6 +164,7 @@ const BANK_INFO_SHEET_NAME = '銀行情報';
 const UNPAID_HISTORY_SHEET_NAME = '未回収履歴';
 const BANK_WITHDRAWAL_UNPAID_HEADER = '未回収チェック';
 const BANK_WITHDRAWAL_AGGREGATE_HEADER = '合算';
+const BANK_WITHDRAWAL_ONLINE_HEADER = 'オンライン';
 const BILLING_DEBUG_PID = '';
 
 if (typeof globalThis !== 'undefined') {
@@ -2731,15 +2732,37 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
     ? headers.slice()
     : (targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getDisplayValues()[0] || []);
 
+  const refreshHeaders_ = () => targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getDisplayValues()[0] || [];
+  const insertColumnBefore_ = (index, label) => {
+    targetSheet.insertColumnBefore(index);
+    targetSheet.getRange(1, index).setValue(label);
+  };
+
   let unpaidCol = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
+  let aggregateCol = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
+  let onlineCol = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
   if (!unpaidCol) {
-    const lastCol = targetSheet.getLastColumn();
-    targetSheet.insertColumnAfter(lastCol);
-    unpaidCol = lastCol + 1;
-    targetSheet.getRange(1, unpaidCol).setValue(BANK_WITHDRAWAL_UNPAID_HEADER);
+    const insertBefore = [aggregateCol, onlineCol].filter(Boolean).sort((a, b) => a - b)[0];
+    if (insertBefore) {
+      insertColumnBefore_(insertBefore, BANK_WITHDRAWAL_UNPAID_HEADER);
+      aggregateCol = aggregateCol ? aggregateCol + 1 : aggregateCol;
+      onlineCol = onlineCol ? onlineCol + 1 : onlineCol;
+      unpaidCol = insertBefore;
+    } else {
+      const lastCol = targetSheet.getLastColumn();
+      targetSheet.insertColumnAfter(lastCol);
+      unpaidCol = lastCol + 1;
+      targetSheet.getRange(1, unpaidCol).setValue(BANK_WITHDRAWAL_UNPAID_HEADER);
+    }
   }
 
-  let aggregateCol = resolveBillingColumn_(workingHeaders, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
+  if (!aggregateCol) {
+    const refreshedHeaders = refreshHeaders_();
+    unpaidCol = resolveBillingColumn_(refreshedHeaders, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
+    onlineCol = resolveBillingColumn_(refreshedHeaders, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
+  }
+
+  aggregateCol = aggregateCol || resolveBillingColumn_(refreshHeaders_(), [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
   if (!aggregateCol) {
     try {
       targetSheet.insertColumnAfter(unpaidCol);
@@ -2747,6 +2770,18 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
       targetSheet.getRange(1, aggregateCol).setValue(BANK_WITHDRAWAL_AGGREGATE_HEADER);
     } catch (err) {
       console.warn('[billing] Failed to insert aggregate column on bank withdrawal sheet', err);
+    }
+  }
+
+  onlineCol = resolveBillingColumn_(refreshHeaders_(), [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
+  if (!onlineCol) {
+    try {
+      const insertAfter = aggregateCol || unpaidCol || targetSheet.getLastColumn();
+      targetSheet.insertColumnAfter(insertAfter);
+      onlineCol = insertAfter + 1;
+      targetSheet.getRange(1, onlineCol).setValue(BANK_WITHDRAWAL_ONLINE_HEADER);
+    } catch (err) {
+      console.warn('[billing] Failed to insert online column on bank withdrawal sheet', err);
     }
   }
 
@@ -2802,6 +2837,9 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
         if (aggregateCol) {
           applyCheckboxes(aggregateCol);
         }
+        if (onlineCol) {
+          applyCheckboxes(onlineCol);
+        }
       }
     }
   } catch (err) {
@@ -2810,7 +2848,7 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
 
   enforceBankWithdrawalAggregateConstraint_(targetSheet, unpaidCol, aggregateCol);
 
-  return { unpaidCol, aggregateCol };
+  return { unpaidCol, aggregateCol, onlineCol };
 }
 
 function enforceBankWithdrawalAggregateConstraint_(sheet, unpaidCol, aggregateCol) {

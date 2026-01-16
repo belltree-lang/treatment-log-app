@@ -1050,13 +1050,14 @@ function buildInvoiceTemplateData_(item) {
   const isAggregateInvoice = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
   const chargeMonthLabel = monthLabel;
   let breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
+  const baseBreakdown = breakdown;
   let visits = breakdown.visits || 0;
   let unitPrice = breakdown.treatmentUnitPrice || 0;
   let carryOverAmount = normalizeBillingCarryOver_(item);
   let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
   let aggregateMonthTotals = [];
   let grandTotal = breakdown.grandTotal;
-  const selfPayItems = Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
+  const selfPayItems = Array.isArray(baseBreakdown.selfPayItems) ? baseBreakdown.selfPayItems : [];
 
   if (isAggregateInvoice && aggregateDecisionMonths.length > 1) {
     const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, { monthCache });

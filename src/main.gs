@@ -1419,6 +1419,61 @@ function attachPreviousReceiptAmounts_(prepared, cache, options) {
   });
 }
 
+function buildReceiptSummaryMap_(prepared, cache, options) {
+  const monthKey = normalizeBillingMonthKeySafe_(prepared && prepared.billingMonth);
+  if (!monthKey || !Array.isArray(prepared && prepared.billingJson)) return {};
+
+  const normalizePid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_
+    : value => String(value || '').trim();
+  const opts = options || {};
+  const targetIds = Array.isArray(opts.targetPatientIds) ? opts.targetPatientIds : [];
+  const normalizedTargetIds = targetIds
+    .map(id => normalizePid(id))
+    .filter(Boolean);
+  const targetIdSet = normalizedTargetIds.length ? new Set(normalizedTargetIds) : null;
+  const map = {};
+
+  prepared.billingJson.forEach(entry => {
+    const pid = normalizePid(entry && entry.patientId);
+    if (!pid) return;
+    if (targetIdSet && !targetIdSet.has(pid)) return;
+    const decision = resolveInvoiceGenerationMode(pid, monthKey, cache);
+    const decisionMonths = decision && Array.isArray(decision.aggregateMonths) ? decision.aggregateMonths : [];
+    const aggregateMonths = normalizePastBillingMonths_(decisionMonths, monthKey);
+    const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
+    map[pid] = {
+      decision,
+      aggregateMonths,
+      isAggregateInvoice
+    };
+  });
+
+  return map;
+}
+
+function resolveReceiptSummaryForPatient_(patientId, billingMonth, cache, summaryMap) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(patientId)
+    : String(patientId || '').trim();
+  if (!pid || !monthKey) {
+    return { decision: { mode: 'standard', aggregateMonths: [] }, aggregateMonths: [], isAggregateInvoice: false };
+  }
+  if (summaryMap && Object.prototype.hasOwnProperty.call(summaryMap, pid)) {
+    return summaryMap[pid];
+  }
+  const decision = resolveInvoiceGenerationMode(pid, monthKey, cache);
+  const decisionMonths = decision && Array.isArray(decision.aggregateMonths) ? decision.aggregateMonths : [];
+  const aggregateMonths = normalizePastBillingMonths_(decisionMonths, monthKey);
+  const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
+  return {
+    decision,
+    aggregateMonths,
+    isAggregateInvoice
+  };
+}
+
 function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
   const monthKey = normalizeBillingMonthKeySafe_(billingMonth);
   if (!monthKey) return { hasSheet: false, amounts: {} };
@@ -3692,7 +3747,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   });
 }
 
-function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
+function buildInvoicePdfContextForEntry_(entry, prepared, cache, receiptSummaryMap) {
   if (!entry) return null;
   const billingMonth = normalizeBillingMonthKeySafe_(prepared && prepared.billingMonth ? prepared.billingMonth : entry.billingMonth);
   const patientId = billingNormalizePatientId_(entry && entry.patientId);
@@ -3709,10 +3764,9 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache) {
       }));
     }
   }
-  const decision = resolveInvoiceGenerationMode(patientId, billingMonth, cache);
-  const decisionMonths = decision && Array.isArray(decision.aggregateMonths) ? decision.aggregateMonths : [];
-  const aggregateMonths = normalizePastBillingMonths_(decisionMonths, billingMonth);
-  const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
+  const receiptSummary = resolveReceiptSummaryForPatient_(patientId, billingMonth, cache, receiptSummaryMap);
+  const aggregateMonths = receiptSummary.aggregateMonths || [];
+  const isAggregateInvoice = !!receiptSummary.isAggregateInvoice;
   const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache, prepared);
 
   return {
@@ -3768,12 +3822,15 @@ function generatePreparedInvoices_(prepared, options) {
     targetPatientIds
   );
   const invoiceTargets = targetBillingRows.filter(row => shouldGenerateInvoicePdfForEntry_(row, receiptEnriched));
+  const receiptSummaryMap = buildReceiptSummaryMap_(receiptEnriched, monthCache, {
+    targetPatientIds
+  });
   const invoiceContexts = invoiceTargets.map(row => {
     const pid = billingNormalizePatientId_(row && row.patientId);
     const receiptEntry = pid
       ? (receiptEnriched.billingJson || []).find(item => billingNormalizePatientId_(item && item.patientId) === pid) || row
       : row;
-    return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache);
+    return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache, receiptSummaryMap);
   }).filter(Boolean);
   // 'scheduled' represents bank-flag-driven aggregate entries that skipped standard
   // invoices earlier and are now eligible for aggregate PDFs without additional triggers.

@@ -1311,7 +1311,7 @@ function isPatientCheckedUnpaidInBankWithdrawalSheet_(patientId, billingMonth, p
   return !!(unpaidMap && unpaidMap[pid]);
 }
 
-function attachPreviousReceiptAmounts_(prepared, cache) {
+function attachPreviousReceiptAmounts_(prepared, cache, options) {
   const monthKey = prepared && prepared.billingMonth;
   if (!monthKey || !Array.isArray(prepared && prepared.billingJson)) return prepared;
 
@@ -1321,6 +1321,12 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
     : value => String(value || '').trim();
+  const opts = options || {};
+  const targetIds = Array.isArray(opts.targetPatientIds) ? opts.targetPatientIds : [];
+  const normalizedTargetIds = targetIds
+    .map(id => normalizePid(id))
+    .filter(Boolean);
+  const targetIdSet = normalizedTargetIds.length ? new Set(normalizedTargetIds) : null;
   const monthCache = cache || {
     preparedByMonth: {},
     bankWithdrawalUnpaidByMonth: {},
@@ -1329,6 +1335,9 @@ function attachPreviousReceiptAmounts_(prepared, cache) {
 
   const enrichedJson = prepared.billingJson.map(entry => {
     const pid = normalizePid(entry && entry.patientId);
+    if (targetIdSet && !targetIdSet.has(pid)) {
+      return entry;
+    }
     const hasPreviousPreparedEntry = !!getPreparedBillingEntryForMonthCached_(previousMonthKey, pid, monthCache);
     const receiptTargetMonths = resolveReceiptTargetMonths(pid, monthKey, cache);
     const hasPreviousReceiptSheet = hasPreviousPreparedEntry;
@@ -3747,11 +3756,13 @@ function generatePreparedInvoices_(prepared, options) {
   }
   preloadPreparedPayloadsForPdfGeneration_(normalized, monthCache);
   const aggregateApplied = applyAggregateInvoiceRulesFromBankFlags_(normalized, monthCache);
-  const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied, monthCache);
+  const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(opts.invoicePatientIds);
+  const receiptEnriched = attachPreviousReceiptAmounts_(aggregateApplied, monthCache, {
+    targetPatientIds
+  });
   if (!receiptEnriched || !receiptEnriched.billingJson) {
     throw new Error('請求集計結果が見つかりません。先に集計を実行してください。');
   }
-  const targetPatientIds = normalizeInvoicePatientIdsForGeneration_(opts.invoicePatientIds);
   const targetBillingRows = filterBillingJsonForInvoice_(
     (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
     targetPatientIds
@@ -3921,7 +3932,9 @@ function generateAggregatedInvoice(billingMonth, options) {
   loadPreparedBillingSummariesIntoCache_(monthCache);
   loadBankWithdrawalAmountsIntoCache_(monthCache, prepared);
   preloadPreparedPayloadsForPdfGeneration_(prepared, monthCache);
-  const receiptPrepared = attachPreviousReceiptAmounts_(prepared, monthCache);
+  const receiptPrepared = attachPreviousReceiptAmounts_(prepared, monthCache, {
+    targetPatientIds: [patientId]
+  });
   const receiptEntry = (receiptPrepared && receiptPrepared.billingJson || [])
     .find(row => billingNormalizePatientId_(row && row.patientId) === patientId) || entry;
   const aggregateContext = buildAggregateInvoicePdfContext_(receiptEntry, aggregateMonths, receiptPrepared || prepared, monthCache);

@@ -3487,25 +3487,30 @@ function resetPreparedBillingAndPrepare(billingMonth, options) {
 
   try {
     if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
-      billingLogger_.log('[billing] resetPreparedBillingAndPrepare updating existing data for ' + monthKey);
+      billingLogger_.log('[billing] resetPreparedBillingAndPrepare deleting prepared billing for ' + monthKey);
     }
   } catch (err) {
     // ignore logging issues in non-GAS environments
   }
 
-  return prepareBillingData(monthKey, options);
+  deletePreparedBillingDataForMonth_(monthKey);
+  const nextOptions = Object.assign({}, options || {}, { forceReaggregate: true });
+  return prepareBillingData(monthKey, nextOptions);
 }
 
 function prepareBillingData(billingMonth, options) {
   const normalizedMonth = normalizeBillingMonthInput(billingMonth);
-  const existingResult = loadPreparedBillingWithSheetFallback_(normalizedMonth.key, { withValidation: true });
-  const existingPrepared = existingResult && existingResult.prepared !== undefined ? existingResult.prepared : existingResult;
-  const existingValidation = existingResult && existingResult.validation
-    ? existingResult.validation
-    : (existingResult && existingResult.ok !== undefined ? existingResult : null);
-  if (existingPrepared && (!existingValidation || existingValidation.ok)) {
-    billingLogger_.log('[billing] prepareBillingData using existing prepared billing for ' + normalizedMonth.key);
-    return existingPrepared;
+  const shouldForceReaggregate = options && options.forceReaggregate === true;
+  if (!shouldForceReaggregate) {
+    const existingResult = loadPreparedBillingWithSheetFallback_(normalizedMonth.key, { withValidation: true });
+    const existingPrepared = existingResult && existingResult.prepared !== undefined ? existingResult.prepared : existingResult;
+    const existingValidation = existingResult && existingResult.validation
+      ? existingResult.validation
+      : (existingResult && existingResult.ok !== undefined ? existingResult : null);
+    if (existingPrepared && (!existingValidation || existingValidation.ok)) {
+      billingLogger_.log('[billing] prepareBillingData using existing prepared billing for ' + normalizedMonth.key);
+      return existingPrepared;
+    }
   }
 
   const prepared = buildPreparedBillingPayload_(normalizedMonth);

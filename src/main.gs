@@ -959,6 +959,7 @@ function pickPreparedBillingEntrySummary_(entry) {
     unitPrice: row.unitPrice,
     medicalAssistance: row.medicalAssistance,
     selfPayItems: row.selfPayItems,
+    billingItems: row.billingItems,
     manualSelfPayAmount: row.manualSelfPayAmount
   };
 }

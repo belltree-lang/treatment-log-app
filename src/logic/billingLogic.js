@@ -278,6 +278,22 @@ function generateBillingJsonFromSource(sourceData) {
 
   const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
+    const rawOnlineValue = patient && patient.raw
+      ? (patient.raw.AG !== undefined ? patient.raw.AG : (patient.raw['オンライン'] !== undefined ? patient.raw['オンライン'] : patient.raw['オンライン対応']))
+      : null;
+    const hasOnlineFee = normalizeZeroOneFlag_(rawOnlineValue) === 1;
+    const billingItems = hasOnlineFee
+      ? [{ type: 'online_fee', label: 'オンライン対応加算', amount: 1000 }]
+      : [];
+    const selfPayItems = Array.isArray(patient.selfPayItems) ? patient.selfPayItems.slice() : [];
+    if (billingItems.length) {
+      billingItems.forEach(item => {
+        selfPayItems.push({
+          type: item.type || item.label || '自費',
+          amount: item.amount
+        });
+      });
+    }
     const isMedicalSubsidy = normalizeMedicalSubsidyFlag_(patient.medicalSubsidy);
     if (isMedicalSubsidy) {
       const name = patient.nameKanji || patient.nameKana || '';
@@ -316,7 +332,7 @@ function generateBillingJsonFromSource(sourceData) {
       manualUnitPrice,
       manualTransportAmount: patient.manualTransportAmount,
       manualSelfPayAmount: patient.manualSelfPayAmount,
-      selfPayItems: Array.isArray(patient.selfPayItems) ? patient.selfPayItems : [],
+      selfPayItems,
       unitPrice: patientUnitPrice,
       medicalAssistance: normalizedMedicalAssistance,
       carryOverAmount: carryOverFromPatient + carryOverFromHistory
@@ -341,6 +357,7 @@ function generateBillingJsonFromSource(sourceData) {
       transportAmount: amountCalc.transportAmount,
       manualSelfPayAmount: amountCalc.manualSelfPayAmount,
       selfPayItems: amountCalc.selfPayItems,
+      billingItems,
       carryOverAmount: amountCalc.carryOverAmount,
       carryOverFromHistory,
       billingAmount: amountCalc.billingAmount,

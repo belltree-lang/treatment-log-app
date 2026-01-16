@@ -1085,6 +1085,11 @@ function buildInvoiceTemplateData_(item) {
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
     { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
   ];
+  const selfPayItems = Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
+  selfPayItems.forEach(entry => {
+    if (!entry) return;
+    rows.push({ label: entry.type || '', detail: '', amount: entry.amount });
+  });
   if (carryOverAmount !== 0) {
     rows.unshift({ label: '前月繰越', detail: '', amount: carryOverAmount });
   }

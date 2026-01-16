@@ -2638,6 +2638,10 @@ function generateSimpleBankSheet(billingMonth) {
   const headerColCount = Math.max(lastCol, amountColumnIndex || 0);
   const initialHeaders = copied.getRange(1, 1, 1, headerColCount).getDisplayValues()[0];
   const pidCol = ensureBankWithdrawalPatientIdColumn_(copied, initialHeaders);
+  ensureUnpaidCheckColumn_(copied, null, {
+    billingJson: prepared && prepared.billingJson,
+    bankRecords: prepared && prepared.bankRecords
+  });
   const refreshedHeaderCount = Math.max(copied.getLastColumn(), headerColCount, pidCol || 0);
   const headers = copied.getRange(1, 1, 1, refreshedHeaderCount).getDisplayValues()[0];
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
@@ -2784,6 +2788,45 @@ function ensureBankWithdrawalFlagColumns_(sheet, headers, options) {
       console.warn('[billing] Failed to insert online column on bank withdrawal sheet', err);
     }
   }
+
+  const alignBankWithdrawalFlagColumns_ = (unpaidIndex, aggregateIndex, onlineIndex) => {
+    const indices = [unpaidIndex, aggregateIndex, onlineIndex].filter(Boolean);
+    if (indices.length !== 3) return { unpaidCol: unpaidIndex, aggregateCol: aggregateIndex, onlineCol: onlineIndex };
+    const targetPositions = indices.slice().sort((a, b) => a - b);
+    const target = {
+      unpaidCol: targetPositions[0],
+      aggregateCol: targetPositions[1],
+      onlineCol: targetPositions[2]
+    };
+    if (unpaidIndex === target.unpaidCol
+      && aggregateIndex === target.aggregateCol
+      && onlineIndex === target.onlineCol) {
+      return { unpaidCol: unpaidIndex, aggregateCol: aggregateIndex, onlineCol: onlineIndex };
+    }
+
+    const lastRow = targetSheet.getLastRow();
+    const rowCount = Math.max(lastRow, 1);
+    const getColumnValues_ = columnIndex => targetSheet.getRange(1, columnIndex, rowCount, 1).getValues();
+    const payload = {
+      unpaid: getColumnValues_(unpaidIndex),
+      aggregate: getColumnValues_(aggregateIndex),
+      online: getColumnValues_(onlineIndex)
+    };
+    targetSheet.getRange(1, target.unpaidCol, rowCount, 1).setValues(payload.unpaid);
+    targetSheet.getRange(1, target.aggregateCol, rowCount, 1).setValues(payload.aggregate);
+    targetSheet.getRange(1, target.onlineCol, rowCount, 1).setValues(payload.online);
+
+    targetSheet.getRange(1, target.unpaidCol).setValue(BANK_WITHDRAWAL_UNPAID_HEADER);
+    targetSheet.getRange(1, target.aggregateCol).setValue(BANK_WITHDRAWAL_AGGREGATE_HEADER);
+    targetSheet.getRange(1, target.onlineCol).setValue(BANK_WITHDRAWAL_ONLINE_HEADER);
+
+    return target;
+  };
+
+  const aligned = alignBankWithdrawalFlagColumns_(unpaidCol, aggregateCol, onlineCol);
+  unpaidCol = aligned.unpaidCol;
+  aggregateCol = aligned.aggregateCol;
+  onlineCol = aligned.onlineCol;
 
   try {
     const lastRow = targetSheet.getLastRow();
@@ -3057,7 +3100,7 @@ function getBankFlagsByPatient_(billingMonth, prepared) {
   const lastCol = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
-  const aggregateCol = resolveBillingColumn_(headers, ['合算'], '合算', {});
+  const aggregateCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});

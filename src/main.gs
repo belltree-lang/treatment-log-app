@@ -3772,6 +3772,7 @@ function generatePreparedInvoices_(prepared, options) {
       && row.bankFlags
       && row.bankFlags.af === true
   );
+  const aggregateFileOptions = Object.assign({}, opts, { billingMonth: normalized.billingMonth });
   const aggregateFiles = aggregateTargets.map(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return null;
@@ -3799,7 +3800,7 @@ function generatePreparedInvoices_(prepared, options) {
       aggregateTargetMonths: uniqueAggregateMonths
     });
     const aggregateContext = buildAggregateInvoicePdfContext_(aggregateEntry, uniqueAggregateMonths, receiptEnriched, monthCache);
-    const meta = generateAggregateInvoicePdf(aggregateContext, { billingMonth: normalized.billingMonth });
+    const meta = generateAggregateInvoicePdf(aggregateContext, aggregateFileOptions);
     return Object.assign({}, meta, { patientId: aggregateEntry.patientId, nameKanji: aggregateEntry.nameKanji });
   }).filter(Boolean);
   const matchedIds = new Set(

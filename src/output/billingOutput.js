@@ -7,6 +7,10 @@ const TRANSPORT_PRICE = (typeof BILLING_TRANSPORT_UNIT_PRICE !== 'undefined')
   : 33;
 const INVOICE_TREATMENT_UNIT_PRICE_BY_BURDEN = { 1: 417, 2: 834, 3: 1251 };
 const INVOICE_UNIT_PRICE_FALLBACK = (typeof BILLING_UNIT_PRICE !== 'undefined') ? BILLING_UNIT_PRICE : 4170;
+const INVOICE_ROOT_FOLDER_NAME = '請求書';
+const INVOICE_STAFF_FOLDER_NAME = 'スタッフ別';
+const invoiceFolderCleanupState_ = new Map();
+const invoiceFolderSequenceState_ = new Map();
 
 function escapeHtml_(value) {
   return String(value || '').replace(/[&<>"']/g, (c) => ({
@@ -1142,11 +1146,29 @@ function ensureSubFolder_(parentFolder, name) {
   return parentFolder.createFolder(name);
 }
 
-function formatResponsibleFolderName_(billingMonth, responsibleName) {
-  const ym = formatBillingMonthCompact_(billingMonth);
-  const ymLabel = ym || '請求月未設定';
-  const safeName = sanitizeFileName_(responsibleName || '担当者未設定');
-  return ymLabel + '請求書_' + safeName;
+function resolveInvoiceStaffFolderName_(responsibleName) {
+  const raw = String(responsibleName || '').trim();
+  if (!raw) return '担当者未設定';
+  return sanitizeFileName_(raw);
+}
+
+function resolveInvoiceMonthFolderLabels_(billingMonth) {
+  const normalized = normalizeInvoiceMonthKey_(billingMonth);
+  if (!normalized) {
+    return { yearLabel: '請求月未設定', monthLabel: '請求月未設定' };
+  }
+  const year = normalized.slice(0, 4);
+  const month = normalized.slice(4, 6).padStart(2, '0');
+  return {
+    yearLabel: year + '年',
+    monthLabel: month + '月分'
+  };
+}
+
+function ensureInvoiceStaffRootFolder_() {
+  const root = ensureInvoiceRootFolder_();
+  const invoiceRoot = ensureSubFolder_(root, INVOICE_ROOT_FOLDER_NAME);
+  return ensureSubFolder_(invoiceRoot, INVOICE_STAFF_FOLDER_NAME);
 }
 
 function calculateInvoiceChargeBreakdown_(params) {
@@ -1265,9 +1287,12 @@ function buildBillingInvoiceHtml_(item, billingMonth) {
 }
 
 function ensureInvoiceFolderForResponsible_(item) {
-  const root = ensureInvoiceRootFolder_();
-  const folderName = formatResponsibleFolderName_(item && item.billingMonth, item && item.responsibleName);
-  return ensureSubFolder_(root, folderName);
+  const root = ensureInvoiceStaffRootFolder_();
+  const staffName = resolveInvoiceStaffFolderName_(item && item.responsibleName);
+  const staffFolder = ensureSubFolder_(root, staffName);
+  const labels = resolveInvoiceMonthFolderLabels_(item && item.billingMonth);
+  const yearFolder = ensureSubFolder_(staffFolder, labels.yearLabel);
+  return ensureSubFolder_(yearFolder, labels.monthLabel);
 }
 
 function removeExistingInvoiceFiles_(folder, fileName) {
@@ -1282,10 +1307,69 @@ function removeExistingInvoiceFiles_(folder, fileName) {
   }
 }
 
+function clearInvoiceFolderIfNeeded_(folder, options) {
+  if (!folder || !(options && options.clearMonthFolder)) return;
+  const folderId = folder.getId();
+  if (invoiceFolderCleanupState_.has(folderId)) return;
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const file = files.next();
+    try {
+      file.setTrashed(true);
+    } catch (e) {
+      // ignore cleanup errors
+    }
+  }
+  invoiceFolderCleanupState_.set(folderId, true);
+  invoiceFolderSequenceState_.set(folderId, 1);
+}
+
+function countInvoicePdfFiles_(folder) {
+  if (!folder) return 0;
+  const files = folder.getFiles();
+  let count = 0;
+  while (files.hasNext()) {
+    const file = files.next();
+    const name = file.getName();
+    const mime = file.getMimeType();
+    const isPdf = (mime && mime.toLowerCase().indexOf('pdf') !== -1)
+      || String(name || '').toLowerCase().endsWith('.pdf');
+    if (isPdf) count += 1;
+  }
+  return count;
+}
+
+function consumeInvoiceSequenceIndex_(folder) {
+  if (!folder) return 0;
+  const folderId = folder.getId();
+  if (!invoiceFolderSequenceState_.has(folderId)) {
+    const count = countInvoicePdfFiles_(folder);
+    invoiceFolderSequenceState_.set(folderId, count + 1);
+  }
+  const next = invoiceFolderSequenceState_.get(folderId);
+  invoiceFolderSequenceState_.set(folderId, next + 1);
+  return next;
+}
+
+function formatInvoiceSequenceFileName_(index, item) {
+  const numberLabel = String(index || 0).padStart(2, '0');
+  const name = sanitizeFileName_(item && (item.name || item.nameKanji || item.patientId || '患者名未設定'));
+  return `${numberLabel}_${name}.pdf`;
+}
+
 function saveInvoicePdf(item, pdfBlob, options) {
-  const folder = ensureInvoiceFolderForResponsible_(item);
+  const folder = (options && options.folder) || ensureInvoiceFolderForResponsible_(item);
+  clearInvoiceFolderIfNeeded_(folder, options);
   const shouldOverwrite = !(options && options.overwriteExisting === false);
-  const fileName = pdfBlob.getName();
+  let fileName = options && options.fileName ? String(options.fileName).trim() : '';
+  if (!fileName) {
+    const sequenceIndex = Number(options && options.sequenceIndex);
+    const index = Number.isFinite(sequenceIndex) && sequenceIndex > 0
+      ? sequenceIndex
+      : consumeInvoiceSequenceIndex_(folder);
+    fileName = formatInvoiceSequenceFileName_(index, item);
+  }
+  pdfBlob.setName(fileName);
   if (shouldOverwrite) {
     removeExistingInvoiceFiles_(folder, fileName);
   }
@@ -1315,10 +1399,9 @@ function generateInvoicePdfs(invoiceContexts, options) {
     ? list.filter(item => patientIds.indexOf(String(item && item.patientId ? item.patientId : '').trim()) >= 0)
     : list;
   const isPartialGeneration = patientIds.length > 0;
-  const invoiceFileOptions = {
-    overwriteExisting: !isPartialGeneration,
-    fileNameSuffix: isPartialGeneration ? (options && options.reissueSuffix ? options.reissueSuffix : '_再発行') : ''
-  };
+  const invoiceFileOptions = Object.assign({}, options || {}, {
+    overwriteExisting: !isPartialGeneration
+  });
   const files = targets.map(item => {
     const meta = generateInvoicePdf(item, invoiceFileOptions);
     return Object.assign({}, meta, { patientId: item && item.patientId, nameKanji: item && (item.name || item.nameKanji) });

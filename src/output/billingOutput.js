@@ -1056,6 +1056,7 @@ function buildInvoiceTemplateData_(item) {
   let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
   let aggregateMonthTotals = [];
   let grandTotal = breakdown.grandTotal;
+  const selfPayItems = Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
 
   if (isAggregateInvoice && aggregateDecisionMonths.length > 1) {
     const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, { monthCache });
@@ -1085,7 +1086,6 @@ function buildInvoiceTemplateData_(item) {
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
     { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
   ];
-  const selfPayItems = Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
   selfPayItems.forEach(entry => {
     if (!entry) return;
     rows.push({ label: entry.type || '', detail: '', amount: entry.amount });

@@ -1049,13 +1049,15 @@ function buildInvoiceTemplateData_(item) {
   ));
   const isAggregateInvoice = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
   const chargeMonthLabel = monthLabel;
-  let breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
+  const baseBreakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
+  let breakdown = baseBreakdown;
   let visits = breakdown.visits || 0;
   let unitPrice = breakdown.treatmentUnitPrice || 0;
   let carryOverAmount = normalizeBillingCarryOver_(item);
   let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
   let aggregateMonthTotals = [];
   let grandTotal = breakdown.grandTotal;
+  const baseSelfPayItems = Array.isArray(baseBreakdown.selfPayItems) ? baseBreakdown.selfPayItems : [];
 
   if (isAggregateInvoice && aggregateDecisionMonths.length > 1) {
     const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, { monthCache });
@@ -1085,8 +1087,7 @@ function buildInvoiceTemplateData_(item) {
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
     { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
   ];
-  const selfPayItems = Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
-  selfPayItems.forEach(entry => {
+  baseSelfPayItems.forEach(entry => {
     if (!entry) return;
     rows.push({ label: entry.type || '', detail: '', amount: entry.amount });
   });

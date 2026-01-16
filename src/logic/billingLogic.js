@@ -109,6 +109,15 @@ function normalizeBillingSource_(source) {
   };
 }
 
+function resolveOnlineFeeFlag_(patient) {
+  if (!patient) return false;
+  const raw = patient.raw || {};
+  const rawOnlineValue = raw.AG !== undefined
+    ? raw.AG
+    : (raw['オンライン'] !== undefined ? raw['オンライン'] : raw['オンライン対応']);
+  return normalizeZeroOneFlag_(rawOnlineValue) === 1;
+}
+
 function normalizeVisitCount_(value) {
   const source = value && value.visitCount != null ? value.visitCount : value;
   if (typeof source === 'number') {
@@ -272,16 +281,19 @@ function generateBillingJsonFromSource(sourceData) {
     bankStatuses,
     carryOverByPatient
   } = normalizeBillingSource_(sourceData);
-  const patientIds = Object.keys(treatmentVisitCounts || {})
+  const patientIdSet = new Set(Object.keys(treatmentVisitCounts || {}));
+  Object.keys(patients || {}).forEach(pid => {
+    if (resolveOnlineFeeFlag_(patients[pid])) {
+      patientIdSet.add(pid);
+    }
+  });
+  const patientIds = Array.from(patientIdSet)
     .sort((a, b) => normalizePatientIdSortKey_(a) - normalizePatientIdSortKey_(b));
   const zeroVisitDebug = [];
 
   const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
-    const rawOnlineValue = patient && patient.raw
-      ? (patient.raw.AG !== undefined ? patient.raw.AG : (patient.raw['オンライン'] !== undefined ? patient.raw['オンライン'] : patient.raw['オンライン対応']))
-      : null;
-    const hasOnlineFee = normalizeZeroOneFlag_(rawOnlineValue) === 1;
+    const hasOnlineFee = resolveOnlineFeeFlag_(patient);
     const billingItems = hasOnlineFee
       ? [{ type: 'online_fee', label: 'オンライン同意サービス使用料', amount: 1000 }]
       : [];

@@ -283,7 +283,7 @@ function generateBillingJsonFromSource(sourceData) {
       : null;
     const hasOnlineFee = normalizeZeroOneFlag_(rawOnlineValue) === 1;
     const billingItems = hasOnlineFee
-      ? [{ type: 'online_fee', label: 'オンライン対応加算', amount: 1000 }]
+      ? [{ type: 'online_fee', label: 'オンライン同意サービス使用料', amount: 1000 }]
       : [];
     const selfPayItems = Array.isArray(patient.selfPayItems) ? patient.selfPayItems.slice() : [];
     if (billingItems.length) {

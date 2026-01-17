@@ -1496,7 +1496,6 @@ function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const values = sheet.getRange(2, 1, lastRow - 1, headerCount).getValues();
-
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
     : value => String(value || '').trim();

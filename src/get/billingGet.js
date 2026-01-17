@@ -182,6 +182,7 @@ const BILLING_LABELS = typeof LABELS !== 'undefined' ? LABELS : {
   consent: ['同意年月日', '同意日', '同意開始日', '同意開始'],
   consentHandout: ['配布', '配布欄', '配布状況', '配布日', '配布（同意書）'],
   consentContent: ['同意症状', '同意内容', '施術対象疾患', '対象疾患', '対象症状', '同意書内容', '同意記載内容'],
+  onlineConsent: ['オンライン同意', 'オンライン同意フラグ', 'オンライン同意（AT）', 'オンライン同意(AT)'],
   share: ['負担割合', '負担', '自己負担', '負担率', '負担割', '負担%', '負担％'],
   phone: ['電話', '電話番号', 'TEL', 'Tel']
 };
@@ -244,6 +245,7 @@ const BILLING_PATIENT_COLS_FIXED = typeof PATIENT_COLS_FIXED !== 'undefined' ? P
   consent: 28,
   consentHandout: 54,
   consentContent: 25,
+  onlineConsent: 46,
   phone: 32,
   share: 47
 };
@@ -1169,6 +1171,12 @@ function getBillingPatientRecords() {
     '交通費',
     {}
   );
+  const colOnlineConsent = resolveBillingColumn_(
+    headers,
+    BILLING_LABELS.onlineConsent || ['オンライン同意'],
+    'オンライン同意',
+    { fallbackLetter: 'AT' }
+  );
 
   return values.map(row => {
     const pid = billingNormalizePatientId_(row[colPid - 1]);
@@ -1204,7 +1212,8 @@ function getBillingPatientRecords() {
       accountNumber: colAccount ? String(row[colAccount - 1] || '').trim() : '',
       isNew: colIsNew ? normalizeZeroOneFlag_(row[colIsNew - 1]) : 0,
       carryOverAmount: colCarryOver ? normalizeMoneyValue_(row[colCarryOver - 1]) : 0,
-      medicalSubsidy: colMedicalSubsidy ? normalizeZeroOneFlag_(row[colMedicalSubsidy - 1]) : 0
+      medicalSubsidy: colMedicalSubsidy ? normalizeZeroOneFlag_(row[colMedicalSubsidy - 1]) : 0,
+      onlineConsent: colOnlineConsent ? normalizeZeroOneFlag_(row[colOnlineConsent - 1]) : 0
     };
   }).filter(Boolean);
 }

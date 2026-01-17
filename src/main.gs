@@ -3844,12 +3844,21 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const baseAmount = isAggregateInvoice
     ? buildAggregateInvoiceAmountDataForPdf_(normalizedAggregateMonths, billingMonth, entry && entry.patientId, cache)
     : buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
-  const breakdownTotal = Array.isArray(entry && entry.receiptMonthBreakdown)
-    ? entry.receiptMonthBreakdown.reduce((sum, item) => sum + (normalizeMoneyNumber_(item && item.amount) || 0), 0)
+  const receiptMonthBreakdown = Array.isArray(entry && entry.receiptMonthBreakdown) ? entry.receiptMonthBreakdown : [];
+  const breakdownTotal = receiptMonthBreakdown.length
+    ? receiptMonthBreakdown.reduce((sum, item) => sum + (normalizeMoneyNumber_(item && item.amount) || 0), 0)
     : null;
   const hasBreakdownTotal = breakdownTotal != null
-    && Array.isArray(entry && entry.receiptMonthBreakdown)
-    && entry.receiptMonthBreakdown.some(item => item && item.amount != null && item.amount !== '');
+    && receiptMonthBreakdown.some(item => item && item.amount != null && item.amount !== '');
+  const hasBreakdownAmount = receiptMonthBreakdown.some(item => (normalizeMoneyNumber_(item && item.amount) || 0) > 0);
+  const normalizedPreviousReceiptAmount = entry && entry.previousReceiptAmount != null
+    ? normalizeMoneyNumber_(entry.previousReceiptAmount)
+    : undefined;
+  const resolvedPreviousReceiptAmount = hasBreakdownAmount
+    ? breakdownTotal
+    : (normalizedPreviousReceiptAmount != null ? normalizedPreviousReceiptAmount : undefined);
+  const hasPreviousReceiptAmount = (Number.isFinite(normalizedPreviousReceiptAmount) && normalizedPreviousReceiptAmount > 0)
+    || hasBreakdownAmount;
   if (entry && entry.previousReceiptAmount == null) {
     if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
       billingLogger_.log('[billing] finalizeInvoiceAmountDataForPdf_ missing previousReceiptAmount: ' + JSON.stringify({
@@ -3880,7 +3889,10 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     : basePreviousReceipt;
   if (previousReceipt) {
     previousReceipt.settled = isPreviousReceiptSettled_(entry);
-    previousReceipt.visible = !!(receiptDisplay && receiptDisplay.visible);
+    previousReceipt.visible = hasPreviousReceiptAmount;
+    if (resolvedPreviousReceiptAmount != null) {
+      previousReceipt.amount = resolvedPreviousReceiptAmount;
+    }
   }
 
   const aggregateStatus = receiptDisplay ? receiptDisplay.aggregateStatus : normalizeAggregateStatus_(entry && entry.aggregateStatus);
@@ -3914,11 +3926,9 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     aggregateConfirmed,
     receiptMonths,
     receiptRemark: receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '',
-    receiptMonthBreakdown: Array.isArray(entry && entry.receiptMonthBreakdown) ? entry.receiptMonthBreakdown : undefined,
-    previousReceiptAmount: hasBreakdownTotal
-      ? breakdownTotal
-      : (entry && entry.previousReceiptAmount != null ? entry.previousReceiptAmount : undefined),
-    showReceipt: !!(receiptDisplay && receiptDisplay.visible),
+    receiptMonthBreakdown: receiptMonthBreakdown.length ? receiptMonthBreakdown : undefined,
+    previousReceiptAmount: resolvedPreviousReceiptAmount,
+    showReceipt: hasPreviousReceiptAmount,
     previousReceipt,
     watermark
   });

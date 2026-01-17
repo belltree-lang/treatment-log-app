@@ -3734,6 +3734,13 @@ function buildStandardInvoiceAmountDataForPdf_(entry, billingMonth) {
     { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount || 0 },
     { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount || 0 }
   ];
+  const selfPayItems = Array.isArray(entry && entry.selfPayItems)
+    ? entry.selfPayItems
+    : [];
+  selfPayItems.forEach(item => {
+    if (!item) return;
+    rows.push({ label: item.type || '', detail: '', amount: item.amount });
+  });
 
   return {
     rows,
@@ -3786,6 +3793,9 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   });
   if (hasBreakdownTotal) {
     amount.grandTotal = breakdownTotal;
+  }
+  if (entry && entry.grandTotal != null && entry.grandTotal !== '') {
+    amount.grandTotal = normalizeMoneyNumber_(entry.grandTotal);
   }
 
   const receiptDisplay = resolveInvoiceReceiptDisplay_(entry, { aggregateMonths: normalizedAggregateMonths });

@@ -209,6 +209,12 @@ function normalizeInvoiceMoney_(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function resolveInvoiceItemLabel_(item) {
+  const label = item && item.label != null ? String(item.label).trim() : '';
+  if (label) return label;
+  return item && item.type != null ? String(item.type).trim() : '';
+}
+
 function normalizeInvoiceVisitCount_(value) {
   const source = value && value.visitCount != null ? value.visitCount : value;
   if (typeof source === 'number') {
@@ -1092,7 +1098,7 @@ function buildInvoiceTemplateData_(item) {
   }
   baseSelfPayItems.forEach(entry => {
     if (!entry) return;
-    rows.push({ label: entry.type || '', detail: '', amount: entry.amount });
+    rows.push({ label: resolveInvoiceItemLabel_(entry), detail: '', amount: entry.amount });
   });
 
   return Object.assign({}, item, {

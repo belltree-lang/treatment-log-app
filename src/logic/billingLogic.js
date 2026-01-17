@@ -95,6 +95,7 @@ function normalizeBillingSource_(source) {
   const staffHistoryByPatient = source.staffHistoryByPatient || {};
   const bankStatuses = source.bankStatuses || {};
   const carryOverByPatient = source.carryOverByPatient || {};
+  const bankFlagsByPatient = source.bankFlagsByPatient || {};
   billingLogger_.log('[billing] patients keys=' + JSON.stringify(Object.keys(patientMap)));
   return {
     billingMonth,
@@ -105,17 +106,16 @@ function normalizeBillingSource_(source) {
     staffDisplayByPatient,
     staffHistoryByPatient,
     bankStatuses,
-    carryOverByPatient
+    carryOverByPatient,
+    bankFlagsByPatient
   };
 }
 
-function resolveOnlineFeeFlag_(patient) {
-  if (!patient) return false;
-  const raw = patient.raw || {};
-  const rawOnlineValue = raw.AG !== undefined
-    ? raw.AG
-    : (raw['オンライン'] !== undefined ? raw['オンライン'] : raw['オンライン対応']);
-  return normalizeZeroOneFlag_(rawOnlineValue) === 1;
+function resolveOnlineFeeFlag_(patientId, bankFlagsByPatient) {
+  const pid = String(patientId || '').trim();
+  if (!pid) return false;
+  const flags = bankFlagsByPatient && bankFlagsByPatient[pid];
+  return !!(flags && (flags.online || flags.ag));
 }
 
 function normalizeVisitCount_(value) {
@@ -279,11 +279,12 @@ function generateBillingJsonFromSource(sourceData) {
     staffDisplayByPatient,
     staffHistoryByPatient,
     bankStatuses,
-    carryOverByPatient
+    carryOverByPatient,
+    bankFlagsByPatient
   } = normalizeBillingSource_(sourceData);
   const patientIdSet = new Set(Object.keys(treatmentVisitCounts || {}));
-  Object.keys(patients || {}).forEach(pid => {
-    if (resolveOnlineFeeFlag_(patients[pid])) {
+  Object.keys(bankFlagsByPatient || {}).forEach(pid => {
+    if (resolveOnlineFeeFlag_(pid, bankFlagsByPatient)) {
       patientIdSet.add(pid);
     }
   });
@@ -293,7 +294,7 @@ function generateBillingJsonFromSource(sourceData) {
 
   const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
-    const hasOnlineFee = resolveOnlineFeeFlag_(patient);
+    const hasOnlineFee = resolveOnlineFeeFlag_(pid, bankFlagsByPatient);
     const billingItems = hasOnlineFee
       ? [{ type: 'online_fee', label: 'オンライン同意サービス使用料', amount: 1000 }]
       : [];

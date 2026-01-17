@@ -1147,6 +1147,8 @@ function collectBankWithdrawalStatusByPatient_(billingMonth) {
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
   const aggregateCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
+  const onlineCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
+  const onlineCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
   const amountCol = resolveBillingColumn_(
     headers,
     ['金額', '請求金額', '引落額', '引落金額'],
@@ -3101,6 +3103,7 @@ function getBankFlagsByPatient_(billingMonth, prepared) {
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
   const aggregateCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
+  const onlineCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const pidCol = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', '患者番号']), '患者ID', {});
@@ -3119,10 +3122,15 @@ function getBankFlagsByPatient_(billingMonth, prepared) {
       : '');
     if (!pid) return;
 
-    const current = flagsByPatient[pid] || { ae: false, af: false };
+    const current = flagsByPatient[pid] || { ae: false, af: false, online: false };
     const ae = unpaidCol ? normalizeBankFlagValue_(row[unpaidCol - 1]) : false;
     const af = aggregateCol ? normalizeBankFlagValue_(row[aggregateCol - 1]) : false;
-    flagsByPatient[pid] = { ae: current.ae || ae, af: current.af || af };
+    const online = onlineCol ? normalizeBankFlagValue_(row[onlineCol - 1]) : false;
+    flagsByPatient[pid] = {
+      ae: current.ae || ae,
+      af: current.af || af,
+      online: current.online || online
+    };
   });
 
   return flagsByPatient;

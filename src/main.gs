@@ -1148,7 +1148,6 @@ function collectBankWithdrawalStatusByPatient_(billingMonth) {
   const unpaidCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_UNPAID_HEADER], BANK_WITHDRAWAL_UNPAID_HEADER, {});
   const aggregateCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_AGGREGATE_HEADER], BANK_WITHDRAWAL_AGGREGATE_HEADER, {});
   const onlineCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
-  const onlineCol = resolveBillingColumn_(headers, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
   const amountCol = resolveBillingColumn_(
     headers,
     ['金額', '請求金額', '引落額', '引落金額'],
@@ -1497,7 +1496,6 @@ function collectPreviousReceiptAmountsFromBankSheet_(billingMonth, prepared) {
   const nameCol = resolveBillingColumn_(headers, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
   const kanaCol = resolveBillingColumn_(headers, BILLING_LABELS.furigana, 'フリガナ', {});
   const values = sheet.getRange(2, 1, lastRow - 1, headerCount).getValues();
-
   const normalizePid = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_
     : value => String(value || '').trim();

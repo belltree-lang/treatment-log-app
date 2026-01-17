@@ -115,7 +115,7 @@ function resolveOnlineFeeFlag_(patientId, bankFlagsByPatient) {
   const pid = String(patientId || '').trim();
   if (!pid) return false;
   const flags = bankFlagsByPatient && bankFlagsByPatient[pid];
-  return !!(flags && (flags.online || flags.ag));
+  return !!(flags && flags.ag);
 }
 
 function normalizeVisitCount_(value) {
@@ -295,20 +295,29 @@ function generateBillingJsonFromSource(sourceData) {
   const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
     const hasOnlineFee = resolveOnlineFeeFlag_(pid, bankFlagsByPatient);
+    const isMedicalSubsidy = normalizeMedicalSubsidyFlag_(patient.medicalSubsidy);
     const billingItems = hasOnlineFee
       ? [{ type: 'online_fee', label: 'オンライン同意サービス使用料', amount: 1000 }]
       : [];
-    const selfPayItems = Array.isArray(patient.selfPayItems) ? patient.selfPayItems.slice() : [];
-    if (billingItems.length) {
-      billingItems.forEach(item => {
-        selfPayItems.push({
+    const selfPayItems = (() => {
+      if (isMedicalSubsidy && hasOnlineFee) {
+        return billingItems.map(item => ({
           type: item.type || item.label || '自費',
           amount: item.amount
+        }));
+      }
+      const items = Array.isArray(patient.selfPayItems) ? patient.selfPayItems.slice() : [];
+      if (billingItems.length) {
+        billingItems.forEach(item => {
+          items.push({
+            type: item.type || item.label || '自費',
+            amount: item.amount
+          });
         });
-      });
-    }
-    const isMedicalSubsidy = normalizeMedicalSubsidyFlag_(patient.medicalSubsidy);
-    if (isMedicalSubsidy) {
+      }
+      return items;
+    })();
+    if (isMedicalSubsidy && !hasOnlineFee) {
       const name = patient.nameKanji || patient.nameKana || '';
       billingLogger_.log(`[exclude] 患者ID ${pid}${name ? `（${name}）` : ''}は医療助成のため請求対象外`);
       return null;
@@ -332,8 +341,12 @@ function generateBillingJsonFromSource(sourceData) {
       ? billingResolveStaffDisplayName_(responsibleEmail, staffDirectory) || ''
       : '';
     const responsibleNames = responsibleName ? [responsibleName] : [];
-    const carryOverFromPatient = normalizeMoneyNumber_(patient.carryOverAmount);
-    const carryOverFromHistory = normalizeMoneyNumber_(carryOverByPatient[pid]);
+    const carryOverFromPatient = isMedicalSubsidy && hasOnlineFee
+      ? 0
+      : normalizeMoneyNumber_(patient.carryOverAmount);
+    const carryOverFromHistory = isMedicalSubsidy && hasOnlineFee
+      ? 0
+      : normalizeMoneyNumber_(carryOverByPatient[pid]);
     const manualUnitPrice = normalizeMoneyNumber_(patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice);
     const patientUnitPrice = normalizeMoneyNumber_(patient.unitPrice);
     const normalizedBurdenRate = normalizeBurdenRateInt_(patient.burdenRate);
@@ -343,8 +356,8 @@ function generateBillingJsonFromSource(sourceData) {
       insuranceType: patient.insuranceType,
       burdenRate: normalizedBurdenRate,
       manualUnitPrice,
-      manualTransportAmount: patient.manualTransportAmount,
-      manualSelfPayAmount: patient.manualSelfPayAmount,
+      manualTransportAmount: isMedicalSubsidy && hasOnlineFee ? '' : patient.manualTransportAmount,
+      manualSelfPayAmount: isMedicalSubsidy && hasOnlineFee ? 0 : patient.manualSelfPayAmount,
       selfPayItems,
       unitPrice: patientUnitPrice,
       medicalAssistance: normalizedMedicalAssistance,

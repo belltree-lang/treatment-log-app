@@ -2547,6 +2547,11 @@ function buildPreparedBillingPayload_(billingMonth) {
     };
   });
   const patientMap = source.patients || source.patientMap || {};
+  try {
+    syncBankWithdrawalOnlineConsentFlags_(billingMonthKey || source.billingMonth || billingMonth, patientMap);
+  } catch (err) {
+    billingLogger_.log('[billing] Failed to sync online consent flags: ' + err);
+  }
   let bankFlagsByPatient = getBankFlagsByPatient_(billingMonthKey || source.billingMonth || billingMonth, {
     patients: patientMap
   });
@@ -3120,18 +3125,88 @@ function getBankFlagsByPatient_(billingMonth, prepared) {
       : '');
     if (!pid) return;
 
-    const current = flagsByPatient[pid] || { ae: false, af: false, online: false };
+    const current = flagsByPatient[pid] || { ae: false, af: false, ag: false, online: false };
     const ae = unpaidCol ? normalizeBankFlagValue_(row[unpaidCol - 1]) : false;
     const af = aggregateCol ? normalizeBankFlagValue_(row[aggregateCol - 1]) : false;
-    const online = onlineCol ? normalizeBankFlagValue_(row[onlineCol - 1]) : false;
+    const ag = onlineCol ? normalizeBankFlagValue_(row[onlineCol - 1]) : false;
     flagsByPatient[pid] = {
       ae: current.ae || ae,
       af: current.af || af,
-      online: current.online || online
+      ag: current.ag || ag,
+      online: current.online || ag
     };
   });
 
   return flagsByPatient;
+}
+
+function syncBankWithdrawalOnlineConsentFlags_(billingMonth, prepared) {
+  const month = normalizeBillingMonthInput(billingMonth);
+  const patients = resolvePreparedPatients_(prepared);
+  const patientIds = patients && typeof patients === 'object' ? Object.keys(patients) : [];
+  if (!patientIds.length) return { billingMonth: month.key, updated: 0 };
+
+  const sheet = ensureBankWithdrawalSheet_(month, { refreshFromTemplate: false, preserveExistingSheet: true });
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { billingMonth: month.key, updated: 0 };
+
+  const headerCount = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, headerCount).getDisplayValues()[0];
+  const flagCols = ensureBankWithdrawalFlagColumns_(sheet, headers, {});
+  const onlineCol = flagCols && flagCols.onlineCol
+    ? flagCols.onlineCol
+    : resolveBillingColumn_(headers, [BANK_WITHDRAWAL_ONLINE_HEADER], BANK_WITHDRAWAL_ONLINE_HEADER, {});
+  if (!onlineCol) return { billingMonth: month.key, updated: 0 };
+
+  const pidCol = ensureBankWithdrawalPatientIdColumn_(sheet, headers);
+  const refreshedHeaders = sheet.getRange(
+    1,
+    1,
+    1,
+    Math.max(sheet.getLastColumn(), headerCount, pidCol || 0, onlineCol)
+  ).getDisplayValues()[0];
+  const nameCol = resolveBillingColumn_(refreshedHeaders, BILLING_LABELS.name, '名前', { required: true, fallbackLetter: 'A' });
+  const kanaCol = resolveBillingColumn_(refreshedHeaders, BILLING_LABELS.furigana, 'フリガナ', {});
+  const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
+    ? BILLING_LABELS.recNo
+    : [];
+  const resolvedPidCol = pidCol || resolveBillingColumn_(refreshedHeaders, patientIdLabels.concat(['患者ID', '患者番号']), '患者ID', {});
+  const rowCount = lastRow - 1;
+  const nameValues = sheet.getRange(2, nameCol, rowCount, 1).getDisplayValues();
+  const kanaValues = kanaCol ? sheet.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
+  const pidValues = resolvedPidCol ? sheet.getRange(2, resolvedPidCol, rowCount, 1).getDisplayValues() : [];
+  const onlineValues = sheet.getRange(2, onlineCol, rowCount, 1).getValues();
+  const nameToPatientId = buildPatientNameToIdMap_(patients);
+  const updatedValues = onlineValues.map(row => [row[0]]);
+
+  let updated = 0;
+  for (let idx = 0; idx < rowCount; idx++) {
+    const rawPid = pidValues[idx] && pidValues[idx][0];
+    const normalizedPid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(rawPid)
+      : (rawPid ? String(rawPid).trim() : '');
+    const nameKey = buildFullNameKey_(
+      nameValues[idx] && nameValues[idx][0],
+      kanaValues[idx] && kanaValues[idx][0]
+    );
+    const pid = normalizedPid || (nameKey ? nameToPatientId[nameKey] : '');
+    if (!pid || !patients || !patients[pid]) continue;
+    const patient = patients[pid] || {};
+    const consentFlag = typeof normalizeZeroOneFlag_ === 'function'
+      ? normalizeZeroOneFlag_(patient.onlineConsent)
+      : (patient.onlineConsent === true || patient.onlineConsent === 1 || patient.onlineConsent === '1' ? 1 : 0);
+    if (!consentFlag) continue;
+    const currentValue = updatedValues[idx][0];
+    if (normalizeBankFlagValue_(currentValue)) continue;
+    updatedValues[idx][0] = true;
+    updated += 1;
+  }
+
+  if (updated) {
+    sheet.getRange(2, onlineCol, rowCount, 1).setValues(updatedValues);
+  }
+
+  return { billingMonth: month.key, updated };
 }
 
 function buildBillingAmountByPatientId_(billingJson) {
@@ -4216,6 +4291,7 @@ function extractPatientInfoUpdateFields_(edit) {
     burdenRate: edit.burdenRate,
     medicalAssistance: edit.medicalAssistance,
     medicalSubsidy: edit.medicalSubsidy,
+    onlineConsent: edit.onlineConsent,
     payerType: edit.payerType,
     responsible: edit.responsible,
     bankCode: edit.bankCode,
@@ -4268,6 +4344,7 @@ function savePatientUpdate(patientId, updatedFields) {
   const colCarryOver = resolveBillingColumn_(headers, ['未入金', '未入金額', '未収金', '未収', '繰越', '繰越額', '繰り越し', '差引繰越', '前回未払', '前回未収', 'carryOverAmount'], '未入金額', {});
   const colPayer = resolveBillingColumn_(headers, ['保険者', '支払区分', '保険/自費', '保険区分種別'], '保険者', {});
   const colMedicalSubsidy = resolveBillingColumn_(headers, ['医療助成'], '医療助成', { fallbackLetter: 'AS' });
+  const colOnlineConsent = resolveBillingColumn_(headers, ['オンライン同意', 'オンライン同意フラグ', 'オンライン同意（AT）', 'オンライン同意(AT)'], 'オンライン同意', { fallbackLetter: 'AT' });
   const colTransport = resolveBillingColumn_(headers, ['交通費', '交通費(手動)', '交通費（手動）', 'transportAmount', 'manualTransportAmount'], '交通費', {});
   const colBank = resolveBillingColumn_(headers, ['銀行コード', '銀行CD', '銀行番号', 'bankCode'], '銀行コード', { fallbackLetter: 'N' });
   const colBranch = resolveBillingColumn_(headers, ['支店コード', '支店番号', '支店CD', 'branchCode'], '支店コード', { fallbackLetter: 'O' });
@@ -4303,6 +4380,7 @@ function savePatientUpdate(patientId, updatedFields) {
     if (colAccount && fields.accountNumber !== undefined) newRow[colAccount - 1] = String(fields.accountNumber || '').trim();
     if (colIsNew && fields.isNew !== undefined) newRow[colIsNew - 1] = normalizeZeroOneFlag_(fields.isNew);
     if (colResponsible && fields.responsible !== undefined) newRow[colResponsible - 1] = String(fields.responsible || '').trim();
+    if (colOnlineConsent && fields.onlineConsent !== undefined) newRow[colOnlineConsent - 1] = normalizeZeroOneFlag_(fields.onlineConsent);
 
     sheet.getRange(idx + 2, 1, 1, newRow.length).setValues([newRow]);
     return { updated: true, rowNumber: idx + 2 };

@@ -55,7 +55,7 @@ const BILLING_TRANSPORT_UNIT_PRICE_FALLBACK = 33;
 const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeof globalThis.BILLING_TRANSPORT_UNIT_PRICE === 'number')
   ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
-const BILLING_PATIENT_INFO_FIELDS = ['medicalAssistance', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
+const BILLING_PATIENT_INFO_FIELDS = ['medicalAssistance', 'onlineConsent', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
 const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount'];
 const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount', 'burdenRate'];
 
@@ -838,6 +838,11 @@ function normalizeMedicalAssistanceFlag(value) {
   return 0;
 }
 
+function normalizeOnlineConsentFlag(value) {
+  if (value === 1 || value === '1' || value === true) return 1;
+  return 0;
+}
+
 function getBillingBaseUrl() {
   return (window.APP_CONFIG && window.APP_CONFIG.baseUrl) || '';
 }
@@ -1280,6 +1285,7 @@ function normalizeBillingResultPayload(raw) {
     insuranceType: '',
     burdenRate: 0,
     medicalAssistance: 0,
+    onlineConsent: 0,
     manualUnitPrice: '',
     manualTransportAmount: '',
     manualSelfPayAmount: '',
@@ -1362,6 +1368,7 @@ function normalizeBillingResultPayload(raw) {
         insuranceType: patient.insuranceType,
         burdenRate: patient.burdenRate,
         medicalAssistance: patient.medicalAssistance,
+        onlineConsent: patient.onlineConsent,
         manualUnitPrice: patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice,
         manualTransportAmount: patient.manualTransportAmount,
         manualSelfPayAmount: patient.manualSelfPayAmount,
@@ -1391,6 +1398,11 @@ function normalizeBillingResultPayload(raw) {
         ? row.medicalAssistance
         : patient.medicalAssistance;
       merged.medicalAssistance = normalizeMedicalAssistanceFlag(assistanceSource);
+
+      const consentSource = row && row.hasOwnProperty('onlineConsent')
+        ? row.onlineConsent
+        : patient.onlineConsent;
+      merged.onlineConsent = normalizeOnlineConsentFlag(consentSource);
 
       const manualPriceSource = row && row.hasOwnProperty('manualUnitPrice')
         ? row.manualUnitPrice
@@ -2011,6 +2023,7 @@ function renderBillingResult() {
     { key: 'nameKanji', label: '氏名', sortable: true },
     { key: 'responsible', label: '担当者', sortable: true },
     { key: 'medicalAssistance', label: '医療助成', sortable: false },
+    { key: 'onlineConsent', label: 'オンライン同意', sortable: false },
     { key: 'payerType', label: '保険者', sortable: false },
     { key: 'burdenRate', label: '負担', sortable: true },
     { key: 'visitCount', label: '回数', sortable: true },
@@ -2070,6 +2083,11 @@ function renderBillingResult() {
         const editor = `<label class="${editClass}" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" ${baseAttrs} ${checked} />医療助成</label>`;
         return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
+      if (field === 'onlineConsent') {
+        const checked = normalizeOnlineConsentFlag(item.onlineConsent) ? 'checked' : '';
+        const editor = `<label class="${editClass}" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" ${baseAttrs} ${checked} />オンライン同意</label>`;
+        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
+      }
       if (field === 'unitPrice' || field === 'carryOverAmount') {
         const val = normalizeEditNumber(item[field]);
         const editor = `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" />`;
@@ -2089,6 +2107,8 @@ function renderBillingResult() {
       switch (field) {
         case 'medicalAssistance':
           return normalizeMedicalAssistanceFlag(item.medicalAssistance) ? '有' : 'なし';
+        case 'onlineConsent':
+          return normalizeOnlineConsentFlag(item.onlineConsent) ? '有' : 'なし';
         case 'burdenRate':
           if (String(item.burdenRate) === '自費') {
             const selfPayAmount = item.manualSelfPayAmount || 0;
@@ -2124,6 +2144,7 @@ function renderBillingResult() {
         <td>${nameWithBadge}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
         <td>${renderEditableCell(safeItem, 'medicalAssistance')}</td>
+        <td>${renderEditableCell(safeItem, 'onlineConsent')}</td>
         <td>${renderEditableCell(safeItem, 'payerType')}</td>
         <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
         <td>${wrapWithOverrideBadge(safeItem.visitCount || 0, safeItem.patientId, 'visitCount')}</td>
@@ -2208,7 +2229,9 @@ function attachBillingEditHandlers() {
       const field = this.getAttribute('data-edit-field');
       let value = this.value;
       if (this.type === 'checkbox') {
-        value = normalizeMedicalAssistanceFlag(this.checked);
+        value = field === 'onlineConsent'
+          ? normalizeOnlineConsentFlag(this.checked)
+          : normalizeMedicalAssistanceFlag(this.checked);
       }
       if (field === 'burdenRate') {
         value = value === '自費' ? '自費' : normalizeBurdenRateInt(value);

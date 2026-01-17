@@ -589,6 +589,13 @@ function isPreviousReceiptSettled_(item) {
   return String(status || '').toUpperCase() === 'SETTLED';
 }
 
+function hasPreviousReceiptAmount_(item) {
+  const previousAmount = Number(item && item.previousReceiptAmount);
+  if (Number.isFinite(previousAmount) && previousAmount > 0) return true;
+  const breakdown = Array.isArray(item && item.receiptMonthBreakdown) ? item.receiptMonthBreakdown : [];
+  return breakdown.some(row => Number(row && row.amount) > 0);
+}
+
 function buildInvoicePreviousReceipt_(item, display, aggregateMonths) {
   const receiptDisplay = display || resolveInvoiceReceiptDisplay_(item);
   const addressee = item && item.nameKanji ? String(item.nameKanji).trim() : '';
@@ -621,7 +628,7 @@ function buildInvoicePreviousReceipt_(item, display, aggregateMonths) {
   const receiptMonthBreakdown = isAggregateInvoice ? aggregateBreakdown : null;
 
   return {
-    visible: !!(receiptDisplay && receiptDisplay.visible),
+    visible: hasPreviousReceiptAmount_(item),
     addressee,
     date,
     amount: Number.isFinite(resolvedAmount) ? resolvedAmount : 0,
@@ -972,7 +979,7 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
   }
 
   if (previousReceipt) {
-    previousReceipt.visible = !!(receipt && receipt.visible);
+    previousReceipt.visible = hasPreviousReceiptAmount_(item);
   }
 
   const aggregateDecision = resolveAggregateInvoiceDecision_(item, receipt, billingMonth, { monthCache });
@@ -1038,7 +1045,7 @@ function buildInvoiceTemplateData_(item) {
   }
 
   if (previousReceipt) {
-    previousReceipt.visible = !!(receipt && receipt.visible);
+    previousReceipt.visible = hasPreviousReceiptAmount_(item);
   }
 
   const aggregateDecisionTrace = Object.assign(

@@ -11381,7 +11381,10 @@ function syncVisitAttendance(options){
         else if (categoryKey === 'self60') pendingEntry.counts.self60 += 1;
         else pendingEntry.counts.self30 += 1;
       }
-      if (group === 'mixed') pendingEntry.counts.mixed += 1;
+      if (group === 'mixed') {
+        pendingEntry.counts.mixed += 1;
+        pendingEntry.counts.self30 += 1;
+      }
       if (group === 'new') pendingEntry.counts.new += 1;
     }
     pendingEntry.rowNumbers.push(rowNumber);

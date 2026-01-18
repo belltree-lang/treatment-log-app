@@ -135,7 +135,9 @@ function normalizeSelfPayCount_(value) {
   if (!value || typeof value !== 'object') return 0;
   const self30 = Number(value.self30) || 0;
   const self60 = Number(value.self60) || 0;
-  return self30 + self60;
+  const mixed = Number(value.mixed) || 0;
+  const self30Only = Math.max(0, self30 - mixed);
+  return self30Only + self60 + mixed;
 }
 
 function normalizeMoneyNumber_(value) {

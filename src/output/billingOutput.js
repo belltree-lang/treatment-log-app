@@ -210,9 +210,11 @@ function normalizeInvoiceMoney_(value) {
 }
 
 function resolveInvoiceItemLabel_(item) {
+  const type = item && item.type != null ? String(item.type).trim() : '';
+  if (type === 'online_fee') return 'オンライン同意サービス利用料';
   const label = item && item.label != null ? String(item.label).trim() : '';
   if (label) return label;
-  return item && item.type != null ? String(item.type).trim() : '';
+  return type;
 }
 
 function normalizeInvoiceVisitCount_(value) {

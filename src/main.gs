@@ -4565,7 +4565,7 @@ function generatePreparedInvoicesForMonth(billingMonth, options) {
 
   const opts = options || {};
   if (opts.applyEdits === true) {
-    applyBillingEdits(monthKey, opts);
+    billingLogger_.log('[billing] generatePreparedInvoicesForMonth ignored applyEdits to keep PDF generation read-only');
   }
 
   const loaded = loadPreparedBillingForPdfGeneration_(monthKey, { withValidation: true });

@@ -3844,12 +3844,13 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const baseAmount = isAggregateInvoice
     ? buildAggregateInvoiceAmountDataForPdf_(normalizedAggregateMonths, billingMonth, entry && entry.patientId, cache)
     : buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
+  const aggregateMonthTotals = Array.isArray(baseAmount.aggregateMonthTotals)
+    ? baseAmount.aggregateMonthTotals
+    : [];
   const receiptMonthBreakdown = Array.isArray(entry && entry.receiptMonthBreakdown) ? entry.receiptMonthBreakdown : [];
   const breakdownTotal = receiptMonthBreakdown.length
     ? receiptMonthBreakdown.reduce((sum, item) => sum + (normalizeMoneyNumber_(item && item.amount) || 0), 0)
     : null;
-  const hasBreakdownTotal = breakdownTotal != null
-    && receiptMonthBreakdown.some(item => item && item.amount != null && item.amount !== '');
   const hasBreakdownAmount = receiptMonthBreakdown.some(item => (normalizeMoneyNumber_(item && item.amount) || 0) > 0);
   const normalizedPreviousReceiptAmount = entry && entry.previousReceiptAmount != null
     ? normalizeMoneyNumber_(entry.previousReceiptAmount)
@@ -3857,8 +3858,6 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const resolvedPreviousReceiptAmount = hasBreakdownAmount
     ? breakdownTotal
     : (normalizedPreviousReceiptAmount != null ? normalizedPreviousReceiptAmount : undefined);
-  const hasPreviousReceiptAmount = (Number.isFinite(normalizedPreviousReceiptAmount) && normalizedPreviousReceiptAmount > 0)
-    || hasBreakdownAmount;
   if (entry && entry.previousReceiptAmount == null) {
     if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
       billingLogger_.log('[billing] finalizeInvoiceAmountDataForPdf_ missing previousReceiptAmount: ' + JSON.stringify({
@@ -3875,11 +3874,14 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     chargeMonthLabel: normalizeBillingMonthLabel_(billingMonth),
     forceHideReceipt: !!(entry && entry.forceHideReceipt)
   });
-  if (hasBreakdownTotal) {
-    amount.grandTotal = breakdownTotal;
-  }
   if (entry && entry.grandTotal != null && entry.grandTotal !== '') {
     amount.grandTotal = normalizeMoneyNumber_(entry.grandTotal);
+  }
+  if (isAggregateInvoice && aggregateMonthTotals.length) {
+    amount.grandTotal = aggregateMonthTotals.reduce(
+      (sum, row) => sum + (normalizeMoneyNumber_(row && row.total) || 0),
+      0
+    );
   }
 
   const receiptDisplay = resolveInvoiceReceiptDisplay_(entry, { aggregateMonths: normalizedAggregateMonths });
@@ -3889,7 +3891,6 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     : basePreviousReceipt;
   if (previousReceipt) {
     previousReceipt.settled = isPreviousReceiptSettled_(entry);
-    previousReceipt.visible = hasPreviousReceiptAmount;
     if (resolvedPreviousReceiptAmount != null) {
       previousReceipt.amount = resolvedPreviousReceiptAmount;
     }
@@ -3899,6 +3900,15 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const aggregateConfirmed = !!(receiptDisplay && receiptDisplay.aggregateConfirmed);
   const watermark = buildInvoiceWatermark_(entry);
   const receiptMonths = resolveReceiptTargetMonths(entry && entry.patientId, billingMonth, cache);
+  const currentFlags = getBankWithdrawalStatusByPatient_(billingMonth, entry && entry.patientId, cache);
+  const isAggregateMonth = !!(currentFlags && currentFlags.af);
+  const shouldShowReceipt = !!(receiptDisplay && receiptDisplay.visible) && !isAggregateMonth;
+  if (amount.forceHideReceipt || isAggregateMonth) {
+    amount.forceHideReceipt = true;
+  }
+  if (previousReceipt) {
+    previousReceipt.visible = shouldShowReceipt;
+  }
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
@@ -3928,7 +3938,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     receiptRemark: receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '',
     receiptMonthBreakdown: receiptMonthBreakdown.length ? receiptMonthBreakdown : undefined,
     previousReceiptAmount: resolvedPreviousReceiptAmount,
-    showReceipt: hasPreviousReceiptAmount,
+    showReceipt: shouldShowReceipt,
     previousReceipt,
     watermark
   });

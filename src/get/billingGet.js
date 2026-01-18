@@ -224,6 +224,50 @@ const billingNormalizeStaffKey_ = typeof normalizeStaffKey_ === 'function'
     return collapsed || normalized;
   };
 
+const BILLING_TREATMENT_CATEGORY_DEFINITIONS = typeof TREATMENT_CATEGORY_DEFINITIONS !== 'undefined'
+  ? TREATMENT_CATEGORY_DEFINITIONS
+  : {
+    insurance30: { label: '30分施術（保険）' },
+    self30: { label: '30分施術（自費）' },
+    self60: { label: '60分施術（完全自費）' },
+    mixed: { label: '60分施術（保険＋自費）' },
+    new: { label: '新規' }
+  };
+
+const BILLING_TREATMENT_CATEGORY_LABEL_TO_KEY = typeof TREATMENT_CATEGORY_LABEL_TO_KEY !== 'undefined'
+  ? TREATMENT_CATEGORY_LABEL_TO_KEY
+  : Object.keys(BILLING_TREATMENT_CATEGORY_DEFINITIONS).reduce((map, key) => {
+    const def = BILLING_TREATMENT_CATEGORY_DEFINITIONS[key];
+    if (def && def.label) {
+      map[def.label] = key;
+    }
+    return map;
+  }, {});
+
+const BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP = typeof TREATMENT_CATEGORY_ATTENDANCE_GROUP !== 'undefined'
+  ? TREATMENT_CATEGORY_ATTENDANCE_GROUP
+  : {
+    insurance30: 'insurance',
+    self30: 'self',
+    self60: 'self',
+    mixed: 'mixed',
+    new: 'new'
+  };
+
+function normalizeTreatmentCategoryKey_(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (BILLING_TREATMENT_CATEGORY_DEFINITIONS[raw]) return raw;
+  if (BILLING_TREATMENT_CATEGORY_LABEL_TO_KEY[raw]) return BILLING_TREATMENT_CATEGORY_LABEL_TO_KEY[raw];
+  const normalized = raw.normalize('NFKC').replace(/\s+/g, '');
+  const matchedKey = Object.keys(BILLING_TREATMENT_CATEGORY_DEFINITIONS).find(key => {
+    const label = BILLING_TREATMENT_CATEGORY_DEFINITIONS[key] && BILLING_TREATMENT_CATEGORY_DEFINITIONS[key].label;
+    if (!label) return false;
+    return label.normalize('NFKC').replace(/\s+/g, '') === normalized;
+  });
+  return matchedKey || '';
+}
+
 function normalizeStaffKeyCandidates_(candidates) {
   const normalizedKeys = [];
   (candidates || []).forEach(candidate => {
@@ -711,6 +755,11 @@ function loadTreatmentLogs_() {
     ['担当者ID', 'スタッフID', 'staffId', 'staffid', 'staff'],
     '担当者ID',
     {});
+  const colTreatmentCategory = resolveBillingColumn_(headers,
+    ['施術時間区分', '施術区分', 'treatmentCategory', 'treatmentCategoryLabel', 'treatmentCategoryKey'],
+    '施術時間区分',
+    {}
+  );
 
   const range = sheet.getRange(2, 1, lastRow - 1, width);
   const values = range.getValues();
@@ -733,6 +782,12 @@ function loadTreatmentLogs_() {
     const staffIdRaw = colStaffId ? row[colStaffId - 1] : '';
     const staffIdDisplay = colStaffId && displayRow && displayRow.length >= colStaffId ? displayRow[colStaffId - 1] : '';
     const staffIdInfo = colStaffId ? extractNormalizedStaffKey_(staffIdRaw, staffIdDisplay) : { raw: '', normalized: '' };
+    const categoryRaw = colTreatmentCategory ? row[colTreatmentCategory - 1] : '';
+    const categoryDisplay = colTreatmentCategory && displayRow && displayRow.length >= colTreatmentCategory
+      ? displayRow[colTreatmentCategory - 1]
+      : '';
+    const categoryValue = categoryDisplay || categoryRaw;
+    const treatmentCategoryKey = normalizeTreatmentCategoryKey_(categoryValue);
 
     const createdByInfo = colCreatedBy
       ? extractNormalizedStaffKey_(row[colCreatedBy - 1], createdByDisplay)
@@ -793,6 +848,8 @@ function loadTreatmentLogs_() {
       timestamp,
       createdByEmail,
       createdByKey: usedNormalized,
+      treatmentCategoryKey,
+      treatmentCategoryLabel: categoryValue ? String(categoryValue).trim() : '',
       raw: row
     };
   });
@@ -869,8 +926,19 @@ function buildVisitCountMap_(billingMonth) {
     }
     debug.counted += 1;
     filteredCount += 1;
-    const current = counts[pid] || { visitCount: 0 };
+    const current = counts[pid] || { visitCount: 0, self30: 0, self60: 0, mixed: 0 };
     current.visitCount += 1;
+    const categoryKey = log && log.treatmentCategoryKey ? String(log.treatmentCategoryKey).trim() : '';
+    if (categoryKey) {
+      const group = BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP[categoryKey];
+      if (group === 'self') {
+        if (categoryKey === 'self60') current.self60 += 1;
+        else current.self30 += 1;
+      } else if (group === 'mixed') {
+        current.mixed += 1;
+        current.self30 += 1;
+      }
+    }
     counts[pid] = current;
 
     if (log && log.createdByEmail) {

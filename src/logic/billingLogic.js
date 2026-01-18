@@ -131,6 +131,13 @@ function normalizeVisitCount_(value) {
   return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
+function normalizeSelfPayCount_(value) {
+  if (!value || typeof value !== 'object') return 0;
+  const self30 = Number(value.self30) || 0;
+  const self60 = Number(value.self60) || 0;
+  return self30 + self60;
+}
+
 function normalizeMoneyNumber_(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : 0;
@@ -324,6 +331,7 @@ function generateBillingJsonFromSource(sourceData) {
     }
     const rawVisitCount = treatmentVisitCounts[pid];
     const visitCount = normalizeVisitCount_(rawVisitCount);
+    const selfPayCount = normalizeSelfPayCount_(rawVisitCount);
     if (!visitCount && zeroVisitDebug.length < 20) {
       zeroVisitDebug.push({
         patientId: pid,
@@ -376,6 +384,7 @@ function generateBillingJsonFromSource(sourceData) {
       burdenRate: normalizedBurdenRate,
       medicalAssistance: normalizedMedicalAssistance,
       visitCount: amountCalc.visits,
+      selfPayCount,
       manualUnitPrice,
       unitPrice: amountCalc.unitPrice,
       treatmentAmount: amountCalc.treatmentAmount,

@@ -1683,13 +1683,9 @@ function handleBillingPdfGeneration() {
   billingState.invoiceMode = invoiceMode;
   billingState.invoicePatientIdsInput = invoicePatientIdsText;
   setBillingLoading(true, 'PDF生成中…');
-  const preparedMonth = normalizeYm(billingState.prepared && billingState.prepared.billingMonth);
-  // 編集反映は「prepared月＝PDF対象月」の場合のみ。過去月編集は対象外。
-  const shouldApplyEdits = preparedMonth && preparedMonth === targetMonth;
   const payload = Object.assign({}, buildBillingSavePayload(), {
     invoiceMode,
-    invoicePatientIds,
-    applyEdits: shouldApplyEdits
+    invoicePatientIds
   });
   google.script.run
     .withSuccessHandler(onBillingPdfCompleted)

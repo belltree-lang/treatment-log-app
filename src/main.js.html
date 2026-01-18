@@ -2023,6 +2023,7 @@ function renderBillingResult() {
     { key: 'payerType', label: '保険者', sortable: false },
     { key: 'burdenRate', label: '負担', sortable: true },
     { key: 'visitCount', label: '回数', sortable: true },
+    { key: 'selfPayCount', label: '自費回数', sortable: false },
     { key: 'unitPrice', label: '単価', sortable: true },
     { key: 'treatmentAmount', label: '施術料', sortable: true },
     { key: 'transportAmount', label: '交通費', sortable: true },
@@ -2134,6 +2135,10 @@ function renderBillingResult() {
     try {
       const safeItem = item && typeof item === 'object' ? item : {};
       const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
+      const selfPayCount = safeItem.selfPayCount;
+      const selfPayDisplay = (selfPayCount === 0 || selfPayCount === '0' || selfPayCount)
+        ? selfPayCount
+        : '—';
       bodyRows.push(`
       <tr>
         <td>${safeItem.patientId || ''}</td>
@@ -2144,6 +2149,7 @@ function renderBillingResult() {
         <td>${renderEditableCell(safeItem, 'payerType')}</td>
         <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
         <td>${wrapWithOverrideBadge(safeItem.visitCount || 0, safeItem.patientId, 'visitCount')}</td>
+        <td>${selfPayDisplay}</td>
         <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
         <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
         <td class="right">${renderEditableCell(safeItem, 'transportAmount', true)}</td>

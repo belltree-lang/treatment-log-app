@@ -2541,13 +2541,14 @@ function buildPreparedBillingPayload_(billingMonth) {
   billingJsonArray.forEach(item => {
     const pid = billingNormalizePatientId_(item && item.patientId);
     if (!pid) return;
+    const normalizedItem = normalizeBillingEntryFromEntries_(item);
     totalsByPatient[pid] = {
-      visitCount: billingNormalizeVisitCount_(item && item.visitCount),
-      billingAmount: normalizeNumber_(item && item.billingAmount),
-      total: normalizeNumber_(item && item.total),
-      grandTotal: normalizeNumber_(item && item.grandTotal),
-      carryOverAmount: normalizeNumber_(item && item.carryOverAmount),
-      carryOverFromHistory: normalizeNumber_(item && item.carryOverFromHistory)
+      visitCount: billingNormalizeVisitCount_(normalizedItem && normalizedItem.visitCount),
+      billingAmount: normalizeNumber_(normalizedItem && normalizedItem.billingAmount),
+      total: normalizeNumber_(normalizedItem && normalizedItem.total),
+      grandTotal: normalizeNumber_(normalizedItem && normalizedItem.grandTotal),
+      carryOverAmount: normalizeNumber_(normalizedItem && normalizedItem.carryOverAmount),
+      carryOverFromHistory: normalizeNumber_(normalizedItem && normalizedItem.carryOverFromHistory)
     };
   });
   const patientMap = source.patients || source.patientMap || {};
@@ -3252,10 +3253,25 @@ function resolveBillingEntryTotalAmount_(entry) {
   return normalizeAmount(entry.total);
 }
 
+function normalizeBillingEntryType_(entryType) {
+  if (!entryType) return '';
+  const raw = String(entryType || '').trim();
+  const lower = raw.toLowerCase();
+  if (lower === 'insurance') return 'insurance';
+  if (lower === 'selfpay' || lower === 'self_pay' || lower === 'self-pay') return 'self_pay';
+  if (raw === 'selfPay') return 'self_pay';
+  return raw;
+}
+
 function resolveBillingEntries_(entry) {
   if (!entry) return [];
   if (Array.isArray(entry.entries) && entry.entries.length) {
-    return entry.entries.filter(item => item && typeof item === 'object' && item.entryType);
+    return entry.entries.map(item => {
+      if (!item || typeof item !== 'object') return null;
+      const normalizedType = normalizeBillingEntryType_(item.type || item.entryType);
+      if (!normalizedType) return null;
+      return Object.assign({}, item, { type: normalizedType, entryType: normalizedType });
+    }).filter(Boolean);
   }
   const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
     ? normalizeMoneyNumber_
@@ -3270,6 +3286,7 @@ function resolveBillingEntries_(entry) {
     + normalizeAmount(entry.carryOverAmount)
     + normalizeAmount(entry.carryOverFromHistory);
   const insuranceEntry = {
+    type: 'insurance',
     entryType: 'insurance',
     unitPrice: entry.unitPrice,
     visitCount: entry.visitCount,
@@ -3293,7 +3310,8 @@ function resolveBillingEntries_(entry) {
   const selfPayItemsTotal = selfPayItems.reduce((sum, item) => sum + normalizeAmount(item.amount), 0);
   if (selfPayItems.length || hasManualSelfPayAmount) {
     const selfPayEntry = {
-      entryType: 'selfPay',
+      type: 'self_pay',
+      entryType: 'self_pay',
       items: selfPayItems,
       total: hasManualSelfPayAmount ? normalizeAmount(manualSelfPayInput) : selfPayItemsTotal
     };
@@ -3306,8 +3324,41 @@ function resolveBillingEntries_(entry) {
 }
 
 function resolveBillingEntryByType_(entry, entryType) {
+  const normalizedType = normalizeBillingEntryType_(entryType);
   const entries = resolveBillingEntries_(entry);
-  return entries.find(item => item && item.entryType === entryType) || null;
+  return entries.find(item => item && normalizeBillingEntryType_(item.entryType || item.type) === normalizedType) || null;
+}
+
+function normalizeBillingEntryFromEntries_(entry) {
+  if (!entry) return entry;
+  const entries = resolveBillingEntries_(entry);
+  const hasEntries = entries.length > 0;
+  const insuranceEntry = entries.find(item => item && item.type === 'insurance') || null;
+  const selfPayEntry = entries.find(item => item && item.type === 'self_pay') || null;
+  const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
+  const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
+  const manualBillingAmount = insuranceEntry && insuranceEntry.manualOverride
+    ? insuranceEntry.manualOverride.amount
+    : (hasEntries ? '' : entry.manualBillingAmount);
+  const manualSelfPayAmount = selfPayEntry && selfPayEntry.manualOverride
+    ? selfPayEntry.manualOverride.amount
+    : (hasEntries ? '' : entry.manualSelfPayAmount);
+  const selfPayItems = selfPayEntry
+    ? (Array.isArray(selfPayEntry.items)
+      ? selfPayEntry.items
+      : (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []))
+    : (Array.isArray(entry.selfPayItems) ? entry.selfPayItems : []);
+  return Object.assign({}, entry, {
+    entries,
+    manualBillingAmount: manualBillingAmount !== undefined ? manualBillingAmount : entry.manualBillingAmount,
+    manualSelfPayAmount: manualSelfPayAmount !== undefined ? manualSelfPayAmount : entry.manualSelfPayAmount,
+    billingAmount: insuranceEntry && insuranceEntry.billingAmount != null
+      ? insuranceEntry.billingAmount
+      : entry.billingAmount,
+    total: insuranceTotal,
+    grandTotal: insuranceTotal + selfPayTotal,
+    selfPayItems
+  });
 }
 
 function buildBillingAmountByPatientId_(billingJson) {
@@ -3327,7 +3378,7 @@ function buildSelfPayAmountByPatientId_(billingJson) {
   (billingJson || []).forEach(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return;
-    const selfPayEntry = resolveBillingEntryByType_(entry, 'selfPay');
+    const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
     if (!selfPayEntry) return;
     amounts[pid] = resolveBillingEntryTotalAmount_(selfPayEntry);
   });
@@ -3661,7 +3712,8 @@ function coerceBillingJsonArray_(raw) {
       const normalizedEntry = Object.assign({}, entry || {}, {
         bankFlags: normalizeBankFlags_(bankFlags)
       });
-      return sanitizeAggregateFieldsForBankFlags_(normalizedEntry, normalizedEntry.bankFlags);
+      const sanitized = sanitizeAggregateFieldsForBankFlags_(normalizedEntry, normalizedEntry.bankFlags);
+      return normalizeBillingEntryFromEntries_(sanitized);
     });
     const schemaVersion = Number(payload.schemaVersion);
     const normalized = {
@@ -3909,17 +3961,64 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
     const pid = billingNormalizePatientId_(entry.patientId);
     if (!pid) return entry;
     const override = overrides[pid];
-    if (!override || override.manualBillingAmount === undefined) return entry;
-    const manualBillingAmount = override.manualBillingAmount;
-    const hasManualBilling = manualBillingAmount !== '' && manualBillingAmount !== null && manualBillingAmount !== undefined;
-    const shouldUpdate = entry.manualBillingAmount !== manualBillingAmount
-      || (hasManualBilling && entry.grandTotal !== manualBillingAmount);
-    if (!shouldUpdate) return entry;
-    updated = true;
-    return Object.assign({}, entry, {
-      manualBillingAmount,
-      grandTotal: hasManualBilling ? manualBillingAmount : entry.grandTotal
+    if (!override || (override.manualBillingAmount === undefined && override.manualSelfPayAmount === undefined)) {
+      return normalizeBillingEntryFromEntries_(entry);
+    }
+    const current = normalizeBillingEntryFromEntries_(entry);
+    const entries = resolveBillingEntries_(current);
+    const insuranceOverride = override.manualBillingAmount;
+    const selfPayOverride = override.manualSelfPayAmount;
+    const updatedEntries = entries.map(item => {
+      const itemType = normalizeBillingEntryType_(item && (item.type || item.entryType));
+      if (itemType === 'insurance' && insuranceOverride !== undefined) {
+        const next = Object.assign({}, item);
+        if (insuranceOverride === '' || insuranceOverride === null) {
+          if (next.manualOverride && Object.prototype.hasOwnProperty.call(next.manualOverride, 'amount')) {
+            const cleaned = Object.assign({}, next.manualOverride);
+            delete cleaned.amount;
+            if (!Object.keys(cleaned).length) {
+              delete next.manualOverride;
+            } else {
+              next.manualOverride = cleaned;
+            }
+          }
+        } else {
+          next.manualOverride = Object.assign({}, next.manualOverride || {}, {
+            amount: insuranceOverride
+          });
+        }
+        return next;
+      }
+      if (itemType === 'self_pay' && selfPayOverride !== undefined) {
+        const next = Object.assign({}, item);
+        if (selfPayOverride === '' || selfPayOverride === null) {
+          if (next.manualOverride && Object.prototype.hasOwnProperty.call(next.manualOverride, 'amount')) {
+            const cleaned = Object.assign({}, next.manualOverride);
+            delete cleaned.amount;
+            if (!Object.keys(cleaned).length) {
+              delete next.manualOverride;
+            } else {
+              next.manualOverride = cleaned;
+            }
+          }
+        } else {
+          next.manualOverride = Object.assign({}, next.manualOverride || {}, {
+            amount: selfPayOverride
+          });
+        }
+        return next;
+      }
+      return item;
     });
+    const normalized = normalizeBillingEntryFromEntries_(Object.assign({}, current, { entries: updatedEntries }));
+    const billingChanged = override.manualBillingAmount !== undefined
+      && normalized.manualBillingAmount !== current.manualBillingAmount;
+    const selfPayChanged = override.manualSelfPayAmount !== undefined
+      && normalized.manualSelfPayAmount !== current.manualSelfPayAmount;
+    if (billingChanged || selfPayChanged) {
+      updated = true;
+    }
+    return normalized;
   });
 
   if (!updated) {
@@ -3933,9 +4032,10 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
       if (!entry) return;
       const pid = billingNormalizePatientId_(entry.patientId);
       if (!pid || !totalsByPatient[pid]) return;
-      if (entry.manualBillingAmount === '' || entry.manualBillingAmount == null) return;
       totalsByPatient[pid] = Object.assign({}, totalsByPatient[pid], {
-        grandTotal: entry.manualBillingAmount
+        grandTotal: normalizeMoneyNumber_(entry.grandTotal),
+        total: normalizeMoneyNumber_(entry.total),
+        billingAmount: normalizeMoneyNumber_(entry.billingAmount)
       });
     });
     updatedPrepared.totalsByPatient = totalsByPatient;
@@ -3944,10 +4044,16 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
     const overrideFlags = Object.assign({}, updatedPrepared.billingOverrideFlags);
     Object.keys(overrides).forEach(pid => {
       const override = overrides[pid];
-      if (!override || override.manualBillingAmount === undefined) return;
-      if (override.manualBillingAmount === '' || override.manualBillingAmount == null) return;
+      if (!override) return;
       const flags = Object.assign({}, overrideFlags[pid] || {});
-      flags.grandTotal = true;
+      if (override.manualBillingAmount !== undefined
+        && override.manualBillingAmount !== '' && override.manualBillingAmount != null) {
+        flags.grandTotal = true;
+      }
+      if (override.manualSelfPayAmount !== undefined
+        && override.manualSelfPayAmount !== '' && override.manualSelfPayAmount != null) {
+        flags.selfPayAmount = true;
+      }
       overrideFlags[pid] = flags;
     });
     updatedPrepared.billingOverrideFlags = overrideFlags;
@@ -4028,14 +4134,18 @@ function shouldGenerateInvoicePdfForEntry_(entry, prepared) {
     if (hasMedicalSubsidy) return false;
   }
 
+  const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
+  if (!insuranceEntry) return false;
   const normalizeVisits = typeof billingNormalizeVisitCount_ === 'function'
     ? billingNormalizeVisitCount_
     : value => Number(value) || 0;
-  const visitCount = normalizeVisits(entry && entry.visitCount);
+  const visitCount = normalizeVisits(insuranceEntry && insuranceEntry.visitCount);
   if (!visitCount) return false;
 
-  const billingAmount = normalizeMoneyNumber_(entry && entry.billingAmount);
-  const grandTotal = normalizeMoneyNumber_(entry && entry.grandTotal);
+  const billingAmount = normalizeMoneyNumber_(insuranceEntry && insuranceEntry.billingAmount != null
+    ? insuranceEntry.billingAmount
+    : insuranceEntry.total);
+  const grandTotal = normalizeMoneyNumber_(resolveBillingEntryTotalAmount_(insuranceEntry));
   if (!billingAmount || !grandTotal) return false;
 
   return true;
@@ -4043,17 +4153,25 @@ function shouldGenerateInvoicePdfForEntry_(entry, prepared) {
 
 function shouldGenerateSelfPayInvoicePdfForEntry_(entry) {
   if (!entry) return false;
-  const selfPayCount = Number(entry.selfPayCount) || 0;
-  const selfPayItems = Array.isArray(entry.selfPayItems) ? entry.selfPayItems : [];
-  return selfPayCount > 0 || selfPayItems.length > 0;
+  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+  if (!selfPayEntry) return false;
+  const selfPayItems = buildSelfPayItemsForInvoice_(entry);
+  if (selfPayItems.length) return true;
+  return resolveBillingEntryTotalAmount_(selfPayEntry) > 0;
 }
 
 function buildSelfPayItemsForInvoice_(entry) {
-  const items = Array.isArray(entry && entry.selfPayItems)
-    ? entry.selfPayItems.filter(item => item && normalizeMoneyNumber_(item.amount) !== 0)
-    : [];
-  if (!items.length && entry && entry.manualSelfPayAmount != null && entry.manualSelfPayAmount !== '') {
-    const manualAmount = normalizeMoneyNumber_(entry.manualSelfPayAmount);
+  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+  if (!selfPayEntry) return [];
+  const rawItems = Array.isArray(selfPayEntry.items)
+    ? selfPayEntry.items
+    : (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []);
+  const items = rawItems.filter(item => item && normalizeMoneyNumber_(item.amount) !== 0);
+  const manualOverride = selfPayEntry && selfPayEntry.manualOverride
+    ? selfPayEntry.manualOverride.amount
+    : undefined;
+  if (!items.length && manualOverride != null && manualOverride !== '') {
+    const manualAmount = normalizeMoneyNumber_(manualOverride);
     if (manualAmount !== 0) {
       items.push({ type: '自費', amount: manualAmount });
     }
@@ -4063,16 +4181,50 @@ function buildSelfPayItemsForInvoice_(entry) {
 
 function buildSelfPayInvoiceEntryForPdf_(entry) {
   if (!entry) return null;
+  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+  if (!selfPayEntry) return null;
   const selfPayCount = Number(entry.selfPayCount) || 0;
   const selfPayItems = buildSelfPayItemsForInvoice_(entry);
+  const manualOverride = selfPayEntry && selfPayEntry.manualOverride
+    ? selfPayEntry.manualOverride.amount
+    : undefined;
   return Object.assign({}, entry, {
+    unitPrice: 0,
     visitCount: selfPayCount,
     insuranceType: '自費',
     burdenRate: '自費',
     selfPayItems,
+    manualSelfPayAmount: manualOverride !== undefined ? manualOverride : entry.manualSelfPayAmount,
+    carryOverAmount: 0,
+    manualTransportAmount: '',
+    transportAmount: 0,
+    treatmentAmount: 0,
     billingAmount: null,
     total: null,
     grandTotal: null
+  });
+}
+
+function buildInsuranceInvoiceEntryForPdf_(entry) {
+  if (!entry) return null;
+  const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
+  if (!insuranceEntry) return null;
+  const manualOverride = insuranceEntry && insuranceEntry.manualOverride
+    ? insuranceEntry.manualOverride.amount
+    : undefined;
+  const insuranceTotal = resolveBillingEntryTotalAmount_(insuranceEntry);
+  return Object.assign({}, entry, {
+    visitCount: insuranceEntry.visitCount,
+    unitPrice: insuranceEntry.unitPrice,
+    treatmentAmount: insuranceEntry.treatmentAmount,
+    transportAmount: insuranceEntry.transportAmount,
+    billingAmount: insuranceEntry.billingAmount,
+    total: insuranceTotal,
+    grandTotal: insuranceTotal,
+    manualBillingAmount: manualOverride !== undefined ? manualOverride : entry.manualBillingAmount,
+    manualSelfPayAmount: '',
+    selfPayItems: [],
+    selfPayCount: 0
   });
 }
 
@@ -4341,7 +4493,8 @@ function generatePreparedInvoices_(prepared, options) {
       const receiptEntry = pid
         ? (receiptEnriched.billingJson || []).find(item => billingNormalizePatientId_(item && item.patientId) === pid) || row
         : row;
-      return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache, receiptSummaryMap);
+      const insuranceEntry = buildInsuranceInvoiceEntryForPdf_(receiptEntry) || receiptEntry;
+      return buildInvoicePdfContextForEntry_(insuranceEntry, receiptEnriched, monthCache, receiptSummaryMap);
     }).filter(Boolean)
     : [];
   // 'scheduled' represents bank-flag-driven aggregate entries that skipped standard

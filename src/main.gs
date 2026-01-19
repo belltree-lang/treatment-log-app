@@ -3252,10 +3252,45 @@ function resolveBillingEntryTotalAmount_(entry) {
   return normalizeAmount(entry.total);
 }
 
+function normalizeBillingEntryTypeValue_(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = raw.toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'insurance') return 'insurance';
+  if (normalized === 'selfpay' || normalized === 'self_pay' || normalized === 'self-pay') return 'self_pay';
+  return '';
+}
+
 function resolveBillingEntries_(entry) {
   if (!entry) return [];
   if (Array.isArray(entry.entries) && entry.entries.length) {
-    return entry.entries.filter(item => item && typeof item === 'object' && item.entryType);
+    const manualBillingInput = Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
+      ? entry.manualBillingAmount
+      : undefined;
+    const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+    const manualSelfPayInput = Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')
+      ? entry.manualSelfPayAmount
+      : undefined;
+    const hasManualSelfPayAmount = manualSelfPayInput !== '' && manualSelfPayInput !== null && manualSelfPayInput !== undefined;
+    const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
+      ? normalizeMoneyNumber_
+      : value => Number(value) || 0;
+    return entry.entries
+      .filter(item => item && typeof item === 'object' && normalizeBillingEntryTypeValue_(item.type || item.entryType))
+      .map(item => {
+        const normalizedType = normalizeBillingEntryTypeValue_(item.type || item.entryType);
+        if (normalizedType === 'insurance' && hasManualBillingAmount) {
+          return Object.assign({}, item, {
+            manualOverride: { amount: normalizeAmount(manualBillingInput) }
+          });
+        }
+        if (normalizedType === 'self_pay' && hasManualSelfPayAmount) {
+          return Object.assign({}, item, {
+            manualOverride: { amount: normalizeAmount(manualSelfPayInput) }
+          });
+        }
+        return item;
+      });
   }
   const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
     ? normalizeMoneyNumber_
@@ -3270,6 +3305,7 @@ function resolveBillingEntries_(entry) {
     + normalizeAmount(entry.carryOverAmount)
     + normalizeAmount(entry.carryOverFromHistory);
   const insuranceEntry = {
+    type: 'insurance',
     entryType: 'insurance',
     unitPrice: entry.unitPrice,
     visitCount: entry.visitCount,
@@ -3293,6 +3329,7 @@ function resolveBillingEntries_(entry) {
   const selfPayItemsTotal = selfPayItems.reduce((sum, item) => sum + normalizeAmount(item.amount), 0);
   if (selfPayItems.length || hasManualSelfPayAmount) {
     const selfPayEntry = {
+      type: 'self_pay',
       entryType: 'selfPay',
       items: selfPayItems,
       total: hasManualSelfPayAmount ? normalizeAmount(manualSelfPayInput) : selfPayItemsTotal
@@ -3307,7 +3344,8 @@ function resolveBillingEntries_(entry) {
 
 function resolveBillingEntryByType_(entry, entryType) {
   const entries = resolveBillingEntries_(entry);
-  return entries.find(item => item && item.entryType === entryType) || null;
+  const normalizedTarget = normalizeBillingEntryTypeValue_(entryType);
+  return entries.find(item => item && normalizeBillingEntryTypeValue_(item.type || item.entryType) === normalizedTarget) || null;
 }
 
 function buildBillingAmountByPatientId_(billingJson) {
@@ -3327,7 +3365,7 @@ function buildSelfPayAmountByPatientId_(billingJson) {
   (billingJson || []).forEach(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return;
-    const selfPayEntry = resolveBillingEntryByType_(entry, 'selfPay');
+    const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
     if (!selfPayEntry) return;
     amounts[pid] = resolveBillingEntryTotalAmount_(selfPayEntry);
   });

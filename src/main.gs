@@ -3797,6 +3797,69 @@ function shouldGenerateInvoicePdfForEntry_(entry, prepared) {
   return true;
 }
 
+function shouldGenerateSelfPayInvoicePdfForEntry_(entry) {
+  if (!entry) return false;
+  const selfPayCount = Number(entry.selfPayCount) || 0;
+  const selfPayItems = Array.isArray(entry.selfPayItems) ? entry.selfPayItems : [];
+  return selfPayCount > 0 || selfPayItems.length > 0;
+}
+
+function buildSelfPayItemsForInvoice_(entry) {
+  const items = Array.isArray(entry && entry.selfPayItems)
+    ? entry.selfPayItems.filter(item => item && normalizeMoneyNumber_(item.amount) !== 0)
+    : [];
+  if (!items.length && entry && entry.manualSelfPayAmount != null && entry.manualSelfPayAmount !== '') {
+    const manualAmount = normalizeMoneyNumber_(entry.manualSelfPayAmount);
+    if (manualAmount !== 0) {
+      items.push({ type: '自費', amount: manualAmount });
+    }
+  }
+  return items;
+}
+
+function buildSelfPayInvoiceEntryForPdf_(entry) {
+  if (!entry) return null;
+  const selfPayCount = Number(entry.selfPayCount) || 0;
+  const selfPayItems = buildSelfPayItemsForInvoice_(entry);
+  return Object.assign({}, entry, {
+    visitCount: selfPayCount,
+    insuranceType: '自費',
+    burdenRate: '自費',
+    selfPayItems,
+    billingAmount: null,
+    total: null,
+    grandTotal: null
+  });
+}
+
+function buildSelfPayInvoicePdfContextForEntry_(entry, prepared, cache) {
+  if (!entry) return null;
+  const billingMonth = normalizeBillingMonthKeySafe_(prepared && prepared.billingMonth ? prepared.billingMonth : entry.billingMonth);
+  const patientId = billingNormalizePatientId_(entry && entry.patientId);
+  if (!billingMonth || !patientId) return null;
+  const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, [], false, cache, prepared);
+  return {
+    patientId,
+    billingMonth,
+    months: [],
+    amount,
+    name: entry && entry.nameKanji ? String(entry.nameKanji) : '',
+    isAggregateInvoice: false,
+    responsibleName: entry && entry.responsibleName ? String(entry.responsibleName) : ''
+  };
+}
+
+function appendSelfPaySuffixToFileName_(fileName) {
+  const name = String(fileName || '').trim();
+  if (!name) return '';
+  if (name.indexOf('_自費') >= 0) return name;
+  const lowerName = name.toLowerCase();
+  if (lowerName.endsWith('.pdf')) {
+    return name.slice(0, -4) + '_自費' + name.slice(-4);
+  }
+  return name + '_自費';
+}
+
 function buildStandardInvoiceAmountDataForPdf_(entry, billingMonth) {
   const targetMonth = normalizeBillingMonthKeySafe_(billingMonth || (entry && entry.billingMonth));
   const breakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: targetMonth }));
@@ -4078,13 +4141,34 @@ function generatePreparedInvoices_(prepared, options) {
 
   const outputOptions = Object.assign({}, opts, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
   const pdfs = generateInvoicePdfs(invoiceContexts, outputOptions);
+  const insuranceFileNamesByPatient = pdfs.files.reduce((map, meta) => {
+    const pid = String(meta && meta.patientId ? meta.patientId : '').trim();
+    if (pid && meta && meta.name) {
+      map[pid] = meta.name;
+    }
+    return map;
+  }, {});
+  const selfPayTargets = targetBillingRows.filter(row => shouldGenerateSelfPayInvoicePdfForEntry_(row));
+  const selfPayFileOptions = Object.assign({}, outputOptions, {
+    clearMonthFolder: false
+  });
+  const selfPayFiles = selfPayTargets.map(row => {
+    const derivedEntry = buildSelfPayInvoiceEntryForPdf_(row);
+    const context = buildSelfPayInvoicePdfContextForEntry_(derivedEntry, receiptEnriched, monthCache);
+    if (!context) return null;
+    const pid = String(context.patientId || '').trim();
+    const baseFileName = insuranceFileNamesByPatient[pid] || formatInvoiceFileName_(context, {});
+    const fileName = appendSelfPaySuffixToFileName_(baseFileName);
+    const meta = generateInvoicePdf(context, Object.assign({}, selfPayFileOptions, { fileName }));
+    return Object.assign({}, meta, { patientId: context.patientId, nameKanji: context.name });
+  }).filter(Boolean);
   const bankOutput = null;
   return {
     billingMonth: normalized.billingMonth,
     billingJson: receiptEnriched.billingJson,
     receiptStatus: normalized.receiptStatus || '',
     aggregateUntilMonth: normalized.aggregateUntilMonth || '',
-    files: pdfs.files.concat(aggregateFiles),
+    files: pdfs.files.concat(aggregateFiles, selfPayFiles),
     invoicePatientIds: targetPatientIds,
     missingInvoicePatientIds: missingPatientIds,
     invoiceGenerationMode: targetPatientIds.length ? 'partial' : 'bulk',

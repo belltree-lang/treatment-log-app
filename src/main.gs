@@ -3415,61 +3415,100 @@ function resolveBillingEntries_(entry) {
   return [];
 }
 
+function normalizeBillingEntryFromEntries_(entry) {
+  if (!entry || typeof entry !== 'object') return entry;
+  const normalizedEntry = Object.assign({}, entry);
   const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
     ? normalizeMoneyNumber_
     : value => Number(value) || 0;
-  const fallbackEntries = [];
-  const manualBillingInput = Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
-    ? entry.manualBillingAmount
-    : undefined;
-  const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
-  const insuranceBaseTotal = normalizeAmount(entry.billingAmount)
-    + normalizeAmount(entry.transportAmount)
-    + normalizeAmount(entry.carryOverAmount)
-    + normalizeAmount(entry.carryOverFromHistory);
-  const insuranceEntry = {
-    type: 'insurance',
-    entryType: 'insurance',
-    unitPrice: entry.unitPrice,
-    visitCount: entry.visitCount,
-    treatmentAmount: entry.treatmentAmount,
-    transportAmount: entry.transportAmount,
-    billingAmount: entry.billingAmount,
-    total: hasManualBillingAmount ? normalizeAmount(manualBillingInput) : insuranceBaseTotal
-  };
-  if (hasManualBillingAmount) {
-    insuranceEntry.manualOverride = { amount: normalizeAmount(manualBillingInput) };
-  }
-  fallbackEntries.push(insuranceEntry);
-
-  const selfPayItems = Array.isArray(entry.selfPayItems)
-    ? entry.selfPayItems.filter(item => item && typeof item === 'object')
-    : [];
-  const manualSelfPayInput = Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')
-    ? entry.manualSelfPayAmount
-    : undefined;
-  const hasManualSelfPayAmount = manualSelfPayInput !== '' && manualSelfPayInput !== null && manualSelfPayInput !== undefined;
-  const selfPayItemsTotal = selfPayItems.reduce((sum, item) => sum + normalizeAmount(item.amount), 0);
-  if (selfPayItems.length || hasManualSelfPayAmount) {
-    const selfPayEntry = {
-      type: 'self_pay',
-      entryType: 'selfPay',
-      items: selfPayItems,
-      total: hasManualSelfPayAmount
-        ? normalizeAmount(manualSelfPayInput)
-        : selfPayItemsTotal
+  const buildFallbackEntries_ = source => {
+    const fallbackEntries = [];
+    const manualBillingInput = Object.prototype.hasOwnProperty.call(source, 'manualBillingAmount')
+      ? source.manualBillingAmount
+      : undefined;
+    const hasManualBillingAmount =
+      manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+    const insuranceBaseTotal = normalizeAmount(source.billingAmount)
+      + normalizeAmount(source.transportAmount)
+      + normalizeAmount(source.carryOverAmount)
+      + normalizeAmount(source.carryOverFromHistory);
+    const insuranceEntry = {
+      type: 'insurance',
+      entryType: 'insurance',
+      unitPrice: source.unitPrice,
+      visitCount: source.visitCount,
+      treatmentAmount: source.treatmentAmount,
+      transportAmount: source.transportAmount,
+      billingAmount: source.billingAmount,
+      total: hasManualBillingAmount ? normalizeAmount(manualBillingInput) : insuranceBaseTotal
     };
+    if (hasManualBillingAmount) {
+      insuranceEntry.manualOverride = { amount: normalizeAmount(manualBillingInput) };
+    }
+    fallbackEntries.push(insuranceEntry);
 
-    if (hasManualSelfPayAmount) {
-      selfPayEntry.manualOverride = {
-        amount: normalizeAmount(manualSelfPayInput)
+    const selfPayItems = Array.isArray(source.selfPayItems)
+      ? source.selfPayItems.filter(item => item && typeof item === 'object')
+      : [];
+    const manualSelfPayInput = Object.prototype.hasOwnProperty.call(source, 'manualSelfPayAmount')
+      ? source.manualSelfPayAmount
+      : undefined;
+    const hasManualSelfPayAmount =
+      manualSelfPayInput !== '' && manualSelfPayInput !== null && manualSelfPayInput !== undefined;
+    const selfPayItemsTotal = selfPayItems.reduce((sum, item) => sum + normalizeAmount(item.amount), 0);
+    if (selfPayItems.length || hasManualSelfPayAmount) {
+      const selfPayEntry = {
+        type: 'self_pay',
+        entryType: 'selfPay',
+        items: selfPayItems,
+        total: hasManualSelfPayAmount
+          ? normalizeAmount(manualSelfPayInput)
+          : selfPayItemsTotal
       };
+
+      if (hasManualSelfPayAmount) {
+        selfPayEntry.manualOverride = {
+          amount: normalizeAmount(manualSelfPayInput)
+        };
+      }
+
+      fallbackEntries.push(selfPayEntry);
     }
 
-    fallbackEntries.push(selfPayEntry);
+    return fallbackEntries;
+  };
+  let entries = resolveBillingEntries_(normalizedEntry);
+  if (!entries.length) {
+    entries = buildFallbackEntries_(normalizedEntry);
   }
-
-  return fallbackEntries;
+  const resolveEntryByType_ = entryType => (
+    entries.find(
+      item =>
+        item &&
+        normalizeBillingEntryTypeValue_(item.type || item.entryType) ===
+          normalizeBillingEntryTypeValue_(entryType)
+    ) || null
+  );
+  const insuranceEntry = resolveEntryByType_('insurance');
+  const selfPayEntry = resolveEntryByType_('self_pay');
+  const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
+  const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
+  const expectedBillingAmount = insuranceEntry && Object.prototype.hasOwnProperty.call(insuranceEntry, 'billingAmount')
+    ? normalizeAmount(insuranceEntry.billingAmount)
+    : insuranceTotal;
+  normalizedEntry.entries = entries;
+  normalizedEntry.billingAmount = insuranceEntry ? expectedBillingAmount : 0;
+  normalizedEntry.total = insuranceEntry ? insuranceTotal : 0;
+  normalizedEntry.grandTotal = insuranceTotal + selfPayTotal;
+  if (insuranceEntry && insuranceEntry.manualOverride
+    && Object.prototype.hasOwnProperty.call(insuranceEntry.manualOverride, 'amount')) {
+    normalizedEntry.manualBillingAmount = insuranceEntry.manualOverride.amount;
+  }
+  if (selfPayEntry && selfPayEntry.manualOverride
+    && Object.prototype.hasOwnProperty.call(selfPayEntry.manualOverride, 'amount')) {
+    normalizedEntry.manualSelfPayAmount = selfPayEntry.manualOverride.amount;
+  }
+  return normalizedEntry;
 }
 
 function resolveBillingEntryByType_(entry, entryType) {

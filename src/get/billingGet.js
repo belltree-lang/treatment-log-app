@@ -1571,7 +1571,20 @@ function getBillingSourceData(billingMonth) {
       billingOverrideFlags[pid] = flags;
     }
     if (override.adjustedVisitCount !== undefined) {
-      treatmentVisitCounts[pid] = override.adjustedVisitCount;
+      const adjustedVisitCount = override.adjustedVisitCount;
+      const currentVisitCount = treatmentVisitCounts[pid];
+      if (currentVisitCount && typeof currentVisitCount === 'object') {
+        treatmentVisitCounts[pid] = Object.assign({}, currentVisitCount, {
+          visitCount: adjustedVisitCount
+        });
+      } else {
+        treatmentVisitCounts[pid] = {
+          visitCount: adjustedVisitCount,
+          self30: 0,
+          self60: 0,
+          mixed: 0
+        };
+      }
     }
   });
   const staffDirectory = loadBillingStaffDirectory_();

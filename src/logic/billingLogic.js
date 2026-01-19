@@ -378,7 +378,35 @@ function generateBillingJsonFromSource(sourceData) {
       : undefined;
     const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
     const manualBillingAmount = hasManualBillingAmount ? normalizeMoneyNumber_(manualBillingInput) : '';
-    const resolvedGrandTotal = hasManualBillingAmount ? manualBillingAmount : amountCalc.grandTotal;
+    const manualSelfPayInput = Object.prototype.hasOwnProperty.call(patient, 'manualSelfPayAmount')
+      ? patient.manualSelfPayAmount
+      : undefined;
+    const hasManualSelfPayAmount = manualSelfPayInput !== '' && manualSelfPayInput !== null && manualSelfPayInput !== undefined;
+    const manualSelfPayAmount = hasManualSelfPayAmount ? normalizeMoneyNumber_(manualSelfPayInput) : '';
+    const selfPayItemsTotal = amountCalc.selfPayItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    const insuranceEntryTotal = hasManualBillingAmount
+      ? manualBillingAmount
+      : amountCalc.billingAmount + amountCalc.transportAmount + amountCalc.carryOverAmount;
+    const selfPayEntryTotal = hasManualSelfPayAmount ? manualSelfPayAmount : selfPayItemsTotal;
+    const entries = [
+      Object.assign({}, {
+        entryType: 'insurance',
+        unitPrice: amountCalc.unitPrice,
+        visitCount: amountCalc.visits,
+        treatmentAmount: amountCalc.treatmentAmount,
+        transportAmount: amountCalc.transportAmount,
+        billingAmount: amountCalc.billingAmount,
+        total: insuranceEntryTotal
+      }, hasManualBillingAmount ? { manualOverride: { amount: manualBillingAmount } } : {})
+    ];
+    if (amountCalc.selfPayItems.length || hasManualSelfPayAmount || selfPayEntryTotal) {
+      entries.push(Object.assign({}, {
+        entryType: 'selfPay',
+        items: amountCalc.selfPayItems,
+        total: selfPayEntryTotal
+      }, hasManualSelfPayAmount ? { manualOverride: { amount: manualSelfPayAmount } } : {}));
+    }
+    const resolvedGrandTotal = entries.reduce((sum, entry) => sum + normalizeMoneyNumber_(entry && entry.total), 0);
 
     const bankStatusEntry = bankStatuses && bankStatuses[pid];
 
@@ -406,6 +434,7 @@ function generateBillingJsonFromSource(sourceData) {
       billingAmount: amountCalc.billingAmount,
       total: amountCalc.total,
       grandTotal: resolvedGrandTotal,
+      entries,
       manualBillingAmount,
       responsibleEmail,
       responsibleNames,

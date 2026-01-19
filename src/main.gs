@@ -1632,6 +1632,10 @@ function collectBankWithdrawalAmountsByPatient_(billingMonth, prepared) {
 
 function resolveBillingAmountForEntry_(entry) {
   if (!entry) return 0;
+  const entries = resolveBillingEntries_(entry);
+  if (entries.length) {
+    return entries.reduce((sum, billingEntry) => sum + resolveBillingEntryTotalAmount_(billingEntry), 0);
+  }
   const carryOverTotal = normalizeMoneyNumber_(entry.carryOverAmount)
     + normalizeMoneyNumber_(entry.carryOverFromHistory);
 
@@ -3236,33 +3240,84 @@ function syncBankWithdrawalOnlineConsentFlags_(billingMonth, prepared) {
   return { billingMonth: month.key, updated };
 }
 
+function resolveBillingEntryTotalAmount_(entry) {
+  if (!entry) return 0;
+  const manualOverride = entry.manualOverride && entry.manualOverride.amount;
+  const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
+    ? normalizeMoneyNumber_
+    : value => Number(value) || 0;
+  if (manualOverride !== '' && manualOverride !== null && manualOverride !== undefined) {
+    return normalizeAmount(manualOverride);
+  }
+  return normalizeAmount(entry.total);
+}
+
+function resolveBillingEntries_(entry) {
+  if (!entry) return [];
+  if (Array.isArray(entry.entries) && entry.entries.length) {
+    return entry.entries.filter(item => item && typeof item === 'object' && item.entryType);
+  }
+  const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
+    ? normalizeMoneyNumber_
+    : value => Number(value) || 0;
+  const fallbackEntries = [];
+  const manualBillingInput = Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
+    ? entry.manualBillingAmount
+    : undefined;
+  const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+  const insuranceBaseTotal = normalizeAmount(entry.billingAmount)
+    + normalizeAmount(entry.transportAmount)
+    + normalizeAmount(entry.carryOverAmount)
+    + normalizeAmount(entry.carryOverFromHistory);
+  const insuranceEntry = {
+    entryType: 'insurance',
+    unitPrice: entry.unitPrice,
+    visitCount: entry.visitCount,
+    treatmentAmount: entry.treatmentAmount,
+    transportAmount: entry.transportAmount,
+    billingAmount: entry.billingAmount,
+    total: hasManualBillingAmount ? normalizeAmount(manualBillingInput) : insuranceBaseTotal
+  };
+  if (hasManualBillingAmount) {
+    insuranceEntry.manualOverride = { amount: normalizeAmount(manualBillingInput) };
+  }
+  fallbackEntries.push(insuranceEntry);
+
+  const selfPayItems = Array.isArray(entry.selfPayItems)
+    ? entry.selfPayItems.filter(item => item && typeof item === 'object')
+    : [];
+  const manualSelfPayInput = Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')
+    ? entry.manualSelfPayAmount
+    : undefined;
+  const hasManualSelfPayAmount = manualSelfPayInput !== '' && manualSelfPayInput !== null && manualSelfPayInput !== undefined;
+  const selfPayItemsTotal = selfPayItems.reduce((sum, item) => sum + normalizeAmount(item.amount), 0);
+  if (selfPayItems.length || hasManualSelfPayAmount) {
+    const selfPayEntry = {
+      entryType: 'selfPay',
+      items: selfPayItems,
+      total: hasManualSelfPayAmount ? normalizeAmount(manualSelfPayInput) : selfPayItemsTotal
+    };
+    if (hasManualSelfPayAmount) {
+      selfPayEntry.manualOverride = { amount: normalizeAmount(manualSelfPayInput) };
+    }
+    fallbackEntries.push(selfPayEntry);
+  }
+  return fallbackEntries;
+}
+
+function resolveBillingEntryByType_(entry, entryType) {
+  const entries = resolveBillingEntries_(entry);
+  return entries.find(item => item && item.entryType === entryType) || null;
+}
+
 function buildBillingAmountByPatientId_(billingJson) {
   const amounts = {};
   (billingJson || []).forEach(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return;
-    const manualBillingInput = entry && Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
-      ? entry.manualBillingAmount
-      : undefined;
-    const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
-    if (hasManualBillingAmount) {
-      const insuranceType = String(entry && entry.insuranceType != null ? entry.insuranceType : '').trim();
-      const burdenRaw = entry && entry.burdenRate != null ? entry.burdenRate : '';
-      const normalizedBurden = typeof normalizeBurdenRateInt_ === 'function'
-        ? normalizeBurdenRateInt_(burdenRaw)
-        : burdenRaw;
-      const isSelfPay = insuranceType === '自費' || String(burdenRaw || '').trim() === '自費' || normalizedBurden === '自費';
-      if (isSelfPay) {
-        return;
-      }
-    }
-    const amountCandidate = entry && entry.grandTotal != null
-      ? entry.grandTotal
-      : (entry && entry.total != null ? entry.total : entry && entry.billingAmount);
-    const amount = typeof normalizeMoneyNumber_ === 'function'
-      ? normalizeMoneyNumber_(amountCandidate)
-      : Number(amountCandidate) || 0;
-    amounts[pid] = amount;
+    const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
+    if (!insuranceEntry) return;
+    amounts[pid] = resolveBillingEntryTotalAmount_(insuranceEntry);
   });
   return amounts;
 }
@@ -3272,27 +3327,9 @@ function buildSelfPayAmountByPatientId_(billingJson) {
   (billingJson || []).forEach(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return;
-    const manualBillingInput = entry && Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
-      ? entry.manualBillingAmount
-      : undefined;
-    const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
-    if (hasManualBillingAmount) {
-      const insuranceType = String(entry && entry.insuranceType != null ? entry.insuranceType : '').trim();
-      const burdenRaw = entry && entry.burdenRate != null ? entry.burdenRate : '';
-      const normalizedBurden = typeof normalizeBurdenRateInt_ === 'function'
-        ? normalizeBurdenRateInt_(burdenRaw)
-        : burdenRaw;
-      const isSelfPay = insuranceType === '自費' || String(burdenRaw || '').trim() === '自費' || normalizedBurden === '自費';
-      if (isSelfPay) {
-        const amount = typeof normalizeMoneyNumber_ === 'function'
-          ? normalizeMoneyNumber_(manualBillingInput)
-          : Number(manualBillingInput) || 0;
-        amounts[pid] = amount;
-        return;
-      }
-    }
-    if (!entry || !Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')) return;
-    amounts[pid] = entry.manualSelfPayAmount;
+    const selfPayEntry = resolveBillingEntryByType_(entry, 'selfPay');
+    if (!selfPayEntry) return;
+    amounts[pid] = resolveBillingEntryTotalAmount_(selfPayEntry);
   });
   return amounts;
 }

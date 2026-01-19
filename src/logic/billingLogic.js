@@ -402,7 +402,7 @@ function generateBillingJsonFromSource(sourceData) {
     ];
     if (amountCalc.selfPayItems.length || hasManualSelfPayAmount || selfPayEntryTotal) {
       entries.push(Object.assign({}, {
-        type: 'selfPay',
+        type: 'self_pay',
         entryType: 'selfPay',
         items: amountCalc.selfPayItems,
         selfPayItems: amountCalc.selfPayItems,

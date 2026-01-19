@@ -264,6 +264,26 @@ function calculateBillingAmounts_(params) {
   };
 }
 
+function normalizeBillingEntryType_(entryType) {
+  if (!entryType) return '';
+  const rawType = String(entryType || '').trim();
+  const lower = rawType.toLowerCase();
+  if (lower === 'insurance') return 'insurance';
+  if (lower === 'selfpay' || lower === 'self_pay' || lower === 'self-pay') return 'self_pay';
+  if (rawType === 'selfPay') return 'self_pay';
+  return rawType;
+}
+
+function resolveEntryTotalAmount_(entry) {
+  if (!entry) return 0;
+  const manualOverride = entry.manualOverride && entry.manualOverride.amount;
+  const normalized = normalizeMoneyNumber_(manualOverride);
+  if (manualOverride !== '' && manualOverride !== null && manualOverride !== undefined) {
+    return normalized;
+  }
+  return normalizeMoneyNumber_(entry.total);
+}
+
 function resolveBillingAddress_(patient) {
   if (!patient) return '';
   if (patient.address) return String(patient.address).trim();
@@ -403,13 +423,37 @@ function generateBillingJsonFromSource(sourceData) {
     if (amountCalc.selfPayItems.length || hasManualSelfPayAmount || selfPayEntryTotal) {
       entries.push(Object.assign({}, {
         type: 'self_pay',
-        entryType: 'selfPay',
         items: amountCalc.selfPayItems,
         selfPayItems: amountCalc.selfPayItems,
         total: selfPayEntryTotal
       }, hasManualSelfPayAmount ? { manualOverride: { amount: manualSelfPayAmount } } : {}));
     }
-    const resolvedGrandTotal = entries.reduce((sum, entry) => sum + normalizeMoneyNumber_(entry && entry.total), 0);
+   const normalizedEntries = entries.map(entryItem => {
+  const normalizedType = normalizeBillingEntryType_(
+    entryItem && (entryItem.type || entryItem.entryType)
+  );
+
+  return Object.assign({}, entryItem, {
+    type: normalizedType,
+    entryType: entryItem.entryType || normalizedType
+  });
+});
+    const insuranceEntry = normalizedEntries.find(item => item && item.type === 'insurance') || null;
+    const selfPayEntry = normalizedEntries.find(item => item && item.type === 'self_pay') || null;
+    const insuranceTotal = insuranceEntry ? resolveEntryTotalAmount_(insuranceEntry) : 0;
+    const selfPayTotal = selfPayEntry ? resolveEntryTotalAmount_(selfPayEntry) : 0;
+    const resolvedGrandTotal = insuranceTotal + selfPayTotal;
+    const resolvedManualBillingAmount = insuranceEntry && insuranceEntry.manualOverride
+      ? insuranceEntry.manualOverride.amount
+      : '';
+    const resolvedManualSelfPayAmount = selfPayEntry && selfPayEntry.manualOverride
+      ? selfPayEntry.manualOverride.amount
+      : '';
+    const resolvedSelfPayItems = selfPayEntry
+      ? (Array.isArray(selfPayEntry.items)
+        ? selfPayEntry.items
+        : (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []))
+      : [];
 
     const bankStatusEntry = bankStatuses && bankStatuses[pid];
 
@@ -429,16 +473,18 @@ function generateBillingJsonFromSource(sourceData) {
       treatmentAmount: amountCalc.treatmentAmount,
       manualTransportAmount: amountCalc.manualTransportAmount,
       transportAmount: amountCalc.transportAmount,
-      manualSelfPayAmount: amountCalc.manualSelfPayAmount,
-      selfPayItems: amountCalc.selfPayItems,
+      manualSelfPayAmount: resolvedManualSelfPayAmount,
+      selfPayItems: resolvedSelfPayItems,
       billingItems,
       carryOverAmount: amountCalc.carryOverAmount,
       carryOverFromHistory,
-      billingAmount: amountCalc.billingAmount,
-      total: amountCalc.total,
+      billingAmount: insuranceEntry && insuranceEntry.billingAmount != null
+        ? insuranceEntry.billingAmount
+        : amountCalc.billingAmount,
+      total: insuranceTotal,
       grandTotal: resolvedGrandTotal,
-      entries,
-      manualBillingAmount,
+      entries: normalizedEntries,
+      manualBillingAmount: resolvedManualBillingAmount,
       responsibleEmail,
       responsibleNames,
       responsibleName,

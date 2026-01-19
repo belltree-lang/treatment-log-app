@@ -2633,13 +2633,14 @@ function buildPreparedBillingPayload_(billingMonth) {
   billingJsonArray.forEach(item => {
     const pid = billingNormalizePatientId_(item && item.patientId);
     if (!pid) return;
+    const normalizedItem = normalizeBillingEntryFromEntries_(item);
     totalsByPatient[pid] = {
-      visitCount: billingNormalizeVisitCount_(item && item.visitCount),
-      billingAmount: normalizeNumber_(item && item.billingAmount),
-      total: normalizeNumber_(item && item.total),
-      grandTotal: normalizeNumber_(item && item.grandTotal),
-      carryOverAmount: normalizeNumber_(item && item.carryOverAmount),
-      carryOverFromHistory: normalizeNumber_(item && item.carryOverFromHistory)
+      visitCount: billingNormalizeVisitCount_(normalizedItem && normalizedItem.visitCount),
+      billingAmount: normalizeNumber_(normalizedItem && normalizedItem.billingAmount),
+      total: normalizeNumber_(normalizedItem && normalizedItem.total),
+      grandTotal: normalizeNumber_(normalizedItem && normalizedItem.grandTotal),
+      carryOverAmount: normalizeNumber_(normalizedItem && normalizedItem.carryOverAmount),
+      carryOverFromHistory: normalizeNumber_(normalizedItem && normalizedItem.carryOverFromHistory)
     };
   });
   const patientMap = source.patients || source.patientMap || {};
@@ -3355,35 +3356,65 @@ function normalizeBillingEntryTypeValue_(value) {
 
 function resolveBillingEntries_(entry) {
   if (!entry) return [];
+
   if (Array.isArray(entry.entries) && entry.entries.length) {
     const manualBillingInput = Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
       ? entry.manualBillingAmount
       : undefined;
-    const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+    const hasManualBillingAmount =
+      manualBillingInput !== '' &&
+      manualBillingInput !== null &&
+      manualBillingInput !== undefined;
+
     const manualSelfPayInput = Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')
       ? entry.manualSelfPayAmount
       : undefined;
-    const hasManualSelfPayAmount = manualSelfPayInput !== '' && manualSelfPayInput !== null && manualSelfPayInput !== undefined;
-    const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
-      ? normalizeMoneyNumber_
-      : value => Number(value) || 0;
+    const hasManualSelfPayAmount =
+      manualSelfPayInput !== '' &&
+      manualSelfPayInput !== null &&
+      manualSelfPayInput !== undefined;
+
+    const normalizeAmount =
+      typeof normalizeMoneyNumber_ === 'function'
+        ? normalizeMoneyNumber_
+        : value => Number(value) || 0;
+
     return entry.entries
-      .filter(item => item && typeof item === 'object' && normalizeBillingEntryTypeValue_(item.type || item.entryType))
+      .filter(
+        item =>
+          item &&
+          typeof item === 'object' &&
+          normalizeBillingEntryTypeValue_(item.type || item.entryType)
+      )
       .map(item => {
         const normalizedType = normalizeBillingEntryTypeValue_(item.type || item.entryType);
+
         if (normalizedType === 'insurance' && hasManualBillingAmount) {
           return Object.assign({}, item, {
+            type: 'insurance',
+            entryType: 'insurance',
             manualOverride: { amount: normalizeAmount(manualBillingInput) }
           });
         }
+
         if (normalizedType === 'self_pay' && hasManualSelfPayAmount) {
           return Object.assign({}, item, {
+            type: 'self_pay',
+            entryType: 'selfPay',
             manualOverride: { amount: normalizeAmount(manualSelfPayInput) }
           });
         }
-        return item;
+
+        return Object.assign({}, item, {
+          type: normalizedType,
+          entryType: normalizedType === 'self_pay' ? 'selfPay' : normalizedType
+        });
       });
   }
+
+  return [];
+}
+
   const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
     ? normalizeMoneyNumber_
     : value => Number(value) || 0;
@@ -3424,20 +3455,35 @@ function resolveBillingEntries_(entry) {
       type: 'self_pay',
       entryType: 'selfPay',
       items: selfPayItems,
-      total: hasManualSelfPayAmount ? normalizeAmount(manualSelfPayInput) : selfPayItemsTotal
+      total: hasManualSelfPayAmount
+        ? normalizeAmount(manualSelfPayInput)
+        : selfPayItemsTotal
     };
+
     if (hasManualSelfPayAmount) {
-      selfPayEntry.manualOverride = { amount: normalizeAmount(manualSelfPayInput) };
+      selfPayEntry.manualOverride = {
+        amount: normalizeAmount(manualSelfPayInput)
+      };
     }
+
     fallbackEntries.push(selfPayEntry);
   }
+
   return fallbackEntries;
 }
 
 function resolveBillingEntryByType_(entry, entryType) {
   const entries = resolveBillingEntries_(entry);
   const normalizedTarget = normalizeBillingEntryTypeValue_(entryType);
-  return entries.find(item => item && normalizeBillingEntryTypeValue_(item.type || item.entryType) === normalizedTarget) || null;
+
+  return (
+    entries.find(
+      item =>
+        item &&
+        normalizeBillingEntryTypeValue_(item.type || item.entryType) ===
+          normalizedTarget
+    ) || null
+  );
 }
 
 function buildBillingAmountByPatientId_(billingJson) {
@@ -3791,7 +3837,8 @@ function coerceBillingJsonArray_(raw) {
       const normalizedEntry = Object.assign({}, entry || {}, {
         bankFlags: normalizeBankFlags_(bankFlags)
       });
-      return sanitizeAggregateFieldsForBankFlags_(normalizedEntry, normalizedEntry.bankFlags);
+      const sanitized = sanitizeAggregateFieldsForBankFlags_(normalizedEntry, normalizedEntry.bankFlags);
+      return normalizeBillingEntryFromEntries_(sanitized);
     });
     const schemaVersion = Number(payload.schemaVersion);
     const normalized = {
@@ -4039,17 +4086,64 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
     const pid = billingNormalizePatientId_(entry.patientId);
     if (!pid) return entry;
     const override = overrides[pid];
-    if (!override || override.manualBillingAmount === undefined) return entry;
-    const manualBillingAmount = override.manualBillingAmount;
-    const hasManualBilling = manualBillingAmount !== '' && manualBillingAmount !== null && manualBillingAmount !== undefined;
-    const shouldUpdate = entry.manualBillingAmount !== manualBillingAmount
-      || (hasManualBilling && entry.grandTotal !== manualBillingAmount);
-    if (!shouldUpdate) return entry;
-    updated = true;
-    return Object.assign({}, entry, {
-      manualBillingAmount,
-      grandTotal: hasManualBilling ? manualBillingAmount : entry.grandTotal
+    if (!override || (override.manualBillingAmount === undefined && override.manualSelfPayAmount === undefined)) {
+      return normalizeBillingEntryFromEntries_(entry);
+    }
+    const current = normalizeBillingEntryFromEntries_(entry);
+    const entries = resolveBillingEntries_(current);
+    const insuranceOverride = override.manualBillingAmount;
+    const selfPayOverride = override.manualSelfPayAmount;
+    const updatedEntries = entries.map(item => {
+      const itemType = normalizeBillingEntryType_(item && (item.type || item.entryType));
+      if (itemType === 'insurance' && insuranceOverride !== undefined) {
+        const next = Object.assign({}, item);
+        if (insuranceOverride === '' || insuranceOverride === null) {
+          if (next.manualOverride && Object.prototype.hasOwnProperty.call(next.manualOverride, 'amount')) {
+            const cleaned = Object.assign({}, next.manualOverride);
+            delete cleaned.amount;
+            if (!Object.keys(cleaned).length) {
+              delete next.manualOverride;
+            } else {
+              next.manualOverride = cleaned;
+            }
+          }
+        } else {
+          next.manualOverride = Object.assign({}, next.manualOverride || {}, {
+            amount: insuranceOverride
+          });
+        }
+        return next;
+      }
+      if (itemType === 'self_pay' && selfPayOverride !== undefined) {
+        const next = Object.assign({}, item);
+        if (selfPayOverride === '' || selfPayOverride === null) {
+          if (next.manualOverride && Object.prototype.hasOwnProperty.call(next.manualOverride, 'amount')) {
+            const cleaned = Object.assign({}, next.manualOverride);
+            delete cleaned.amount;
+            if (!Object.keys(cleaned).length) {
+              delete next.manualOverride;
+            } else {
+              next.manualOverride = cleaned;
+            }
+          }
+        } else {
+          next.manualOverride = Object.assign({}, next.manualOverride || {}, {
+            amount: selfPayOverride
+          });
+        }
+        return next;
+      }
+      return item;
     });
+    const normalized = normalizeBillingEntryFromEntries_(Object.assign({}, current, { entries: updatedEntries }));
+    const billingChanged = override.manualBillingAmount !== undefined
+      && normalized.manualBillingAmount !== current.manualBillingAmount;
+    const selfPayChanged = override.manualSelfPayAmount !== undefined
+      && normalized.manualSelfPayAmount !== current.manualSelfPayAmount;
+    if (billingChanged || selfPayChanged) {
+      updated = true;
+    }
+    return normalized;
   });
 
   if (!updated) {
@@ -4063,9 +4157,10 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
       if (!entry) return;
       const pid = billingNormalizePatientId_(entry.patientId);
       if (!pid || !totalsByPatient[pid]) return;
-      if (entry.manualBillingAmount === '' || entry.manualBillingAmount == null) return;
       totalsByPatient[pid] = Object.assign({}, totalsByPatient[pid], {
-        grandTotal: entry.manualBillingAmount
+        grandTotal: normalizeMoneyNumber_(entry.grandTotal),
+        total: normalizeMoneyNumber_(entry.total),
+        billingAmount: normalizeMoneyNumber_(entry.billingAmount)
       });
     });
     updatedPrepared.totalsByPatient = totalsByPatient;
@@ -4074,10 +4169,16 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
     const overrideFlags = Object.assign({}, updatedPrepared.billingOverrideFlags);
     Object.keys(overrides).forEach(pid => {
       const override = overrides[pid];
-      if (!override || override.manualBillingAmount === undefined) return;
-      if (override.manualBillingAmount === '' || override.manualBillingAmount == null) return;
+      if (!override) return;
       const flags = Object.assign({}, overrideFlags[pid] || {});
-      flags.grandTotal = true;
+      if (override.manualBillingAmount !== undefined
+        && override.manualBillingAmount !== '' && override.manualBillingAmount != null) {
+        flags.grandTotal = true;
+      }
+      if (override.manualSelfPayAmount !== undefined
+        && override.manualSelfPayAmount !== '' && override.manualSelfPayAmount != null) {
+        flags.selfPayAmount = true;
+      }
       overrideFlags[pid] = flags;
     });
     updatedPrepared.billingOverrideFlags = overrideFlags;
@@ -4158,14 +4259,18 @@ function shouldGenerateInvoicePdfForEntry_(entry, prepared) {
     if (hasMedicalSubsidy) return false;
   }
 
+  const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
+  if (!insuranceEntry) return false;
   const normalizeVisits = typeof billingNormalizeVisitCount_ === 'function'
     ? billingNormalizeVisitCount_
     : value => Number(value) || 0;
-  const visitCount = normalizeVisits(entry && entry.visitCount);
+  const visitCount = normalizeVisits(insuranceEntry && insuranceEntry.visitCount);
   if (!visitCount) return false;
 
-  const billingAmount = normalizeMoneyNumber_(entry && entry.billingAmount);
-  const grandTotal = normalizeMoneyNumber_(entry && entry.grandTotal);
+  const billingAmount = normalizeMoneyNumber_(insuranceEntry && insuranceEntry.billingAmount != null
+    ? insuranceEntry.billingAmount
+    : insuranceEntry.total);
+  const grandTotal = normalizeMoneyNumber_(resolveBillingEntryTotalAmount_(insuranceEntry));
   if (!billingAmount || !grandTotal) return false;
 
   return true;
@@ -4173,17 +4278,25 @@ function shouldGenerateInvoicePdfForEntry_(entry, prepared) {
 
 function shouldGenerateSelfPayInvoicePdfForEntry_(entry) {
   if (!entry) return false;
-  const selfPayCount = Number(entry.selfPayCount) || 0;
-  const selfPayItems = Array.isArray(entry.selfPayItems) ? entry.selfPayItems : [];
-  return selfPayCount > 0 || selfPayItems.length > 0;
+  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+  if (!selfPayEntry) return false;
+  const selfPayItems = buildSelfPayItemsForInvoice_(entry);
+  if (selfPayItems.length) return true;
+  return resolveBillingEntryTotalAmount_(selfPayEntry) > 0;
 }
 
 function buildSelfPayItemsForInvoice_(entry) {
-  const items = Array.isArray(entry && entry.selfPayItems)
-    ? entry.selfPayItems.filter(item => item && normalizeMoneyNumber_(item.amount) !== 0)
-    : [];
-  if (!items.length && entry && entry.manualSelfPayAmount != null && entry.manualSelfPayAmount !== '') {
-    const manualAmount = normalizeMoneyNumber_(entry.manualSelfPayAmount);
+  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+  if (!selfPayEntry) return [];
+  const rawItems = Array.isArray(selfPayEntry.items)
+    ? selfPayEntry.items
+    : (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []);
+  const items = rawItems.filter(item => item && normalizeMoneyNumber_(item.amount) !== 0);
+  const manualOverride = selfPayEntry && selfPayEntry.manualOverride
+    ? selfPayEntry.manualOverride.amount
+    : undefined;
+  if (!items.length && manualOverride != null && manualOverride !== '') {
+    const manualAmount = normalizeMoneyNumber_(manualOverride);
     if (manualAmount !== 0) {
       items.push({ type: '自費', amount: manualAmount });
     }
@@ -4193,16 +4306,50 @@ function buildSelfPayItemsForInvoice_(entry) {
 
 function buildSelfPayInvoiceEntryForPdf_(entry) {
   if (!entry) return null;
+  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+  if (!selfPayEntry) return null;
   const selfPayCount = Number(entry.selfPayCount) || 0;
   const selfPayItems = buildSelfPayItemsForInvoice_(entry);
+  const manualOverride = selfPayEntry && selfPayEntry.manualOverride
+    ? selfPayEntry.manualOverride.amount
+    : undefined;
   return Object.assign({}, entry, {
+    unitPrice: 0,
     visitCount: selfPayCount,
     insuranceType: '自費',
     burdenRate: '自費',
     selfPayItems,
+    manualSelfPayAmount: manualOverride !== undefined ? manualOverride : entry.manualSelfPayAmount,
+    carryOverAmount: 0,
+    manualTransportAmount: '',
+    transportAmount: 0,
+    treatmentAmount: 0,
     billingAmount: null,
     total: null,
     grandTotal: null
+  });
+}
+
+function buildInsuranceInvoiceEntryForPdf_(entry) {
+  if (!entry) return null;
+  const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
+  if (!insuranceEntry) return null;
+  const manualOverride = insuranceEntry && insuranceEntry.manualOverride
+    ? insuranceEntry.manualOverride.amount
+    : undefined;
+  const insuranceTotal = resolveBillingEntryTotalAmount_(insuranceEntry);
+  return Object.assign({}, entry, {
+    visitCount: insuranceEntry.visitCount,
+    unitPrice: insuranceEntry.unitPrice,
+    treatmentAmount: insuranceEntry.treatmentAmount,
+    transportAmount: insuranceEntry.transportAmount,
+    billingAmount: insuranceEntry.billingAmount,
+    total: insuranceTotal,
+    grandTotal: insuranceTotal,
+    manualBillingAmount: manualOverride !== undefined ? manualOverride : entry.manualBillingAmount,
+    manualSelfPayAmount: '',
+    selfPayItems: [],
+    selfPayCount: 0
   });
 }
 
@@ -4471,7 +4618,8 @@ function generatePreparedInvoices_(prepared, options) {
       const receiptEntry = pid
         ? (receiptEnriched.billingJson || []).find(item => billingNormalizePatientId_(item && item.patientId) === pid) || row
         : row;
-      return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache, receiptSummaryMap);
+      const insuranceEntry = buildInsuranceInvoiceEntryForPdf_(receiptEntry) || receiptEntry;
+      return buildInvoicePdfContextForEntry_(insuranceEntry, receiptEnriched, monthCache, receiptSummaryMap);
     }).filter(Boolean)
     : [];
   // 'scheduled' represents bank-flag-driven aggregate entries that skipped standard

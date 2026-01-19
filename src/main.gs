@@ -4355,6 +4355,17 @@ function normalizeBillingEdits_(maybeEdits) {
     const normalizedManualSelfPay = manualSelfPaySource === '' || manualSelfPaySource === null
       ? ''
       : Number(manualSelfPaySource) || 0;
+    const hasManualBillingInput = edit && (Object.prototype.hasOwnProperty.call(edit, 'manualBillingAmount')
+      || Object.prototype.hasOwnProperty.call(edit, 'grandTotal')
+      || Object.prototype.hasOwnProperty.call(edit, 'billingAmount'));
+    const manualBillingSource = hasManualBillingInput
+      ? (Object.prototype.hasOwnProperty.call(edit, 'manualBillingAmount')
+        ? edit.manualBillingAmount
+        : (Object.prototype.hasOwnProperty.call(edit, 'grandTotal') ? edit.grandTotal : edit.billingAmount))
+      : undefined;
+    const normalizedManualBilling = manualBillingSource === '' || manualBillingSource === null
+      ? ''
+      : Number(manualBillingSource) || 0;
     const hasAdjustedVisitInput = edit && Object.prototype.hasOwnProperty.call(edit, 'adjustedVisitCount');
     const normalizedAdjustedVisit = hasAdjustedVisitInput
       ? billingNormalizeVisitCount_(edit.adjustedVisitCount)
@@ -4374,6 +4385,7 @@ function normalizeBillingEdits_(maybeEdits) {
       payerType: edit.payerType != null ? String(edit.payerType).trim() : undefined,
       manualTransportAmount: hasManualTransportInput ? normalizedManualTransport : undefined,
       manualSelfPayAmount: hasManualSelfPayInput ? normalizedManualSelfPay : undefined,
+      manualBillingAmount: hasManualBillingInput ? normalizedManualBilling : undefined,
       responsible: edit && edit.responsible != null ? String(edit.responsible).trim() : undefined,
       bankCode: normalizedBankCode,
       branchCode: normalizedBranchCode,
@@ -4430,13 +4442,14 @@ function extractBillingOverrideFields_(edit) {
     manualTransportAmount: edit.manualTransportAmount,
     carryOverAmount: edit.carryOverAmount,
     adjustedVisitCount: edit.adjustedVisitCount,
-    manualSelfPayAmount: edit.manualSelfPayAmount
+    manualSelfPayAmount: edit.manualSelfPayAmount,
+    manualBillingAmount: edit.manualBillingAmount
   };
 }
 
 function hasBillingOverrideValues_(edit) {
   const fields = extractBillingOverrideFields_(edit);
-  return ['manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount', 'manualSelfPayAmount']
+  return ['manualUnitPrice', 'manualTransportAmount', 'carryOverAmount', 'adjustedVisitCount', 'manualSelfPayAmount', 'manualBillingAmount']
     .some(key => fields[key] !== undefined);
 }
 
@@ -4530,7 +4543,16 @@ function applyBillingPatientEdits_(edits) {
 function ensureBillingOverridesSheet_() {
   const ss = billingSs();
   let sheet = ss.getSheetByName(BILLING_OVERRIDES_SHEET_NAME);
-  if (sheet) return sheet;
+  if (sheet) {
+    const lastCol = Math.min(sheet.getLastColumn(), sheet.getMaxColumns());
+    if (lastCol > 0) {
+      const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+      if (headers.indexOf('manualBillingAmount') === -1) {
+        sheet.getRange(1, lastCol + 1).setValue('manualBillingAmount');
+      }
+    }
+    return sheet;
+  }
 
   sheet = ss.insertSheet(BILLING_OVERRIDES_SHEET_NAME);
   sheet.appendRow([
@@ -4540,7 +4562,8 @@ function ensureBillingOverridesSheet_() {
     'manualTransportAmount',
     'carryOverAmount',
     'adjustedVisitCount',
-    'manualSelfPayAmount'
+    'manualSelfPayAmount',
+    'manualBillingAmount'
   ]);
   return sheet;
 }
@@ -4553,7 +4576,22 @@ function resolveBillingOverridesColumns_(headers) {
   const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {});
   const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {});
   const colManualSelfPay = resolveBillingColumn_(headers, ['manualSelfPayAmount', 'selfPayAmount', '自費'], 'manualSelfPayAmount', {});
-  return { colYm, colPid, colManualUnitPrice, colManualTransport, colCarryOver, colAdjustedVisits, colManualSelfPay };
+  const colManualBillingAmount = resolveBillingColumn_(
+    headers,
+    ['manualBillingAmount', 'billingAmount', 'grandTotal', '請求額', '合計'],
+    'manualBillingAmount',
+    {}
+  );
+  return {
+    colYm,
+    colPid,
+    colManualUnitPrice,
+    colManualTransport,
+    colCarryOver,
+    colAdjustedVisits,
+    colManualSelfPay,
+    colManualBillingAmount
+  };
 }
 
 function saveBillingOverrideUpdate_(billingMonthKey, edit) {
@@ -4586,12 +4624,13 @@ function saveBillingOverrideUpdate_(billingMonthKey, edit) {
     assignField(newRow, cols.colCarryOver, edit.carryOverAmount);
     assignField(newRow, cols.colAdjustedVisits, edit.adjustedVisitCount);
     assignField(newRow, cols.colManualSelfPay, edit.manualSelfPayAmount);
+    assignField(newRow, cols.colManualBillingAmount, edit.manualBillingAmount);
 
     sheet.getRange(idx + 2, 1, 1, newRow.length).setValues([newRow]);
     return { updated: true, rowNumber: idx + 2 };
   }
 
-  const newRow = new Array(Math.max(lastCol, 7)).fill('');
+  const newRow = new Array(Math.max(lastCol, 8)).fill('');
   assignField(newRow, cols.colYm, ym);
   assignField(newRow, cols.colPid, pid);
   assignField(newRow, cols.colManualUnitPrice, edit.manualUnitPrice);
@@ -4599,6 +4638,7 @@ function saveBillingOverrideUpdate_(billingMonthKey, edit) {
   assignField(newRow, cols.colCarryOver, edit.carryOverAmount);
   assignField(newRow, cols.colAdjustedVisits, edit.adjustedVisitCount);
   assignField(newRow, cols.colManualSelfPay, edit.manualSelfPayAmount);
+  assignField(newRow, cols.colManualBillingAmount, edit.manualBillingAmount);
 
   sheet.appendRow(newRow);
   return { updated: true, rowNumber: sheet.getLastRow() };
@@ -4621,11 +4661,15 @@ function applyBillingOverrideEdits_(billingMonthKey, edits) {
     const normalizedManualSelfPay = edit.manualSelfPayAmount === '' || edit.manualSelfPayAmount === null
       ? ''
       : edit.manualSelfPayAmount;
+    const normalizedManualBilling = edit.manualBillingAmount === '' || edit.manualBillingAmount === null
+      ? ''
+      : edit.manualBillingAmount;
     const result = saveBillingOverrideUpdate_(billingMonthKey, Object.assign({}, edit, {
       carryOverAmount: normalizedCarryOver,
       manualUnitPrice: normalizedManualUnitPrice,
       manualTransportAmount: normalizedManualTransport,
-      manualSelfPayAmount: normalizedManualSelfPay
+      manualSelfPayAmount: normalizedManualSelfPay,
+      manualBillingAmount: normalizedManualBilling
     }));
     if (result && result.updated) {
       updatedCount += 1;

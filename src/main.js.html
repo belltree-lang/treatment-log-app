@@ -58,8 +58,8 @@ const BILLING_TRANSPORT_UNIT_PRICE = (typeof globalThis !== 'undefined' && typeo
   ? globalThis.BILLING_TRANSPORT_UNIT_PRICE
   : BILLING_TRANSPORT_UNIT_PRICE_FALLBACK;
 const BILLING_PATIENT_INFO_FIELDS = ['medicalAssistance', 'onlineConsent', 'burdenRate', 'payerType', 'responsible', 'bankInfo', 'isNew'];
-const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount'];
-const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount', 'burdenRate'];
+const BILLING_BILLING_OVERRIDES_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount', 'grandTotal'];
+const BILLING_OVERRIDE_BADGE_FIELDS = ['unitPrice', 'transportAmount', 'carryOverAmount', 'visitCount', 'selfPayAmount', 'burdenRate', 'grandTotal'];
 
 function qs(id) {
   return document.getElementById(id);
@@ -1159,14 +1159,25 @@ function calculateBillingRowTotalsLocal(row) {
       ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
       : 0;
   const manualSelfPayAmount = normalizeMoneyNumber(source.manualSelfPayAmount);
-  const grandTotal = carryOverAmount + treatmentAmount + transportAmount + manualSelfPayAmount;
+  const baseGrandTotal = carryOverAmount + treatmentAmount + transportAmount + manualSelfPayAmount;
+  const manualBillingInput = Object.prototype.hasOwnProperty.call(source, 'manualBillingAmount')
+    ? source.manualBillingAmount
+    : undefined;
+  const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+  const grandTotal = hasManualBillingAmount ? normalizeMoneyNumber(manualBillingInput) : baseGrandTotal;
 
-  return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, manualSelfPayAmount, grandTotal };
+  const manualBillingAmount = hasManualBillingAmount ? normalizeMoneyNumber(manualBillingInput) : '';
+  return { visitCount, treatmentUnitPrice, treatmentAmount, transportAmount, manualSelfPayAmount, grandTotal, manualBillingAmount };
 }
 
 function normalizeServerBillingTotals(result, fallback) {
   const payload = result && typeof result === 'object' ? result : {};
   const base = fallback && typeof fallback === 'object' ? fallback : {};
+  const manualBillingInput = base && Object.prototype.hasOwnProperty.call(base, 'manualBillingAmount')
+    ? base.manualBillingAmount
+    : undefined;
+  const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+  const overrideGrandTotal = hasManualBillingAmount ? normalizeMoneyNumber(manualBillingInput) : null;
   return {
     visitCount: Number(payload.visitCount != null ? payload.visitCount : payload.visits) || base.visitCount || 0,
     treatmentUnitPrice: Number(payload.treatmentUnitPrice != null ? payload.treatmentUnitPrice : payload.unitPrice)
@@ -1177,7 +1188,10 @@ function normalizeServerBillingTotals(result, fallback) {
     carryOverAmount: Number(payload.carryOverAmount) || base.carryOverAmount || 0,
     billingAmount: Number(payload.billingAmount) || base.billingAmount || 0,
     manualSelfPayAmount: Number(payload.manualSelfPayAmount) || base.manualSelfPayAmount || 0,
-    grandTotal: Number(payload.grandTotal) || base.grandTotal || 0
+    manualBillingAmount: base.manualBillingAmount != null ? base.manualBillingAmount : '',
+    grandTotal: overrideGrandTotal != null
+      ? overrideGrandTotal
+      : (Number(payload.grandTotal) || base.grandTotal || 0)
   };
 }
 
@@ -1220,6 +1234,8 @@ function resolveBillingOverrideFields(field, value) {
       return { carryOverAmount: value };
     case 'selfPayAmount':
       return { manualSelfPayAmount: value === '' ? '' : value };
+    case 'grandTotal':
+      return { manualBillingAmount: value === '' ? '' : value };
     default:
       return {};
   }
@@ -1292,6 +1308,9 @@ function commitBillingEdit(patientId, field, value) {
   if (field === 'selfPayAmount') {
     baseUpdate.manualSelfPayAmount = value === '' ? '' : value;
   }
+  if (field === 'grandTotal') {
+    baseUpdate.manualBillingAmount = value === '' ? '' : value;
+  }
   recordBillingEditForPersistence(pid, field, value);
   billingState.edits[pid] = baseUpdate;
   billingState.editing = null;
@@ -1331,6 +1350,7 @@ function normalizeBillingResultPayload(raw) {
     manualUnitPrice: '',
     manualTransportAmount: '',
     manualSelfPayAmount: '',
+    manualBillingAmount: '',
     selfPayItems: [],
     unitPrice: 0,
     visitCount: 0,
@@ -1396,6 +1416,11 @@ function normalizeBillingResultPayload(raw) {
     return normalizeMoneyNumber(value);
   }
 
+  function normalizeManualBillingAmountValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    return normalizeMoneyNumber(value);
+  }
+
   function mergePatientMetaIntoRows(rows, patients) {
     if (!Array.isArray(rows)) return [];
     return rows.map(row => {
@@ -1414,6 +1439,7 @@ function normalizeBillingResultPayload(raw) {
         manualUnitPrice: patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice,
         manualTransportAmount: patient.manualTransportAmount,
         manualSelfPayAmount: patient.manualSelfPayAmount,
+        manualBillingAmount: patient.manualBillingAmount,
         selfPayItems: patient.selfPayItems,
         unitPrice: patient.unitPrice,
         visitCount: patient.visitCount,
@@ -1460,6 +1486,10 @@ function normalizeBillingResultPayload(raw) {
         ? row.manualSelfPayAmount
         : patientSeed.manualSelfPayAmount;
       merged.manualSelfPayAmount = normalizeManualSelfPayAmountValue(manualSelfPaySource);
+      const manualBillingSource = row && row.hasOwnProperty('manualBillingAmount')
+        ? row.manualBillingAmount
+        : patientSeed.manualBillingAmount;
+      merged.manualBillingAmount = normalizeManualBillingAmountValue(manualBillingSource);
       merged.selfPayItems = Array.isArray(row && row.selfPayItems)
         ? row.selfPayItems
         : Array.isArray(patientSeed.selfPayItems) ? patientSeed.selfPayItems : [];
@@ -2134,6 +2164,14 @@ function renderBillingResult() {
         const editor = `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${val}" />`;
         return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
+      if (field === 'grandTotal') {
+        const manualBillingAmount = item.manualBillingAmount === '' || item.manualBillingAmount === null || item.manualBillingAmount === undefined
+          ? ''
+          : normalizeEditNumber(item.manualBillingAmount);
+        const placeholder = Number.isFinite(item.grandTotal) ? formatCurrency(item.grandTotal) : '';
+        const editor = `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${manualBillingAmount}" placeholder="${placeholder}" />`;
+        return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
+      }
       if (field === 'transportAmount') {
         const val = item.manualTransportAmount === '' || item.manualTransportAmount === null || item.manualTransportAmount === undefined
           ? ''
@@ -2165,6 +2203,8 @@ function renderBillingResult() {
           return formatCurrency(item.transportAmount);
         case 'carryOverAmount':
           return formatCurrency(item.carryOverAmount);
+        case 'grandTotal':
+          return formatCurrency(item.grandTotal);
         default:
           return item[field] || '';
       }
@@ -2198,7 +2238,7 @@ function renderBillingResult() {
         <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
         <td class="right">${renderEditableCell(safeItem, 'transportAmount', true)}</td>
         <td class="right">${renderEditableCell(safeItem, 'carryOverAmount', true)}</td>
-        <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
+        <td class="right">${renderEditableCell(safeItem, 'grandTotal', true)}</td>
         <td>${formatPaidStatus(safeItem) || '—'}</td>
         <td>${formatBankInfo(safeItem) || '—'}</td>
         <td>${formatNewFlag(safeItem) || ''}</td>
@@ -2284,6 +2324,9 @@ function attachBillingEditHandlers() {
       }
       if (field === 'unitPrice' || field === 'carryOverAmount') {
         value = normalizeMoneyNumber(value);
+      }
+      if (field === 'grandTotal') {
+        value = value === '' ? '' : normalizeMoneyNumber(value);
       }
       if (field === 'transportAmount') {
         value = value === '' ? '' : normalizeMoneyNumber(value);

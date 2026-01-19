@@ -175,6 +175,17 @@
         <div id="billingError" class="alert danger" style="display:none"></div>
       </div>
       <div class="generation-options">
+        <p class="muted" style="margin:0">PDF生成対象</p>
+        <div class="mode-options" role="group" aria-label="請求書PDFの出力対象">
+          <label class="pill-input">
+            <input type="checkbox" id="includeInsurancePdf" checked onchange="handleInvoicePdfOptionChange(event)" />
+            <span>保険請求PDF</span>
+          </label>
+          <label class="pill-input">
+            <input type="checkbox" id="includeSelfPayPdf" onchange="handleInvoicePdfOptionChange(event)" />
+            <span>自費請求PDF</span>
+          </label>
+        </div>
         <p class="muted" style="margin:0">PDF生成モード</p>
           <div class="mode-options" role="group" aria-label="請求書PDFの生成モード">
             <label class="pill-input">

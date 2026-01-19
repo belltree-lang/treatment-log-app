@@ -20,7 +20,9 @@ const billingState = {
   preparedMonths: [],
   selectedPreparedMonth: '',
   reaggregationRequiredMonths: {},
-  sort: { field: null, direction: 'asc' }
+  sort: { field: null, direction: 'asc' },
+  includeInsurancePdf: true,
+  includeSelfPayPdf: false
 };
 
 const bankFlowState = {
@@ -206,6 +208,7 @@ function updateBillingControls() {
   }
   updatePreparedMonthSelectors();
   updateInvoiceModeControls();
+  updateInvoicePdfOptionControls();
   renderReceiptControls();
   renderPreparedMonthInfo();
 }
@@ -247,6 +250,22 @@ function updateInvoiceModeControls() {
 
   if (note) {
     note.className = isPartial ? 'field-note warn' : 'field-note';
+  }
+}
+
+function updateInvoicePdfOptionControls() {
+  const loading = billingState.loading;
+  const includeInsurance = qs('includeInsurancePdf');
+  const includeSelfPay = qs('includeSelfPayPdf');
+
+  if (includeInsurance) {
+    includeInsurance.disabled = loading;
+    includeInsurance.checked = billingState.includeInsurancePdf !== false;
+  }
+
+  if (includeSelfPay) {
+    includeSelfPay.disabled = loading;
+    includeSelfPay.checked = !!billingState.includeSelfPayPdf;
   }
 }
 
@@ -401,6 +420,18 @@ function getInvoiceMode() {
   return 'bulk';
 }
 
+function getIncludeInsurancePdf() {
+  const checkbox = qs('includeInsurancePdf');
+  if (checkbox) return !!checkbox.checked;
+  return billingState.includeInsurancePdf !== false;
+}
+
+function getIncludeSelfPayPdf() {
+  const checkbox = qs('includeSelfPayPdf');
+  if (checkbox) return !!checkbox.checked;
+  return !!billingState.includeSelfPayPdf;
+}
+
 function getInvoicePatientIdsInput() {
   const textarea = qs('invoicePatientIds');
   return textarea && textarea.value ? textarea.value : '';
@@ -416,6 +447,17 @@ function handleInvoiceModeToggle(event) {
 function handleInvoicePatientInput(event) {
   const value = event && event.target ? event.target.value : getInvoicePatientIdsInput();
   billingState.invoicePatientIdsInput = value;
+}
+
+function handleInvoicePdfOptionChange(event) {
+  if (!event || !event.target) return;
+  if (event.target.id === 'includeInsurancePdf') {
+    billingState.includeInsurancePdf = !!event.target.checked;
+  }
+  if (event.target.id === 'includeSelfPayPdf') {
+    billingState.includeSelfPayPdf = !!event.target.checked;
+  }
+  updateInvoicePdfOptionControls();
 }
 
 function handleReceiptStatusChange(event) {
@@ -1685,7 +1727,9 @@ function handleBillingPdfGeneration() {
   setBillingLoading(true, 'PDF生成中…');
   const payload = Object.assign({}, buildBillingSavePayload(), {
     invoiceMode,
-    invoicePatientIds
+    invoicePatientIds,
+    includeInsurancePdf: getIncludeInsurancePdf(),
+    includeSelfPayPdf: getIncludeSelfPayPdf()
   });
   google.script.run
     .withSuccessHandler(onBillingPdfCompleted)

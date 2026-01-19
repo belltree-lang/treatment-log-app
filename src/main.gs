@@ -4063,6 +4063,8 @@ function buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, cach
 function generatePreparedInvoices_(prepared, options) {
   const normalized = normalizePreparedBilling_(prepared);
   const opts = options || {};
+  const includeInsurancePdf = opts.includeInsurancePdf !== false;
+  const includeSelfPayPdf = opts.includeSelfPayPdf === true;
   const monthCache = opts.monthCache || createBillingMonthCache_();
   if (normalized && normalized.billingMonth && monthCache.preparedByMonth) {
     monthCache.preparedByMonth[normalized.billingMonth] = monthCache.preparedByMonth[normalized.billingMonth]
@@ -4081,17 +4083,23 @@ function generatePreparedInvoices_(prepared, options) {
     (receiptEnriched.billingJson || []).filter(row => !(row && row.skipInvoice)),
     targetPatientIds
   );
-  const invoiceTargets = targetBillingRows.filter(row => shouldGenerateInvoicePdfForEntry_(row, receiptEnriched));
-  const receiptSummaryMap = buildReceiptSummaryMap_(receiptEnriched, monthCache, {
-    targetPatientIds
-  });
-  const invoiceContexts = invoiceTargets.map(row => {
-    const pid = billingNormalizePatientId_(row && row.patientId);
-    const receiptEntry = pid
-      ? (receiptEnriched.billingJson || []).find(item => billingNormalizePatientId_(item && item.patientId) === pid) || row
-      : row;
-    return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache, receiptSummaryMap);
-  }).filter(Boolean);
+  const invoiceTargets = includeInsurancePdf
+    ? targetBillingRows.filter(row => shouldGenerateInvoicePdfForEntry_(row, receiptEnriched))
+    : [];
+  const receiptSummaryMap = includeInsurancePdf
+    ? buildReceiptSummaryMap_(receiptEnriched, monthCache, {
+      targetPatientIds
+    })
+    : null;
+  const invoiceContexts = includeInsurancePdf
+    ? invoiceTargets.map(row => {
+      const pid = billingNormalizePatientId_(row && row.patientId);
+      const receiptEntry = pid
+        ? (receiptEnriched.billingJson || []).find(item => billingNormalizePatientId_(item && item.patientId) === pid) || row
+        : row;
+      return buildInvoicePdfContextForEntry_(receiptEntry, receiptEnriched, monthCache, receiptSummaryMap);
+    }).filter(Boolean)
+    : [];
   // 'scheduled' represents bank-flag-driven aggregate entries that skipped standard
   // invoices earlier and are now eligible for aggregate PDFs without additional triggers.
   const aggregateTargets = (receiptEnriched.billingJson || []).filter(
@@ -4140,28 +4148,38 @@ function generatePreparedInvoices_(prepared, options) {
   const missingPatientIds = targetPatientIds.filter(id => !matchedIds.has(id));
 
   const outputOptions = Object.assign({}, opts, { billingMonth: normalized.billingMonth, patientIds: targetPatientIds });
-  const pdfs = generateInvoicePdfs(invoiceContexts, outputOptions);
-  const insuranceFileNamesByPatient = pdfs.files.reduce((map, meta) => {
-    const pid = String(meta && meta.patientId ? meta.patientId : '').trim();
-    if (pid && meta && meta.name) {
-      map[pid] = meta.name;
-    }
-    return map;
-  }, {});
-  const selfPayTargets = targetBillingRows.filter(row => shouldGenerateSelfPayInvoicePdfForEntry_(row));
-  const selfPayFileOptions = Object.assign({}, outputOptions, {
-    clearMonthFolder: false
-  });
-  const selfPayFiles = selfPayTargets.map(row => {
-    const derivedEntry = buildSelfPayInvoiceEntryForPdf_(row);
-    const context = buildSelfPayInvoicePdfContextForEntry_(derivedEntry, receiptEnriched, monthCache);
-    if (!context) return null;
-    const pid = String(context.patientId || '').trim();
-    const baseFileName = insuranceFileNamesByPatient[pid] || formatInvoiceFileName_(context, {});
-    const fileName = appendSelfPaySuffixToFileName_(baseFileName);
-    const meta = generateInvoicePdf(context, Object.assign({}, selfPayFileOptions, { fileName }));
-    return Object.assign({}, meta, { patientId: context.patientId, nameKanji: context.name });
-  }).filter(Boolean);
+  const pdfs = includeInsurancePdf
+    ? generateInvoicePdfs(invoiceContexts, outputOptions)
+    : { files: [] };
+  const insuranceFileNamesByPatient = includeInsurancePdf
+    ? pdfs.files.reduce((map, meta) => {
+      const pid = String(meta && meta.patientId ? meta.patientId : '').trim();
+      if (pid && meta && meta.name) {
+        map[pid] = meta.name;
+      }
+      return map;
+    }, {})
+    : {};
+  const selfPayTargets = includeSelfPayPdf
+    ? targetBillingRows.filter(row => shouldGenerateSelfPayInvoicePdfForEntry_(row))
+    : [];
+  const selfPayFileOptions = includeSelfPayPdf
+    ? Object.assign({}, outputOptions, {
+      clearMonthFolder: false
+    })
+    : null;
+  const selfPayFiles = includeSelfPayPdf
+    ? selfPayTargets.map(row => {
+      const derivedEntry = buildSelfPayInvoiceEntryForPdf_(row);
+      const context = buildSelfPayInvoicePdfContextForEntry_(derivedEntry, receiptEnriched, monthCache);
+      if (!context) return null;
+      const pid = String(context.patientId || '').trim();
+      const baseFileName = insuranceFileNamesByPatient[pid] || formatInvoiceFileName_(context, {});
+      const fileName = appendSelfPaySuffixToFileName_(baseFileName);
+      const meta = generateInvoicePdf(context, Object.assign({}, selfPayFileOptions, { fileName }));
+      return Object.assign({}, meta, { patientId: context.patientId, nameKanji: context.name });
+    }).filter(Boolean)
+    : [];
   const bankOutput = null;
   return {
     billingMonth: normalized.billingMonth,

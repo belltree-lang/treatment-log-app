@@ -3802,9 +3802,14 @@ function prepareBillingData(billingMonth, options) {
     if (existingPrepared && (!existingValidation || existingValidation.ok)) {
       const manualSync = syncManualBillingOverridesIntoPrepared_(existingPrepared, normalizedMonth.key);
       if (manualSync && manualSync.updated) {
-        savePreparedBilling_(manualSync.prepared);
         savePreparedBillingToSheet_(normalizedMonth.key, manualSync.prepared);
         billingLogger_.log('[billing] prepareBillingData refreshed manual billing overrides for ' + normalizedMonth.key);
+      }
+      if (manualSync && manualSync.prepared) {
+        savePreparedBilling_(manualSync.prepared);
+        if (!manualSync.updated) {
+          billingLogger_.log('[billing] prepareBillingData using existing prepared billing for ' + normalizedMonth.key);
+        }
         return manualSync.prepared;
       }
       billingLogger_.log('[billing] prepareBillingData using existing prepared billing for ' + normalizedMonth.key);

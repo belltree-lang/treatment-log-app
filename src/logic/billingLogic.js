@@ -390,6 +390,7 @@ function generateBillingJsonFromSource(sourceData) {
     const selfPayEntryTotal = hasManualSelfPayAmount ? manualSelfPayAmount : selfPayItemsTotal;
     const entries = [
       Object.assign({}, {
+        type: 'insurance',
         entryType: 'insurance',
         unitPrice: amountCalc.unitPrice,
         visitCount: amountCalc.visits,
@@ -401,8 +402,10 @@ function generateBillingJsonFromSource(sourceData) {
     ];
     if (amountCalc.selfPayItems.length || hasManualSelfPayAmount || selfPayEntryTotal) {
       entries.push(Object.assign({}, {
+        type: 'selfPay',
         entryType: 'selfPay',
         items: amountCalc.selfPayItems,
+        selfPayItems: amountCalc.selfPayItems,
         total: selfPayEntryTotal
       }, hasManualSelfPayAmount ? { manualOverride: { amount: manualSelfPayAmount } } : {}));
     }

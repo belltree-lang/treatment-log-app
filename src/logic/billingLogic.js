@@ -423,19 +423,21 @@ function generateBillingJsonFromSource(sourceData) {
     if (amountCalc.selfPayItems.length || hasManualSelfPayAmount || selfPayEntryTotal) {
       entries.push(Object.assign({}, {
         type: 'self_pay',
-        entryType: 'self_pay',
         items: amountCalc.selfPayItems,
         selfPayItems: amountCalc.selfPayItems,
         total: selfPayEntryTotal
       }, hasManualSelfPayAmount ? { manualOverride: { amount: manualSelfPayAmount } } : {}));
     }
-    const normalizedEntries = entries.map(entryItem => {
-      const normalizedType = normalizeBillingEntryType_(entryItem && (entryItem.type || entryItem.entryType));
-      return Object.assign({}, entryItem, {
-        type: normalizedType,
-        entryType: normalizedType
-      });
-    });
+   const normalizedEntries = entries.map(entryItem => {
+  const normalizedType = normalizeBillingEntryType_(
+    entryItem && (entryItem.type || entryItem.entryType)
+  );
+
+  return Object.assign({}, entryItem, {
+    type: normalizedType,
+    entryType: entryItem.entryType || normalizedType
+  });
+});
     const insuranceEntry = normalizedEntries.find(item => item && item.type === 'insurance') || null;
     const selfPayEntry = normalizedEntries.find(item => item && item.type === 'self_pay') || null;
     const insuranceTotal = insuranceEntry ? resolveEntryTotalAmount_(insuranceEntry) : 0;

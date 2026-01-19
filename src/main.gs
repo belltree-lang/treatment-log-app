@@ -2208,7 +2208,99 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
     }
   }
 
+  try {
+    validatePreparedBillingPhase4A_(payload);
+  } catch (err) {
+    try {
+      billingLogger_.log('[billing] Phase4-A validation failed to run: ' + err);
+    } catch (logErr) {
+      // ignore logging errors in non-GAS environments
+    }
+  }
+
   return { ok: true, billingMonth };
+}
+
+function logPreparedBillingPhase4AMismatch_(patientId, billingMonth, field, expected, actual) {
+  try {
+    billingLogger_.log('[billing] Phase4-A mismatch ' + JSON.stringify({
+      patientId: patientId || '',
+      month: billingMonth || '',
+      field,
+      expected,
+      actual
+    }));
+  } catch (err) {
+    try {
+      console.warn('[billing] Phase4-A mismatch', { patientId, month: billingMonth, field, expected, actual });
+    } catch (logErr) {
+      // ignore logging errors in non-GAS environments
+    }
+  }
+}
+
+function validatePreparedBillingPhase4A_(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  if (!Array.isArray(payload.billingJson) || payload.billingJson.length === 0) return;
+  const billingMonth = payload.billingMonth || payload.month || '';
+  const totalsByPatient = payload.totalsByPatient && typeof payload.totalsByPatient === 'object'
+    ? payload.totalsByPatient
+    : {};
+  const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
+    ? normalizeMoneyNumber_
+    : value => Number(value) || 0;
+  const isBlank = value => value === '' || value === null || value === undefined;
+  const isSameAmount = (expected, actual) => {
+    if (isBlank(expected) && isBlank(actual)) return true;
+    const expectedNum = normalizeAmount(expected);
+    const actualNum = normalizeAmount(actual);
+    if (!Number.isFinite(expectedNum) || !Number.isFinite(actualNum)) {
+      return String(expected || '') === String(actual || '');
+    }
+    return expectedNum === actualNum;
+  };
+  const compareAmount = (pid, field, expected, actual) => {
+    if (isSameAmount(expected, actual)) return;
+    logPreparedBillingPhase4AMismatch_(pid, billingMonth, field, expected, actual);
+  };
+
+  let bankAmounts = {};
+  try {
+    bankAmounts = collectBankWithdrawalAmountsByPatient_(billingMonth, payload) || {};
+  } catch (err) {
+    bankAmounts = {};
+  }
+
+  payload.billingJson.forEach(entry => {
+    const pid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(entry && entry.patientId)
+      : String(entry && entry.patientId || '').trim();
+    if (!pid) return;
+    const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
+    const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+    const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
+    const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
+    const expectedBillingAmount = insuranceEntry && Object.prototype.hasOwnProperty.call(insuranceEntry, 'billingAmount')
+      ? normalizeAmount(insuranceEntry.billingAmount)
+      : insuranceTotal;
+    const expectedTotal = insuranceEntry ? insuranceTotal : 0;
+    const expectedGrandTotal = insuranceTotal + selfPayTotal;
+
+    compareAmount(pid, 'billingAmount', expectedBillingAmount, entry && entry.billingAmount);
+    compareAmount(pid, 'total', expectedTotal, entry && entry.total);
+    compareAmount(pid, 'grandTotal', expectedGrandTotal, entry && entry.grandTotal);
+
+    const totalsEntry = totalsByPatient && totalsByPatient[pid];
+    if (totalsEntry && typeof totalsEntry === 'object') {
+      compareAmount(pid, 'totalsByPatient.billingAmount', expectedBillingAmount, totalsEntry.billingAmount);
+      compareAmount(pid, 'totalsByPatient.total', expectedTotal, totalsEntry.total);
+      compareAmount(pid, 'totalsByPatient.grandTotal', expectedGrandTotal, totalsEntry.grandTotal);
+    }
+
+    if (bankAmounts && Object.prototype.hasOwnProperty.call(bankAmounts, pid)) {
+      compareAmount(pid, 'bankDebitAmount', insuranceTotal, bankAmounts[pid]);
+    }
+  });
 }
 
 // Deprecated: Prepared billing should be read from the PreparedBilling sheet for durability.
@@ -3253,26 +3345,76 @@ function resolveBillingEntryTotalAmount_(entry) {
   return normalizeAmount(entry.total);
 }
 
-function normalizeBillingEntryType_(entryType) {
-  if (!entryType) return '';
-  const raw = String(entryType || '').trim();
-  const lower = raw.toLowerCase();
-  if (lower === 'insurance') return 'insurance';
-  if (lower === 'selfpay' || lower === 'self_pay' || lower === 'self-pay') return 'self_pay';
-  if (raw === 'selfPay') return 'self_pay';
-  return raw;
+function normalizeBillingEntryTypeValue_(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = raw.toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'insurance') return 'insurance';
+  if (normalized === 'selfpay' || normalized === 'self_pay' || normalized === 'self-pay') return 'self_pay';
+  return '';
 }
 
 function resolveBillingEntries_(entry) {
   if (!entry) return [];
+
   if (Array.isArray(entry.entries) && entry.entries.length) {
-    return entry.entries.map(item => {
-      if (!item || typeof item !== 'object') return null;
-      const normalizedType = normalizeBillingEntryType_(item.type || item.entryType);
-      if (!normalizedType) return null;
-      return Object.assign({}, item, { type: normalizedType, entryType: normalizedType });
-    }).filter(Boolean);
+    const manualBillingInput = Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
+      ? entry.manualBillingAmount
+      : undefined;
+    const hasManualBillingAmount =
+      manualBillingInput !== '' &&
+      manualBillingInput !== null &&
+      manualBillingInput !== undefined;
+
+    const manualSelfPayInput = Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')
+      ? entry.manualSelfPayAmount
+      : undefined;
+    const hasManualSelfPayAmount =
+      manualSelfPayInput !== '' &&
+      manualSelfPayInput !== null &&
+      manualSelfPayInput !== undefined;
+
+    const normalizeAmount =
+      typeof normalizeMoneyNumber_ === 'function'
+        ? normalizeMoneyNumber_
+        : value => Number(value) || 0;
+
+    return entry.entries
+      .filter(
+        item =>
+          item &&
+          typeof item === 'object' &&
+          normalizeBillingEntryTypeValue_(item.type || item.entryType)
+      )
+      .map(item => {
+        const normalizedType = normalizeBillingEntryTypeValue_(item.type || item.entryType);
+
+        if (normalizedType === 'insurance' && hasManualBillingAmount) {
+          return Object.assign({}, item, {
+            type: 'insurance',
+            entryType: 'insurance',
+            manualOverride: { amount: normalizeAmount(manualBillingInput) }
+          });
+        }
+
+        if (normalizedType === 'self_pay' && hasManualSelfPayAmount) {
+          return Object.assign({}, item, {
+            type: 'self_pay',
+            entryType: 'selfPay',
+            manualOverride: { amount: normalizeAmount(manualSelfPayInput) }
+          });
+        }
+
+        return Object.assign({}, item, {
+          type: normalizedType,
+          entryType: normalizedType === 'self_pay' ? 'selfPay' : normalizedType
+        });
+      });
   }
+
+  return [];
+}
+
   const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
     ? normalizeMoneyNumber_
     : value => Number(value) || 0;
@@ -3311,54 +3453,37 @@ function resolveBillingEntries_(entry) {
   if (selfPayItems.length || hasManualSelfPayAmount) {
     const selfPayEntry = {
       type: 'self_pay',
-      entryType: 'self_pay',
+      entryType: 'selfPay',
       items: selfPayItems,
-      total: hasManualSelfPayAmount ? normalizeAmount(manualSelfPayInput) : selfPayItemsTotal
+      total: hasManualSelfPayAmount
+        ? normalizeAmount(manualSelfPayInput)
+        : selfPayItemsTotal
     };
+
     if (hasManualSelfPayAmount) {
-      selfPayEntry.manualOverride = { amount: normalizeAmount(manualSelfPayInput) };
+      selfPayEntry.manualOverride = {
+        amount: normalizeAmount(manualSelfPayInput)
+      };
     }
+
     fallbackEntries.push(selfPayEntry);
   }
+
   return fallbackEntries;
 }
 
 function resolveBillingEntryByType_(entry, entryType) {
-  const normalizedType = normalizeBillingEntryType_(entryType);
   const entries = resolveBillingEntries_(entry);
-  return entries.find(item => item && normalizeBillingEntryType_(item.entryType || item.type) === normalizedType) || null;
-}
+  const normalizedTarget = normalizeBillingEntryTypeValue_(entryType);
 
-function normalizeBillingEntryFromEntries_(entry) {
-  if (!entry) return entry;
-  const entries = resolveBillingEntries_(entry);
-  const hasEntries = entries.length > 0;
-  const insuranceEntry = entries.find(item => item && item.type === 'insurance') || null;
-  const selfPayEntry = entries.find(item => item && item.type === 'self_pay') || null;
-  const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
-  const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
-  const manualBillingAmount = insuranceEntry && insuranceEntry.manualOverride
-    ? insuranceEntry.manualOverride.amount
-    : (hasEntries ? '' : entry.manualBillingAmount);
-  const manualSelfPayAmount = selfPayEntry && selfPayEntry.manualOverride
-    ? selfPayEntry.manualOverride.amount
-    : (hasEntries ? '' : entry.manualSelfPayAmount);
-  const selfPayItems = selfPayEntry
-    ? (Array.isArray(selfPayEntry.items)
-      ? selfPayEntry.items
-      : (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []))
-    : (Array.isArray(entry.selfPayItems) ? entry.selfPayItems : []);
-  return Object.assign({}, entry, {
-    entries,
-    manualBillingAmount: manualBillingAmount !== undefined ? manualBillingAmount : entry.manualBillingAmount,
-    manualSelfPayAmount: manualSelfPayAmount !== undefined ? manualSelfPayAmount : entry.manualSelfPayAmount,
-    billingAmount: insuranceEntry && insuranceEntry.billingAmount != null
-      ? insuranceEntry.billingAmount
-      : entry.billingAmount,
-    total: insuranceTotal,
-    grandTotal: insuranceTotal + selfPayTotal,
-    selfPayItems
-  });
+  return (
+    entries.find(
+      item =>
+        item &&
+        normalizeBillingEntryTypeValue_(item.type || item.entryType) ===
+          normalizedTarget
+    ) || null
+  );
 }
 
 function buildBillingAmountByPatientId_(billingJson) {

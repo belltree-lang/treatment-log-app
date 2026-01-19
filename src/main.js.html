@@ -1068,13 +1068,37 @@ function getDisplayBillingRows() {
   return sortBillingRows(merged);
 }
 
+function buildBillingDerivedViews(entry) {
+  const source = entry && typeof entry === 'object' ? entry : {};
+  const rawSelfPayItems = Array.isArray(source.selfPayItems) ? source.selfPayItems : [];
+  const derivedSelfPayItems = rawSelfPayItems
+    .filter(item => item && normalizeMoneyNumber(item.amount) !== 0)
+    .map(item => ({
+      type: item.type || '',
+      amount: normalizeMoneyNumber(item.amount)
+    }));
+
+  const selfPayTotal = derivedSelfPayItems.reduce((sum, item) => sum + normalizeMoneyNumber(item.amount), 0);
+  const mixedTotal = normalizeMoneyNumber(source.grandTotal);
+  const insuranceTotal = Math.max(mixedTotal - selfPayTotal, 0);
+
+  return {
+    insuranceView: { total: insuranceTotal },
+    selfPayView: { items: derivedSelfPayItems, total: selfPayTotal },
+    mixedView: { total: mixedTotal }
+  };
+}
+
 function calculateBillingSummary(rows) {
   return (rows || []).reduce((acc, row) => {
     if (!row || typeof row !== 'object') return acc;
+    const views = buildBillingDerivedViews(row);
     acc.totalVisits += Number(row.visitCount) || 0;
-    acc.totalGrandTotal += Number(row.grandTotal) || 0;
+    acc.totalGrandTotal += views.mixedView.total;
+    acc.totalInsurance += views.insuranceView.total;
+    acc.totalSelfPay += views.selfPayView.total;
     return acc;
-  }, { totalVisits: 0, totalGrandTotal: 0 });
+  }, { totalVisits: 0, totalGrandTotal: 0, totalInsurance: 0, totalSelfPay: 0 });
 }
 
 function calculateAggregateStatusCounts(rows) {
@@ -2035,7 +2059,11 @@ function renderBillingSummary(rows) {
   const aggregate = calculateAggregateStatusCounts(rows);
   const cards = [
     { label: '総施術回数', value: `${summary.totalVisits.toLocaleString()} 回` },
-    { label: '請求合計金額', value: formatCurrency(summary.totalGrandTotal) }
+    {
+      label: '請求合計金額',
+      value: formatCurrency(summary.totalGrandTotal),
+      subvalue: `保険合計 ${formatCurrency(summary.totalInsurance)} / 自費合計 ${formatCurrency(summary.totalSelfPay)}`
+    }
   ];
 
   if (aggregate.aggregate) {
@@ -2052,6 +2080,7 @@ function renderBillingSummary(rows) {
     <div class="summary-card">
       <p class="summary-label">${card.label}</p>
       <p class="summary-value">${card.value}</p>
+      ${card.subvalue ? `<p class="summary-subvalue">${card.subvalue}</p>` : ''}
     </div>
   `).join('');
 }

@@ -2208,7 +2208,99 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
     }
   }
 
+  try {
+    validatePreparedBillingPhase4A_(payload);
+  } catch (err) {
+    try {
+      billingLogger_.log('[billing] Phase4-A validation failed to run: ' + err);
+    } catch (logErr) {
+      // ignore logging errors in non-GAS environments
+    }
+  }
+
   return { ok: true, billingMonth };
+}
+
+function logPreparedBillingPhase4AMismatch_(patientId, billingMonth, field, expected, actual) {
+  try {
+    billingLogger_.log('[billing] Phase4-A mismatch ' + JSON.stringify({
+      patientId: patientId || '',
+      month: billingMonth || '',
+      field,
+      expected,
+      actual
+    }));
+  } catch (err) {
+    try {
+      console.warn('[billing] Phase4-A mismatch', { patientId, month: billingMonth, field, expected, actual });
+    } catch (logErr) {
+      // ignore logging errors in non-GAS environments
+    }
+  }
+}
+
+function validatePreparedBillingPhase4A_(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  if (!Array.isArray(payload.billingJson) || payload.billingJson.length === 0) return;
+  const billingMonth = payload.billingMonth || payload.month || '';
+  const totalsByPatient = payload.totalsByPatient && typeof payload.totalsByPatient === 'object'
+    ? payload.totalsByPatient
+    : {};
+  const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
+    ? normalizeMoneyNumber_
+    : value => Number(value) || 0;
+  const isBlank = value => value === '' || value === null || value === undefined;
+  const isSameAmount = (expected, actual) => {
+    if (isBlank(expected) && isBlank(actual)) return true;
+    const expectedNum = normalizeAmount(expected);
+    const actualNum = normalizeAmount(actual);
+    if (!Number.isFinite(expectedNum) || !Number.isFinite(actualNum)) {
+      return String(expected || '') === String(actual || '');
+    }
+    return expectedNum === actualNum;
+  };
+  const compareAmount = (pid, field, expected, actual) => {
+    if (isSameAmount(expected, actual)) return;
+    logPreparedBillingPhase4AMismatch_(pid, billingMonth, field, expected, actual);
+  };
+
+  let bankAmounts = {};
+  try {
+    bankAmounts = collectBankWithdrawalAmountsByPatient_(billingMonth, payload) || {};
+  } catch (err) {
+    bankAmounts = {};
+  }
+
+  payload.billingJson.forEach(entry => {
+    const pid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(entry && entry.patientId)
+      : String(entry && entry.patientId || '').trim();
+    if (!pid) return;
+    const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
+    const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+    const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
+    const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
+    const expectedBillingAmount = insuranceEntry && Object.prototype.hasOwnProperty.call(insuranceEntry, 'billingAmount')
+      ? normalizeAmount(insuranceEntry.billingAmount)
+      : insuranceTotal;
+    const expectedTotal = insuranceEntry ? insuranceTotal : 0;
+    const expectedGrandTotal = insuranceTotal + selfPayTotal;
+
+    compareAmount(pid, 'billingAmount', expectedBillingAmount, entry && entry.billingAmount);
+    compareAmount(pid, 'total', expectedTotal, entry && entry.total);
+    compareAmount(pid, 'grandTotal', expectedGrandTotal, entry && entry.grandTotal);
+
+    const totalsEntry = totalsByPatient && totalsByPatient[pid];
+    if (totalsEntry && typeof totalsEntry === 'object') {
+      compareAmount(pid, 'totalsByPatient.billingAmount', expectedBillingAmount, totalsEntry.billingAmount);
+      compareAmount(pid, 'totalsByPatient.total', expectedTotal, totalsEntry.total);
+      compareAmount(pid, 'totalsByPatient.grandTotal', expectedGrandTotal, totalsEntry.grandTotal);
+    }
+
+    if (bankAmounts && Object.prototype.hasOwnProperty.call(bankAmounts, pid)) {
+      compareAmount(pid, 'bankDebitAmount', insuranceTotal, bankAmounts[pid]);
+    }
+  });
 }
 
 // Deprecated: Prepared billing should be read from the PreparedBilling sheet for durability.

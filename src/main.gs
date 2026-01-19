@@ -3358,27 +3358,6 @@ function resolveBillingEntries_(entry) {
   if (!entry) return [];
 
   if (Array.isArray(entry.entries) && entry.entries.length) {
-    const manualBillingInput = Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
-      ? entry.manualBillingAmount
-      : undefined;
-    const hasManualBillingAmount =
-      manualBillingInput !== '' &&
-      manualBillingInput !== null &&
-      manualBillingInput !== undefined;
-
-    const manualSelfPayInput = Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')
-      ? entry.manualSelfPayAmount
-      : undefined;
-    const hasManualSelfPayAmount =
-      manualSelfPayInput !== '' &&
-      manualSelfPayInput !== null &&
-      manualSelfPayInput !== undefined;
-
-    const normalizeAmount =
-      typeof normalizeMoneyNumber_ === 'function'
-        ? normalizeMoneyNumber_
-        : value => Number(value) || 0;
-
     return entry.entries
       .filter(
         item =>
@@ -3388,23 +3367,6 @@ function resolveBillingEntries_(entry) {
       )
       .map(item => {
         const normalizedType = normalizeBillingEntryTypeValue_(item.type || item.entryType);
-
-        if (normalizedType === 'insurance' && hasManualBillingAmount) {
-          return Object.assign({}, item, {
-            type: 'insurance',
-            entryType: 'insurance',
-            manualOverride: { amount: normalizeAmount(manualBillingInput) }
-          });
-        }
-
-        if (normalizedType === 'self_pay' && hasManualSelfPayAmount) {
-          return Object.assign({}, item, {
-            type: 'self_pay',
-            entryType: 'selfPay',
-            manualOverride: { amount: normalizeAmount(manualSelfPayInput) }
-          });
-        }
-
         return Object.assign({}, item, {
           type: normalizedType,
           entryType: normalizedType === 'self_pay' ? 'selfPay' : normalizedType
@@ -3493,21 +3455,25 @@ function normalizeBillingEntryFromEntries_(entry) {
   const selfPayEntry = resolveEntryByType_('self_pay');
   const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
   const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
-  const expectedBillingAmount = insuranceEntry && Object.prototype.hasOwnProperty.call(insuranceEntry, 'billingAmount')
-    ? normalizeAmount(insuranceEntry.billingAmount)
-    : insuranceTotal;
+  const expectedBillingAmount = insuranceEntry
+    ? normalizeAmount(
+      Object.prototype.hasOwnProperty.call(insuranceEntry, 'billingAmount')
+        ? insuranceEntry.billingAmount
+        : insuranceTotal
+    )
+    : 0;
   normalizedEntry.entries = entries;
-  normalizedEntry.billingAmount = insuranceEntry ? expectedBillingAmount : 0;
-  normalizedEntry.total = insuranceEntry ? insuranceTotal : 0;
+  normalizedEntry.billingAmount = expectedBillingAmount;
+  normalizedEntry.total = insuranceTotal;
   normalizedEntry.grandTotal = insuranceTotal + selfPayTotal;
-  if (insuranceEntry && insuranceEntry.manualOverride
-    && Object.prototype.hasOwnProperty.call(insuranceEntry.manualOverride, 'amount')) {
-    normalizedEntry.manualBillingAmount = insuranceEntry.manualOverride.amount;
-  }
-  if (selfPayEntry && selfPayEntry.manualOverride
-    && Object.prototype.hasOwnProperty.call(selfPayEntry.manualOverride, 'amount')) {
-    normalizedEntry.manualSelfPayAmount = selfPayEntry.manualOverride.amount;
-  }
+  normalizedEntry.manualBillingAmount = insuranceEntry && insuranceEntry.manualOverride
+    && Object.prototype.hasOwnProperty.call(insuranceEntry.manualOverride, 'amount')
+    ? insuranceEntry.manualOverride.amount
+    : '';
+  normalizedEntry.manualSelfPayAmount = selfPayEntry && selfPayEntry.manualOverride
+    && Object.prototype.hasOwnProperty.call(selfPayEntry.manualOverride, 'amount')
+    ? selfPayEntry.manualOverride.amount
+    : '';
   return normalizedEntry;
 }
 
@@ -4098,7 +4064,7 @@ function prepareBillingData(billingMonth, options) {
   const shouldSyncBank = !(options && options.syncBankWithdrawal === false);
   let bankSheetResult = null;
   if (shouldSyncBank) {
-    bankSheetResult = syncBankWithdrawalSheetForMonth_(normalizedMonth, prepared);
+    bankSheetResult = syncBankWithdrawalSheetForMonth_(normalizedMonth, normalizedPrepared);
     billingLogger_.log('[billing] Bank withdrawal sheet synced: ' + JSON.stringify(bankSheetResult));
   } else {
     billingLogger_.log('[billing] Bank withdrawal sheet sync skipped for ' + normalizedMonth.key);
@@ -4232,9 +4198,10 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
  */
 function generateBillingJsonPreview(billingMonth) {
   const prepared = buildPreparedBillingPayload_(billingMonth);
-  savePreparedBilling_(prepared);
-  savePreparedBillingToSheet_(billingMonth, prepared);
-  return prepared;
+  const normalized = normalizePreparedBilling_(prepared) || prepared;
+  savePreparedBilling_(normalized);
+  savePreparedBillingToSheet_(billingMonth, normalized);
+  return normalized;
 }
 
 /**
@@ -4246,12 +4213,13 @@ function generateBillingJsonPreview(billingMonth) {
 function generateInvoices(billingMonth, options) {
   try {
     const prepared = buildPreparedBillingPayload_(billingMonth);
-    savePreparedBilling_(prepared);
-    savePreparedBillingToSheet_(billingMonth, prepared);
+    const normalized = normalizePreparedBilling_(prepared) || prepared;
+    savePreparedBilling_(normalized);
+    savePreparedBillingToSheet_(billingMonth, normalized);
     const monthCache = createBillingMonthCache_();
     loadPreparedBillingSummariesIntoCache_(monthCache);
-    loadBankWithdrawalAmountsIntoCache_(monthCache, prepared);
-    return generatePreparedInvoices_(prepared, Object.assign({}, options || {}, { monthCache }));
+    loadBankWithdrawalAmountsIntoCache_(monthCache, normalized);
+    return generatePreparedInvoices_(normalized, Object.assign({}, options || {}, { monthCache }));
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     const stack = err && err.stack ? '\n' + err.stack : '';
@@ -4358,7 +4326,7 @@ function buildSelfPayInvoiceEntryForPdf_(entry) {
     insuranceType: '自費',
     burdenRate: '自費',
     selfPayItems,
-    manualSelfPayAmount: manualOverride !== undefined ? manualOverride : entry.manualSelfPayAmount,
+    manualSelfPayAmount: manualOverride !== undefined ? manualOverride : '',
     carryOverAmount: 0,
     manualTransportAmount: '',
     transportAmount: 0,
@@ -4385,7 +4353,7 @@ function buildInsuranceInvoiceEntryForPdf_(entry) {
     billingAmount: insuranceEntry.billingAmount,
     total: insuranceTotal,
     grandTotal: insuranceTotal,
-    manualBillingAmount: manualOverride !== undefined ? manualOverride : entry.manualBillingAmount,
+    manualBillingAmount: manualOverride !== undefined ? manualOverride : '',
     manualSelfPayAmount: '',
     selfPayItems: [],
     selfPayCount: 0
@@ -5257,9 +5225,10 @@ function applyBillingEdits(billingMonth, options) {
   if (refreshedPatients) {
     prepared.patients = indexByPatientId_(refreshedPatients);
   }
-  savePreparedBilling_(prepared);
-  savePreparedBillingToSheet_(billingMonth, prepared);
-  return prepared;
+  const normalizedPrepared = normalizePreparedBilling_(prepared) || prepared;
+  savePreparedBilling_(normalizedPrepared);
+  savePreparedBillingToSheet_(billingMonth, normalizedPrepared);
+  return normalizedPrepared;
 }
 
 function applyBillingEditsAndGenerateInvoices(billingMonth, options) {
@@ -5325,9 +5294,10 @@ function updateBillingReceiptStatus(billingMonth, options) {
   // Deprecated (legacy bank transfer export). New specifications do not rely on bank CSV/JSON outputs.
   function generateBankTransferData(billingMonth, options) {
     const prepared = buildPreparedBillingPayload_(billingMonth);
-    savePreparedBilling_(prepared);
-    savePreparedBillingToSheet_(billingMonth, prepared);
-    return exportBankTransferDataForPrepared_(prepared, options || {});
+    const normalized = normalizePreparedBilling_(prepared) || prepared;
+    savePreparedBilling_(normalized);
+    savePreparedBillingToSheet_(billingMonth, normalized);
+    return exportBankTransferDataForPrepared_(normalized, options || {});
   }
 
   // Deprecated (legacy bank transfer export). New specifications do not rely on bank CSV/JSON outputs.

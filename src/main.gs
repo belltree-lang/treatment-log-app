@@ -3241,6 +3241,21 @@ function buildBillingAmountByPatientId_(billingJson) {
   (billingJson || []).forEach(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return;
+    const manualBillingInput = entry && Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
+      ? entry.manualBillingAmount
+      : undefined;
+    const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+    if (hasManualBillingAmount) {
+      const insuranceType = String(entry && entry.insuranceType != null ? entry.insuranceType : '').trim();
+      const burdenRaw = entry && entry.burdenRate != null ? entry.burdenRate : '';
+      const normalizedBurden = typeof normalizeBurdenRateInt_ === 'function'
+        ? normalizeBurdenRateInt_(burdenRaw)
+        : burdenRaw;
+      const isSelfPay = insuranceType === '自費' || String(burdenRaw || '').trim() === '自費' || normalizedBurden === '自費';
+      if (isSelfPay) {
+        return;
+      }
+    }
     const amountCandidate = entry && entry.grandTotal != null
       ? entry.grandTotal
       : (entry && entry.total != null ? entry.total : entry && entry.billingAmount);
@@ -3257,6 +3272,25 @@ function buildSelfPayAmountByPatientId_(billingJson) {
   (billingJson || []).forEach(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return;
+    const manualBillingInput = entry && Object.prototype.hasOwnProperty.call(entry, 'manualBillingAmount')
+      ? entry.manualBillingAmount
+      : undefined;
+    const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+    if (hasManualBillingAmount) {
+      const insuranceType = String(entry && entry.insuranceType != null ? entry.insuranceType : '').trim();
+      const burdenRaw = entry && entry.burdenRate != null ? entry.burdenRate : '';
+      const normalizedBurden = typeof normalizeBurdenRateInt_ === 'function'
+        ? normalizeBurdenRateInt_(burdenRaw)
+        : burdenRaw;
+      const isSelfPay = insuranceType === '自費' || String(burdenRaw || '').trim() === '自費' || normalizedBurden === '自費';
+      if (isSelfPay) {
+        const amount = typeof normalizeMoneyNumber_ === 'function'
+          ? normalizeMoneyNumber_(manualBillingInput)
+          : Number(manualBillingInput) || 0;
+        amounts[pid] = amount;
+        return;
+      }
+    }
     if (!entry || !Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')) return;
     amounts[pid] = entry.manualSelfPayAmount;
   });

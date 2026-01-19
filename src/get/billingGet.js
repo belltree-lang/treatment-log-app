@@ -1110,6 +1110,12 @@ function loadBillingOverridesMap_(billingMonth) {
   const colAdjustedVisits = resolveBillingColumn_(headers, ['adjustedVisitCount', 'visitCount', '回数'], 'adjustedVisitCount', {});
   const colBurdenRate = resolveBillingColumn_(headers, BILLING_LABELS.share.concat(['burdenRate']), 'burdenRate', {});
   const colManualSelfPay = resolveBillingColumn_(headers, ['manualSelfPayAmount', '自費', 'selfPayAmount'], 'manualSelfPayAmount', {});
+  const colManualBillingAmount = resolveBillingColumn_(
+    headers,
+    ['manualBillingAmount', 'billingAmount', 'grandTotal', '請求額', '合計'],
+    'manualBillingAmount',
+    {}
+  );
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const map = {};
@@ -1151,6 +1157,11 @@ function loadBillingOverridesMap_(billingMonth) {
         ? ''
         : normalizeMoneyValue_(row[colManualSelfPay - 1]))
       : undefined;
+    const manualBillingAmount = colManualBillingAmount
+      ? (row[colManualBillingAmount - 1] === '' || row[colManualBillingAmount - 1] === null
+        ? undefined
+        : normalizeMoneyValue_(row[colManualBillingAmount - 1]))
+      : undefined;
 
     const hasOverride = [
       manualUnitPrice,
@@ -1158,7 +1169,8 @@ function loadBillingOverridesMap_(billingMonth) {
       carryOverAmount,
       adjustedVisitCount,
       burdenRate,
-      manualSelfPayAmount
+      manualSelfPayAmount,
+      manualBillingAmount
     ].some(value => value !== undefined);
     if (!hasOverride) return;
 
@@ -1169,6 +1181,7 @@ function loadBillingOverridesMap_(billingMonth) {
       adjustedVisitCount,
       burdenRate,
       manualSelfPayAmount,
+      manualBillingAmount,
       selfPayItems: buildSelfPayItemsFromLegacy_(manualSelfPayAmount)
     };
     const existing = latestRowByKey[key];
@@ -1567,6 +1580,7 @@ function getBillingSourceData(billingMonth) {
     if (override.adjustedVisitCount !== undefined) flags.visitCount = true;
     if (override.burdenRate !== undefined) flags.burdenRate = true;
     if (override.manualSelfPayAmount !== undefined) flags.manualSelfPayAmount = true;
+    if (override.manualBillingAmount !== undefined) flags.grandTotal = true;
     if (Object.keys(flags).length) {
       billingOverrideFlags[pid] = flags;
     }

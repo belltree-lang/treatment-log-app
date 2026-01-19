@@ -373,6 +373,12 @@ function generateBillingJsonFromSource(sourceData) {
       medicalAssistance: normalizedMedicalAssistance,
       carryOverAmount: carryOverFromPatient + carryOverFromHistory
     });
+    const manualBillingInput = Object.prototype.hasOwnProperty.call(patient, 'manualBillingAmount')
+      ? patient.manualBillingAmount
+      : undefined;
+    const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
+    const manualBillingAmount = hasManualBillingAmount ? normalizeMoneyNumber_(manualBillingInput) : '';
+    const resolvedGrandTotal = hasManualBillingAmount ? manualBillingAmount : amountCalc.grandTotal;
 
     const bankStatusEntry = bankStatuses && bankStatuses[pid];
 
@@ -399,7 +405,8 @@ function generateBillingJsonFromSource(sourceData) {
       carryOverFromHistory,
       billingAmount: amountCalc.billingAmount,
       total: amountCalc.total,
-      grandTotal: amountCalc.grandTotal,
+      grandTotal: resolvedGrandTotal,
+      manualBillingAmount,
       responsibleEmail,
       responsibleNames,
       responsibleName,

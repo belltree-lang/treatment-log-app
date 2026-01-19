@@ -2616,6 +2616,8 @@ function buildPreparedBillingPayload_(billingMonth) {
 
 const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
 const BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER = 'S';
+const BANK_WITHDRAWAL_SELF_PAY_COLUMN_LETTER = 'T';
+const BANK_WITHDRAWAL_SELF_PAY_HEADER = '自費請求';
 
 function generateSimpleBankSheet(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
@@ -2657,6 +2659,12 @@ function generateSimpleBankSheet(billingMonth) {
     '金額',
     { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
   );
+  const selfPayCol = resolveBillingColumn_(
+    headers,
+    [BANK_WITHDRAWAL_SELF_PAY_HEADER],
+    BANK_WITHDRAWAL_SELF_PAY_HEADER,
+    { fallbackLetter: BANK_WITHDRAWAL_SELF_PAY_COLUMN_LETTER }
+  );
   const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
     ? BILLING_LABELS.recNo
     : [];
@@ -2669,6 +2677,7 @@ function generateSimpleBankSheet(billingMonth) {
   const patients = resolvePreparedPatients_(prepared);
   const nameToPatientId = buildPatientNameToIdMap_(patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
+  const selfPayAmountByPatientId = buildSelfPayAmountByPatientId_(prepared && prepared.billingJson);
 
   const missingAccounts = [];
   const diagnostics = [];
@@ -2695,8 +2704,26 @@ function generateSimpleBankSheet(billingMonth) {
     }
     return [amount];
   });
+  const selfPayValues = selfPayCol ? nameValues.map((row, idx) => {
+    const rawPid = pidValues[idx] && pidValues[idx][0];
+    const normalizedPid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(rawPid)
+      : (rawPid ? String(rawPid).trim() : '');
+    const rawKana = (kanaValues[idx] && kanaValues[idx][0]) ? String(kanaValues[idx][0]).trim() : '';
+    const fullNameKey = buildFullNameKey_(row && row[0], rawKana);
+    const pid = normalizedPid || (fullNameKey ? nameToPatientId[fullNameKey] : '');
+    const hasAmount = pid && Object.prototype.hasOwnProperty.call(selfPayAmountByPatientId, pid);
+    const amount = hasAmount ? selfPayAmountByPatientId[pid] : null;
+    if (!pid || amount === null || amount === undefined) {
+      return [''];
+    }
+    return [amount];
+  }) : [];
 
   copied.getRange(2, amountCol, rowCount, 1).setValues(amountValues);
+  if (selfPayCol) {
+    copied.getRange(2, selfPayCol, rowCount, 1).setValues(selfPayValues);
+  }
   const filled = amountValues.filter(v => v && v[0] !== '' && v[0] !== null && v[0] !== undefined).length;
 
   if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
@@ -3225,6 +3252,17 @@ function buildBillingAmountByPatientId_(billingJson) {
   return amounts;
 }
 
+function buildSelfPayAmountByPatientId_(billingJson) {
+  const amounts = {};
+  (billingJson || []).forEach(entry => {
+    const pid = billingNormalizePatientId_(entry && entry.patientId);
+    if (!pid) return;
+    if (!entry || !Object.prototype.hasOwnProperty.call(entry, 'manualSelfPayAmount')) return;
+    amounts[pid] = entry.manualSelfPayAmount;
+  });
+  return amounts;
+}
+
 function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const month = normalizeBillingMonthInput(billingMonth || (prepared && prepared.billingMonth));
   const sheet = ensureBankWithdrawalSheet_(month, {
@@ -3248,6 +3286,12 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
     '金額',
     { required: true, fallbackLetter: BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER }
   );
+  const selfPayCol = resolveBillingColumn_(
+    headers,
+    [BANK_WITHDRAWAL_SELF_PAY_HEADER],
+    BANK_WITHDRAWAL_SELF_PAY_HEADER,
+    { fallbackLetter: BANK_WITHDRAWAL_SELF_PAY_COLUMN_LETTER }
+  );
   const patientIdLabels = (typeof BILLING_LABELS !== 'undefined' && BILLING_LABELS && Array.isArray(BILLING_LABELS.recNo))
     ? BILLING_LABELS.recNo
     : [];
@@ -3258,9 +3302,13 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   const kanaValues = kanaCol ? sheet.getRange(2, kanaCol, rowCount, 1).getDisplayValues() : [];
   const pidValues = resolvedPidCol ? sheet.getRange(2, resolvedPidCol, rowCount, 1).getDisplayValues() : [];
   const existingAmountValues = sheet.getRange(2, amountCol, rowCount, 1).getValues();
+  const existingSelfPayValues = selfPayCol
+    ? sheet.getRange(2, selfPayCol, rowCount, 1).getValues()
+    : [];
   const patients = resolvePreparedPatients_(prepared);
   const nameToPatientId = buildPatientNameToIdMap_(patients);
   const amountByPatientId = buildBillingAmountByPatientId_(prepared && prepared.billingJson);
+  const selfPayAmountByPatientId = buildSelfPayAmountByPatientId_(prepared && prepared.billingJson);
   const isBlank_ = value => value === '' || value === null || value === undefined;
   const isSameAmount_ = (current, next) => {
     if (isBlank_(current) && isBlank_(next)) return true;
@@ -3290,37 +3338,85 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
       : (resolvedAmount !== null && resolvedAmount !== undefined ? resolvedAmount : existingAmount);
     return [nextAmount];
   });
+  const newSelfPayValues = selfPayCol ? nameValues.map((row, idx) => {
+    const kanaRow = kanaValues[idx] || [];
+    const rawPid = pidValues[idx] && pidValues[idx][0];
+    const normalizedPid = typeof billingNormalizePatientId_ === 'function'
+      ? billingNormalizePatientId_(rawPid)
+      : (rawPid ? String(rawPid).trim() : '');
+    const nameKey = buildFullNameKey_(row && row[0], kanaRow[0]);
+    const pid = normalizedPid || (nameKey ? nameToPatientId[nameKey] : '');
+    const resolvedAmount = pid && Object.prototype.hasOwnProperty.call(selfPayAmountByPatientId, pid)
+      ? selfPayAmountByPatientId[pid]
+      : null;
+    const existingAmount = existingSelfPayValues[idx][0];
+    const hasManualAmount = existingAmount !== '' && existingAmount !== null && existingAmount !== undefined;
+    const nextAmount = hasManualAmount && resolvedAmount !== null && resolvedAmount !== undefined
+      ? existingAmount
+      : (resolvedAmount !== null && resolvedAmount !== undefined ? resolvedAmount : existingAmount);
+    return [nextAmount];
+  }) : [];
 
-  const updates = [];
+  const amountUpdates = [];
   newAmountValues.forEach((rowValue, idx) => {
     const existingValue = existingAmountValues[idx] ? existingAmountValues[idx][0] : '';
     const nextValue = rowValue[0];
     if (!isSameAmount_(existingValue, nextValue)) {
-      updates.push({ row: idx + 2, value: nextValue });
+      amountUpdates.push({ row: idx + 2, value: nextValue });
     }
   });
+  const selfPayUpdates = [];
+  if (selfPayCol) {
+    newSelfPayValues.forEach((rowValue, idx) => {
+      const existingValue = existingSelfPayValues[idx] ? existingSelfPayValues[idx][0] : '';
+      const nextValue = rowValue[0];
+      if (!isSameAmount_(existingValue, nextValue)) {
+        selfPayUpdates.push({ row: idx + 2, value: nextValue });
+      }
+    });
+  }
 
-  if (!updates.length) {
+  if (!amountUpdates.length && !selfPayUpdates.length) {
     return { billingMonth: month.key, updated: 0 };
   }
 
-  let segmentStart = updates[0].row;
-  let segmentValues = [[updates[0].value]];
-  let previousRow = updates[0].row;
-  for (let idx = 1; idx < updates.length; idx++) {
-    const update = updates[idx];
-    if (update.row === previousRow + 1) {
-      segmentValues.push([update.value]);
-    } else {
-      sheet.getRange(segmentStart, amountCol, segmentValues.length, 1).setValues(segmentValues);
-      segmentStart = update.row;
-      segmentValues = [[update.value]];
+  if (amountUpdates.length) {
+    let segmentStart = amountUpdates[0].row;
+    let segmentValues = [[amountUpdates[0].value]];
+    let previousRow = amountUpdates[0].row;
+    for (let idx = 1; idx < amountUpdates.length; idx++) {
+      const update = amountUpdates[idx];
+      if (update.row === previousRow + 1) {
+        segmentValues.push([update.value]);
+      } else {
+        sheet.getRange(segmentStart, amountCol, segmentValues.length, 1).setValues(segmentValues);
+        segmentStart = update.row;
+        segmentValues = [[update.value]];
+      }
+      previousRow = update.row;
     }
-    previousRow = update.row;
+    sheet.getRange(segmentStart, amountCol, segmentValues.length, 1).setValues(segmentValues);
   }
-  sheet.getRange(segmentStart, amountCol, segmentValues.length, 1).setValues(segmentValues);
 
-  return { billingMonth: month.key, updated: updates.length };
+  if (selfPayCol && selfPayUpdates.length) {
+    let segmentStart = selfPayUpdates[0].row;
+    let segmentValues = [[selfPayUpdates[0].value]];
+    let previousRow = selfPayUpdates[0].row;
+    for (let idx = 1; idx < selfPayUpdates.length; idx++) {
+      const update = selfPayUpdates[idx];
+      if (update.row === previousRow + 1) {
+        segmentValues.push([update.value]);
+      } else {
+        sheet.getRange(segmentStart, selfPayCol, segmentValues.length, 1).setValues(segmentValues);
+        segmentStart = update.row;
+        segmentValues = [[update.value]];
+      }
+      previousRow = update.row;
+    }
+    sheet.getRange(segmentStart, selfPayCol, segmentValues.length, 1).setValues(segmentValues);
+  }
+
+  return { billingMonth: month.key, updated: amountUpdates.length + selfPayUpdates.length };
 }
 
 function summarizeBankWithdrawalSheet_(billingMonth) {

@@ -3800,6 +3800,13 @@ function prepareBillingData(billingMonth, options) {
       ? existingResult.validation
       : (existingResult && existingResult.ok !== undefined ? existingResult : null);
     if (existingPrepared && (!existingValidation || existingValidation.ok)) {
+      const manualSync = syncManualBillingOverridesIntoPrepared_(existingPrepared, normalizedMonth.key);
+      if (manualSync && manualSync.updated) {
+        savePreparedBilling_(manualSync.prepared);
+        savePreparedBillingToSheet_(normalizedMonth.key, manualSync.prepared);
+        billingLogger_.log('[billing] prepareBillingData refreshed manual billing overrides for ' + normalizedMonth.key);
+        return manualSync.prepared;
+      }
       billingLogger_.log('[billing] prepareBillingData using existing prepared billing for ' + normalizedMonth.key);
       return existingPrepared;
     }
@@ -3839,6 +3846,71 @@ function prepareBillingData(billingMonth, options) {
     billingLogger_.log('[billing] Bank withdrawal sheet sync skipped for ' + normalizedMonth.key);
   }
   return cachePayload;
+}
+
+function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
+  const monthKey = normalizeBillingMonthKeySafe_(billingMonth || (prepared && prepared.billingMonth));
+  if (!monthKey || !prepared || !Array.isArray(prepared.billingJson)) {
+    return { prepared, updated: false };
+  }
+  if (typeof loadBillingOverridesMap_ !== 'function') {
+    return { prepared, updated: false };
+  }
+  const overrides = loadBillingOverridesMap_(monthKey);
+  if (!overrides || !Object.keys(overrides).length) {
+    return { prepared, updated: false };
+  }
+
+  let updated = false;
+  const updatedBillingJson = prepared.billingJson.map(entry => {
+    if (!entry) return entry;
+    const pid = billingNormalizePatientId_(entry.patientId);
+    if (!pid) return entry;
+    const override = overrides[pid];
+    if (!override || override.manualBillingAmount === undefined) return entry;
+    const manualBillingAmount = override.manualBillingAmount;
+    const hasManualBilling = manualBillingAmount !== '' && manualBillingAmount !== null && manualBillingAmount !== undefined;
+    const shouldUpdate = entry.manualBillingAmount !== manualBillingAmount
+      || (hasManualBilling && entry.grandTotal !== manualBillingAmount);
+    if (!shouldUpdate) return entry;
+    updated = true;
+    return Object.assign({}, entry, {
+      manualBillingAmount,
+      grandTotal: hasManualBilling ? manualBillingAmount : entry.grandTotal
+    });
+  });
+
+  if (!updated) {
+    return { prepared, updated: false };
+  }
+
+  const updatedPrepared = Object.assign({}, prepared, { billingJson: updatedBillingJson });
+  if (updatedPrepared.totalsByPatient && typeof updatedPrepared.totalsByPatient === 'object') {
+    const totalsByPatient = Object.assign({}, updatedPrepared.totalsByPatient);
+    updatedBillingJson.forEach(entry => {
+      if (!entry) return;
+      const pid = billingNormalizePatientId_(entry.patientId);
+      if (!pid || !totalsByPatient[pid]) return;
+      if (entry.manualBillingAmount === '' || entry.manualBillingAmount == null) return;
+      totalsByPatient[pid] = Object.assign({}, totalsByPatient[pid], {
+        grandTotal: entry.manualBillingAmount
+      });
+    });
+    updatedPrepared.totalsByPatient = totalsByPatient;
+  }
+  if (updatedPrepared.billingOverrideFlags && typeof updatedPrepared.billingOverrideFlags === 'object') {
+    const overrideFlags = Object.assign({}, updatedPrepared.billingOverrideFlags);
+    Object.keys(overrides).forEach(pid => {
+      const override = overrides[pid];
+      if (!override || override.manualBillingAmount === undefined) return;
+      if (override.manualBillingAmount === '' || override.manualBillingAmount == null) return;
+      const flags = Object.assign({}, overrideFlags[pid] || {});
+      flags.grandTotal = true;
+      overrideFlags[pid] = flags;
+    });
+    updatedPrepared.billingOverrideFlags = overrideFlags;
+  }
+  return { prepared: updatedPrepared, updated: true };
 }
 
 /**

@@ -1068,6 +1068,42 @@ function getDisplayBillingRows() {
   return sortBillingRows(merged);
 }
 
+function normalizeBillingEntryType(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = raw.toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'insurance') return 'insurance';
+  if (normalized === 'selfpay' || normalized === 'self_pay' || normalized === 'self-pay') return 'self_pay';
+  return '';
+}
+
+function buildBillingEntryDisplayRow(baseRow, entry) {
+  const safeBase = baseRow && typeof baseRow === 'object' ? baseRow : {};
+  const safeEntry = entry && typeof entry === 'object' ? entry : {};
+  const entryType = normalizeBillingEntryType(safeEntry.type || safeEntry.entryType);
+  const manualOverrideAmount = safeEntry.manualOverride
+    && Object.prototype.hasOwnProperty.call(safeEntry.manualOverride, 'amount')
+    ? safeEntry.manualOverride.amount
+    : '';
+  const selfPayItems = Array.isArray(safeEntry.selfPayItems)
+    ? safeEntry.selfPayItems
+    : (Array.isArray(safeEntry.items) ? safeEntry.items : []);
+
+  return Object.assign({}, safeBase, {
+    unitPrice: safeEntry.unitPrice,
+    visitCount: safeEntry.visitCount,
+    treatmentAmount: safeEntry.treatmentAmount,
+    transportAmount: safeEntry.transportAmount,
+    carryOverAmount: safeEntry.carryOverAmount,
+    grandTotal: safeEntry.total,
+    billingAmount: safeEntry.billingAmount,
+    selfPayItems,
+    manualBillingAmount: entryType === 'insurance' ? manualOverrideAmount : '',
+    manualSelfPayAmount: entryType === 'self_pay' ? manualOverrideAmount : '',
+    entryType
+  });
+}
+
 function buildBillingDerivedViews(entry) {
   const source = entry && typeof entry === 'object' ? entry : {};
   const rawSelfPayItems = Array.isArray(source.selfPayItems) ? source.selfPayItems : [];
@@ -2244,15 +2280,18 @@ function renderBillingResult() {
   }
 
   const bodyRows = [];
-  rows.forEach(item => {
-    try {
-      const safeItem = item && typeof item === 'object' ? item : {};
-      const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
-      const selfPayCount = safeItem.selfPayCount;
-      const selfPayDisplay = (selfPayCount === 0 || selfPayCount === '0' || selfPayCount)
-        ? selfPayCount
-        : '—';
-      bodyRows.push(`
+
+  function renderEntryRow(item) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
+    const selfPayCount = safeItem.selfPayCount;
+    const selfPayDisplay = (selfPayCount === 0 || selfPayCount === '0' || selfPayCount)
+      ? selfPayCount
+      : '—';
+    const visitDisplay = (safeItem.visitCount === 0 || safeItem.visitCount === '0' || safeItem.visitCount)
+      ? safeItem.visitCount
+      : '—';
+    return `
       <tr>
         <td>${safeItem.patientId || ''}</td>
         <td>${nameWithBadge}</td>
@@ -2261,7 +2300,7 @@ function renderBillingResult() {
         <td>${renderEditableCell(safeItem, 'onlineConsent')}</td>
         <td>${renderEditableCell(safeItem, 'payerType')}</td>
         <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
-        <td>${wrapWithOverrideBadge(safeItem.visitCount || 0, safeItem.patientId, 'visitCount')}</td>
+        <td>${wrapWithOverrideBadge(visitDisplay, safeItem.patientId, 'visitCount')}</td>
         <td>${selfPayDisplay}</td>
         <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
         <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
@@ -2271,7 +2310,41 @@ function renderBillingResult() {
         <td>${formatPaidStatus(safeItem) || '—'}</td>
         <td>${formatBankInfo(safeItem) || '—'}</td>
         <td>${formatNewFlag(safeItem) || ''}</td>
-      </tr>`);
+      </tr>`;
+  }
+
+  function renderSectionRow(label) {
+    return `<tr class="billing-section"><td colspan="${columnCount}">${label}</td></tr>`;
+  }
+
+  rows.forEach(item => {
+    try {
+      const safeItem = item && typeof item === 'object' ? item : {};
+      const entries = Array.isArray(safeItem.entries) ? safeItem.entries : [];
+      const insuranceEntries = [];
+      const selfPayEntries = [];
+      entries.forEach(entry => {
+        const entryType = normalizeBillingEntryType(entry && (entry.type || entry.entryType));
+        if (entryType === 'insurance') {
+          insuranceEntries.push(entry);
+        } else if (entryType === 'self_pay') {
+          selfPayEntries.push(entry);
+        }
+      });
+
+      if (insuranceEntries.length) {
+        bodyRows.push(renderSectionRow('【保険請求】'));
+        insuranceEntries.forEach(entry => {
+          bodyRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
+        });
+      }
+
+      if (selfPayEntries.length) {
+        bodyRows.push(renderSectionRow('【自費請求】'));
+        selfPayEntries.forEach(entry => {
+          bodyRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
+        });
+      }
     } catch (err) {
       console.error('Failed to render billing row', err, item);
       const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';

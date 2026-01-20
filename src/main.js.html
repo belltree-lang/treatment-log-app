@@ -2323,18 +2323,35 @@ function renderBillingResult() {
       </tr>`;
   }
 
+  function getSelfPayVisitCount(item) {
+    return Number(item && item.selfPayVisitCount != null ? item.selfPayVisitCount : item && item.selfPayCount) || 0;
+  }
+
+  function getSelfPayUnitPrice(item) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    const hasManualUnitPrice = Object.prototype.hasOwnProperty.call(safeItem, 'manualUnitPrice')
+      && safeItem.manualUnitPrice !== ''
+      && safeItem.manualUnitPrice !== null
+      && safeItem.manualUnitPrice !== undefined;
+    const source = hasManualUnitPrice ? safeItem.manualUnitPrice : safeItem.unitPrice;
+    return normalizeMoneyNumber(source);
+  }
+
   function renderSelfPayRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
+    const selfPayVisitCount = getSelfPayVisitCount(safeItem);
+    const visitDisplay = (selfPayVisitCount === 0 || selfPayVisitCount) ? selfPayVisitCount : '—';
+    const unitPrice = getSelfPayUnitPrice(safeItem);
+    const totalAmount = Number.isFinite(unitPrice) ? unitPrice * selfPayVisitCount : null;
+    const displayItem = Object.assign({}, safeItem, { unitPrice });
     return `
       <tr>
-        <td>${renderPatientIdCell(safeItem)}</td>
-        <td>${renderPatientNameCell(safeItem)}</td>
-        <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td class="right">${renderMoneyValue(safeItem.unitPrice)}</td>
-        <td class="right">${renderMoneyValue(safeItem.treatmentAmount)}</td>
-        <td class="right">${renderMoneyValue(safeItem.transportAmount)}</td>
-        <td class="right">${renderMoneyValue(safeItem.carryOverAmount)}</td>
-        <td class="right">${renderMoneyValue(safeItem.grandTotal)}</td>
+        <td>${renderPatientIdCell(displayItem)}</td>
+        <td>${renderPatientNameCell(displayItem)}</td>
+        <td>${getResponsibleDisplay(displayItem) || '—'}</td>
+        <td class="right">${visitDisplay}</td>
+        <td class="right">${renderEditableCell(displayItem, 'unitPrice', true)}</td>
+        <td class="right">${renderMoneyValue(totalAmount)}</td>
       </tr>`;
   }
 
@@ -2411,6 +2428,7 @@ function renderBillingResult() {
   const insuranceRowsByPatient = new Map();
   const onlineConsentRowsByPatient = new Map();
   const selfPayRowsByPatient = new Map();
+  const selfPayColumnCount = 6;
 
   function getPatientKey(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
@@ -2433,7 +2451,6 @@ function renderBillingResult() {
       const safeItem = item && typeof item === 'object' ? item : {};
       const entries = Array.isArray(safeItem.entries) ? safeItem.entries : [];
       const insuranceEntry = entries.find(entry => normalizeEntryType(entry) === 'insurance');
-      const selfPayEntry = entries.find(entry => normalizeEntryType(entry) === 'self_pay');
       const patientKey = registerPatient(safeItem);
 
       if (hasInsuranceSection(safeItem)) {
@@ -2450,9 +2467,8 @@ function renderBillingResult() {
       }
 
       if (hasSelfPaySection(safeItem)) {
-        const displayRow = selfPayEntry ? buildBillingEntryDisplayRow(safeItem, selfPayEntry) : safeItem;
         if (!selfPayRowsByPatient.has(patientKey)) {
-          selfPayRowsByPatient.set(patientKey, renderSelfPayRow(displayRow));
+          selfPayRowsByPatient.set(patientKey, renderSelfPayRow(safeItem));
         }
       }
     } catch (err) {
@@ -2466,7 +2482,7 @@ function renderBillingResult() {
         onlineConsentRowsByPatient.set(patientKey, `<tr class="error-row"><td colspan="4">${pid}</td></tr>`);
       }
       if (!selfPayRowsByPatient.has(patientKey)) {
-        selfPayRowsByPatient.set(patientKey, `<tr class="error-row"><td colspan="8">${pid}</td></tr>`);
+        selfPayRowsByPatient.set(patientKey, `<tr class="error-row"><td colspan="${selfPayColumnCount}">${pid}</td></tr>`);
       }
     }
   });
@@ -2504,11 +2520,9 @@ function renderBillingResult() {
     { key: 'patientId', label: '患者ID' },
     { key: 'nameKanji', label: '氏名' },
     { key: 'responsible', label: '担当者' },
+    { key: 'selfPayVisitCount', label: '自費回数' },
     { key: 'unitPrice', label: '単価' },
-    { key: 'treatmentAmount', label: '施術料' },
-    { key: 'transportAmount', label: '交通費' },
-    { key: 'carryOverAmount', label: '繰越' },
-    { key: 'grandTotal', label: '合計' }
+    { key: 'billingAmount', label: '請求金額' }
   ];
 
   const selfPayTableHtml = [

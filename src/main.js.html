@@ -2322,37 +2322,123 @@ function renderBillingResult() {
       </tr>`;
   }
 
+  function renderOnlineConsentRow(item) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
+    return `
+      <tr>
+        <td>${safeItem.patientId || ''}</td>
+        <td>${nameWithBadge}</td>
+        <td>${getResponsibleDisplay(safeItem) || '—'}</td>
+        <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
+      </tr>`;
+  }
+
+  function renderEmptyRow(colspan) {
+    return `<tr class="empty-row"><td colspan="${colspan}">該当なし</td></tr>`;
+  }
+
+  function normalizeEntryType(entry) {
+    return normalizeBillingEntryType(entry && (entry.type || entry.entryType));
+  }
+
+  function hasSelfPayItemsAmount(items) {
+    return (items || []).some(item => normalizeMoneyNumber(item && item.amount) > 0);
+  }
+
+  function hasInsuranceSection(row) {
+    const visitCount = normalizeVisitCount(row && row.visitCount);
+    return visitCount > 0;
+  }
+
+  function hasOnlineConsentSection(row) {
+    const entries = Array.isArray(row && row.entries) ? row.entries : [];
+    return entries.some(entry => {
+      const rawType = entry && (entry.type || entry.entryType);
+      const normalizedRawType = String(rawType || '').trim().toLowerCase().replace(/\s+/g, '');
+      return normalizedRawType === 'online_consent' || normalizedRawType === 'online_fee';
+    });
+  }
+
+  function hasSelfPaySection(row) {
+    const visitCount = normalizeVisitCount(row && row.visitCount);
+    if (visitCount !== 0) return false;
+    const entries = Array.isArray(row && row.entries) ? row.entries : [];
+    const hasEntrySelfPayAmount = entries.some(entry => {
+      const items = Array.isArray(entry && entry.items)
+        ? entry.items
+        : (Array.isArray(entry && entry.selfPayItems) ? entry.selfPayItems : []);
+      return hasSelfPayItemsAmount(items);
+    });
+    const rowSelfPayItems = Array.isArray(row && row.selfPayItems) ? row.selfPayItems : [];
+    const hasRowSelfPayAmount = hasSelfPayItemsAmount(rowSelfPayItems);
+    const hasManualSelfPayAmount = normalizeMoneyNumber(row && row.manualSelfPayAmount) > 0;
+    return hasEntrySelfPayAmount || hasRowSelfPayAmount || hasManualSelfPayAmount;
+  }
+
   const insuranceRows = [];
+  const onlineConsentRows = [];
   const selfPayRows = [];
 
   rows.forEach(item => {
     try {
       const safeItem = item && typeof item === 'object' ? item : {};
       const entries = Array.isArray(safeItem.entries) ? safeItem.entries : [];
-      entries.forEach(entry => {
-        const entryType = normalizeBillingEntryType(entry && (entry.type || entry.entryType));
-        if (entryType === 'insurance' || entryType === 'online_consent') {
-          insuranceRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
-        } else if (entryType === 'self_pay') {
-          selfPayRows.push(renderSelfPayRow(buildBillingEntryDisplayRow(safeItem, entry)));
-        }
-      });
+      const insuranceEntry = entries.find(entry => normalizeEntryType(entry) === 'insurance');
+      const selfPayEntry = entries.find(entry => normalizeEntryType(entry) === 'self_pay');
+
+      if (hasInsuranceSection(safeItem)) {
+        const displayRow = insuranceEntry ? buildBillingEntryDisplayRow(safeItem, insuranceEntry) : safeItem;
+        insuranceRows.push(renderEntryRow(displayRow));
+      }
+
+      if (hasOnlineConsentSection(safeItem)) {
+        entries.forEach(entry => {
+          const rawType = entry && (entry.type || entry.entryType);
+          const normalizedRawType = String(rawType || '').trim().toLowerCase().replace(/\s+/g, '');
+          if (normalizedRawType === 'online_consent' || normalizedRawType === 'online_fee') {
+            onlineConsentRows.push(renderOnlineConsentRow(buildBillingEntryDisplayRow(safeItem, entry)));
+          }
+        });
+      }
+
+      if (hasSelfPaySection(safeItem)) {
+        const displayRow = selfPayEntry ? buildBillingEntryDisplayRow(safeItem, selfPayEntry) : safeItem;
+        selfPayRows.push(renderSelfPayRow(displayRow));
+      }
     } catch (err) {
       console.error('Failed to render billing row', err, item);
       const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';
       insuranceRows.push(`<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
+      onlineConsentRows.push(`<tr class="error-row"><td colspan="4">${pid}</td></tr>`);
       selfPayRows.push(`<tr class="error-row"><td colspan="8">${pid}</td></tr>`);
     }
   });
 
-  const insuranceTableHtml = insuranceRows.length ? [
+  const insuranceTableHtml = [
     '<h3>【保険請求】</h3>',
     '<table><thead><tr>',
     header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',
-    insuranceRows.join(''),
+    (insuranceRows.length ? insuranceRows.join('') : renderEmptyRow(columnCount)),
     '</tbody></table>'
-  ].join('') : '';
+  ].join('');
+
+  const onlineConsentHeader = [
+    { key: 'patientId', label: '患者ID' },
+    { key: 'nameKanji', label: '氏名' },
+    { key: 'responsible', label: '担当者' },
+    { key: 'onlineConsentAmount', label: 'オンライン同意金額' }
+  ];
+
+  const onlineConsentTableHtml = [
+    '<h3>【オンライン同意請求】</h3>',
+    '<table><thead><tr>',
+    onlineConsentHeader.map(h => `<th>${h.label}</th>`).join(''),
+    '</tr></thead><tbody>',
+    (onlineConsentRows.length ? onlineConsentRows.join('') : renderEmptyRow(onlineConsentHeader.length)),
+    '</tbody></table>'
+  ].join('');
 
   const selfPayHeader = [
     { key: 'patientId', label: '患者ID' },
@@ -2365,16 +2451,16 @@ function renderBillingResult() {
     { key: 'grandTotal', label: '合計' }
   ];
 
-  const selfPayTableHtml = selfPayRows.length ? [
+  const selfPayTableHtml = [
     '<h3>【自費請求】</h3>',
     '<table><thead><tr>',
     selfPayHeader.map(h => `<th>${h.label}</th>`).join(''),
     '</tr></thead><tbody>',
-    selfPayRows.join(''),
+    (selfPayRows.length ? selfPayRows.join('') : renderEmptyRow(selfPayHeader.length)),
     '</tbody></table>'
-  ].join('') : '';
+  ].join('');
 
-  const sections = [insuranceTableHtml, selfPayTableHtml].filter(Boolean);
+  const sections = [insuranceTableHtml, onlineConsentTableHtml, selfPayTableHtml].filter(Boolean);
   const tableHtml = [
     sections.join(''),
     renderBillingActionFooter(rows && rows.length > 0)

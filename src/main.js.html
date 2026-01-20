@@ -2379,44 +2379,50 @@ function renderBillingResult() {
     return String(rawType).indexOf('オンライン同意') >= 0;
   }
 
-  function collectOnlineConsentAmounts(row) {
-    const amounts = [];
+  function getEntryAmount(entry) {
+    if (!entry || typeof entry !== 'object') return 0;
+    const rawAmount = entry.amount !== null && entry.amount !== undefined
+      ? entry.amount
+      : entry.total;
+    return normalizeMoneyNumber(rawAmount);
+  }
+
+  function hasEntryItemsAmount(entry) {
+    if (!entry || typeof entry !== 'object') return false;
+    const items = Array.isArray(entry.items)
+      ? entry.items
+      : (Array.isArray(entry.selfPayItems) ? entry.selfPayItems : []);
+    return hasSelfPayItemsAmount(items);
+  }
+
+  function collectOnlineConsentEntryAmounts(row) {
     const entries = Array.isArray(row && row.entries) ? row.entries : [];
-    entries.forEach(entry => {
-      if (!entry || typeof entry !== 'object') return;
-      const rawType = entry.type || entry.entryType;
-      if (isOnlineConsentType(rawType)) {
-        const entryAmount = entry.amount !== null && entry.amount !== undefined
-          ? entry.amount
-          : entry.total;
-        const normalizedAmount = normalizeMoneyNumber(entryAmount);
-        if (normalizedAmount > 0) amounts.push(normalizedAmount);
-      }
-    });
-    const rowBillingItems = Array.isArray(row && row.billingItems) ? row.billingItems : [];
-    const rowSelfPayItems = Array.isArray(row && row.selfPayItems) ? row.selfPayItems : [];
-    rowBillingItems.concat(rowSelfPayItems).forEach(item => {
-      if (!isOnlineConsentItem(item)) return;
-      const normalizedAmount = normalizeMoneyNumber(item.amount);
-      if (normalizedAmount > 0) amounts.push(normalizedAmount);
-    });
-    return amounts;
+    return entries
+      .map(getEntryAmount)
+      .filter(amount => amount > 0);
   }
 
   /**
    * Decide if the online consent section should be shown for a patient row.
    *
    * Condition: the section appears when any online consent amount is positive.
-   * Data fields used: entries (entry.type/entry.entryType + entry.amount/total),
-   * billingItems/selfPayItems on the row.
+   * Data fields used: entries (entry.items amount and entry.total/amount),
+   * row selfPayItems, row manualSelfPayAmount.
    *
    * Examples:
-   * - entries = [{ type: 'online_consent', amount: 1000 }] => shows online consent section.
-   * - row.billingItems = [{ type: 'online_fee', amount: 1000 }] => shows online consent section.
+   * - entries = [{ items: [{ amount: 1000 }], total: 1000 }] => shows online consent section.
+   * - row.selfPayItems = [{ amount: 1000 }] => shows online consent section.
+   * - row.manualSelfPayAmount = 1000 => shows online consent section.
    * - no online consent amounts => hides online consent section.
    */
   function hasOnlineConsentSection(row) {
-    return collectOnlineConsentAmounts(row).some(amount => normalizeMoneyNumber(amount) > 0);
+    const entries = Array.isArray(row && row.entries) ? row.entries : [];
+    const hasEntryItemAmount = entries.some(hasEntryItemsAmount);
+    const hasEntryTotalAmount = entries.some(entry => getEntryAmount(entry) > 0);
+    const rowSelfPayItems = Array.isArray(row && row.selfPayItems) ? row.selfPayItems : [];
+    const hasRowSelfPayAmount = hasSelfPayItemsAmount(rowSelfPayItems);
+    const hasManualSelfPayAmount = normalizeMoneyNumber(row && row.manualSelfPayAmount) > 0;
+    return hasEntryItemAmount || hasEntryTotalAmount || hasRowSelfPayAmount || hasManualSelfPayAmount;
   }
 
   /**
@@ -2463,11 +2469,9 @@ function renderBillingResult() {
       }
 
       if (hasOnlineConsentSection(safeItem)) {
-        const onlineConsentTotal = collectOnlineConsentAmounts(safeItem)
+        const onlineConsentTotal = collectOnlineConsentEntryAmounts(safeItem)
           .reduce((sum, amount) => sum + normalizeMoneyNumber(amount), 0);
-        if (onlineConsentTotal > 0) {
-          onlineConsentRows.push(renderOnlineConsentRow(safeItem, onlineConsentTotal));
-        }
+        onlineConsentRows.push(renderOnlineConsentRow(safeItem, onlineConsentTotal));
       }
 
       if (hasSelfPaySection(safeItem)) {

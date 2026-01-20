@@ -2323,7 +2323,6 @@ function renderBillingResult() {
   }
 
   const insuranceRows = [];
-  const onlineConsentRows = [];
   const selfPayRows = [];
 
   rows.forEach(item => {
@@ -2332,18 +2331,8 @@ function renderBillingResult() {
       const entries = Array.isArray(safeItem.entries) ? safeItem.entries : [];
       entries.forEach(entry => {
         const entryType = normalizeBillingEntryType(entry && (entry.type || entry.entryType));
-        if (entryType === 'insurance') {
+        if (entryType === 'insurance' || entryType === 'online_consent') {
           insuranceRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
-        } else if (entryType === 'online_consent') {
-          const amount = normalizeMoneyNumber(entry && (entry.total != null ? entry.total : entry.amount));
-          onlineConsentRows.push(`
-            <tr>
-              <td>${safeItem.patientId || ''}</td>
-              <td>${safeItem.nameKanji || ''}</td>
-              <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-              <td class="right">${formatCurrency(amount)}</td>
-            </tr>
-          `);
         } else if (entryType === 'self_pay') {
           selfPayRows.push(renderSelfPayRow(buildBillingEntryDisplayRow(safeItem, entry)));
         }
@@ -2352,28 +2341,18 @@ function renderBillingResult() {
       console.error('Failed to render billing row', err, item);
       const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';
       insuranceRows.push(`<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
-      onlineConsentRows.push(`<tr class="error-row"><td colspan="4">${pid}</td></tr>`);
       selfPayRows.push(`<tr class="error-row"><td colspan="8">${pid}</td></tr>`);
     }
   });
 
-  const insuranceTableHtml = [
+  const insuranceTableHtml = insuranceRows.length ? [
     '<h3>【保険請求】</h3>',
     '<table><thead><tr>',
     header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',
-    insuranceRows.length ? insuranceRows.join('') : '<tr><td colspan="' + columnCount + '" class="muted">該当なし</td></tr>',
+    insuranceRows.join(''),
     '</tbody></table>'
-  ].join('');
-
-  const onlineConsentTableHtml = [
-    '<h3>【オンライン同意請求】</h3>',
-    '<table><thead><tr>',
-    '<th>患者ID</th><th>氏名</th><th>担当者</th><th class="right">オンライン同意金額</th>',
-    '</tr></thead><tbody>',
-    onlineConsentRows.length ? onlineConsentRows.join('') : '<tr><td colspan="4" class="muted">該当なし</td></tr>',
-    '</tbody></table>'
-  ].join('');
+  ].join('') : '';
 
   const selfPayHeader = [
     { key: 'patientId', label: '患者ID' },
@@ -2386,19 +2365,18 @@ function renderBillingResult() {
     { key: 'grandTotal', label: '合計' }
   ];
 
-  const selfPayTableHtml = [
+  const selfPayTableHtml = selfPayRows.length ? [
     '<h3>【自費請求】</h3>',
     '<table><thead><tr>',
     selfPayHeader.map(h => `<th>${h.label}</th>`).join(''),
     '</tr></thead><tbody>',
-    selfPayRows.length ? selfPayRows.join('') : '<tr><td colspan="8" class="muted">該当なし</td></tr>',
+    selfPayRows.join(''),
     '</tbody></table>'
-  ].join('');
+  ].join('') : '';
 
+  const sections = [insuranceTableHtml, selfPayTableHtml].filter(Boolean);
   const tableHtml = [
-    insuranceTableHtml,
-    onlineConsentTableHtml,
-    selfPayTableHtml,
+    sections.join(''),
     renderBillingActionFooter(rows && rows.length > 0)
   ].join('');
 

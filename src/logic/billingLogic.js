@@ -353,7 +353,7 @@ function generateBillingJsonFromSource(sourceData) {
     }
     const rawVisitCount = treatmentVisitCounts[pid];
     const visitCount = normalizeVisitCount_(rawVisitCount);
-    const selfPayCount = normalizeSelfPayCount_(rawVisitCount);
+    const selfPayVisitCount = normalizeSelfPayCount_(rawVisitCount);
     if (!visitCount && zeroVisitDebug.length < 20) {
       zeroVisitDebug.push({
         patientId: pid,
@@ -467,7 +467,8 @@ function generateBillingJsonFromSource(sourceData) {
       burdenRate: normalizedBurdenRate,
       medicalAssistance: normalizedMedicalAssistance,
       visitCount: amountCalc.visits,
-      selfPayCount,
+      selfPayVisitCount,
+      selfPayCount: selfPayVisitCount,
       manualUnitPrice,
       unitPrice: amountCalc.unitPrice,
       treatmentAmount: amountCalc.treatmentAmount,

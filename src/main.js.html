@@ -1073,6 +1073,7 @@ function normalizeBillingEntryType(value) {
   if (!raw) return '';
   const normalized = raw.toLowerCase().replace(/\s+/g, '');
   if (normalized === 'insurance') return 'insurance';
+  if (normalized === 'onlineconsent' || normalized === 'online_consent' || normalized === 'online-consent') return 'online_consent';
   if (normalized === 'selfpay' || normalized === 'self_pay' || normalized === 'self-pay') return 'self_pay';
   return '';
 }
@@ -2162,7 +2163,6 @@ function renderBillingResult() {
     { key: 'payerType', label: '保険者', sortable: false },
     { key: 'burdenRate', label: '負担', sortable: true },
     { key: 'visitCount', label: '回数', sortable: true },
-    { key: 'selfPayCount', label: '自費回数', sortable: false },
     { key: 'unitPrice', label: '単価', sortable: true },
     { key: 'treatmentAmount', label: '施術料', sortable: true },
     { key: 'transportAmount', label: '交通費', sortable: true },
@@ -2282,10 +2282,6 @@ function renderBillingResult() {
   function renderEntryRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
     const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
-    const selfPayCount = safeItem.selfPayCount;
-    const selfPayDisplay = (selfPayCount === 0 || selfPayCount === '0' || selfPayCount)
-      ? selfPayCount
-      : '—';
     const visitDisplay = (safeItem.visitCount === 0 || safeItem.visitCount === '0' || safeItem.visitCount)
       ? safeItem.visitCount
       : '—';
@@ -2299,7 +2295,6 @@ function renderBillingResult() {
         <td>${renderEditableCell(safeItem, 'payerType')}</td>
         <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
         <td>${wrapWithOverrideBadge(visitDisplay, safeItem.patientId, 'visitCount')}</td>
-        <td>${selfPayDisplay}</td>
         <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
         <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
         <td class="right">${renderEditableCell(safeItem, 'transportAmount', true)}</td>
@@ -2314,16 +2309,11 @@ function renderBillingResult() {
   function renderSelfPayRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
     const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
-    const selfPayCount = safeItem.selfPayCount;
-    const selfPayDisplay = (selfPayCount === 0 || selfPayCount === '0' || selfPayCount)
-      ? selfPayCount
-      : '—';
     return `
       <tr>
         <td>${safeItem.patientId || ''}</td>
         <td>${nameWithBadge}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td>${selfPayDisplay}</td>
         <td class="right">${formatCurrency(safeItem.unitPrice)}</td>
         <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
         <td class="right">${formatCurrency(safeItem.transportAmount)}</td>
@@ -2333,7 +2323,9 @@ function renderBillingResult() {
   }
 
   const insuranceRows = [];
+  const onlineConsentRows = [];
   const selfPayRows = [];
+
   rows.forEach(item => {
     try {
       const safeItem = item && typeof item === 'object' ? item : {};
@@ -2342,6 +2334,16 @@ function renderBillingResult() {
         const entryType = normalizeBillingEntryType(entry && (entry.type || entry.entryType));
         if (entryType === 'insurance') {
           insuranceRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
+        } else if (entryType === 'online_consent') {
+          const amount = normalizeMoneyNumber(entry && (entry.total != null ? entry.total : entry.amount));
+          onlineConsentRows.push(`
+            <tr>
+              <td>${safeItem.patientId || ''}</td>
+              <td>${safeItem.nameKanji || ''}</td>
+              <td>${getResponsibleDisplay(safeItem) || '—'}</td>
+              <td class="right">${formatCurrency(amount)}</td>
+            </tr>
+          `);
         } else if (entryType === 'self_pay') {
           selfPayRows.push(renderSelfPayRow(buildBillingEntryDisplayRow(safeItem, entry)));
         }
@@ -2350,7 +2352,8 @@ function renderBillingResult() {
       console.error('Failed to render billing row', err, item);
       const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';
       insuranceRows.push(`<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
-      selfPayRows.push(`<tr class="error-row"><td colspan="9">${pid}</td></tr>`);
+      onlineConsentRows.push(`<tr class="error-row"><td colspan="4">${pid}</td></tr>`);
+      selfPayRows.push(`<tr class="error-row"><td colspan="8">${pid}</td></tr>`);
     }
   });
 
@@ -2359,7 +2362,16 @@ function renderBillingResult() {
     '<table><thead><tr>',
     header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',
-    ...insuranceRows,
+    insuranceRows.length ? insuranceRows.join('') : '<tr><td colspan="' + columnCount + '" class="muted">該当なし</td></tr>',
+    '</tbody></table>'
+  ].join('');
+
+  const onlineConsentTableHtml = [
+    '<h3>【オンライン同意請求】</h3>',
+    '<table><thead><tr>',
+    '<th>患者ID</th><th>氏名</th><th>担当者</th><th class="right">オンライン同意金額</th>',
+    '</tr></thead><tbody>',
+    onlineConsentRows.length ? onlineConsentRows.join('') : '<tr><td colspan="4" class="muted">該当なし</td></tr>',
     '</tbody></table>'
   ].join('');
 
@@ -2367,7 +2379,6 @@ function renderBillingResult() {
     { key: 'patientId', label: '患者ID' },
     { key: 'nameKanji', label: '氏名' },
     { key: 'responsible', label: '担当者' },
-    { key: 'selfPayCount', label: '自費回数' },
     { key: 'unitPrice', label: '単価' },
     { key: 'treatmentAmount', label: '施術料' },
     { key: 'transportAmount', label: '交通費' },
@@ -2380,12 +2391,13 @@ function renderBillingResult() {
     '<table><thead><tr>',
     selfPayHeader.map(h => `<th>${h.label}</th>`).join(''),
     '</tr></thead><tbody>',
-    ...selfPayRows,
+    selfPayRows.length ? selfPayRows.join('') : '<tr><td colspan="8" class="muted">該当なし</td></tr>',
     '</tbody></table>'
   ].join('');
 
   const tableHtml = [
     insuranceTableHtml,
+    onlineConsentTableHtml,
     selfPayTableHtml,
     renderBillingActionFooter(rows && rows.length > 0)
   ].join('');

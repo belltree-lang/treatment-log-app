@@ -2322,12 +2322,9 @@ function renderBillingResult() {
       </tr>`;
   }
 
-  function renderOnlineConsentRow(item, entry) {
+  function renderOnlineConsentRow(item, amount) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const hasEntryAmount = entry && entry.amount !== null && entry.amount !== undefined;
-    const hasEntryTotal = entry && entry.total !== null && entry.total !== undefined;
-    const entryAmount = hasEntryAmount ? entry.amount : (hasEntryTotal ? entry.total : 0);
-    const displayAmount = normalizeMoneyNumber(entryAmount);
+    const displayAmount = normalizeMoneyNumber(amount);
     const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
     return `
       <tr>
@@ -2365,23 +2362,61 @@ function renderBillingResult() {
     return visitCount > 0;
   }
 
+  function isOnlineConsentType(value) {
+    const normalized = String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+    return normalized === 'online_consent'
+      || normalized === 'onlineconsent'
+      || normalized === 'online-consent'
+      || normalized === 'online_fee'
+      || normalized === 'onlinefee'
+      || normalized === 'online-fee';
+  }
+
+  function isOnlineConsentItem(item) {
+    if (!item || typeof item !== 'object') return false;
+    const rawType = item.type || item.entryType || item.label || item.name || '';
+    if (isOnlineConsentType(rawType)) return true;
+    return String(rawType).indexOf('オンライン同意') >= 0;
+  }
+
+  function collectOnlineConsentAmounts(row) {
+    const amounts = [];
+    const entries = Array.isArray(row && row.entries) ? row.entries : [];
+    entries.forEach(entry => {
+      if (!entry || typeof entry !== 'object') return;
+      const rawType = entry.type || entry.entryType;
+      if (isOnlineConsentType(rawType)) {
+        const entryAmount = entry.amount !== null && entry.amount !== undefined
+          ? entry.amount
+          : entry.total;
+        const normalizedAmount = normalizeMoneyNumber(entryAmount);
+        if (normalizedAmount > 0) amounts.push(normalizedAmount);
+      }
+    });
+    const rowBillingItems = Array.isArray(row && row.billingItems) ? row.billingItems : [];
+    const rowSelfPayItems = Array.isArray(row && row.selfPayItems) ? row.selfPayItems : [];
+    rowBillingItems.concat(rowSelfPayItems).forEach(item => {
+      if (!isOnlineConsentItem(item)) return;
+      const normalizedAmount = normalizeMoneyNumber(item.amount);
+      if (normalizedAmount > 0) amounts.push(normalizedAmount);
+    });
+    return amounts;
+  }
+
   /**
    * Decide if the online consent section should be shown for a patient row.
    *
-   * Condition: the section appears when any entry is an online consent fee entry.
-   * Data fields used: entries (entry.type or entry.entryType).
+   * Condition: the section appears when any online consent amount is positive.
+   * Data fields used: entries (entry.type/entry.entryType + entry.amount/total),
+   * billingItems/selfPayItems on the row.
    *
    * Examples:
-   * - entries = [{ type: 'online_consent' }] => shows online consent section.
-   * - entries = [{ entryType: 'insurance' }] => hides online consent section.
+   * - entries = [{ type: 'online_consent', amount: 1000 }] => shows online consent section.
+   * - row.billingItems = [{ type: 'online_fee', amount: 1000 }] => shows online consent section.
+   * - no online consent amounts => hides online consent section.
    */
   function hasOnlineConsentSection(row) {
-    const entries = Array.isArray(row && row.entries) ? row.entries : [];
-    return entries.some(entry => {
-      const rawType = entry && (entry.type || entry.entryType);
-      const normalizedRawType = String(rawType || '').trim().toLowerCase().replace(/\s+/g, '');
-      return normalizedRawType === 'online_consent' || normalizedRawType === 'online_fee';
-    });
+    return collectOnlineConsentAmounts(row).some(amount => normalizeMoneyNumber(amount) > 0);
   }
 
   /**
@@ -2428,13 +2463,11 @@ function renderBillingResult() {
       }
 
       if (hasOnlineConsentSection(safeItem)) {
-        entries.forEach(entry => {
-          const rawType = entry && (entry.type || entry.entryType);
-          const normalizedRawType = String(rawType || '').trim().toLowerCase().replace(/\s+/g, '');
-          if (normalizedRawType === 'online_consent' || normalizedRawType === 'online_fee') {
-            onlineConsentRows.push(renderOnlineConsentRow(buildBillingEntryDisplayRow(safeItem, entry), entry));
-          }
-        });
+        const onlineConsentTotal = collectOnlineConsentAmounts(safeItem)
+          .reduce((sum, amount) => sum + normalizeMoneyNumber(amount), 0);
+        if (onlineConsentTotal > 0) {
+          onlineConsentRows.push(renderOnlineConsentRow(safeItem, onlineConsentTotal));
+        }
       }
 
       if (hasSelfPaySection(safeItem)) {

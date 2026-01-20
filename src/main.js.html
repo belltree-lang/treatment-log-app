@@ -2279,8 +2279,6 @@ function renderBillingResult() {
     return wrapWithOverrideBadge(view, item.patientId, field, alignRight);
   }
 
-  const bodyRows = [];
-
   function renderEntryRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
     const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
@@ -2313,51 +2311,82 @@ function renderBillingResult() {
       </tr>`;
   }
 
-  function renderSectionRow(label) {
-    return `<tr class="billing-section"><td colspan="${columnCount}">${label}</td></tr>`;
+  function renderSelfPayRow(item) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
+    const selfPayCount = safeItem.selfPayCount;
+    const selfPayDisplay = (selfPayCount === 0 || selfPayCount === '0' || selfPayCount)
+      ? selfPayCount
+      : '—';
+    return `
+      <tr>
+        <td>${safeItem.patientId || ''}</td>
+        <td>${nameWithBadge}</td>
+        <td>${getResponsibleDisplay(safeItem) || '—'}</td>
+        <td>${selfPayDisplay}</td>
+        <td class="right">${formatCurrency(safeItem.unitPrice)}</td>
+        <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
+        <td class="right">${formatCurrency(safeItem.transportAmount)}</td>
+        <td class="right">${formatCurrency(safeItem.carryOverAmount)}</td>
+        <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
+      </tr>`;
   }
 
+  const insuranceRows = [];
+  const selfPayRows = [];
   rows.forEach(item => {
     try {
       const safeItem = item && typeof item === 'object' ? item : {};
       const entries = Array.isArray(safeItem.entries) ? safeItem.entries : [];
-      const insuranceEntries = [];
-      const selfPayEntries = [];
       entries.forEach(entry => {
         const entryType = normalizeBillingEntryType(entry && (entry.type || entry.entryType));
         if (entryType === 'insurance') {
-          insuranceEntries.push(entry);
+          insuranceRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
         } else if (entryType === 'self_pay') {
-          selfPayEntries.push(entry);
+          selfPayRows.push(renderSelfPayRow(buildBillingEntryDisplayRow(safeItem, entry)));
         }
       });
-
-      if (insuranceEntries.length) {
-        bodyRows.push(renderSectionRow('【保険請求】'));
-        insuranceEntries.forEach(entry => {
-          bodyRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
-        });
-      }
-
-      if (selfPayEntries.length) {
-        bodyRows.push(renderSectionRow('【自費請求】'));
-        selfPayEntries.forEach(entry => {
-          bodyRows.push(renderEntryRow(buildBillingEntryDisplayRow(safeItem, entry)));
-        });
-      }
     } catch (err) {
       console.error('Failed to render billing row', err, item);
       const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';
-      bodyRows.push(`<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
+      insuranceRows.push(`<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
+      selfPayRows.push(`<tr class="error-row"><td colspan="9">${pid}</td></tr>`);
     }
   });
 
-  const tableHtml = [
+  const insuranceTableHtml = [
+    '<h3>【保険請求】</h3>',
     '<table><thead><tr>',
     header.map(renderSortHeaderCell).join(''),
     '</tr></thead><tbody>',
-    ...bodyRows,
-    '</tbody></table>',
+    ...insuranceRows,
+    '</tbody></table>'
+  ].join('');
+
+  const selfPayHeader = [
+    { key: 'patientId', label: '患者ID' },
+    { key: 'nameKanji', label: '氏名' },
+    { key: 'responsible', label: '担当者' },
+    { key: 'selfPayCount', label: '自費回数' },
+    { key: 'unitPrice', label: '単価' },
+    { key: 'treatmentAmount', label: '施術料' },
+    { key: 'transportAmount', label: '交通費' },
+    { key: 'carryOverAmount', label: '繰越' },
+    { key: 'grandTotal', label: '合計' }
+  ];
+
+  const selfPayTableHtml = [
+    '<h3>【自費請求】</h3>',
+    '<table><thead><tr>',
+    selfPayHeader.map(h => `<th>${h.label}</th>`).join(''),
+    '</tr></thead><tbody>',
+    ...selfPayRows,
+    '</tbody></table>'
+  ].join('');
+
+  const tableHtml = [
+    insuranceTableHtml,
+    selfPayTableHtml,
     renderBillingActionFooter(rows && rows.length > 0)
   ].join('');
 

@@ -2338,14 +2338,15 @@ function renderBillingResult() {
       </tr>`;
   }
 
-  function renderOnlineConsentRow(item, amount) {
+  function renderOnlineConsentRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
+    const onlineConsentAmount = 1000;
     return `
       <tr>
         <td>${renderPatientIdCell(safeItem)}</td>
         <td>${renderPatientNameCell(safeItem)}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td class="right">${renderMoneyValue(amount)}</td>
+        <td class="right">${renderMoneyValue(onlineConsentAmount)}</td>
       </tr>`;
   }
 
@@ -2376,56 +2377,18 @@ function renderBillingResult() {
     return visitCount > 0;
   }
 
-  function isOnlineConsentType(value) {
-    const normalized = String(value || '').trim().toLowerCase().replace(/\s+/g, '');
-    return normalized === 'online_consent'
-      || normalized === 'onlineconsent'
-      || normalized === 'online-consent'
-      || normalized === 'online_fee'
-      || normalized === 'onlinefee'
-      || normalized === 'online-fee';
-  }
-
-  function isOnlineConsentItem(item) {
-    if (!item || typeof item !== 'object') return false;
-    const rawType = item.type || item.entryType || item.label || item.name || '';
-    if (isOnlineConsentType(rawType)) return true;
-    return String(rawType).indexOf('オンライン同意') >= 0;
-  }
-
-  function collectOnlineConsentItemAmounts(items) {
-    return (items || [])
-      .filter(item => isOnlineConsentItem(item))
-      .map(item => normalizeMoneyNumber(item && item.amount))
-      .filter(amount => amount > 0);
-  }
-
-  function collectOnlineConsentAmounts(row) {
-    const entries = Array.isArray(row && row.entries) ? row.entries : [];
-    const entryAmounts = entries.flatMap(entry => {
-      const items = Array.isArray(entry && entry.items) ? entry.items : [];
-      return collectOnlineConsentItemAmounts(items);
-    });
-    const billingItems = collectOnlineConsentItemAmounts(row && row.billingItems);
-    const selfPayItems = collectOnlineConsentItemAmounts(row && row.selfPayItems);
-    return entryAmounts.concat(billingItems, selfPayItems);
-  }
-
   /**
    * Decide if the online consent section should be shown for a patient row.
    *
-   * Condition: the section appears when any online consent amount is positive.
-   * Data fields used: entries.items (online fee items only),
-   * row billingItems (online fee items), row selfPayItems (online fee items).
+   * Condition: the section appears when the online consent flag is set.
+   * Data fields used: onlineConsent flag.
    *
    * Examples:
-   * - entries = [{ items: [{ type: 'online_fee', amount: 1000 }] }] => shows online consent section.
-   * - row.selfPayItems = [{ type: 'online_fee', amount: 1000 }] => shows online consent section.
-   * - row.billingItems = [{ type: 'online_fee', amount: 1000 }] => shows online consent section.
-   * - no online consent amounts => hides online consent section.
+   * - onlineConsent = 1 => shows online consent section.
+   * - onlineConsent = 0 => hides online consent section.
    */
   function hasOnlineConsentSection(row) {
-    return collectOnlineConsentAmounts(row).length > 0;
+    return normalizeOnlineConsentFlag(row && row.onlineConsent) === 1;
   }
 
   /**
@@ -2481,10 +2444,8 @@ function renderBillingResult() {
       }
 
       if (hasOnlineConsentSection(safeItem)) {
-        const onlineConsentTotal = collectOnlineConsentAmounts(safeItem)
-          .reduce((sum, amount) => sum + normalizeMoneyNumber(amount), 0);
         if (!onlineConsentRowsByPatient.has(patientKey)) {
-          onlineConsentRowsByPatient.set(patientKey, renderOnlineConsentRow(safeItem, onlineConsentTotal));
+          onlineConsentRowsByPatient.set(patientKey, renderOnlineConsentRow(safeItem));
         }
       }
 

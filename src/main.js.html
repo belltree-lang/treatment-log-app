@@ -2387,20 +2387,17 @@ function renderBillingResult() {
   /**
    * Decide if the self-pay section should be shown for a patient row.
    *
-   * Condition: the section appears only when visitCount normalizes to 0 and
-   * there is any positive self-pay amount from entries, row selfPayItems,
-   * or manualSelfPayAmount.
-   * Data fields used: visitCount, entries (entry.items or entry.selfPayItems),
+   * Condition: the section appears when there is any positive self-pay amount
+   * from entries, row selfPayItems, or manualSelfPayAmount.
+   * Data fields used: entries (entry.items or entry.selfPayItems),
    * selfPayItems (on the row), manualSelfPayAmount.
    *
    * Examples:
-   * - visitCount = 0, entries include items with amount > 0 => shows self-pay section.
-   * - visitCount = 0, row.manualSelfPayAmount = 500 => shows self-pay section.
-   * - visitCount = 2, even with selfPayItems present => hides self-pay section.
+   * - entries include items with amount > 0 => shows self-pay section.
+   * - row.manualSelfPayAmount = 500 => shows self-pay section.
+   * - no self-pay amounts anywhere => hides self-pay section.
    */
   function hasSelfPaySection(row) {
-    const visitCount = normalizeVisitCount(row && row.visitCount);
-    if (visitCount !== 0) return false;
     const entries = Array.isArray(row && row.entries) ? row.entries : [];
     const hasEntrySelfPayAmount = entries.some(entry => {
       const items = Array.isArray(entry && entry.items)

@@ -2279,16 +2279,33 @@ function renderBillingResult() {
     return wrapWithOverrideBadge(view, item.patientId, field, alignRight);
   }
 
+  function renderPatientIdCell(item) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    const patientId = String(safeItem.patientId || '').trim();
+    return patientId || '—';
+  }
+
+  function renderPatientNameCell(item) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    const name = String(safeItem.nameKanji || '').trim() || '—';
+    return `${name}${renderStatusBadges(safeItem)}`;
+  }
+
+  function renderMoneyValue(value) {
+    if (value === '' || value === null || value === undefined) return '—';
+    const normalized = normalizeMoneyNumber(value);
+    return formatCurrency(normalized);
+  }
+
   function renderEntryRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
     const visitDisplay = (safeItem.visitCount === 0 || safeItem.visitCount === '0' || safeItem.visitCount)
       ? safeItem.visitCount
       : '—';
     return `
       <tr>
-        <td>${safeItem.patientId || ''}</td>
-        <td>${nameWithBadge}</td>
+        <td>${renderPatientIdCell(safeItem)}</td>
+        <td>${renderPatientNameCell(safeItem)}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
         <td>${renderEditableCell(safeItem, 'medicalAssistance')}</td>
         <td>${renderEditableCell(safeItem, 'onlineConsent')}</td>
@@ -2308,30 +2325,27 @@ function renderBillingResult() {
 
   function renderSelfPayRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
     return `
       <tr>
-        <td>${safeItem.patientId || ''}</td>
-        <td>${nameWithBadge}</td>
+        <td>${renderPatientIdCell(safeItem)}</td>
+        <td>${renderPatientNameCell(safeItem)}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td class="right">${formatCurrency(safeItem.unitPrice)}</td>
-        <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
-        <td class="right">${formatCurrency(safeItem.transportAmount)}</td>
-        <td class="right">${formatCurrency(safeItem.carryOverAmount)}</td>
-        <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
+        <td class="right">${renderMoneyValue(safeItem.unitPrice)}</td>
+        <td class="right">${renderMoneyValue(safeItem.treatmentAmount)}</td>
+        <td class="right">${renderMoneyValue(safeItem.transportAmount)}</td>
+        <td class="right">${renderMoneyValue(safeItem.carryOverAmount)}</td>
+        <td class="right">${renderMoneyValue(safeItem.grandTotal)}</td>
       </tr>`;
   }
 
   function renderOnlineConsentRow(item, amount) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const displayAmount = normalizeMoneyNumber(amount);
-    const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
     return `
       <tr>
-        <td>${safeItem.patientId || ''}</td>
-        <td>${nameWithBadge}</td>
+        <td>${renderPatientIdCell(safeItem)}</td>
+        <td>${renderPatientNameCell(safeItem)}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td class="right">${formatCurrency(displayAmount)}</td>
+        <td class="right">${renderMoneyValue(amount)}</td>
       </tr>`;
   }
 
@@ -2452,9 +2466,27 @@ function renderBillingResult() {
     return hasEntrySelfPayAmount || hasRowSelfPayAmount || hasManualSelfPayAmount;
   }
 
-  const insuranceRows = [];
-  const onlineConsentRows = [];
-  const selfPayRows = [];
+  const patientOrder = [];
+  const seenPatients = new Set();
+  const insuranceRowsByPatient = new Map();
+  const onlineConsentRowsByPatient = new Map();
+  const selfPayRowsByPatient = new Map();
+
+  function getPatientKey(item) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    const patientId = String(safeItem.patientId || '').trim();
+    const name = String(safeItem.nameKanji || '').trim();
+    return `${patientId || 'no-id'}::${name || 'no-name'}`;
+  }
+
+  function registerPatient(item) {
+    const key = getPatientKey(item);
+    if (!seenPatients.has(key)) {
+      seenPatients.add(key);
+      patientOrder.push(key);
+    }
+    return key;
+  }
 
   rows.forEach(item => {
     try {
@@ -2462,30 +2494,48 @@ function renderBillingResult() {
       const entries = Array.isArray(safeItem.entries) ? safeItem.entries : [];
       const insuranceEntry = entries.find(entry => normalizeEntryType(entry) === 'insurance');
       const selfPayEntry = entries.find(entry => normalizeEntryType(entry) === 'self_pay');
+      const patientKey = registerPatient(safeItem);
 
       if (hasInsuranceSection(safeItem)) {
         const displayRow = insuranceEntry ? buildBillingEntryDisplayRow(safeItem, insuranceEntry) : safeItem;
-        insuranceRows.push(renderEntryRow(displayRow));
+        if (!insuranceRowsByPatient.has(patientKey)) {
+          insuranceRowsByPatient.set(patientKey, renderEntryRow(displayRow));
+        }
       }
 
       if (hasOnlineConsentSection(safeItem)) {
         const onlineConsentTotal = collectOnlineConsentEntryAmounts(safeItem)
           .reduce((sum, amount) => sum + normalizeMoneyNumber(amount), 0);
-        onlineConsentRows.push(renderOnlineConsentRow(safeItem, onlineConsentTotal));
+        if (!onlineConsentRowsByPatient.has(patientKey)) {
+          onlineConsentRowsByPatient.set(patientKey, renderOnlineConsentRow(safeItem, onlineConsentTotal));
+        }
       }
 
       if (hasSelfPaySection(safeItem)) {
         const displayRow = selfPayEntry ? buildBillingEntryDisplayRow(safeItem, selfPayEntry) : safeItem;
-        selfPayRows.push(renderSelfPayRow(displayRow));
+        if (!selfPayRowsByPatient.has(patientKey)) {
+          selfPayRowsByPatient.set(patientKey, renderSelfPayRow(displayRow));
+        }
       }
     } catch (err) {
       console.error('Failed to render billing row', err, item);
       const pid = item && item.patientId ? `患者ID: ${item.patientId}` : '患者行の表示でエラーが発生しました';
-      insuranceRows.push(`<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
-      onlineConsentRows.push(`<tr class="error-row"><td colspan="4">${pid}</td></tr>`);
-      selfPayRows.push(`<tr class="error-row"><td colspan="8">${pid}</td></tr>`);
+      const patientKey = registerPatient(item);
+      if (!insuranceRowsByPatient.has(patientKey)) {
+        insuranceRowsByPatient.set(patientKey, `<tr class="error-row"><td colspan="${columnCount}">${pid}</td></tr>`);
+      }
+      if (!onlineConsentRowsByPatient.has(patientKey)) {
+        onlineConsentRowsByPatient.set(patientKey, `<tr class="error-row"><td colspan="4">${pid}</td></tr>`);
+      }
+      if (!selfPayRowsByPatient.has(patientKey)) {
+        selfPayRowsByPatient.set(patientKey, `<tr class="error-row"><td colspan="8">${pid}</td></tr>`);
+      }
     }
   });
+
+  const insuranceRows = patientOrder.map(key => insuranceRowsByPatient.get(key)).filter(Boolean);
+  const onlineConsentRows = patientOrder.map(key => onlineConsentRowsByPatient.get(key)).filter(Boolean);
+  const selfPayRows = patientOrder.map(key => selfPayRowsByPatient.get(key)).filter(Boolean);
 
   const insuranceTableHtml = [
     '<h3>【保険請求】</h3>',

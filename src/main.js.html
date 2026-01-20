@@ -2322,15 +2322,19 @@ function renderBillingResult() {
       </tr>`;
   }
 
-  function renderOnlineConsentRow(item) {
+  function renderOnlineConsentRow(item, entry) {
     const safeItem = item && typeof item === 'object' ? item : {};
+    const hasEntryAmount = entry && entry.amount !== null && entry.amount !== undefined;
+    const hasEntryTotal = entry && entry.total !== null && entry.total !== undefined;
+    const entryAmount = hasEntryAmount ? entry.amount : (hasEntryTotal ? entry.total : 0);
+    const displayAmount = normalizeMoneyNumber(entryAmount);
     const nameWithBadge = `${safeItem.nameKanji || ''}${renderStatusBadges(safeItem)}`;
     return `
       <tr>
         <td>${safeItem.patientId || ''}</td>
         <td>${nameWithBadge}</td>
         <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td class="right">${formatCurrency(safeItem.grandTotal)}</td>
+        <td class="right">${formatCurrency(displayAmount)}</td>
       </tr>`;
   }
 
@@ -2397,7 +2401,7 @@ function renderBillingResult() {
           const rawType = entry && (entry.type || entry.entryType);
           const normalizedRawType = String(rawType || '').trim().toLowerCase().replace(/\s+/g, '');
           if (normalizedRawType === 'online_consent' || normalizedRawType === 'online_fee') {
-            onlineConsentRows.push(renderOnlineConsentRow(buildBillingEntryDisplayRow(safeItem, entry)));
+            onlineConsentRows.push(renderOnlineConsentRow(buildBillingEntryDisplayRow(safeItem, entry), entry));
           }
         });
       }

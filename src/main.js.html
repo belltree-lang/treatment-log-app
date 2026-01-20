@@ -2350,11 +2350,31 @@ function renderBillingResult() {
     return (items || []).some(item => normalizeMoneyNumber(item && item.amount) > 0);
   }
 
+  /**
+   * Decide if the insurance section should be shown for a patient row.
+   *
+   * Condition: the section appears when the normalized visitCount is greater than 0.
+   * Data fields used: visitCount (from the row).
+   *
+   * Examples:
+   * - visitCount = 3 => shows insurance section.
+   * - visitCount = 0 or undefined => hides insurance section.
+   */
   function hasInsuranceSection(row) {
     const visitCount = normalizeVisitCount(row && row.visitCount);
     return visitCount > 0;
   }
 
+  /**
+   * Decide if the online consent section should be shown for a patient row.
+   *
+   * Condition: the section appears when any entry is an online consent fee entry.
+   * Data fields used: entries (entry.type or entry.entryType).
+   *
+   * Examples:
+   * - entries = [{ type: 'online_consent' }] => shows online consent section.
+   * - entries = [{ entryType: 'insurance' }] => hides online consent section.
+   */
   function hasOnlineConsentSection(row) {
     const entries = Array.isArray(row && row.entries) ? row.entries : [];
     return entries.some(entry => {
@@ -2364,6 +2384,20 @@ function renderBillingResult() {
     });
   }
 
+  /**
+   * Decide if the self-pay section should be shown for a patient row.
+   *
+   * Condition: the section appears only when visitCount normalizes to 0 and
+   * there is any positive self-pay amount from entries, row selfPayItems,
+   * or manualSelfPayAmount.
+   * Data fields used: visitCount, entries (entry.items or entry.selfPayItems),
+   * selfPayItems (on the row), manualSelfPayAmount.
+   *
+   * Examples:
+   * - visitCount = 0, entries include items with amount > 0 => shows self-pay section.
+   * - visitCount = 0, row.manualSelfPayAmount = 500 => shows self-pay section.
+   * - visitCount = 2, even with selfPayItems present => hides self-pay section.
+   */
   function hasSelfPaySection(row) {
     const visitCount = normalizeVisitCount(row && row.visitCount);
     if (visitCount !== 0) return false;

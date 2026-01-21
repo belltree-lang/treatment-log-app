@@ -1147,7 +1147,9 @@ function loadBillingOverridesMap_(billingMonth) {
         : normalizeMoneyValue_(row[colCarryOver - 1]))
       : undefined;
     const adjustedVisitCount = colAdjustedVisits
-      ? billingNormalizeVisitCount_(row[colAdjustedVisits - 1])
+      ? (row[colAdjustedVisits - 1] === '' || row[colAdjustedVisits - 1] === null
+        ? undefined
+        : billingNormalizeVisitCount_(row[colAdjustedVisits - 1]))
       : undefined;
     const burdenRate = colBurdenRate
       ? (row[colBurdenRate - 1] === '' || row[colBurdenRate - 1] === null

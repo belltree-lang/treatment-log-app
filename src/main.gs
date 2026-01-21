@@ -4186,9 +4186,13 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
     const entries = resolveBillingEntries_(current);
     const insuranceOverride = override.manualBillingAmount;
     const selfPayOverride = override.manualSelfPayAmount;
+    const insuranceOverrideEntryType = normalizeBillingEntryType_(override.manualBillingAmountEntryType || override.entryType);
+    const selfPayOverrideEntryType = normalizeBillingEntryType_(override.manualSelfPayAmountEntryType || override.entryType);
     const updatedEntries = entries.map(item => {
       const itemType = normalizeBillingEntryType_(item && (item.type || item.entryType));
-      if (itemType === 'insurance' && insuranceOverride !== undefined) {
+      if (itemType === 'insurance'
+        && insuranceOverride !== undefined
+        && (!insuranceOverrideEntryType || insuranceOverrideEntryType === itemType)) {
         const next = Object.assign({}, item);
         if (insuranceOverride === '' || insuranceOverride === null) {
           if (next.manualOverride && Object.prototype.hasOwnProperty.call(next.manualOverride, 'amount')) {
@@ -4207,7 +4211,9 @@ function syncManualBillingOverridesIntoPrepared_(prepared, billingMonth) {
         }
         return next;
       }
-      if (itemType === 'self_pay' && selfPayOverride !== undefined) {
+      if (itemType === 'self_pay'
+        && selfPayOverride !== undefined
+        && (!selfPayOverrideEntryType || selfPayOverrideEntryType === itemType)) {
         const next = Object.assign({}, item);
         if (selfPayOverride === '' || selfPayOverride === null) {
           if (next.manualOverride && Object.prototype.hasOwnProperty.call(next.manualOverride, 'amount')) {
@@ -5167,6 +5173,9 @@ function ensureBillingOverridesSheet_() {
       if (headers.indexOf('manualBillingAmount') === -1) {
         sheet.getRange(1, lastCol + 1).setValue('manualBillingAmount');
       }
+      if (headers.indexOf('entryType') === -1) {
+        sheet.getRange(1, sheet.getLastColumn() + 1).setValue('entryType');
+      }
     }
     return sheet;
   }
@@ -5175,6 +5184,7 @@ function ensureBillingOverridesSheet_() {
   sheet.appendRow([
     'ym',
     'patientId',
+    'entryType',
     'manualUnitPrice',
     'manualTransportAmount',
     'carryOverAmount',
@@ -5188,6 +5198,7 @@ function ensureBillingOverridesSheet_() {
 function resolveBillingOverridesColumns_(headers) {
   const colYm = resolveBillingColumn_(headers, ['ym', 'billingMonth', 'month'], 'ym', { required: true });
   const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', 'patientId']), 'patientId', { required: true });
+  const colEntryType = resolveBillingColumn_(headers, ['entryType', 'entry_type', 'type', '請求タイプ', '請求種別'], 'entryType', {});
   const colManualUnitPrice = resolveBillingColumn_(headers, ['manualUnitPrice', 'unitPrice', '単価'], 'manualUnitPrice', {});
   const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {});
   const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {});
@@ -5202,6 +5213,7 @@ function resolveBillingOverridesColumns_(headers) {
   return {
     colYm,
     colPid,
+    colEntryType,
     colManualUnitPrice,
     colManualTransport,
     colCarryOver,
@@ -5236,6 +5248,7 @@ function saveBillingOverrideUpdate_(billingMonthKey, edit) {
     const newRow = row.slice();
     assignField(newRow, cols.colYm, ym);
     assignField(newRow, cols.colPid, pid);
+    assignField(newRow, cols.colEntryType, edit.entryType);
     assignField(newRow, cols.colManualUnitPrice, edit.manualUnitPrice);
     assignField(newRow, cols.colManualTransport, edit.manualTransportAmount);
     assignField(newRow, cols.colCarryOver, edit.carryOverAmount);
@@ -5247,9 +5260,10 @@ function saveBillingOverrideUpdate_(billingMonthKey, edit) {
     return { updated: true, rowNumber: idx + 2 };
   }
 
-  const newRow = new Array(Math.max(lastCol, 8)).fill('');
+  const newRow = new Array(Math.max(lastCol, 9)).fill('');
   assignField(newRow, cols.colYm, ym);
   assignField(newRow, cols.colPid, pid);
+  assignField(newRow, cols.colEntryType, edit.entryType);
   assignField(newRow, cols.colManualUnitPrice, edit.manualUnitPrice);
   assignField(newRow, cols.colManualTransport, edit.manualTransportAmount);
   assignField(newRow, cols.colCarryOver, edit.carryOverAmount);

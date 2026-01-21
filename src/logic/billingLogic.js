@@ -274,6 +274,13 @@ function normalizeBillingEntryType_(entryType) {
   return rawType;
 }
 
+function shouldApplyOverrideForEntryType_(overrideEntryType, targetEntryType) {
+  const normalizedOverride = normalizeBillingEntryType_(overrideEntryType);
+  const normalizedTarget = normalizeBillingEntryType_(targetEntryType);
+  if (!normalizedOverride || !normalizedTarget) return true;
+  return normalizedOverride === normalizedTarget;
+}
+
 function resolveEntryTotalAmount_(entry) {
   if (!entry) return 0;
   const manualOverride = entry.manualOverride && entry.manualOverride.amount;
@@ -359,12 +366,20 @@ function generateBillingJsonFromSource(sourceData) {
     const carryOverFromHistory = isMedicalSubsidy && hasOnlineFee
       ? 0
       : normalizeMoneyNumber_(carryOverByPatient[pid]);
-    const manualUnitPrice = normalizeMoneyNumber_(patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice);
+    const manualUnitPriceEntryType = normalizeBillingEntryType_(patient.manualUnitPriceEntryType);
+    const manualBillingAmountEntryType = normalizeBillingEntryType_(patient.manualBillingAmountEntryType);
+    const manualSelfPayAmountEntryType = normalizeBillingEntryType_(patient.manualSelfPayAmountEntryType);
+    const manualUnitPriceValue = normalizeMoneyNumber_(patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice);
+    const manualUnitPriceAppliesToInsurance = shouldApplyOverrideForEntryType_(manualUnitPriceEntryType, 'insurance');
+    const manualUnitPrice = manualUnitPriceAppliesToInsurance
+      ? manualUnitPriceValue
+      : normalizeMoneyNumber_(patient.unitPrice);
     const patientUnitPrice = normalizeMoneyNumber_(patient.unitPrice);
     const normalizedBurdenRate = normalizeBurdenRateInt_(patient.burdenRate);
     const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag_(patient.medicalAssistance);
     const hasManualUnitPriceInput = patient.manualUnitPrice !== '' && patient.manualUnitPrice !== null
-      && patient.manualUnitPrice !== undefined;
+      && patient.manualUnitPrice !== undefined
+      && shouldApplyOverrideForEntryType_(manualUnitPriceEntryType, 'self_pay');
     const selfPayUnitPriceSource = hasManualUnitPriceInput ? patient.manualUnitPrice : patient.unitPrice;
     const resolvedSelfPayUnitPrice = normalizeMoneyNumber_(selfPayUnitPriceSource);
     const selfPayChargeAmount = selfPayVisitCount > 0 && resolvedSelfPayUnitPrice > 0
@@ -395,18 +410,24 @@ function generateBillingJsonFromSource(sourceData) {
       burdenRate: normalizedBurdenRate,
       manualUnitPrice,
       manualTransportAmount: isMedicalSubsidy && hasOnlineFee ? '' : patient.manualTransportAmount,
-      manualSelfPayAmount: isMedicalSubsidy && hasOnlineFee ? 0 : patient.manualSelfPayAmount,
+      manualSelfPayAmount: isMedicalSubsidy && hasOnlineFee
+        ? 0
+        : (shouldApplyOverrideForEntryType_(manualSelfPayAmountEntryType, 'self_pay')
+          ? patient.manualSelfPayAmount
+          : undefined),
       selfPayItems,
       unitPrice: patientUnitPrice,
       medicalAssistance: normalizedMedicalAssistance,
       carryOverAmount: carryOverFromPatient + carryOverFromHistory
     });
-    const manualBillingInput = Object.prototype.hasOwnProperty.call(patient, 'manualBillingAmount')
+    const manualBillingInput = shouldApplyOverrideForEntryType_(manualBillingAmountEntryType, 'insurance')
+      && Object.prototype.hasOwnProperty.call(patient, 'manualBillingAmount')
       ? patient.manualBillingAmount
       : undefined;
     const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
     const manualBillingAmount = hasManualBillingAmount ? normalizeMoneyNumber_(manualBillingInput) : '';
-    const manualSelfPayInput = Object.prototype.hasOwnProperty.call(patient, 'manualSelfPayAmount')
+    const manualSelfPayInput = shouldApplyOverrideForEntryType_(manualSelfPayAmountEntryType, 'self_pay')
+      && Object.prototype.hasOwnProperty.call(patient, 'manualSelfPayAmount')
       ? patient.manualSelfPayAmount
       : undefined;
     const hasManualSelfPayAmount = manualSelfPayInput !== '' && manualSelfPayInput !== null && manualSelfPayInput !== undefined;

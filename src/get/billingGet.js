@@ -1106,6 +1106,7 @@ function loadBillingOverridesMap_(billingMonth) {
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
   const colYm = resolveBillingColumn_(headers, ['ym', 'billingMonth', 'month'], 'ym', { required: true });
   const colPid = resolveBillingColumn_(headers, BILLING_LABELS.recNo.concat(['患者ID', 'patientId']), 'patientId', { required: true });
+  const colEntryType = resolveBillingColumn_(headers, ['entryType', 'entry_type', 'type', '請求タイプ', '請求種別'], 'entryType', {});
   const colManualUnitPrice = resolveBillingColumn_(headers, ['manualUnitPrice', 'unitPrice', '単価'], 'manualUnitPrice', {});
   const colManualTransport = resolveBillingColumn_(headers, ['manualTransportAmount', 'transportAmount', '交通費'], 'manualTransportAmount', {});
   const colCarryOver = resolveBillingColumn_(headers, ['carryOverAmount', 'carryOver', '未入金額', '繰越'], 'carryOverAmount', {});
@@ -1130,6 +1131,10 @@ function loadBillingOverridesMap_(billingMonth) {
     if (!pid) return;
     const rowNumber = idx + 2;
     const key = ym + '#' + pid;
+    const rawEntryType = colEntryType ? row[colEntryType - 1] : '';
+    const normalizedEntryType = typeof normalizeBillingEntryType_ === 'function'
+      ? normalizeBillingEntryType_(rawEntryType)
+      : String(rawEntryType || '').trim();
 
     const manualUnitPrice = colManualUnitPrice
       ? (row[colManualUnitPrice - 1] === '' || row[colManualUnitPrice - 1] === null
@@ -1179,6 +1184,7 @@ function loadBillingOverridesMap_(billingMonth) {
     if (!hasOverride) return;
 
     const override = {
+      entryType: normalizedEntryType,
       manualUnitPrice,
       manualTransportAmount,
       carryOverAmount,
@@ -1186,7 +1192,10 @@ function loadBillingOverridesMap_(billingMonth) {
       burdenRate,
       manualSelfPayAmount,
       manualBillingAmount,
-      selfPayItems: buildSelfPayItemsFromLegacy_(manualSelfPayAmount)
+      selfPayItems: buildSelfPayItemsFromLegacy_(manualSelfPayAmount),
+      manualUnitPriceEntryType: normalizedEntryType && manualUnitPrice !== undefined ? normalizedEntryType : undefined,
+      manualSelfPayAmountEntryType: normalizedEntryType && manualSelfPayAmount !== undefined ? normalizedEntryType : undefined,
+      manualBillingAmountEntryType: normalizedEntryType && manualBillingAmount !== undefined ? normalizedEntryType : undefined
     };
     const existing = latestRowByKey[key];
     if (existing && existing.rowNumber > rowNumber) {
@@ -1576,6 +1585,14 @@ function getBillingSourceData(billingMonth) {
     const override = billingOverrides[pid];
     if (!override) return;
     const target = Object.assign({}, mergedPatients[pid] || {}, override);
+    const entryType = override.entryType && typeof normalizeBillingEntryType_ === 'function'
+      ? normalizeBillingEntryType_(override.entryType)
+      : String(override.entryType || '').trim();
+    if (entryType) {
+      if (override.manualUnitPrice !== undefined) target.manualUnitPriceEntryType = entryType;
+      if (override.manualSelfPayAmount !== undefined) target.manualSelfPayAmountEntryType = entryType;
+      if (override.manualBillingAmount !== undefined) target.manualBillingAmountEntryType = entryType;
+    }
     mergedPatients[pid] = target;
     const flags = billingOverrideFlags[pid] || {};
     if (override.manualUnitPrice !== undefined) flags.unitPrice = true;

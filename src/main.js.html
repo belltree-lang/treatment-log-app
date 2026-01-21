@@ -1078,10 +1078,20 @@ function normalizeBillingEntryType(value) {
   return '';
 }
 
+function shouldApplyOverrideForEntryType(entryType, overrideEntryType) {
+  const normalizedEntry = normalizeBillingEntryType(entryType);
+  const normalizedOverride = normalizeBillingEntryType(overrideEntryType);
+  if (!normalizedEntry || !normalizedOverride) return true;
+  return normalizedEntry === normalizedOverride;
+}
+
 function buildBillingEntryDisplayRow(baseRow, entry) {
   const safeBase = baseRow && typeof baseRow === 'object' ? baseRow : {};
   const safeEntry = entry && typeof entry === 'object' ? entry : {};
   const entryType = normalizeBillingEntryType(safeEntry.type || safeEntry.entryType);
+  const manualUnitPriceEntryType = normalizeBillingEntryType(safeBase.manualUnitPriceEntryType);
+  const manualBillingAmountEntryType = normalizeBillingEntryType(safeBase.manualBillingAmountEntryType);
+  const manualSelfPayAmountEntryType = normalizeBillingEntryType(safeBase.manualSelfPayAmountEntryType);
   const entryBurdenRate = Object.prototype.hasOwnProperty.call(safeEntry, 'burdenRate')
     ? safeEntry.burdenRate
     : safeBase.burdenRate;
@@ -1092,8 +1102,12 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
   const selfPayItems = Array.isArray(safeEntry.selfPayItems)
     ? safeEntry.selfPayItems
     : (Array.isArray(safeEntry.items) ? safeEntry.items : []);
+  const manualUnitPrice = shouldApplyOverrideForEntryType(entryType, manualUnitPriceEntryType)
+    ? safeBase.manualUnitPrice
+    : '';
 
   return Object.assign({}, safeBase, {
+    manualUnitPrice,
     unitPrice: safeEntry.unitPrice,
     visitCount: safeEntry.visitCount,
     treatmentAmount: safeEntry.treatmentAmount,
@@ -1103,8 +1117,17 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
     billingAmount: safeEntry.billingAmount,
     burdenRate: entryBurdenRate,
     selfPayItems,
-    manualBillingAmount: entryType === 'insurance' ? manualOverrideAmount : '',
-    manualSelfPayAmount: entryType === 'self_pay' ? manualOverrideAmount : '',
+    manualBillingAmount: (entryType === 'insurance'
+      && shouldApplyOverrideForEntryType(entryType, manualBillingAmountEntryType))
+      ? manualOverrideAmount
+      : '',
+    manualSelfPayAmount: (entryType === 'self_pay'
+      && shouldApplyOverrideForEntryType(entryType, manualSelfPayAmountEntryType))
+      ? manualOverrideAmount
+      : '',
+    manualUnitPriceEntryType,
+    manualBillingAmountEntryType,
+    manualSelfPayAmountEntryType,
     entryType
   });
 }
@@ -1165,6 +1188,10 @@ function toggleBillingSort(field) {
 
 function calculateBillingRowTotalsLocal(row) {
   const source = row && typeof row === 'object' ? row : {};
+  const entryType = normalizeBillingEntryType(source.entryType || source.type);
+  const manualUnitPriceEntryType = normalizeBillingEntryType(source.manualUnitPriceEntryType);
+  const manualBillingAmountEntryType = normalizeBillingEntryType(source.manualBillingAmountEntryType);
+  const manualSelfPayAmountEntryType = normalizeBillingEntryType(source.manualSelfPayAmountEntryType);
   const insuranceType = source.insuranceType ? String(source.insuranceType).trim() : '';
   const burdenRate = normalizeBurdenRateInt(source.burdenRate);
   const visitCount = normalizeVisitCount(source.visitCount);
@@ -1183,9 +1210,10 @@ function calculateBillingRowTotalsLocal(row) {
     && manualTransportInput !== undefined
     && Number.isFinite(normalizedManualTransport);
 
-  const manualUnitPriceInput = Object.prototype.hasOwnProperty.call(source, 'manualUnitPrice')
-    ? source.manualUnitPrice
-    : source.unitPrice;
+  const canApplyManualUnitPrice = shouldApplyOverrideForEntryType(entryType, manualUnitPriceEntryType);
+  const manualUnitPriceInput = canApplyManualUnitPrice
+    ? (Object.prototype.hasOwnProperty.call(source, 'manualUnitPrice') ? source.manualUnitPrice : source.unitPrice)
+    : '';
   const normalizedManualUnitPrice = (manualUnitPriceInput === '' || manualUnitPriceInput === null)
     ? null
     : normalizeMoneyNumber(manualUnitPriceInput);
@@ -1223,9 +1251,12 @@ function calculateBillingRowTotalsLocal(row) {
     : hasChargeablePrice && visitCount > 0
       ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
       : 0;
-  const manualSelfPayAmount = normalizeMoneyNumber(source.manualSelfPayAmount);
+  const manualSelfPayAmount = shouldApplyOverrideForEntryType(entryType, manualSelfPayAmountEntryType)
+    ? normalizeMoneyNumber(source.manualSelfPayAmount)
+    : 0;
   const baseGrandTotal = carryOverAmount + treatmentAmount + transportAmount + manualSelfPayAmount;
-  const manualBillingInput = Object.prototype.hasOwnProperty.call(source, 'manualBillingAmount')
+  const canApplyManualBillingAmount = shouldApplyOverrideForEntryType(entryType, manualBillingAmountEntryType);
+  const manualBillingInput = canApplyManualBillingAmount && Object.prototype.hasOwnProperty.call(source, 'manualBillingAmount')
     ? source.manualBillingAmount
     : undefined;
   const hasManualBillingAmount = manualBillingInput !== '' && manualBillingInput !== null && manualBillingInput !== undefined;
@@ -2384,7 +2415,10 @@ function renderBillingResult() {
 
   function getSelfPayUnitPrice(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
+    const manualUnitPriceEntryType = normalizeBillingEntryType(safeItem.manualUnitPriceEntryType);
+    const canApplyManualUnitPrice = shouldApplyOverrideForEntryType('self_pay', manualUnitPriceEntryType);
     const hasManualUnitPrice = Object.prototype.hasOwnProperty.call(safeItem, 'manualUnitPrice')
+      && canApplyManualUnitPrice
       && safeItem.manualUnitPrice !== ''
       && safeItem.manualUnitPrice !== null
       && safeItem.manualUnitPrice !== undefined;

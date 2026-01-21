@@ -3322,10 +3322,10 @@ function syncBankWithdrawalOnlineConsentFlags_(billingMonth, prepared) {
     const consentFlag = typeof normalizeZeroOneFlag_ === 'function'
       ? normalizeZeroOneFlag_(patient.onlineConsent)
       : (patient.onlineConsent === true || patient.onlineConsent === 1 || patient.onlineConsent === '1' ? 1 : 0);
-    if (!consentFlag) continue;
+    const shouldBeOnline = !!consentFlag;
     const currentValue = updatedValues[idx][0];
-    if (normalizeBankFlagValue_(currentValue)) continue;
-    updatedValues[idx][0] = true;
+    if (normalizeBankFlagValue_(currentValue) === shouldBeOnline) continue;
+    updatedValues[idx][0] = shouldBeOnline;
     updated += 1;
   }
 

@@ -927,17 +927,19 @@ function buildVisitCountMap_(billingMonth) {
     debug.counted += 1;
     filteredCount += 1;
     const current = counts[pid] || { visitCount: 0, self30: 0, self60: 0, mixed: 0 };
-    current.visitCount += 1;
     const categoryKey = log && log.treatmentCategoryKey ? String(log.treatmentCategoryKey).trim() : '';
-    if (categoryKey) {
-      const group = BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP[categoryKey];
-      if (group === 'self') {
-        if (categoryKey === 'self60') current.self60 += 1;
-        else current.self30 += 1;
-      } else if (group === 'mixed') {
-        current.mixed += 1;
-        current.self30 += 1;
-      }
+    const attendanceGroup = categoryKey ? BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP[categoryKey] : '';
+    const shouldCountInsurance = !categoryKey || attendanceGroup === 'insurance' || attendanceGroup === 'mixed';
+    if (shouldCountInsurance) {
+      current.visitCount += 1;
+    }
+    if (attendanceGroup === 'self') {
+      if (categoryKey === 'self60') current.self60 += 1;
+      else current.self30 += 1;
+    }
+    if (attendanceGroup === 'mixed') {
+      current.mixed += 1;
+      current.self30 += 1;
     }
     counts[pid] = current;
 

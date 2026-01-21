@@ -2297,10 +2297,22 @@ function renderBillingResult() {
     return formatCurrency(normalized);
   }
 
+  function normalizeOptionalVisitCount(value) {
+    if (value === '' || value === null || value === undefined) return null;
+    const normalized = String(value || '')
+      .normalize('NFKC')
+      .replace(/[，,]/g, '')
+      .trim();
+    if (!normalized) return null;
+    const num = Number(normalized);
+    return Number.isFinite(num) ? num : null;
+  }
+
   function renderEntryRow(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const visitDisplay = (safeItem.visitCount === 0 || safeItem.visitCount === '0' || safeItem.visitCount)
-      ? safeItem.visitCount
+    const visitCount = normalizeVisitCount(safeItem.visitCount);
+    const visitDisplay = (visitCount === 0 || visitCount)
+      ? visitCount
       : '—';
     return `
       <tr>
@@ -2324,7 +2336,8 @@ function renderBillingResult() {
   }
 
   function getSelfPayVisitCount(item) {
-    return Number(item && item.selfPayVisitCount != null ? item.selfPayVisitCount : item && item.selfPayCount) || 0;
+    const safeItem = item && typeof item === 'object' ? item : {};
+    return normalizeOptionalVisitCount(safeItem.selfPayVisitCount);
   }
 
   function getSelfPayUnitPrice(item) {
@@ -2342,7 +2355,9 @@ function renderBillingResult() {
     const selfPayVisitCount = getSelfPayVisitCount(safeItem);
     const visitDisplay = (selfPayVisitCount === 0 || selfPayVisitCount) ? selfPayVisitCount : '—';
     const unitPrice = getSelfPayUnitPrice(safeItem);
-    const totalAmount = Number.isFinite(unitPrice) ? unitPrice * selfPayVisitCount : null;
+    const totalAmount = (Number.isFinite(unitPrice) && selfPayVisitCount != null)
+      ? unitPrice * selfPayVisitCount
+      : null;
     const displayItem = Object.assign({}, safeItem, { unitPrice });
     return `
       <tr>
@@ -2382,7 +2397,7 @@ function renderBillingResult() {
   /**
    * Decide if the insurance section should be shown for a patient row.
    *
-   * Condition: the section appears when the normalized visitCount is greater than 0.
+   * Condition: the section appears when visitCount is greater than 0.
    * Data fields used: visitCount (from the row).
    *
    * Examples:
@@ -2412,15 +2427,15 @@ function renderBillingResult() {
    * Decide if the self-pay section should be shown for a patient row.
    *
    * Condition: the section appears when selfPayVisitCount is 1 or more.
-   * Data fields used: selfPayVisitCount (or fallback selfPayCount).
+   * Data fields used: selfPayVisitCount.
    *
    * Examples:
    * - selfPayVisitCount = 1 => shows self-pay section.
-   * - selfPayVisitCount = 0 => hides self-pay section.
+   * - selfPayVisitCount = 0 or undefined => hides self-pay section.
    */
   function hasSelfPaySection(row) {
-    const selfPayVisitCount = Number(row && row.selfPayVisitCount != null ? row.selfPayVisitCount : row.selfPayCount) || 0;
-    return selfPayVisitCount >= 1;
+    const selfPayVisitCount = getSelfPayVisitCount(row);
+    return Number(selfPayVisitCount) >= 1;
   }
 
   const patientOrder = [];

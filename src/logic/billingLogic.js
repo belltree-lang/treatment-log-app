@@ -328,24 +328,6 @@ function generateBillingJsonFromSource(sourceData) {
     const billingItems = hasOnlineFee
       ? [{ type: 'online_fee', label: 'オンライン同意サービス使用料', amount: 1000 }]
       : [];
-    const selfPayItems = (() => {
-      if (isMedicalSubsidy && hasOnlineFee) {
-        return billingItems.map(item => ({
-          type: item.type || item.label || '自費',
-          amount: item.amount
-        }));
-      }
-      const items = Array.isArray(patient.selfPayItems) ? patient.selfPayItems.slice() : [];
-      if (billingItems.length) {
-        billingItems.forEach(item => {
-          items.push({
-            type: item.type || item.label || '自費',
-            amount: item.amount
-          });
-        });
-      }
-      return items;
-    })();
     if (isMedicalSubsidy && !hasOnlineFee) {
       const name = patient.nameKanji || patient.nameKana || '';
       billingLogger_.log(`[exclude] 患者ID ${pid}${name ? `（${name}）` : ''}は医療助成のため請求対象外`);
@@ -381,6 +363,32 @@ function generateBillingJsonFromSource(sourceData) {
     const patientUnitPrice = normalizeMoneyNumber_(patient.unitPrice);
     const normalizedBurdenRate = normalizeBurdenRateInt_(patient.burdenRate);
     const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag_(patient.medicalAssistance);
+    const hasManualUnitPriceInput = patient.manualUnitPrice !== '' && patient.manualUnitPrice !== null
+      && patient.manualUnitPrice !== undefined;
+    const selfPayUnitPriceSource = hasManualUnitPriceInput ? patient.manualUnitPrice : patient.unitPrice;
+    const resolvedSelfPayUnitPrice = normalizeMoneyNumber_(selfPayUnitPriceSource);
+    const selfPayChargeAmount = selfPayVisitCount > 0 && resolvedSelfPayUnitPrice > 0
+      ? resolvedSelfPayUnitPrice * selfPayVisitCount
+      : 0;
+    const selfPayItems = (() => {
+      const items = [];
+      if (!isMedicalSubsidy || !hasOnlineFee) {
+        const baseItems = Array.isArray(patient.selfPayItems) ? patient.selfPayItems.slice() : [];
+        baseItems.forEach(item => items.push(item));
+      }
+      if (selfPayChargeAmount) {
+        items.push({ type: '自費', amount: selfPayChargeAmount });
+      }
+      if (billingItems.length) {
+        billingItems.forEach(item => {
+          items.push({
+            type: item.type || item.label || '自費',
+            amount: item.amount
+          });
+        });
+      }
+      return items;
+    })();
     const amountCalc = calculateBillingAmounts_({
       visitCount,
       insuranceType: patient.insuranceType,

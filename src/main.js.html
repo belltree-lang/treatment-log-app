@@ -2307,17 +2307,9 @@ function renderBillingResult() {
     const num = Number(normalized);
     return Number.isFinite(num) ? num : null;
   }
-  function renderEntryRow(item) {
-    const safeItem = item && typeof item === 'object' ? item : {};
-    const visitCount = normalizeVisitCount(safeItem.visitCount);
-    const visitDisplay = (visitCount === 0 || visitCount)
-      ? visitCount
   function getInsuranceVisitCount(item) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const insuranceCount = normalizeOptionalVisitCount(safeItem.insuranceCount);
-    const mixedCount = normalizeOptionalVisitCount(safeItem.mixedCount);
-    if (insuranceCount === null && mixedCount === null) return null;
-    return (insuranceCount || 0) + (mixedCount || 0);
+    return normalizeOptionalVisitCount(safeItem.visitCount);
   }
 
   function renderEntryRow(item) {
@@ -2410,12 +2402,10 @@ function renderBillingResult() {
    * Decide if the insurance section should be shown for a patient row.
    * Condition: the section appears when visitCount is greater than 0.
    * Data fields used: visitCount (from the row).
-   * Condition: the section appears when insuranceCount + mixedCount is greater than 0.
-   * Data fields used: insuranceCount, mixedCount (from the row).
    *
    * Examples:
-   * - insuranceCount = 2, mixedCount = 1 => shows insurance section.
-   * - insuranceCount = 0, mixedCount = 0 or undefined => hides insurance section.
+   * - visitCount = 2 => shows insurance section.
+   * - visitCount = 0 or undefined => hides insurance section.
    */
   function hasInsuranceSection(row) {
     const insuranceVisitCount = getInsuranceVisitCount(row);

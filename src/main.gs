@@ -2715,6 +2715,7 @@ const BANK_WITHDRAWAL_SHEET_PREFIX = '銀行引落_';
 const BANK_WITHDRAWAL_AMOUNT_COLUMN_LETTER = 'S';
 const BANK_WITHDRAWAL_SELF_PAY_COLUMN_LETTER = 'T';
 const BANK_WITHDRAWAL_SELF_PAY_HEADER = '自費請求';
+const BANK_WITHDRAWAL_DUPLICATE_WARNING_COLOR = '#fff2cc';
 
 function generateSimpleBankSheet(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
@@ -2839,6 +2840,8 @@ function generateSimpleBankSheet(billingMonth) {
       billingLogger_.log('[billing] generateSimpleBankSheet diagnostics=' + JSON.stringify(diagnostics));
     }
   }
+
+  highlightDuplicateBankWithdrawalAccounts_(copied, headers, rowCount);
 
   return { billingMonth: month.key, sheetName, rows: rowCount, filled, missingAccounts };
 }
@@ -3629,6 +3632,7 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
   }
 
   if (!amountUpdates.length && !selfPayUpdates.length) {
+    highlightDuplicateBankWithdrawalAccounts_(sheet, headers, rowCount);
     return { billingMonth: month.key, updated: 0 };
   }
 
@@ -3668,7 +3672,91 @@ function syncBankWithdrawalSheetForMonth_(billingMonth, prepared) {
     sheet.getRange(segmentStart, selfPayCol, segmentValues.length, 1).setValues(segmentValues);
   }
 
+  highlightDuplicateBankWithdrawalAccounts_(sheet, headers, rowCount);
+
   return { billingMonth: month.key, updated: amountUpdates.length + selfPayUpdates.length };
+}
+
+function normalizeBankAccountKey_(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/[\s\u3000・･．.ー－ｰ−‐-]+/g, '')
+    .trim();
+}
+
+function highlightDuplicateBankWithdrawalAccounts_(sheet, headers, rowCount) {
+  if (!sheet || !rowCount) return;
+  const lastCol = sheet.getLastColumn();
+  if (!lastCol) return;
+
+  const accountIdCol = resolveBillingColumn_(
+    headers,
+    ['口座ID', '口座Id', '口座ＩＤ', 'accountId', 'account_id'],
+    '口座ID',
+    {}
+  );
+  const accountNumberCol = resolveBillingColumn_(
+    headers,
+    ['口座番号', '口座No', '口座NO', 'accountNumber', '口座'],
+    '口座番号',
+    {}
+  );
+
+  if (!accountIdCol && !accountNumberCol) return;
+
+  const accountIdValues = accountIdCol ? sheet.getRange(2, accountIdCol, rowCount, 1).getDisplayValues() : [];
+  const accountNumberValues = accountNumberCol
+    ? sheet.getRange(2, accountNumberCol, rowCount, 1).getDisplayValues()
+    : [];
+
+  const rowsByKey = {};
+  for (let idx = 0; idx < rowCount; idx++) {
+    const rawAccountId = accountIdValues[idx] ? accountIdValues[idx][0] : '';
+    const rawAccountNumber = accountNumberValues[idx] ? accountNumberValues[idx][0] : '';
+    const normalizedAccountId = normalizeBankAccountKey_(rawAccountId);
+    const normalizedAccountNumber = normalizeBankAccountKey_(rawAccountNumber);
+    const key = normalizedAccountId || normalizedAccountNumber;
+    if (!key) continue;
+    if (!rowsByKey[key]) rowsByKey[key] = [];
+    rowsByKey[key].push(idx);
+  }
+
+  const duplicateRows = new Set();
+  Object.keys(rowsByKey).forEach(key => {
+    const indices = rowsByKey[key];
+    if (indices && indices.length > 1) {
+      indices.forEach(idx => duplicateRows.add(idx));
+    }
+  });
+
+  const range = sheet.getRange(2, 1, rowCount, lastCol);
+  const backgrounds = range.getBackgrounds();
+  let needsUpdate = false;
+
+  for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
+    if (duplicateRows.has(rowIdx)) {
+      for (let colIdx = 0; colIdx < lastCol; colIdx++) {
+        if (backgrounds[rowIdx][colIdx] !== BANK_WITHDRAWAL_DUPLICATE_WARNING_COLOR) {
+          backgrounds[rowIdx][colIdx] = BANK_WITHDRAWAL_DUPLICATE_WARNING_COLOR;
+          needsUpdate = true;
+        }
+      }
+    } else {
+      const isAllWarning = backgrounds[rowIdx].every(
+        color => color === BANK_WITHDRAWAL_DUPLICATE_WARNING_COLOR
+      );
+      if (isAllWarning) {
+        for (let colIdx = 0; colIdx < lastCol; colIdx++) {
+          backgrounds[rowIdx][colIdx] = '';
+        }
+        needsUpdate = true;
+      }
+    }
+  }
+
+  if (needsUpdate) {
+    range.setBackgrounds(backgrounds);
+  }
 }
 
 function summarizeBankWithdrawalSheet_(billingMonth) {

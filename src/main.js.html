@@ -1082,6 +1082,9 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
   const safeBase = baseRow && typeof baseRow === 'object' ? baseRow : {};
   const safeEntry = entry && typeof entry === 'object' ? entry : {};
   const entryType = normalizeBillingEntryType(safeEntry.type || safeEntry.entryType);
+  const entryBurdenRate = Object.prototype.hasOwnProperty.call(safeEntry, 'burdenRate')
+    ? safeEntry.burdenRate
+    : safeBase.burdenRate;
   const manualOverrideAmount = safeEntry.manualOverride
     && Object.prototype.hasOwnProperty.call(safeEntry.manualOverride, 'amount')
     ? safeEntry.manualOverride.amount
@@ -1098,6 +1101,7 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
     carryOverAmount: safeEntry.carryOverAmount,
     grandTotal: safeEntry.total,
     billingAmount: safeEntry.billingAmount,
+    burdenRate: entryBurdenRate,
     selfPayItems,
     manualBillingAmount: entryType === 'insurance' ? manualOverrideAmount : '',
     manualSelfPayAmount: entryType === 'self_pay' ? manualOverrideAmount : '',

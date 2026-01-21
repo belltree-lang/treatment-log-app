@@ -2307,10 +2307,25 @@ function renderBillingResult() {
     const num = Number(normalized);
     return Number.isFinite(num) ? num : null;
   }
+  function sumOptionalVisitCounts(primaryCount, secondaryCount) {
+    const hasPrimary = primaryCount === 0 || primaryCount;
+    const hasSecondary = secondaryCount === 0 || secondaryCount;
+    if (!hasPrimary && !hasSecondary) return null;
+    return (hasPrimary ? primaryCount : 0) + (hasSecondary ? secondaryCount : 0);
+  }
   function resolveInsuranceVisitCount(item, insuranceEntry) {
     const safeItem = item && typeof item === 'object' ? item : {};
     const entryVisitCount = normalizeOptionalVisitCount(insuranceEntry && insuranceEntry.visitCount);
+    const entryInsuranceCount = normalizeOptionalVisitCount(insuranceEntry && insuranceEntry.insuranceCount);
+    const entryMixedCount = normalizeOptionalVisitCount(insuranceEntry && insuranceEntry.mixedCount);
+    const entryCombinedCount = sumOptionalVisitCounts(entryInsuranceCount, entryMixedCount);
+    if (entryCombinedCount === 0 || entryCombinedCount) return entryCombinedCount;
     if (entryVisitCount === 0 || entryVisitCount) return entryVisitCount;
+
+    const rowInsuranceCount = normalizeOptionalVisitCount(safeItem.insuranceCount);
+    const rowMixedCount = normalizeOptionalVisitCount(safeItem.mixedCount);
+    const rowCombinedCount = sumOptionalVisitCounts(rowInsuranceCount, rowMixedCount);
+    if (rowCombinedCount === 0 || rowCombinedCount) return rowCombinedCount;
     return normalizeOptionalVisitCount(safeItem.visitCount);
   }
 
@@ -2322,11 +2337,21 @@ function renderBillingResult() {
     return safeItem;
   }
 
+  function resolveInsuranceTreatmentAmount(item, insuranceVisitCount) {
+    const safeItem = item && typeof item === 'object' ? item : {};
+    if (insuranceVisitCount === null || insuranceVisitCount === undefined) {
+      return safeItem.treatmentAmount;
+    }
+    const totals = calculateBillingRowTotalsLocal(Object.assign({}, safeItem, { visitCount: insuranceVisitCount }));
+    return totals.treatmentAmount;
+  }
+
   function renderEntryRow(item, insuranceVisitCount) {
     const safeItem = item && typeof item === 'object' ? item : {};
     const visitDisplay = (insuranceVisitCount === 0 || insuranceVisitCount)
       ? insuranceVisitCount
       : '—';
+    const insuranceTreatmentAmount = resolveInsuranceTreatmentAmount(safeItem, insuranceVisitCount);
     return `
       <tr>
         <td>${renderPatientIdCell(safeItem)}</td>
@@ -2338,7 +2363,7 @@ function renderBillingResult() {
         <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
         <td>${wrapWithOverrideBadge(visitDisplay, safeItem.patientId, 'visitCount')}</td>
         <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
-        <td class="right">${formatCurrency(safeItem.treatmentAmount)}</td>
+        <td class="right">${formatCurrency(insuranceTreatmentAmount)}</td>
         <td class="right">${renderEditableCell(safeItem, 'transportAmount', true)}</td>
         <td class="right">${renderEditableCell(safeItem, 'carryOverAmount', true)}</td>
         <td class="right">${renderEditableCell(safeItem, 'grandTotal', true)}</td>

@@ -2307,14 +2307,23 @@ function renderBillingResult() {
     const num = Number(normalized);
     return Number.isFinite(num) ? num : null;
   }
-  function getInsuranceVisitCount(item) {
+  function resolveInsuranceVisitCount(item, insuranceEntry) {
     const safeItem = item && typeof item === 'object' ? item : {};
+    const entryVisitCount = normalizeOptionalVisitCount(insuranceEntry && insuranceEntry.visitCount);
+    if (entryVisitCount === 0 || entryVisitCount) return entryVisitCount;
     return normalizeOptionalVisitCount(safeItem.visitCount);
   }
 
-  function renderEntryRow(item) {
+  function resolveInsuranceDisplayRow(item, insuranceEntry) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const insuranceVisitCount = getInsuranceVisitCount(safeItem);
+    if (insuranceEntry && typeof insuranceEntry === 'object') {
+      return buildBillingEntryDisplayRow(safeItem, insuranceEntry);
+    }
+    return safeItem;
+  }
+
+  function renderEntryRow(item, insuranceVisitCount) {
+    const safeItem = item && typeof item === 'object' ? item : {};
     const visitDisplay = (insuranceVisitCount === 0 || insuranceVisitCount)
       ? insuranceVisitCount
       : '—';
@@ -2401,14 +2410,13 @@ function renderBillingResult() {
   /**
    * Decide if the insurance section should be shown for a patient row.
    * Condition: the section appears when visitCount is greater than 0.
-   * Data fields used: visitCount (from the row).
+   * Data fields used: insurance entry visitCount (fallback to row visitCount).
    *
    * Examples:
    * - visitCount = 2 => shows insurance section.
    * - visitCount = 0 or undefined => hides insurance section.
    */
-  function hasInsuranceSection(row) {
-    const insuranceVisitCount = getInsuranceVisitCount(row);
+  function hasInsuranceSection(insuranceVisitCount) {
     return Number(insuranceVisitCount) > 0;
   }
 
@@ -2471,10 +2479,11 @@ function renderBillingResult() {
       const insuranceEntry = entries.find(entry => normalizeEntryType(entry) === 'insurance');
       const patientKey = registerPatient(safeItem);
 
-      if (hasInsuranceSection(safeItem)) {
-        const displayRow = insuranceEntry ? buildBillingEntryDisplayRow(safeItem, insuranceEntry) : safeItem;
+      const insuranceVisitCount = resolveInsuranceVisitCount(safeItem, insuranceEntry);
+      const insuranceDisplayRow = resolveInsuranceDisplayRow(safeItem, insuranceEntry);
+      if (hasInsuranceSection(insuranceVisitCount)) {
         if (!insuranceRowsByPatient.has(patientKey)) {
-          insuranceRowsByPatient.set(patientKey, renderEntryRow(displayRow));
+          insuranceRowsByPatient.set(patientKey, renderEntryRow(insuranceDisplayRow, insuranceVisitCount));
         }
       }
 

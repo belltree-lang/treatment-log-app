@@ -2377,7 +2377,10 @@ function renderBillingResult() {
     if (insuranceVisitCount === null || insuranceVisitCount === undefined) {
       return safeItem.treatmentAmount;
     }
-    const totals = calculateBillingRowTotalsLocal(Object.assign({}, safeItem, { visitCount: insuranceVisitCount }));
+    const totals = calculateBillingRowTotalsLocal(Object.assign({}, safeItem, {
+      entryType: 'insurance',
+      visitCount: insuranceVisitCount,
+    }));
     return totals.treatmentAmount;
   }
 

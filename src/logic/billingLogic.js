@@ -277,7 +277,7 @@ function normalizeBillingEntryType_(entryType) {
 function shouldApplyOverrideForEntryType_(overrideEntryType, targetEntryType) {
   const normalizedOverride = normalizeBillingEntryType_(overrideEntryType);
   const normalizedTarget = normalizeBillingEntryType_(targetEntryType);
-  if (!normalizedOverride || !normalizedTarget) return true;
+  if (!normalizedOverride || !normalizedTarget) return false;
   return normalizedOverride === normalizedTarget;
 }
 
@@ -331,6 +331,17 @@ function generateBillingJsonFromSource(sourceData) {
   const billingJson = patientIds.map(pid => {
     const patient = patients[pid] || {};
     const hasOnlineFee = resolveOnlineFeeFlag_(pid, bankFlagsByPatient);
+    const consentFlag = typeof normalizeZeroOneFlag_ === 'function'
+      ? normalizeZeroOneFlag_(patient.onlineConsent)
+      : (patient.onlineConsent === true || patient.onlineConsent === 1 || patient.onlineConsent === '1' ? 1 : 0);
+    if (!consentFlag && hasOnlineFee) {
+      const errorMessage = `[billing] online consent mismatch: patientId=${pid} onlineConsent=false but online_fee=true`;
+      if (typeof console !== 'undefined' && console && typeof console.error === 'function') {
+        console.error(errorMessage);
+      } else {
+        billingLogger_.log(errorMessage);
+      }
+    }
     const isMedicalSubsidy = normalizeMedicalSubsidyFlag_(patient.medicalSubsidy);
     const billingItems = hasOnlineFee
       ? [{ type: 'online_fee', label: 'オンライン同意サービス使用料', amount: 1000 }]

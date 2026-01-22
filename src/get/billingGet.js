@@ -1095,6 +1095,30 @@ function buildSelfPayItemsFromLegacy_(manualSelfPayAmount) {
   return [{ type: '自費', amount }];
 }
 
+function warnBillingOverrideEntryType_(message) {
+  if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
+    console.warn(message);
+    return;
+  }
+  if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+    billingLogger_.log(message);
+  }
+}
+
+function buildBillingOverridesSnapshot_(overrides) {
+  const entries = Object.keys(overrides || {}).map(pid => {
+    const entry = overrides[pid] || {};
+    return {
+      patientId: pid,
+      entryType: entry.entryType || '',
+      manualBillingAmount: entry.manualBillingAmount,
+      manualSelfPayAmount: entry.manualSelfPayAmount
+    };
+  });
+  entries.sort((a, b) => String(a.patientId || '').localeCompare(String(b.patientId || ''), 'ja'));
+  return JSON.stringify(entries);
+}
+
 function loadBillingOverridesMap_(billingMonth) {
   const month = normalizeBillingMonthInput(billingMonth);
   const sheet = billingSs().getSheetByName(BILLING_OVERRIDES_SHEET_NAME);
@@ -1135,6 +1159,17 @@ function loadBillingOverridesMap_(billingMonth) {
     const normalizedEntryType = typeof normalizeBillingEntryType_ === 'function'
       ? normalizeBillingEntryType_(rawEntryType)
       : String(rawEntryType || '').trim();
+    const allowedEntryTypes = ['insurance', 'self_pay', 'online_consent'];
+    if (!normalizedEntryType) {
+      warnBillingOverrideEntryType_(`[billing] BillingOverrides entryType missing; skip override (row=${rowNumber}, pid=${pid})`);
+      return;
+    }
+    if (allowedEntryTypes.indexOf(normalizedEntryType) < 0) {
+      warnBillingOverrideEntryType_(
+        `[billing] BillingOverrides entryType invalid="${normalizedEntryType}"; skip override (row=${rowNumber}, pid=${pid})`
+      );
+      return;
+    }
 
     const manualUnitPrice = colManualUnitPrice
       ? (row[colManualUnitPrice - 1] === '' || row[colManualUnitPrice - 1] === null
@@ -1713,7 +1748,8 @@ function getBillingSourceData(billingMonth) {
     carryOverLedgerMeta,
     carryOverLedgerByPatient,
     carryOverByPatient,
-    billingOverrideFlags
+    billingOverrideFlags,
+    billingOverridesSnapshot: buildBillingOverridesSnapshot_(billingOverrides)
   };
 }
 

@@ -2615,6 +2615,16 @@ function buildPreparedBillingPayload_(billingMonth) {
   const billingMonthKey = normalizeBillingMonthKeySafe_(
     source.billingMonth || (source.month && source.month.key) || resolvedMonthKey
   );
+  const patientMap = source.patients || source.patientMap || {};
+  try {
+    syncBankWithdrawalOnlineConsentFlags_(billingMonthKey || source.billingMonth || billingMonth, patientMap);
+  } catch (err) {
+    billingLogger_.log('[billing] Failed to sync online consent flags: ' + err);
+  }
+  const bankFlagsByPatient = getBankFlagsByPatient_(billingMonthKey || source.billingMonth || billingMonth, {
+    patients: patientMap
+  });
+  source.bankFlagsByPatient = bankFlagsByPatient;
   const billingJson = generateBillingJsonFromSource(source);
   const billingJsonArray = Array.isArray(billingJson) ? billingJson : [];
   const visitCounts = source.treatmentVisitCounts || source.visitCounts || {};
@@ -2642,15 +2652,6 @@ function buildPreparedBillingPayload_(billingMonth) {
       carryOverAmount: normalizeNumber_(normalizedItem && normalizedItem.carryOverAmount),
       carryOverFromHistory: normalizeNumber_(normalizedItem && normalizedItem.carryOverFromHistory)
     };
-  });
-  const patientMap = source.patients || source.patientMap || {};
-  try {
-    syncBankWithdrawalOnlineConsentFlags_(billingMonthKey || source.billingMonth || billingMonth, patientMap);
-  } catch (err) {
-    billingLogger_.log('[billing] Failed to sync online consent flags: ' + err);
-  }
-  let bankFlagsByPatient = getBankFlagsByPatient_(billingMonthKey || source.billingMonth || billingMonth, {
-    patients: patientMap
   });
   const bankAccountInfoByPatient = Object.keys(patientMap || {}).reduce((map, pid) => {
     const patient = patientMap[pid] || {};
@@ -2694,6 +2695,7 @@ function buildPreparedBillingPayload_(billingMonth) {
     staffDirectory: source.staffDirectory || {},
     staffDisplayByPatient: source.staffDisplayByPatient || {},
     billingOverrideFlags: source.billingOverrideFlags || {},
+    billingOverridesSnapshot: source.billingOverridesSnapshot || '',
     bankFlagsByPatient,
     carryOverByPatient: source.carryOverByPatient || {},
     carryOverLedger: source.carryOverLedger || [],
@@ -4097,9 +4099,64 @@ function resetPreparedBillingAndPrepare(billingMonth, options) {
   return prepareBillingData(monthKey, nextOptions);
 }
 
+function normalizeOnlineConsentFlag_(value) {
+  if (typeof normalizeZeroOneFlag_ === 'function') {
+    return normalizeZeroOneFlag_(value);
+  }
+  return value === true || value === 1 || value === '1' ? 1 : 0;
+}
+
+function hasOnlineConsentMismatch_(currentPatients, existingPatients) {
+  const currentKeys = Object.keys(currentPatients || {});
+  for (let i = 0; i < currentKeys.length; i++) {
+    const pid = currentKeys[i];
+    const current = currentPatients && currentPatients[pid];
+    const existing = existingPatients && existingPatients[pid];
+    const currentFlag = normalizeOnlineConsentFlag_(current && current.onlineConsent);
+    const existingFlag = normalizeOnlineConsentFlag_(existing && existing.onlineConsent);
+    if (currentFlag !== existingFlag) return true;
+  }
+  return false;
+}
+
+function hasOnlineBankFlagMismatch_(currentFlags, existingFlags) {
+  const allKeys = Object.keys(currentFlags || {}).concat(Object.keys(existingFlags || {}));
+  const unique = Array.from(new Set(allKeys));
+  for (let i = 0; i < unique.length; i++) {
+    const pid = unique[i];
+    const currentFlag = normalizeBankFlagValue_(currentFlags && currentFlags[pid] && currentFlags[pid].ag);
+    const existingFlag = normalizeBankFlagValue_(existingFlags && existingFlags[pid] && existingFlags[pid].ag);
+    if (currentFlag !== existingFlag) return true;
+  }
+  return false;
+}
+
+function shouldInvalidatePreparedBilling_(existingPrepared, source, monthKey) {
+  if (!existingPrepared || !source) return false;
+  const patients = source.patients || source.patientMap || {};
+  const existingPatients = existingPrepared.patients || {};
+  if (hasOnlineConsentMismatch_(patients, existingPatients)) {
+    billingLogger_.log('[billing] prepareBillingData invalidate: onlineConsent mismatch for ' + monthKey);
+    return true;
+  }
+  const currentFlags = source.bankFlagsByPatient || {};
+  const existingFlags = existingPrepared.bankFlagsByPatient || {};
+  if (hasOnlineBankFlagMismatch_(currentFlags, existingFlags)) {
+    billingLogger_.log('[billing] prepareBillingData invalidate: bankFlags mismatch for ' + monthKey);
+    return true;
+  }
+  const currentSnapshot = source.billingOverridesSnapshot || '';
+  const existingSnapshot = existingPrepared.billingOverridesSnapshot || '';
+  if (currentSnapshot !== existingSnapshot) {
+    billingLogger_.log('[billing] prepareBillingData invalidate: billing overrides mismatch for ' + monthKey);
+    return true;
+  }
+  return false;
+}
+
 function prepareBillingData(billingMonth, options) {
   const normalizedMonth = normalizeBillingMonthInput(billingMonth);
-  const shouldForceReaggregate = options && options.forceReaggregate === true;
+  let shouldForceReaggregate = options && options.forceReaggregate === true;
   if (!shouldForceReaggregate) {
     const existingResult = loadPreparedBillingWithSheetFallback_(normalizedMonth.key, { withValidation: true });
     const existingPrepared = existingResult && existingResult.prepared !== undefined ? existingResult.prepared : existingResult;
@@ -4107,6 +4164,22 @@ function prepareBillingData(billingMonth, options) {
       ? existingResult.validation
       : (existingResult && existingResult.ok !== undefined ? existingResult : null);
     if (existingPrepared && (!existingValidation || existingValidation.ok)) {
+      const currentSource = getBillingSourceData(normalizedMonth.key);
+      const currentPatients = currentSource.patients || currentSource.patientMap || {};
+      try {
+        syncBankWithdrawalOnlineConsentFlags_(normalizedMonth.key, currentPatients);
+      } catch (err) {
+        billingLogger_.log('[billing] prepareBillingData failed to sync online consent flags: ' + err);
+      }
+      const currentBankFlags = getBankFlagsByPatient_(normalizedMonth.key, { patients: currentPatients });
+      currentSource.bankFlagsByPatient = currentBankFlags;
+      if (shouldInvalidatePreparedBilling_(existingPrepared, currentSource, normalizedMonth.key)) {
+        shouldForceReaggregate = true;
+      }
+    }
+    if (shouldForceReaggregate) {
+      billingLogger_.log('[billing] prepareBillingData invalidated prepared billing for ' + normalizedMonth.key);
+    } else if (existingPrepared && (!existingValidation || existingValidation.ok)) {
       const manualSync = syncManualBillingOverridesIntoPrepared_(existingPrepared, normalizedMonth.key);
       if (manualSync && manualSync.updated) {
         savePreparedBillingToSheet_(normalizedMonth.key, manualSync.prepared);

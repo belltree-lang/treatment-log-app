@@ -1081,7 +1081,7 @@ function normalizeBillingEntryType(value) {
 function shouldApplyOverrideForEntryType(entryType, overrideEntryType) {
   const normalizedEntry = normalizeBillingEntryType(entryType);
   const normalizedOverride = normalizeBillingEntryType(overrideEntryType);
-  if (!normalizedEntry || !normalizedOverride) return true;
+  if (!normalizedEntry || !normalizedOverride) return false;
   return normalizedEntry === normalizedOverride;
 }
 
@@ -1105,6 +1105,13 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
   const manualUnitPrice = shouldApplyOverrideForEntryType(entryType, manualUnitPriceEntryType)
     ? safeBase.manualUnitPrice
     : '';
+
+  if (!manualBillingAmountEntryType && safeBase.manualBillingAmount !== '' && safeBase.manualBillingAmount != null) {
+    console.warn('[billing] manualBillingAmount override missing entryType', safeBase);
+  }
+  if (!manualSelfPayAmountEntryType && safeBase.manualSelfPayAmount !== '' && safeBase.manualSelfPayAmount != null) {
+    console.warn('[billing] manualSelfPayAmount override missing entryType', safeBase);
+  }
 
   return Object.assign({}, safeBase, {
     manualUnitPrice,
@@ -1134,17 +1141,32 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
 
 function buildBillingDerivedViews(entry) {
   const source = entry && typeof entry === 'object' ? entry : {};
-  const rawSelfPayItems = Array.isArray(source.selfPayItems) ? source.selfPayItems : [];
+  const entries = Array.isArray(source.entries) ? source.entries : [];
+  const resolveEntryTotal = item => {
+    if (!item) return null;
+    const manualOverride = item.manualOverride && Object.prototype.hasOwnProperty.call(item.manualOverride, 'amount')
+      ? item.manualOverride.amount
+      : null;
+    if (manualOverride !== '' && manualOverride !== null && manualOverride !== undefined) {
+      return normalizeMoneyNumber(manualOverride);
+    }
+    return normalizeMoneyNumber(item.total);
+  };
+  const insuranceEntry = entries.find(item => normalizeBillingEntryType(item && (item.type || item.entryType)) === 'insurance');
+  const selfPayEntry = entries.find(item => normalizeBillingEntryType(item && (item.type || item.entryType)) === 'self_pay');
+  const insuranceTotal = insuranceEntry ? resolveEntryTotal(insuranceEntry) : 0;
+  const selfPayTotal = selfPayEntry ? resolveEntryTotal(selfPayEntry) : 0;
+  const mixedTotal = normalizeMoneyNumber(source.grandTotal);
+  const selfPayItemsSource = selfPayEntry
+    ? (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : selfPayEntry.items)
+    : source.selfPayItems;
+  const rawSelfPayItems = Array.isArray(selfPayItemsSource) ? selfPayItemsSource : [];
   const derivedSelfPayItems = rawSelfPayItems
     .filter(item => item && normalizeMoneyNumber(item.amount) !== 0)
     .map(item => ({
       type: item.type || '',
       amount: normalizeMoneyNumber(item.amount)
     }));
-
-  const selfPayTotal = derivedSelfPayItems.reduce((sum, item) => sum + normalizeMoneyNumber(item.amount), 0);
-  const mixedTotal = normalizeMoneyNumber(source.grandTotal);
-  const insuranceTotal = Math.max(mixedTotal - selfPayTotal, 0);
 
   return {
     insuranceView: { total: insuranceTotal },
@@ -1189,6 +1211,9 @@ function toggleBillingSort(field) {
 function calculateBillingRowTotalsLocal(row) {
   const source = row && typeof row === 'object' ? row : {};
   const entryType = normalizeBillingEntryType(source.entryType || source.type);
+  if (!entryType) {
+    console.warn('[billing] calculateBillingRowTotalsLocal missing entryType', source);
+  }
   const manualUnitPriceEntryType = normalizeBillingEntryType(source.manualUnitPriceEntryType);
   const manualBillingAmountEntryType = normalizeBillingEntryType(source.manualBillingAmountEntryType);
   const manualSelfPayAmountEntryType = normalizeBillingEntryType(source.manualSelfPayAmountEntryType);
@@ -1199,13 +1224,15 @@ function calculateBillingRowTotalsLocal(row) {
   const carryOverAmount = normalizeMoneyNumber(source.carryOverAmount)
     + normalizeMoneyNumber(source.carryOverFromHistory);
 
-  const manualTransportInput = Object.prototype.hasOwnProperty.call(source, 'manualTransportAmount')
+  const canApplyTransport = entryType === 'insurance';
+  const manualTransportInput = canApplyTransport && Object.prototype.hasOwnProperty.call(source, 'manualTransportAmount')
     ? source.manualTransportAmount
-    : source.transportAmount;
+    : (canApplyTransport ? source.transportAmount : null);
   const normalizedManualTransport = (manualTransportInput === '' || manualTransportInput === null || manualTransportInput === undefined)
     ? null
     : normalizeMoneyNumber(manualTransportInput);
-  const hasManualTransport = manualTransportInput !== ''
+  const hasManualTransport = canApplyTransport
+    && manualTransportInput !== ''
     && manualTransportInput !== null
     && manualTransportInput !== undefined
     && Number.isFinite(normalizedManualTransport);
@@ -1246,11 +1273,13 @@ function calculateBillingRowTotalsLocal(row) {
   const treatmentAmount = isSelfPaid
     ? treatmentAmountFull
     : treatmentAmountFull * burdenMultiplier;
-  const transportAmount = hasManualTransport
-    ? normalizedManualTransport
-    : hasChargeablePrice && visitCount > 0
-      ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
-      : 0;
+  const transportAmount = entryType !== 'insurance'
+    ? 0
+    : (hasManualTransport
+      ? normalizedManualTransport
+      : hasChargeablePrice && visitCount > 0
+        ? BILLING_TRANSPORT_UNIT_PRICE * visitCount
+        : 0);
   const manualSelfPayAmount = shouldApplyOverrideForEntryType(entryType, manualSelfPayAmountEntryType)
     ? normalizeMoneyNumber(source.manualSelfPayAmount)
     : 0;
@@ -1373,7 +1402,7 @@ function recalculateBillingRow(patientId) {
   const baseRow = baseRows.find(row => String(row && row.patientId ? row.patientId : '') === pid) || {};
   const edits = billingState.edits[pid] || {};
   const merged = Object.assign({}, baseRow, edits);
-  const fallbackTotals = calculateBillingRowTotalsLocal(merged);
+  const fallbackTotals = calculateBillingRowTotalsLocal(Object.assign({}, merged, { entryType: 'insurance' }));
   billingState.previewTotals[pid] = fallbackTotals;
 
   const scriptRun = typeof google !== 'undefined' && google.script && google.script.run;
@@ -2378,8 +2407,8 @@ function renderBillingResult() {
       return safeItem.treatmentAmount;
     }
     const totals = calculateBillingRowTotalsLocal(Object.assign({}, safeItem, {
-      entryType: 'insurance',
       visitCount: insuranceVisitCount,
+      entryType: 'insurance'
     }));
     return totals.treatmentAmount;
   }

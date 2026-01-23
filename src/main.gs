@@ -127,19 +127,37 @@ function getBillingSource(billingMonth) {
  */
 function calculateBillingRowTotalsServer(row) {
   const source = row && typeof row === 'object' ? row : {};
+  const normalized = normalizeBillingEntryFromEntries_(source);
+  const insuranceEntry = resolveBillingEntryByType_(normalized, 'insurance') || {};
+  const selfPayEntry = resolveBillingEntryByType_(normalized, 'self_pay') || {};
+  const manualUnitPrice = Object.prototype.hasOwnProperty.call(source, 'manualUnitPrice')
+    ? source.manualUnitPrice
+    : insuranceEntry.manualUnitPrice;
+  const manualTransportAmount = Object.prototype.hasOwnProperty.call(source, 'manualTransportAmount')
+    ? source.manualTransportAmount
+    : (Object.prototype.hasOwnProperty.call(insuranceEntry, 'manualTransportAmount')
+      ? insuranceEntry.manualTransportAmount
+      : insuranceEntry.transportAmount);
+  const manualSelfPayAmount = Object.prototype.hasOwnProperty.call(source, 'manualSelfPayAmount')
+    ? source.manualSelfPayAmount
+    : (selfPayEntry && selfPayEntry.manualOverride
+      && Object.prototype.hasOwnProperty.call(selfPayEntry.manualOverride, 'amount')
+      ? selfPayEntry.manualOverride.amount
+      : undefined);
+  const selfPayItems = Array.isArray(selfPayEntry && selfPayEntry.items)
+    ? selfPayEntry.items
+    : (Array.isArray(selfPayEntry && selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []);
   const amountCalc = calculateBillingAmounts_({
-    visitCount: source.visitCount,
-    insuranceType: source.insuranceType,
-    burdenRate: source.burdenRate,
-    manualUnitPrice: source.manualUnitPrice != null ? source.manualUnitPrice : source.unitPrice,
-    manualTransportAmount: Object.prototype.hasOwnProperty.call(source, 'manualTransportAmount')
-      ? source.manualTransportAmount
-      : source.transportAmount,
-    unitPrice: source.unitPrice,
-    medicalAssistance: source.medicalAssistance,
-    carryOverAmount: source.carryOverAmount,
-    selfPayItems: source.selfPayItems,
-    manualSelfPayAmount: source.manualSelfPayAmount
+    visitCount: insuranceEntry.visitCount,
+    insuranceType: insuranceEntry.insuranceType,
+    burdenRate: insuranceEntry.burdenRate,
+    manualUnitPrice: manualUnitPrice != null ? manualUnitPrice : insuranceEntry.unitPrice,
+    manualTransportAmount,
+    unitPrice: insuranceEntry.unitPrice,
+    medicalAssistance: insuranceEntry.medicalAssistance,
+    carryOverAmount: insuranceEntry.carryOverAmount,
+    selfPayItems,
+    manualSelfPayAmount
   });
 
   return {
@@ -3388,6 +3406,9 @@ function normalizeBillingEntryFromEntries_(entry) {
   const normalizeAmount = typeof normalizeMoneyNumber_ === 'function'
     ? normalizeMoneyNumber_
     : value => Number(value) || 0;
+  const normalizeVisits = typeof billingNormalizeVisitCount_ === 'function'
+    ? billingNormalizeVisitCount_
+    : value => Number(value) || 0;
   const buildFallbackEntries_ = source => {
     const fallbackEntries = [];
     const manualBillingInput = Object.prototype.hasOwnProperty.call(source, 'manualBillingAmount')
@@ -3427,6 +3448,7 @@ function normalizeBillingEntryFromEntries_(entry) {
       const selfPayEntry = {
         type: 'self_pay',
         entryType: 'selfPay',
+        visitCount: normalizeVisits(source.selfPayCount),
         items: selfPayItems,
         total: hasManualSelfPayAmount
           ? normalizeAmount(manualSelfPayInput)
@@ -3448,6 +3470,82 @@ function normalizeBillingEntryFromEntries_(entry) {
   if (!entries.length) {
     entries = buildFallbackEntries_(normalizedEntry);
   }
+  entries = entries.map(item => {
+    if (!item || typeof item !== 'object') return item;
+    const itemType = normalizeBillingEntryTypeValue_(item.type || item.entryType);
+    const next = Object.assign({}, item);
+    if (itemType === 'insurance') {
+      if (next.unitPrice == null && normalizedEntry.unitPrice != null) {
+        next.unitPrice = normalizedEntry.unitPrice;
+      }
+      if (next.visitCount == null && normalizedEntry.visitCount != null) {
+        next.visitCount = normalizeVisits(normalizedEntry.visitCount);
+      }
+      if (next.treatmentAmount == null && normalizedEntry.treatmentAmount != null) {
+        next.treatmentAmount = normalizedEntry.treatmentAmount;
+      }
+      if (next.transportAmount == null && normalizedEntry.transportAmount != null) {
+        next.transportAmount = normalizedEntry.transportAmount;
+      }
+      if (next.billingAmount == null && normalizedEntry.billingAmount != null) {
+        next.billingAmount = normalizedEntry.billingAmount;
+      }
+      if (next.carryOverAmount == null && normalizedEntry.carryOverAmount != null) {
+        next.carryOverAmount = normalizedEntry.carryOverAmount;
+      }
+      if (next.carryOverFromHistory == null && normalizedEntry.carryOverFromHistory != null) {
+        next.carryOverFromHistory = normalizedEntry.carryOverFromHistory;
+      }
+      if (next.insuranceType == null && normalizedEntry.insuranceType != null) {
+        next.insuranceType = normalizedEntry.insuranceType;
+      }
+      if (next.burdenRate == null && normalizedEntry.burdenRate != null) {
+        next.burdenRate = normalizedEntry.burdenRate;
+      }
+      if (next.medicalAssistance == null && normalizedEntry.medicalAssistance != null) {
+        next.medicalAssistance = normalizedEntry.medicalAssistance;
+      }
+      if (next.payerType == null && normalizedEntry.payerType != null) {
+        next.payerType = normalizedEntry.payerType;
+      }
+      if (!Object.prototype.hasOwnProperty.call(next, 'manualUnitPrice')
+        && Object.prototype.hasOwnProperty.call(normalizedEntry, 'manualUnitPrice')) {
+        next.manualUnitPrice = normalizedEntry.manualUnitPrice;
+      }
+      if (!Object.prototype.hasOwnProperty.call(next, 'manualTransportAmount')
+        && Object.prototype.hasOwnProperty.call(normalizedEntry, 'manualTransportAmount')) {
+        next.manualTransportAmount = normalizedEntry.manualTransportAmount;
+      }
+      if (!Object.prototype.hasOwnProperty.call(next, 'adjustedVisitCount')
+        && Object.prototype.hasOwnProperty.call(normalizedEntry, 'adjustedVisitCount')) {
+        next.adjustedVisitCount = normalizedEntry.adjustedVisitCount;
+      }
+      if (!Object.prototype.hasOwnProperty.call(next, 'manualUnitPriceEntryType')
+        && Object.prototype.hasOwnProperty.call(normalizedEntry, 'manualUnitPriceEntryType')) {
+        next.manualUnitPriceEntryType = normalizedEntry.manualUnitPriceEntryType;
+      }
+      if (!Object.prototype.hasOwnProperty.call(next, 'manualBillingAmountEntryType')
+        && Object.prototype.hasOwnProperty.call(normalizedEntry, 'manualBillingAmountEntryType')) {
+        next.manualBillingAmountEntryType = normalizedEntry.manualBillingAmountEntryType;
+      }
+      if (!Object.prototype.hasOwnProperty.call(next, 'manualSelfPayAmountEntryType')
+        && Object.prototype.hasOwnProperty.call(normalizedEntry, 'manualSelfPayAmountEntryType')) {
+        next.manualSelfPayAmountEntryType = normalizedEntry.manualSelfPayAmountEntryType;
+      }
+      return next;
+    }
+    if (itemType === 'self_pay') {
+      if (next.visitCount == null && normalizedEntry.selfPayCount != null) {
+        next.visitCount = normalizeVisits(normalizedEntry.selfPayCount);
+      }
+      if (!Object.prototype.hasOwnProperty.call(next, 'manualSelfPayAmountEntryType')
+        && Object.prototype.hasOwnProperty.call(normalizedEntry, 'manualSelfPayAmountEntryType')) {
+        next.manualSelfPayAmountEntryType = normalizedEntry.manualSelfPayAmountEntryType;
+      }
+      return next;
+    }
+    return next;
+  });
   const resolveEntryByType_ = entryType => (
     entries.find(
       item =>

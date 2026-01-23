@@ -1025,18 +1025,26 @@ function resolveBillingSortValue(row, field) {
       return row.nameKanji || '';
     case 'burdenRate':
       return resolveBurdenSortValue(row.burdenRate);
-    case 'unitPrice':
-      return Number(row.unitPrice) || 0;
-    case 'visitCount':
-      return Number(row.visitCount) || 0;
-    case 'treatmentAmount':
-      return Number(row.treatmentAmount) || 0;
-    case 'transportAmount':
-      return Number(row.transportAmount) || 0;
+    case 'unitPrice': {
+      const insuranceEntry = filterEntriesByType(getBillingEntries(row), 'insurance')[0];
+      return Number(insuranceEntry && insuranceEntry.unitPrice) || 0;
+    }
+    case 'visitCount': {
+      const insuranceEntry = filterEntriesByType(getBillingEntries(row), 'insurance')[0];
+      return Number(insuranceEntry && insuranceEntry.visitCount) || 0;
+    }
+    case 'treatmentAmount': {
+      const insuranceEntry = filterEntriesByType(getBillingEntries(row), 'insurance')[0];
+      return Number(insuranceEntry && insuranceEntry.treatmentAmount) || 0;
+    }
+    case 'transportAmount': {
+      const insuranceEntry = filterEntriesByType(getBillingEntries(row), 'insurance')[0];
+      return Number(insuranceEntry && insuranceEntry.transportAmount) || 0;
+    }
     case 'carryOverAmount':
       return Number(row.carryOverAmount) || 0;
     case 'grandTotal':
-      return Number(row.grandTotal) || 0;
+      return sumEntryTotals(getBillingEntries(row));
     case 'responsible':
       return getResponsibleDisplay(row);
     case 'patientId':
@@ -1099,9 +1107,6 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
     && Object.prototype.hasOwnProperty.call(safeEntry.manualOverride, 'amount')
     ? safeEntry.manualOverride.amount
     : '';
-  const selfPayItems = Array.isArray(safeEntry.selfPayItems)
-    ? safeEntry.selfPayItems
-    : (Array.isArray(safeEntry.items) ? safeEntry.items : []);
   const manualUnitPrice = shouldApplyOverrideForEntryType(entryType, manualUnitPriceEntryType)
     ? safeBase.manualUnitPrice
     : '';
@@ -1119,11 +1124,9 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
     visitCount: safeEntry.visitCount,
     treatmentAmount: safeEntry.treatmentAmount,
     transportAmount: entryType === 'insurance' ? safeEntry.transportAmount : 0,
-    carryOverAmount: safeEntry.carryOverAmount,
-    grandTotal: safeEntry.total,
-    billingAmount: safeEntry.billingAmount,
+    carryOverAmount: safeBase.carryOverAmount,
+    entryTotal: safeEntry.total,
     burdenRate: entryBurdenRate,
-    selfPayItems,
     manualBillingAmount: (entryType === 'insurance'
       && shouldApplyOverrideForEntryType(entryType, manualBillingAmountEntryType))
       ? manualOverrideAmount
@@ -1139,28 +1142,39 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
   });
 }
 
+function getBillingEntries(source) {
+  return Array.isArray(source && source.entries) ? source.entries : [];
+}
+
+function sumEntryTotals(entries) {
+  return (entries || []).reduce((sum, entry) => sum + normalizeMoneyNumber(entry && entry.total), 0);
+}
+
+function filterEntriesByType(entries, entryType) {
+  const type = normalizeBillingEntryType(entryType);
+  if (!type) return [];
+  return (entries || []).filter(entry => normalizeBillingEntryType(entry && (entry.type || entry.entryType)) === type);
+}
+
+function collectSelfPayItems(entries) {
+  return (entries || []).reduce((list, entry) => {
+    if (normalizeBillingEntryType(entry && (entry.type || entry.entryType)) !== 'self_pay') return list;
+    const items = Array.isArray(entry && entry.items)
+      ? entry.items
+      : (Array.isArray(entry && entry.selfPayItems) ? entry.selfPayItems : []);
+    return list.concat(items);
+  }, []);
+}
+
 function buildBillingDerivedViews(entry) {
   const source = entry && typeof entry === 'object' ? entry : {};
-  const entries = Array.isArray(source.entries) ? source.entries : [];
-  const resolveSelfPayTotal = item => {
-    if (!item) return null;
-    const manualOverride = item.manualOverride && Object.prototype.hasOwnProperty.call(item.manualOverride, 'amount')
-      ? item.manualOverride.amount
-      : null;
-    if (manualOverride !== '' && manualOverride !== null && manualOverride !== undefined) {
-      return normalizeMoneyNumber(manualOverride);
-    }
-    return normalizeMoneyNumber(item.total);
-  };
-  const insuranceEntry = entries.find(item => normalizeBillingEntryType(item && (item.type || item.entryType)) === 'insurance');
-  const selfPayEntry = entries.find(item => normalizeBillingEntryType(item && (item.type || item.entryType)) === 'self_pay');
-  const insuranceTotal = insuranceEntry ? normalizeMoneyNumber(insuranceEntry.total) : 0;
-  const selfPayTotal = selfPayEntry ? resolveSelfPayTotal(selfPayEntry) : 0;
-  const mixedTotal = normalizeMoneyNumber(source.grandTotal);
-  const selfPayItemsSource = selfPayEntry
-    ? (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : selfPayEntry.items)
-    : source.selfPayItems;
-  const rawSelfPayItems = Array.isArray(selfPayItemsSource) ? selfPayItemsSource : [];
+  const entries = getBillingEntries(source);
+  const insuranceEntries = filterEntriesByType(entries, 'insurance');
+  const selfPayEntries = filterEntriesByType(entries, 'self_pay');
+  const insuranceTotal = insuranceEntries.reduce((sum, item) => sum + normalizeMoneyNumber(item && item.total), 0);
+  const selfPayTotal = selfPayEntries.reduce((sum, item) => sum + normalizeMoneyNumber(item && item.total), 0);
+  const mixedTotal = sumEntryTotals(entries);
+  const rawSelfPayItems = collectSelfPayItems(entries);
   const derivedSelfPayItems = rawSelfPayItems
     .filter(item => item && normalizeMoneyNumber(item.amount) !== 0)
     .map(item => ({
@@ -1178,8 +1192,10 @@ function buildBillingDerivedViews(entry) {
 function calculateBillingSummary(rows) {
   return (rows || []).reduce((acc, row) => {
     if (!row || typeof row !== 'object') return acc;
+    const entries = getBillingEntries(row);
+    const insuranceEntries = filterEntriesByType(entries, 'insurance');
     const views = buildBillingDerivedViews(row);
-    acc.totalVisits += Number(row.visitCount) || 0;
+    acc.totalVisits += insuranceEntries.reduce((sum, entry) => sum + (Number(entry && entry.visitCount) || 0), 0);
     acc.totalGrandTotal += views.mixedView.total;
     acc.totalInsurance += views.insuranceView.total;
     acc.totalSelfPay += views.selfPayView.total;
@@ -2156,6 +2172,12 @@ function renderBillingSummary(rows) {
     box.innerHTML = '';
     return;
   }
+  const hasEntries = rows.some(row => getBillingEntries(row).length > 0);
+  if (!hasEntries) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
   const summary = calculateBillingSummary(rows);
   const aggregate = calculateAggregateStatusCounts(rows);
   const cards = [
@@ -2217,6 +2239,12 @@ function renderBillingResult() {
   }
 
   const rows = getDisplayBillingRows();
+  const hasEntries = rows.some(row => getBillingEntries(row).length > 0);
+  if (!hasEntries) {
+    renderBillingSummary(null);
+    box.innerHTML = '<div class="muted">請求対象なし</div>';
+    return;
+  }
   renderBillingSummary(rows);
   const header = [
     { key: 'patientId', label: '患者ID', sortable: true },
@@ -2297,7 +2325,7 @@ function renderBillingResult() {
         const manualBillingAmount = item.manualBillingAmount === '' || item.manualBillingAmount === null || item.manualBillingAmount === undefined
           ? ''
           : normalizeEditNumber(item.manualBillingAmount);
-        const placeholder = Number.isFinite(item.grandTotal) ? formatCurrency(item.grandTotal) : '';
+        const placeholder = Number.isFinite(item.entryTotal) ? formatCurrency(item.entryTotal) : '';
         const editor = `<input class="${editClass}" ${baseAttrs} type="number" step="10" value="${manualBillingAmount}" placeholder="${placeholder}" />`;
         return wrapWithOverrideBadge(editor, item.patientId, field, alignRight);
       }
@@ -2333,7 +2361,7 @@ function renderBillingResult() {
         case 'carryOverAmount':
           return formatCurrency(item.carryOverAmount);
         case 'grandTotal':
-          return formatCurrency(item.grandTotal);
+          return formatCurrency(item.entryTotal);
         default:
           return item[field] || '';
       }
@@ -2377,20 +2405,14 @@ function renderBillingResult() {
     if (!hasPrimary && !hasSecondary) return null;
     return (hasPrimary ? primaryCount : 0) + (hasSecondary ? secondaryCount : 0);
   }
-  function resolveInsuranceVisitCount(item, insuranceEntry) {
-    const safeItem = item && typeof item === 'object' ? item : {};
+  function resolveInsuranceVisitCount(insuranceEntry) {
     const entryVisitCount = normalizeOptionalVisitCount(insuranceEntry && insuranceEntry.visitCount);
     const entryInsuranceCount = normalizeOptionalVisitCount(insuranceEntry && insuranceEntry.insuranceCount);
     const entryMixedCount = normalizeOptionalVisitCount(insuranceEntry && insuranceEntry.mixedCount);
     const entryCombinedCount = sumOptionalVisitCounts(entryInsuranceCount, entryMixedCount);
     if (entryCombinedCount === 0 || entryCombinedCount) return entryCombinedCount;
     if (entryVisitCount === 0 || entryVisitCount) return entryVisitCount;
-
-    const rowInsuranceCount = normalizeOptionalVisitCount(safeItem.insuranceCount);
-    const rowMixedCount = normalizeOptionalVisitCount(safeItem.mixedCount);
-    const rowCombinedCount = sumOptionalVisitCounts(rowInsuranceCount, rowMixedCount);
-    if (rowCombinedCount === 0 || rowCombinedCount) return rowCombinedCount;
-    return normalizeOptionalVisitCount(safeItem.visitCount);
+    return null;
   }
 
   function resolveInsuranceDisplayRow(item, insuranceEntry) {
@@ -2401,72 +2423,43 @@ function renderBillingResult() {
     return safeItem;
   }
 
-  function resolveInsuranceTreatmentAmount(item, insuranceVisitCount) {
+  function renderEntryRow(item, insuranceEntry, insuranceVisitCount) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const resolvedVisitCount = (insuranceVisitCount === 0 || insuranceVisitCount)
-      ? insuranceVisitCount
-      : safeItem.visitCount;
-    const totals = calculateBillingRowTotalsLocal(Object.assign({}, safeItem, {
-      visitCount: resolvedVisitCount,
-      entryType: 'insurance'
-    }));
-    return totals.treatmentAmount;
-  }
-
-  function renderEntryRow(item, insuranceVisitCount) {
-    const safeItem = item && typeof item === 'object' ? item : {};
+    const displayItem = resolveInsuranceDisplayRow(safeItem, insuranceEntry);
     const visitDisplay = (insuranceVisitCount === 0 || insuranceVisitCount)
       ? insuranceVisitCount
       : '—';
-    const insuranceTreatmentAmount = resolveInsuranceTreatmentAmount(safeItem, insuranceVisitCount);
     return `
       <tr>
-        <td>${renderPatientIdCell(safeItem)}</td>
-        <td>${renderPatientNameCell(safeItem)}</td>
-        <td>${getResponsibleDisplay(safeItem) || '—'}</td>
-        <td>${renderEditableCell(safeItem, 'medicalAssistance')}</td>
-        <td>${renderEditableCell(safeItem, 'onlineConsent')}</td>
-        <td>${renderEditableCell(safeItem, 'payerType')}</td>
-        <td>${renderEditableCell(safeItem, 'burdenRate')}</td>
-        <td>${wrapWithOverrideBadge(visitDisplay, safeItem.patientId, 'visitCount')}</td>
-        <td class="right">${renderEditableCell(safeItem, 'unitPrice', true)}</td>
-        <td class="right">${formatCurrency(insuranceTreatmentAmount)}</td>
-        <td class="right">${renderEditableCell(safeItem, 'transportAmount', true)}</td>
-        <td class="right">${renderEditableCell(safeItem, 'carryOverAmount', true)}</td>
-        <td class="right">${renderEditableCell(safeItem, 'grandTotal', true)}</td>
-        <td>${formatPaidStatus(safeItem) || '—'}</td>
-        <td>${formatBankInfo(safeItem) || '—'}</td>
-        <td>${formatNewFlag(safeItem) || ''}</td>
+        <td>${renderPatientIdCell(displayItem)}</td>
+        <td>${renderPatientNameCell(displayItem)}</td>
+        <td>${getResponsibleDisplay(displayItem) || '—'}</td>
+        <td>${renderEditableCell(displayItem, 'medicalAssistance')}</td>
+        <td>${renderEditableCell(displayItem, 'onlineConsent')}</td>
+        <td>${renderEditableCell(displayItem, 'payerType')}</td>
+        <td>${renderEditableCell(displayItem, 'burdenRate')}</td>
+        <td>${wrapWithOverrideBadge(visitDisplay, displayItem.patientId, 'visitCount')}</td>
+        <td class="right">${renderEditableCell(displayItem, 'unitPrice', true)}</td>
+        <td class="right">${renderMoneyValue(displayItem.treatmentAmount)}</td>
+        <td class="right">${renderEditableCell(displayItem, 'transportAmount', true)}</td>
+        <td class="right">${renderEditableCell(displayItem, 'carryOverAmount', true)}</td>
+        <td class="right">${renderEditableCell(displayItem, 'grandTotal', true)}</td>
+        <td>${formatPaidStatus(displayItem) || '—'}</td>
+        <td>${formatBankInfo(displayItem) || '—'}</td>
+        <td>${formatNewFlag(displayItem) || ''}</td>
       </tr>`;
   }
 
-  function getSelfPayVisitCount(item) {
-    const safeItem = item && typeof item === 'object' ? item : {};
-    return normalizeOptionalVisitCount(safeItem.selfPayVisitCount);
+  function getSelfPayVisitCount(entry) {
+    return normalizeOptionalVisitCount(entry && entry.visitCount);
   }
 
-  function getSelfPayUnitPrice(item) {
+  function renderSelfPayRow(item, selfPayEntry) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    const manualUnitPriceEntryType = normalizeBillingEntryType(safeItem.manualUnitPriceEntryType);
-    const canApplyManualUnitPrice = shouldApplyOverrideForEntryType('self_pay', manualUnitPriceEntryType);
-    const hasManualUnitPrice = Object.prototype.hasOwnProperty.call(safeItem, 'manualUnitPrice')
-      && canApplyManualUnitPrice
-      && safeItem.manualUnitPrice !== ''
-      && safeItem.manualUnitPrice !== null
-      && safeItem.manualUnitPrice !== undefined;
-    const source = hasManualUnitPrice ? safeItem.manualUnitPrice : safeItem.unitPrice;
-    return normalizeMoneyNumber(source);
-  }
-
-  function renderSelfPayRow(item) {
-    const safeItem = item && typeof item === 'object' ? item : {};
-    const selfPayVisitCount = getSelfPayVisitCount(safeItem);
+    const displayItem = buildBillingEntryDisplayRow(safeItem, selfPayEntry);
+    const selfPayVisitCount = getSelfPayVisitCount(selfPayEntry);
     const visitDisplay = (selfPayVisitCount === 0 || selfPayVisitCount) ? selfPayVisitCount : '—';
-    const unitPrice = getSelfPayUnitPrice(safeItem);
-    const totalAmount = (Number.isFinite(unitPrice) && selfPayVisitCount != null)
-      ? unitPrice * selfPayVisitCount
-      : null;
-    const displayItem = Object.assign({}, safeItem, { unitPrice });
+    const totalAmount = Number.isFinite(displayItem.entryTotal) ? displayItem.entryTotal : null;
     return `
       <tr>
         <td>${renderPatientIdCell(displayItem)}</td>
@@ -2494,25 +2487,17 @@ function renderBillingResult() {
     return `<tr class="empty-row"><td colspan="${colspan}">該当なし</td></tr>`;
   }
 
-  function normalizeEntryType(entry) {
-    return normalizeBillingEntryType(entry && (entry.type || entry.entryType));
-  }
-
-  function hasSelfPayItemsAmount(items) {
-    return (items || []).some(item => normalizeMoneyNumber(item && item.amount) > 0);
-  }
-
   /**
    * Decide if the insurance section should be shown for a patient row.
-   * Condition: the section appears when visitCount is greater than 0.
-   * Data fields used: insurance entry visitCount (fallback to row visitCount).
+   * Condition: the section appears when an insurance entry exists.
+   * Data fields used: entries[].entryType === 'insurance'.
    *
    * Examples:
-   * - visitCount = 2 => shows insurance section.
-   * - visitCount = 0 or undefined => hides insurance section.
+   * - insurance entry exists => shows insurance section.
+   * - no insurance entry => hides insurance section.
    */
-  function hasInsuranceSection(insuranceVisitCount) {
-    return Number(insuranceVisitCount) > 0;
+  function hasInsuranceSection(insuranceEntry) {
+    return !!insuranceEntry;
   }
 
   /**
@@ -2532,16 +2517,15 @@ function renderBillingResult() {
   /**
    * Decide if the self-pay section should be shown for a patient row.
    *
-   * Condition: the section appears when selfPayVisitCount is 1 or more.
-   * Data fields used: selfPayVisitCount.
+   * Condition: the section appears when a self-pay entry exists.
+   * Data fields used: entries[].entryType === 'self_pay'.
    *
    * Examples:
-   * - selfPayVisitCount = 1 => shows self-pay section.
-   * - selfPayVisitCount = 0 or undefined => hides self-pay section.
+   * - self-pay entry exists => shows self-pay section.
+   * - no self-pay entry => hides self-pay section.
    */
-  function hasSelfPaySection(row) {
-    const selfPayVisitCount = getSelfPayVisitCount(row);
-    return Number(selfPayVisitCount) >= 1;
+  function hasSelfPaySection(selfPayEntry) {
+    return !!selfPayEntry;
   }
 
   const patientOrder = [];
@@ -2570,15 +2554,15 @@ function renderBillingResult() {
   rows.forEach(item => {
     try {
       const safeItem = item && typeof item === 'object' ? item : {};
-      const entries = Array.isArray(safeItem.entries) ? safeItem.entries : [];
-      const insuranceEntry = entries.find(entry => normalizeEntryType(entry) === 'insurance');
+      const entries = getBillingEntries(safeItem);
+      const insuranceEntry = filterEntriesByType(entries, 'insurance')[0];
+      const selfPayEntry = filterEntriesByType(entries, 'self_pay')[0];
       const patientKey = registerPatient(safeItem);
 
-      const insuranceVisitCount = resolveInsuranceVisitCount(safeItem, insuranceEntry);
-      const insuranceDisplayRow = resolveInsuranceDisplayRow(safeItem, insuranceEntry);
-      if (hasInsuranceSection(insuranceVisitCount)) {
+      const insuranceVisitCount = resolveInsuranceVisitCount(insuranceEntry);
+      if (hasInsuranceSection(insuranceEntry)) {
         if (!insuranceRowsByPatient.has(patientKey)) {
-          insuranceRowsByPatient.set(patientKey, renderEntryRow(insuranceDisplayRow, insuranceVisitCount));
+          insuranceRowsByPatient.set(patientKey, renderEntryRow(safeItem, insuranceEntry, insuranceVisitCount));
         }
       }
 
@@ -2588,9 +2572,9 @@ function renderBillingResult() {
         }
       }
 
-      if (hasSelfPaySection(safeItem)) {
+      if (hasSelfPaySection(selfPayEntry)) {
         if (!selfPayRowsByPatient.has(patientKey)) {
-          selfPayRowsByPatient.set(patientKey, renderSelfPayRow(safeItem));
+          selfPayRowsByPatient.set(patientKey, renderSelfPayRow(safeItem, selfPayEntry));
         }
       }
     } catch (err) {

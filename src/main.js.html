@@ -1118,7 +1118,7 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
     unitPrice: safeEntry.unitPrice,
     visitCount: safeEntry.visitCount,
     treatmentAmount: safeEntry.treatmentAmount,
-    transportAmount: safeEntry.transportAmount,
+    transportAmount: entryType === 'insurance' ? safeEntry.transportAmount : 0,
     carryOverAmount: safeEntry.carryOverAmount,
     grandTotal: safeEntry.total,
     billingAmount: safeEntry.billingAmount,
@@ -1142,7 +1142,7 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
 function buildBillingDerivedViews(entry) {
   const source = entry && typeof entry === 'object' ? entry : {};
   const entries = Array.isArray(source.entries) ? source.entries : [];
-  const resolveEntryTotal = item => {
+  const resolveSelfPayTotal = item => {
     if (!item) return null;
     const manualOverride = item.manualOverride && Object.prototype.hasOwnProperty.call(item.manualOverride, 'amount')
       ? item.manualOverride.amount
@@ -1154,8 +1154,8 @@ function buildBillingDerivedViews(entry) {
   };
   const insuranceEntry = entries.find(item => normalizeBillingEntryType(item && (item.type || item.entryType)) === 'insurance');
   const selfPayEntry = entries.find(item => normalizeBillingEntryType(item && (item.type || item.entryType)) === 'self_pay');
-  const insuranceTotal = insuranceEntry ? resolveEntryTotal(insuranceEntry) : 0;
-  const selfPayTotal = selfPayEntry ? resolveEntryTotal(selfPayEntry) : 0;
+  const insuranceTotal = insuranceEntry ? normalizeMoneyNumber(insuranceEntry.total) : 0;
+  const selfPayTotal = selfPayEntry ? resolveSelfPayTotal(selfPayEntry) : 0;
   const mixedTotal = normalizeMoneyNumber(source.grandTotal);
   const selfPayItemsSource = selfPayEntry
     ? (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : selfPayEntry.items)
@@ -2403,11 +2403,11 @@ function renderBillingResult() {
 
   function resolveInsuranceTreatmentAmount(item, insuranceVisitCount) {
     const safeItem = item && typeof item === 'object' ? item : {};
-    if (insuranceVisitCount === null || insuranceVisitCount === undefined) {
-      return safeItem.treatmentAmount;
-    }
+    const resolvedVisitCount = (insuranceVisitCount === 0 || insuranceVisitCount)
+      ? insuranceVisitCount
+      : safeItem.visitCount;
     const totals = calculateBillingRowTotalsLocal(Object.assign({}, safeItem, {
-      visitCount: insuranceVisitCount,
+      visitCount: resolvedVisitCount,
       entryType: 'insurance'
     }));
     return totals.treatmentAmount;

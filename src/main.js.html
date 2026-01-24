@@ -916,15 +916,13 @@ function resolveEntryOverrideFlags(row) {
   const insuranceEntry = filterEntriesByType(entries, 'insurance')[0];
   const selfPayEntry = filterEntriesByType(entries, 'self_pay')[0];
   if (insuranceEntry) {
+    // Override badges are driven exclusively by entry-scoped override fields.
     const hasManualUnitPrice = Object.prototype.hasOwnProperty.call(insuranceEntry, 'manualUnitPrice')
       && insuranceEntry.manualUnitPrice !== '' && insuranceEntry.manualUnitPrice !== null && insuranceEntry.manualUnitPrice !== undefined;
     if (hasManualUnitPrice) flags.unitPrice = true;
     const hasManualTransport = Object.prototype.hasOwnProperty.call(insuranceEntry, 'manualTransportAmount')
       && insuranceEntry.manualTransportAmount !== '' && insuranceEntry.manualTransportAmount !== null && insuranceEntry.manualTransportAmount !== undefined;
     if (hasManualTransport) flags.transportAmount = true;
-    const hasAdjustedVisit = Object.prototype.hasOwnProperty.call(insuranceEntry, 'adjustedVisitCount')
-      && insuranceEntry.adjustedVisitCount !== '' && insuranceEntry.adjustedVisitCount !== null && insuranceEntry.adjustedVisitCount !== undefined;
-    if (hasAdjustedVisit) flags.visitCount = true;
     const manualBillingAmount = getEntryManualOverrideAmount(insuranceEntry);
     if (manualBillingAmount !== '' && manualBillingAmount !== null && manualBillingAmount !== undefined) {
       flags.grandTotal = true;
@@ -1296,6 +1294,24 @@ function toggleBillingSort(field) {
 function calculateBillingRowTotalsLocal(row) {
   const source = row && typeof row === 'object' ? row : {};
   const entries = getBillingEntries(source);
+  if (entries.length) {
+    // Entries are authoritative: sum entry totals directly to avoid legacy row recomputation.
+    const insuranceEntry = filterEntriesByType(entries, 'insurance')[0] || {};
+    const selfPayEntry = filterEntriesByType(entries, 'self_pay')[0] || {};
+    const manualBillingAmount = getEntryManualOverrideAmount(insuranceEntry);
+    const manualSelfPayAmount = getEntryManualOverrideAmount(selfPayEntry);
+    return {
+      visitCount: normalizeVisitCount(insuranceEntry.visitCount),
+      treatmentUnitPrice: normalizeMoneyNumber(insuranceEntry.unitPrice),
+      treatmentAmount: normalizeMoneyNumber(insuranceEntry.treatmentAmount),
+      transportAmount: normalizeMoneyNumber(insuranceEntry.transportAmount),
+      manualSelfPayAmount: manualSelfPayAmount != null ? normalizeMoneyNumber(manualSelfPayAmount) : 0,
+      grandTotal: sumEntryTotals(entries),
+      manualBillingAmount: manualBillingAmount != null && manualBillingAmount !== ''
+        ? normalizeMoneyNumber(manualBillingAmount)
+        : ''
+    };
+  }
   const insuranceEntry = filterEntriesByType(entries, 'insurance')[0] || {};
   const selfPayEntry = filterEntriesByType(entries, 'self_pay')[0] || {};
   const entryType = normalizeBillingEntryType(
@@ -2550,8 +2566,12 @@ function renderBillingResult() {
   function renderSelfPayRow(item, selfPayEntry) {
     const safeItem = item && typeof item === 'object' ? item : {};
     const displayItem = buildBillingEntryDisplayRow(safeItem, selfPayEntry);
-    const selfPayVisitCount = getSelfPayVisitCount(selfPayEntry);
+    // Self-pay rows render entry-scoped fields only; never fall back to row-level values.
+    const hasSelfPayVisit = selfPayEntry && Object.prototype.hasOwnProperty.call(selfPayEntry, 'visitCount');
+    const selfPayVisitCount = hasSelfPayVisit ? getSelfPayVisitCount(selfPayEntry) : null;
     const visitDisplay = (selfPayVisitCount === 0 || selfPayVisitCount) ? selfPayVisitCount : '—';
+    const hasUnitPrice = selfPayEntry && Object.prototype.hasOwnProperty.call(selfPayEntry, 'unitPrice');
+    const unitPriceDisplay = hasUnitPrice ? renderMoneyValue(selfPayEntry.unitPrice) : '—';
     const totalAmount = Number.isFinite(displayItem.entryTotal) ? displayItem.entryTotal : null;
     return `
       <tr>
@@ -2559,7 +2579,7 @@ function renderBillingResult() {
         <td>${renderPatientNameCell(displayItem)}</td>
         <td>${getResponsibleDisplay(displayItem) || '—'}</td>
         <td class="right">${visitDisplay}</td>
-        <td class="right">${renderEditableCell(displayItem, 'unitPrice', true)}</td>
+        <td class="right">${unitPriceDisplay}</td>
         <td class="right">${renderMoneyValue(totalAmount)}</td>
       </tr>`;
   }

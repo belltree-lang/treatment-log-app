@@ -1173,6 +1173,10 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
   const manualUnitPrice = shouldApplyOverrideForEntryType(entryType, manualUnitPriceEntryType)
     ? safeEntry.manualUnitPrice
     : '';
+  const manualTransportAmount = entryType === 'insurance'
+    && Object.prototype.hasOwnProperty.call(safeEntry, 'manualTransportAmount')
+    ? safeEntry.manualTransportAmount
+    : '';
 
   if (!manualBillingAmountEntryType && safeEntry.manualBillingAmount !== '' && safeEntry.manualBillingAmount != null) {
     console.warn('[billing] manualBillingAmount override missing entryType', safeBase);
@@ -1189,6 +1193,7 @@ function buildBillingEntryDisplayRow(baseRow, entry) {
     visitCount: safeEntry.visitCount,
     treatmentAmount: safeEntry.treatmentAmount,
     transportAmount: entryType === 'insurance' ? safeEntry.transportAmount : 0,
+    manualTransportAmount,
     carryOverAmount: safeEntry.carryOverAmount,
     entryTotal: safeEntry.total,
     burdenRate: entryBurdenRate,
@@ -1221,6 +1226,16 @@ function filterEntriesByType(entries, entryType) {
   const type = normalizeBillingEntryType(entryType);
   if (!type) return [];
   return (entries || []).filter(entry => normalizeBillingEntryType(entry && (entry.type || entry.entryType)) === type);
+}
+
+function hasVisitBasedSelfPayEntry(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  return Object.prototype.hasOwnProperty.call(entry, 'visitCount');
+}
+
+function resolveSelfPayVisitEntry(entries) {
+  const selfPayEntries = filterEntriesByType(entries, 'self_pay');
+  return selfPayEntries.find(hasVisitBasedSelfPayEntry) || null;
 }
 
 function collectSelfPayItems(entries) {
@@ -2630,15 +2645,15 @@ function renderBillingResult() {
   /**
    * Decide if the self-pay section should be shown for a patient row.
    *
-   * Condition: the section appears when a self-pay entry exists.
-   * Data fields used: entries[].entryType === 'self_pay'.
+   * Condition: the section appears when a self-pay entry includes visitCount.
+   * Data fields used: entries[].entryType === 'self_pay' with visitCount.
    *
    * Examples:
-   * - self-pay entry exists => shows self-pay section.
-   * - no self-pay entry => hides self-pay section.
+   * - self-pay entry with visitCount exists => shows self-pay section.
+   * - item-only self-pay entry => hides self-pay section.
    */
   function hasSelfPaySection(selfPayEntry) {
-    return !!selfPayEntry;
+    return hasVisitBasedSelfPayEntry(selfPayEntry);
   }
 
   const patientOrder = [];
@@ -2669,7 +2684,7 @@ function renderBillingResult() {
       const safeItem = item && typeof item === 'object' ? item : {};
       const entries = getBillingEntries(safeItem);
       const insuranceEntry = filterEntriesByType(entries, 'insurance')[0];
-      const selfPayEntry = filterEntriesByType(entries, 'self_pay')[0];
+      const selfPayEntry = resolveSelfPayVisitEntry(entries);
       const patientKey = registerPatient(safeItem);
 
       const insuranceVisitCount = resolveInsuranceVisitCount(insuranceEntry);

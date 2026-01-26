@@ -129,7 +129,12 @@ function calculateBillingRowTotalsServer(row) {
   const source = row && typeof row === 'object' ? row : {};
   const normalized = normalizeBillingEntryFromEntries_(source);
   const insuranceEntry = resolveBillingEntryByType_(normalized, 'insurance') || {};
-  const selfPayEntry = resolveBillingEntryByType_(normalized, 'self_pay') || {};
+  const selfPayEntries = resolveBillingEntries_(normalized).filter(item => (
+    normalizeBillingEntryTypeValue_(item && (item.type || item.entryType)) === 'self_pay'
+  ));
+  const selfPayEntryWithManual = selfPayEntries.find(item => item && item.manualOverride
+    && item.manualOverride.amount !== '' && item.manualOverride.amount !== null
+    && item.manualOverride.amount !== undefined);
   const manualUnitPrice = Object.prototype.hasOwnProperty.call(source, 'manualUnitPrice')
     ? source.manualUnitPrice
     : insuranceEntry.manualUnitPrice;
@@ -140,13 +145,16 @@ function calculateBillingRowTotalsServer(row) {
       : insuranceEntry.transportAmount);
   const manualSelfPayAmount = Object.prototype.hasOwnProperty.call(source, 'manualSelfPayAmount')
     ? source.manualSelfPayAmount
-    : (selfPayEntry && selfPayEntry.manualOverride
-      && Object.prototype.hasOwnProperty.call(selfPayEntry.manualOverride, 'amount')
-      ? selfPayEntry.manualOverride.amount
+    : (selfPayEntryWithManual && selfPayEntryWithManual.manualOverride
+      && Object.prototype.hasOwnProperty.call(selfPayEntryWithManual.manualOverride, 'amount')
+      ? selfPayEntryWithManual.manualOverride.amount
       : undefined);
-  const selfPayItems = Array.isArray(selfPayEntry && selfPayEntry.items)
-    ? selfPayEntry.items
-    : (Array.isArray(selfPayEntry && selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []);
+  const selfPayItems = selfPayEntries.reduce((list, entry) => {
+    const items = Array.isArray(entry && entry.items)
+      ? entry.items
+      : (Array.isArray(entry && entry.selfPayItems) ? entry.selfPayItems : []);
+    return list.concat(items);
+  }, []);
   const amountCalc = calculateBillingAmounts_({
     visitCount: insuranceEntry.visitCount,
     insuranceType: insuranceEntry.insuranceType,
@@ -2295,9 +2303,14 @@ function validatePreparedBillingPhase4A_(payload) {
       : String(entry && entry.patientId || '').trim();
     if (!pid) return;
     const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
-    const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
+    const selfPayEntries = resolveBillingEntries_(entry).filter(item => (
+      normalizeBillingEntryTypeValue_(item && (item.type || item.entryType)) === 'self_pay'
+    ));
     const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
-    const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
+    const selfPayTotal = selfPayEntries.reduce(
+      (sum, item) => sum + resolveBillingEntryTotalAmount_(item),
+      0
+    );
     const expectedBillingAmount = insuranceEntry && Object.prototype.hasOwnProperty.call(insuranceEntry, 'billingAmount')
       ? normalizeAmount(insuranceEntry.billingAmount)
       : insuranceTotal;
@@ -3564,9 +3577,14 @@ function normalizeBillingEntryFromEntries_(entry) {
     ) || null
   );
   const insuranceEntry = resolveEntryByType_('insurance');
-  const selfPayEntry = resolveEntryByType_('self_pay');
+  const selfPayEntries = entries.filter(
+    item => item && normalizeBillingEntryTypeValue_(item.type || item.entryType) === 'self_pay'
+  );
   const insuranceTotal = insuranceEntry ? resolveBillingEntryTotalAmount_(insuranceEntry) : 0;
-  const selfPayTotal = selfPayEntry ? resolveBillingEntryTotalAmount_(selfPayEntry) : 0;
+  const selfPayTotal = selfPayEntries.reduce(
+    (sum, item) => sum + resolveBillingEntryTotalAmount_(item),
+    0
+  );
   const expectedBillingAmount = insuranceEntry
     ? normalizeAmount(
       Object.prototype.hasOwnProperty.call(insuranceEntry, 'billingAmount')
@@ -3582,9 +3600,11 @@ function normalizeBillingEntryFromEntries_(entry) {
     && Object.prototype.hasOwnProperty.call(insuranceEntry.manualOverride, 'amount')
     ? insuranceEntry.manualOverride.amount
     : '';
-  normalizedEntry.manualSelfPayAmount = selfPayEntry && selfPayEntry.manualOverride
-    && Object.prototype.hasOwnProperty.call(selfPayEntry.manualOverride, 'amount')
-    ? selfPayEntry.manualOverride.amount
+  const selfPayEntryWithManual = selfPayEntries.find(item => item && item.manualOverride
+    && Object.prototype.hasOwnProperty.call(item.manualOverride, 'amount'));
+  normalizedEntry.manualSelfPayAmount = selfPayEntryWithManual
+    && Object.prototype.hasOwnProperty.call(selfPayEntryWithManual.manualOverride, 'amount')
+    ? selfPayEntryWithManual.manualOverride.amount
     : '';
   return normalizedEntry;
 }
@@ -3620,9 +3640,14 @@ function buildSelfPayAmountByPatientId_(billingJson) {
   (billingJson || []).forEach(entry => {
     const pid = billingNormalizePatientId_(entry && entry.patientId);
     if (!pid) return;
-    const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
-    if (!selfPayEntry) return;
-    amounts[pid] = resolveBillingEntryTotalAmount_(selfPayEntry);
+    const selfPayEntries = resolveBillingEntries_(entry).filter(item => (
+      normalizeBillingEntryTypeValue_(item && (item.type || item.entryType)) === 'self_pay'
+    ));
+    if (!selfPayEntries.length) return;
+    amounts[pid] = selfPayEntries.reduce(
+      (sum, item) => sum + resolveBillingEntryTotalAmount_(item),
+      0
+    );
   });
   return amounts;
 }
@@ -4559,23 +4584,31 @@ function shouldGenerateInvoicePdfForEntry_(entry, prepared) {
 
 function shouldGenerateSelfPayInvoicePdfForEntry_(entry) {
   if (!entry) return false;
-  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
-  if (!selfPayEntry) return false;
+  const selfPayEntries = resolveBillingEntries_(entry).filter(item => (
+    normalizeBillingEntryTypeValue_(item && (item.type || item.entryType)) === 'self_pay'
+  ));
+  if (!selfPayEntries.length) return false;
   const selfPayItems = buildSelfPayItemsForInvoice_(entry);
   if (selfPayItems.length) return true;
-  return resolveBillingEntryTotalAmount_(selfPayEntry) > 0;
+  return selfPayEntries.some(item => resolveBillingEntryTotalAmount_(item) > 0);
 }
 
 function buildSelfPayItemsForInvoice_(entry) {
-  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
-  if (!selfPayEntry) return [];
-  const rawItems = Array.isArray(selfPayEntry.items)
-    ? selfPayEntry.items
-    : (Array.isArray(selfPayEntry.selfPayItems) ? selfPayEntry.selfPayItems : []);
+  const selfPayEntries = resolveBillingEntries_(entry).filter(item => (
+    normalizeBillingEntryTypeValue_(item && (item.type || item.entryType)) === 'self_pay'
+  ));
+  if (!selfPayEntries.length) return [];
+  const rawItems = selfPayEntries.reduce((list, entryItem) => {
+    const items = Array.isArray(entryItem.items)
+      ? entryItem.items
+      : (Array.isArray(entryItem.selfPayItems) ? entryItem.selfPayItems : []);
+    return list.concat(items);
+  }, []);
   const items = rawItems.filter(item => item && normalizeMoneyNumber_(item.amount) !== 0);
-  const manualOverride = selfPayEntry && selfPayEntry.manualOverride
-    ? selfPayEntry.manualOverride.amount
-    : undefined;
+  const manualOverrideEntry = selfPayEntries.find(entryItem => entryItem && entryItem.manualOverride
+    && entryItem.manualOverride.amount !== '' && entryItem.manualOverride.amount !== null
+    && entryItem.manualOverride.amount !== undefined);
+  const manualOverride = manualOverrideEntry ? manualOverrideEntry.manualOverride.amount : undefined;
   if (!items.length && manualOverride != null && manualOverride !== '') {
     const manualAmount = normalizeMoneyNumber_(manualOverride);
     if (manualAmount !== 0) {
@@ -4587,13 +4620,16 @@ function buildSelfPayItemsForInvoice_(entry) {
 
 function buildSelfPayInvoiceEntryForPdf_(entry) {
   if (!entry) return null;
-  const selfPayEntry = resolveBillingEntryByType_(entry, 'self_pay');
-  if (!selfPayEntry) return null;
+  const selfPayEntries = resolveBillingEntries_(entry).filter(item => (
+    normalizeBillingEntryTypeValue_(item && (item.type || item.entryType)) === 'self_pay'
+  ));
+  if (!selfPayEntries.length) return null;
   const selfPayCount = Number(entry.selfPayCount) || 0;
   const selfPayItems = buildSelfPayItemsForInvoice_(entry);
-  const manualOverride = selfPayEntry && selfPayEntry.manualOverride
-    ? selfPayEntry.manualOverride.amount
-    : undefined;
+  const manualOverrideEntry = selfPayEntries.find(entryItem => entryItem && entryItem.manualOverride
+    && entryItem.manualOverride.amount !== '' && entryItem.manualOverride.amount !== null
+    && entryItem.manualOverride.amount !== undefined);
+  const manualOverride = manualOverrideEntry ? manualOverrideEntry.manualOverride.amount : undefined;
   return Object.assign({}, entry, {
     unitPrice: 0,
     visitCount: selfPayCount,

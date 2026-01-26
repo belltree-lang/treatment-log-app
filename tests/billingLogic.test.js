@@ -170,6 +170,45 @@ function testBillingJsonIncludesInsuranceMeta() {
   assert.strictEqual(entry.unitPrice, 5500, 'resolveInvoiceUnitPrice_へ渡した値が反映される');
 }
 
+function testVisitBasedSelfPaySplitsItemOnlyEntries() {
+  const source = {
+    billingMonth: '202512',
+    patients: {
+      '010': {
+        nameKanji: '自費確認',
+        burdenRate: 3,
+        insuranceType: '鍼灸',
+        unitPrice: 5000,
+        onlineConsent: 1
+      }
+    },
+    treatmentVisitCounts: { '010': { self30: 2 } },
+    bankStatuses: {},
+    bankFlagsByPatient: { '010': { ag: true } }
+  };
+
+  const billingJson = generateBillingJsonFromSource(source);
+  const entry = billingJson[0];
+  const selfPayEntries = entry.entries.filter(item => item && item.type === 'self_pay');
+  const visitBasedEntry = selfPayEntries.find(item => Object.prototype.hasOwnProperty.call(item, 'visitCount'));
+  const itemOnlyEntry = selfPayEntries.find(item => !Object.prototype.hasOwnProperty.call(item, 'visitCount'));
+
+  assert.strictEqual(selfPayEntries.length, 2, '自費は回数ベースと項目のみで分割される');
+  assert.ok(visitBasedEntry, '回数ベースの自費エントリが含まれる');
+  assert.strictEqual(visitBasedEntry.visitCount, 2, '自費回数がエントリに保持される');
+  assert.strictEqual(visitBasedEntry.unitPrice, 5000, '自費単価がエントリに保持される');
+  assert.strictEqual(visitBasedEntry.total, 10000, '自費合計は回数×単価で計上される');
+  assert.ok(itemOnlyEntry, '項目のみの自費エントリが含まれる');
+  assert.ok(
+    itemOnlyEntry.items.some(item => item && item.type === 'online_fee'),
+    'オンライン同意の項目は回数なし自費に入る'
+  );
+  assert.ok(
+    visitBasedEntry.items.every(item => item && item.type !== 'online_fee'),
+    '回数ベース自費にオンライン同意は混在しない'
+  );
+}
+
 function testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice() {
   const result = calculateBillingAmounts_({
     visitCount: '４',
@@ -258,6 +297,7 @@ function run() {
   testMedicalSubsidyExcludesBillingEntries();
   testCustomTransportUnitPriceIsUsed();
   testMedicalAssistanceNormalizationIsStrict();
+  testVisitBasedSelfPaySplitsItemOnlyEntries();
   testFullWidthNumbersAreParsedAndAppliedForSelfPaidManualPrice();
   testSelfPaidDefaultsToZeroWithoutManualUnitPrice();
   testSelfPaidManualPriceIsNotRounded();

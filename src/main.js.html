@@ -1230,7 +1230,9 @@ function filterEntriesByType(entries, entryType) {
 
 function hasVisitBasedSelfPayEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
-  return Object.prototype.hasOwnProperty.call(entry, 'visitCount');
+  return Object.prototype.hasOwnProperty.call(entry, 'visitCount')
+    && entry.visitCount !== null
+    && entry.visitCount !== undefined;
 }
 
 function resolveSelfPayVisitEntry(entries) {
@@ -2631,15 +2633,16 @@ function renderBillingResult() {
   /**
    * Decide if the online consent section should be shown for a patient row.
    *
-   * Condition: the section appears when the online consent flag is set.
-   * Data fields used: onlineConsent flag.
+   * Condition: the section appears when an online_fee item exists in self-pay entries.
+   * Data fields used: entries[].entryType === 'self_pay' items[].type === 'online_fee'.
    *
    * Examples:
-   * - onlineConsent = 1 => shows online consent section.
-   * - onlineConsent = 0 => hides online consent section.
+   * - online_fee item exists => shows online consent section.
+   * - no online_fee item => hides online consent section.
    */
-  function hasOnlineConsentSection(row) {
-    return normalizeOnlineConsentFlag(row && row.onlineConsent) === 1;
+  function hasOnlineConsentSection(entries) {
+    const items = collectSelfPayItems(entries);
+    return items.some(item => item && item.type === 'online_fee');
   }
 
   /**
@@ -2694,7 +2697,7 @@ function renderBillingResult() {
         }
       }
 
-      if (hasOnlineConsentSection(safeItem)) {
+      if (hasOnlineConsentSection(entries)) {
         if (!onlineConsentRowsByPatient.has(patientKey)) {
           onlineConsentRowsByPatient.set(patientKey, renderOnlineConsentRow(safeItem));
         }

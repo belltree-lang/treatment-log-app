@@ -188,7 +188,7 @@ function normalizeBurdenRateInt_(burdenRate) {
   return 0;
 }
 
-function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice, medicalAssistance) {
+function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice, medicalAssistance, patientUnitPrice, options) {
   const type = String(insuranceType || '').trim();
   if (type === 'マッサージ') return 0;
   const manualUnitPrice = normalizeMoneyNumber_(customUnitPrice);
@@ -201,21 +201,26 @@ function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice, me
   const isLifeProtection = ['生保', '生活保護', '生活扶助'].indexOf(type) >= 0;
   if (isLifeProtection) return 0;
 
+  const ignoreSelfPayInsuranceType = options && options.ignoreSelfPayInsuranceType;
   const normalizedBurdenRate = normalizeBurdenRateInt_(burdenRate);
-  const isSelfPaid = type === '自費' || normalizedBurdenRate === '自費';
+  const isSelfPaid = (type === '自費' && !ignoreSelfPayInsuranceType) || normalizedBurdenRate === '自費';
   if (isSelfPaid) return 0;
 
-  const patientUnitPrice = arguments.length >= 5 ? normalizeMoneyNumber_(arguments[4]) : 0;
-  const hasPatientUnitPrice = Number.isFinite(patientUnitPrice) && patientUnitPrice !== 0;
-  if (hasPatientUnitPrice) return patientUnitPrice;
+  const normalizedPatientUnitPrice = normalizeMoneyNumber_(patientUnitPrice);
+  const hasPatientUnitPrice = Number.isFinite(normalizedPatientUnitPrice) && normalizedPatientUnitPrice !== 0;
+  if (hasPatientUnitPrice) return normalizedPatientUnitPrice;
 
   return BILLING_UNIT_PRICE;
 }
 
 function calculateBillingAmounts_(params) {
-  const visits = normalizeVisitCount_(params.visitCount);
+  const visitCountSource = params && params.visitCount;
+  const visits = normalizeVisitCount_(visitCountSource);
   const insuranceType = String(params.insuranceType || '').trim();
   const normalizedBurdenRate = normalizeBurdenRateInt_(params.burdenRate);
+  const hasMixedVisitCount = visitCountSource && typeof visitCountSource === 'object'
+    && Number(visitCountSource.mixed) > 0;
+  const ignoreSelfPayInsuranceType = !!(params && params.ignoreSelfPayInsuranceType) || hasMixedVisitCount;
   const medicalAssistance = normalizeMedicalAssistanceFlag_(params.medicalAssistance);
   const manualUnitPrice = normalizeMoneyNumber_(params.manualUnitPrice != null ? params.manualUnitPrice : params.unitPrice);
   const patientUnitPrice = normalizeMoneyNumber_(params.unitPrice);
@@ -230,9 +235,11 @@ function calculateBillingAmounts_(params) {
     normalizedBurdenRate,
     manualUnitPrice,
     medicalAssistance,
-    patientUnitPrice
+    patientUnitPrice,
+    { ignoreSelfPayInsuranceType }
   );
-  const isSelfPaid = insuranceType === '自費' || normalizedBurdenRate === '自費';
+  const isSelfPaid = !ignoreSelfPayInsuranceType
+    && (insuranceType === '自費' || normalizedBurdenRate === '自費');
   const hasChargeableUnitPrice = Number.isFinite(unitPrice) && unitPrice !== 0;
   const treatmentAmount = visits > 0 && hasChargeableUnitPrice ? unitPrice * visits : 0;
   const transportAmount = visits > 0 && hasChargeableUnitPrice ? BILLING_TRANSPORT_UNIT_PRICE * visits : 0;
@@ -240,7 +247,10 @@ function calculateBillingAmounts_(params) {
     && Number.isFinite(manualTransportAmount))
     ? manualTransportAmount
     : transportAmount;
-  const burdenMultiplier = normalizeBurdenMultiplier_(normalizedBurdenRate, insuranceType);
+  const burdenMultiplier = normalizeBurdenMultiplier_(
+    normalizedBurdenRate,
+    ignoreSelfPayInsuranceType ? '' : insuranceType
+  );
   const carryOverAmount = normalizeMoneyNumber_(params.carryOverAmount);
   const selfPayItems = normalizeSelfPayItems_(params);
   const selfPayTotal = selfPayItems.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
@@ -358,6 +368,8 @@ function generateBillingJsonFromSource(sourceData) {
     const rawVisitCount = treatmentVisitCounts[pid];
     const visitCount = normalizeVisitCount_(rawVisitCount);
     const selfPayVisitCount = normalizeSelfPayCount_(rawVisitCount);
+    const hasMixedVisitCount = rawVisitCount && typeof rawVisitCount === 'object'
+      && Number(rawVisitCount.mixed) > 0;
     if (!visitCount && zeroVisitDebug.length < 20) {
       zeroVisitDebug.push({
         patientId: pid,
@@ -426,6 +438,7 @@ function generateBillingJsonFromSource(sourceData) {
       visitCount,
       insuranceType: patient.insuranceType,
       burdenRate: normalizedBurdenRate,
+      ignoreSelfPayInsuranceType: hasMixedVisitCount,
       manualUnitPrice,
       manualTransportAmount: isMedicalSubsidy && hasOnlineFee ? '' : patient.manualTransportAmount,
       manualSelfPayAmount: isMedicalSubsidy && hasOnlineFee

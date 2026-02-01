@@ -254,6 +254,24 @@ const BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP = typeof TREATMENT_CATEGORY_AT
     new: 'new'
   };
 
+const BILLING_SELF_PAY_VISIT_UNITS_BY_CATEGORY = {
+  self30: 1,
+  self60: 2,
+  mixed: 1
+};
+
+function resolveSelfPayVisitUnits_(categoryKey, categoryLabel) {
+  if (categoryKey && Object.prototype.hasOwnProperty.call(BILLING_SELF_PAY_VISIT_UNITS_BY_CATEGORY, categoryKey)) {
+    return BILLING_SELF_PAY_VISIT_UNITS_BY_CATEGORY[categoryKey];
+  }
+  const normalized = String(categoryLabel || '').normalize('NFKC').replace(/\s+/g, '');
+  if (!normalized || normalized.indexOf('自費') === -1) return 0;
+  const hasInsurance = normalized.indexOf('保険') !== -1;
+  if (normalized.indexOf('30分') !== -1) return 1;
+  if (normalized.indexOf('60分') !== -1) return hasInsurance ? 1 : 2;
+  return 0;
+}
+
 function normalizeTreatmentCategoryKey_(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -926,12 +944,17 @@ function buildVisitCountMap_(billingMonth) {
     }
     debug.counted += 1;
     filteredCount += 1;
-    const current = counts[pid] || { visitCount: 0, self30: 0, self60: 0, mixed: 0 };
+    const current = counts[pid] || { visitCount: 0, self30: 0, self60: 0, mixed: 0, selfPayVisitCount: 0 };
+    if (current.selfPayVisitCount == null) current.selfPayVisitCount = 0;
     const categoryKey = log && log.treatmentCategoryKey ? String(log.treatmentCategoryKey).trim() : '';
     const attendanceGroup = categoryKey ? BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP[categoryKey] : '';
     const shouldCountInsurance = !categoryKey || attendanceGroup === 'insurance' || attendanceGroup === 'mixed';
     if (shouldCountInsurance) {
       current.visitCount += 1;
+    }
+    const selfPayUnits = resolveSelfPayVisitUnits_(categoryKey, log && log.treatmentCategoryLabel);
+    if (selfPayUnits) {
+      current.selfPayVisitCount += selfPayUnits;
     }
     if (attendanceGroup === 'self') {
       if (categoryKey === 'self60') current.self60 += 1;
@@ -1652,7 +1675,8 @@ function getBillingSourceData(billingMonth) {
           visitCount: adjustedVisitCount,
           self30: 0,
           self60: 0,
-          mixed: 0
+          mixed: 0,
+          selfPayVisitCount: 0
         };
       }
     }

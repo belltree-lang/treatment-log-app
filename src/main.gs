@@ -3466,10 +3466,10 @@ function normalizeBillingEntryFromEntries_(entry) {
           ? normalizeAmount(manualSelfPayInput)
           : selfPayItemsTotal
       };
-      // Only include visitCount when legacy selfPayCount is explicitly present.
-      if (Object.prototype.hasOwnProperty.call(source, 'selfPayCount')
-        && source.selfPayCount !== '' && source.selfPayCount != null) {
-        selfPayEntry.visitCount = normalizeVisits(source.selfPayCount);
+      // Only include visitCount when visit-based self-pay is explicitly present.
+      if (Object.prototype.hasOwnProperty.call(source, 'selfPayVisitCount')
+        && source.selfPayVisitCount !== '' && source.selfPayVisitCount != null) {
+        selfPayEntry.visitCount = normalizeVisits(source.selfPayVisitCount);
       }
 
       if (hasManualSelfPayAmount) {

@@ -1237,6 +1237,8 @@ function hasVisitBasedSelfPayEntry(entry) {
 
 function resolveSelfPayVisitEntry(entries) {
   const selfPayEntries = filterEntriesByType(entries, 'self_pay');
+  // Visit-based self-pay entries (derived from treatment time categories) drive the self-pay table.
+  // Item-only self-pay entries (e.g., online_fee) are intentionally excluded here.
   return selfPayEntries.find(hasVisitBasedSelfPayEntry) || null;
 }
 

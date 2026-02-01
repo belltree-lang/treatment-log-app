@@ -133,6 +133,10 @@ function normalizeVisitCount_(value) {
 
 function normalizeSelfPayCount_(value) {
   if (!value || typeof value !== 'object') return 0;
+  if (Object.prototype.hasOwnProperty.call(value, 'selfPayVisitCount')) {
+    const explicitCount = Number(value.selfPayVisitCount);
+    return Number.isFinite(explicitCount) && explicitCount > 0 ? explicitCount : 0;
+  }
   const self30 = Number(value.self30) || 0;
   const self60 = Number(value.self60) || 0;
   const mixed = Number(value.mixed) || 0;
@@ -396,6 +400,7 @@ function generateBillingJsonFromSource(sourceData) {
     const selfPayChargeAmount = selfPayVisitCount > 0 && resolvedSelfPayUnitPrice > 0
       ? resolvedSelfPayUnitPrice * selfPayVisitCount
       : 0;
+    // Item-only self-pay entries (e.g., online_fee) should never create visit counts.
     const itemOnlySelfPayItems = (() => {
       const items = [];
       if (!isMedicalSubsidy || !hasOnlineFee) {
@@ -412,6 +417,7 @@ function generateBillingJsonFromSource(sourceData) {
       }
       return items;
     })();
+    // Visit-based self-pay entries are derived from treatment time categories and carry visitCount.
     const visitBasedSelfPayItems = selfPayChargeAmount
       ? [{ type: '自費', amount: selfPayChargeAmount }]
       : [];

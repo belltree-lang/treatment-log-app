@@ -937,21 +937,25 @@ function buildVisitCountMap_(billingMonth) {
     const categoryKey = log && log.treatmentCategoryKey ? String(log.treatmentCategoryKey).trim() : '';
     const attendanceGroup = categoryKey ? BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP[categoryKey] : '';
     const categoryLabel = log && log.treatmentCategoryLabel ? String(log.treatmentCategoryLabel) : '';
-    const hasMixedLabel = categoryLabel.includes('保険') && categoryLabel.includes('自費');
-    const shouldCountInsurance = hasMixedLabel || !categoryKey || attendanceGroup === 'insurance' || attendanceGroup === 'mixed';
+    const isMixedVisit = categoryLabel.includes('保険') && categoryLabel.includes('自費');
+    const shouldCountInsurance = isMixedVisit || !categoryKey || attendanceGroup === 'insurance' || attendanceGroup === 'mixed';
     if (shouldCountInsurance) {
       current.visitCount += 1;
     }
-    const selfPayUnits = resolveSelfPayVisitUnits_(categoryKey, log && log.treatmentCategoryLabel);
-    if (selfPayUnits) {
-      current.selfPayVisitCount += selfPayUnits;
+    if (isMixedVisit) {
+      current.selfPayVisitCount += 1;
+      current.mixed += 1;
+    } else {
+      const selfPayUnits = resolveSelfPayVisitUnits_(categoryKey, log && log.treatmentCategoryLabel);
+      if (selfPayUnits) {
+        current.selfPayVisitCount += selfPayUnits;
+      }
     }
     if (attendanceGroup === 'self') {
       if (categoryKey === 'self60') current.self60 += 1;
       else current.self30 += 1;
     }
-    if (attendanceGroup === 'mixed') {
-      current.mixed += 1;
+    if (!isMixedVisit && attendanceGroup === 'mixed') {
       current.self30 += 1;
     }
     counts[pid] = current;

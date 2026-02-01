@@ -470,21 +470,19 @@ function generateBillingJsonFromSource(sourceData) {
     ];
     const hasVisitBasedSelfPay = selfPayVisitCount > 0;
     const hasItemOnlySelfPay = itemOnlySelfPayItems.length > 0;
-    const visitBasedEntryTotal = hasManualSelfPayAmount ? manualSelfPayAmount : selfPayChargeAmount;
+    const visitBasedEntryTotal = resolvedSelfPayUnitPrice * selfPayVisitCount;
     const itemOnlyEntryTotal = hasManualSelfPayAmount
       ? (hasVisitBasedSelfPay ? 0 : manualSelfPayAmount)
       : itemOnlySelfPayTotal;
-    if (hasVisitBasedSelfPay) {
-      entries.push(Object.assign({}, {
-        type: 'self_pay',
-        entryType: 'self_pay',
-        visitCount: selfPayVisitCount,
-        unitPrice: resolvedSelfPayUnitPrice,
-        items: visitBasedSelfPayItems,
-        selfPayItems: visitBasedSelfPayItems,
-        total: visitBasedEntryTotal
-      }, hasManualSelfPayAmount ? { manualOverride: { amount: manualSelfPayAmount } } : {}));
-    }
+    entries.push(Object.assign({}, {
+      type: 'self_pay',
+      entryType: 'self_pay',
+      visitCount: selfPayVisitCount,
+      unitPrice: resolvedSelfPayUnitPrice,
+      items: visitBasedSelfPayItems,
+      selfPayItems: visitBasedSelfPayItems,
+      total: visitBasedEntryTotal
+    }, (hasManualSelfPayAmount && hasVisitBasedSelfPay) ? { manualOverride: { amount: manualSelfPayAmount } } : {}));
     if (hasItemOnlySelfPay || (!hasVisitBasedSelfPay && (hasManualSelfPayAmount || selfPayEntryTotal))) {
       entries.push(Object.assign({}, {
         type: 'self_pay',

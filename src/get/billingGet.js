@@ -254,22 +254,10 @@ const BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP = typeof TREATMENT_CATEGORY_AT
     new: 'new'
   };
 
-const BILLING_SELF_PAY_VISIT_UNITS_BY_CATEGORY = {
-  self30: 1,
-  self60: 2,
-  mixed: 1
-};
-
 function resolveSelfPayVisitUnits_(categoryKey, categoryLabel) {
-  if (categoryKey && Object.prototype.hasOwnProperty.call(BILLING_SELF_PAY_VISIT_UNITS_BY_CATEGORY, categoryKey)) {
-    return BILLING_SELF_PAY_VISIT_UNITS_BY_CATEGORY[categoryKey];
-  }
   const normalized = String(categoryLabel || '').normalize('NFKC').replace(/\s+/g, '');
   if (!normalized || normalized.indexOf('自費') === -1) return 0;
-  const hasInsurance = normalized.indexOf('保険') !== -1;
-  if (normalized.indexOf('30分') !== -1) return 1;
-  if (normalized.indexOf('60分') !== -1) return hasInsurance ? 1 : 2;
-  return 0;
+  return 1;
 }
 
 function normalizeTreatmentCategoryKey_(value) {

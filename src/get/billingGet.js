@@ -936,7 +936,9 @@ function buildVisitCountMap_(billingMonth) {
     if (current.selfPayVisitCount == null) current.selfPayVisitCount = 0;
     const categoryKey = log && log.treatmentCategoryKey ? String(log.treatmentCategoryKey).trim() : '';
     const attendanceGroup = categoryKey ? BILLING_TREATMENT_CATEGORY_ATTENDANCE_GROUP[categoryKey] : '';
-    const shouldCountInsurance = !categoryKey || attendanceGroup === 'insurance' || attendanceGroup === 'mixed';
+    const categoryLabel = log && log.treatmentCategoryLabel ? String(log.treatmentCategoryLabel) : '';
+    const hasMixedLabel = categoryLabel.includes('保険') && categoryLabel.includes('自費');
+    const shouldCountInsurance = hasMixedLabel || !categoryKey || attendanceGroup === 'insurance' || attendanceGroup === 'mixed';
     if (shouldCountInsurance) {
       current.visitCount += 1;
     }

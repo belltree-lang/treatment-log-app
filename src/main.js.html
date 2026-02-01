@@ -1230,9 +1230,11 @@ function filterEntriesByType(entries, entryType) {
 
 function hasVisitBasedSelfPayEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
-  return Object.prototype.hasOwnProperty.call(entry, 'visitCount')
-    && entry.visitCount !== null
-    && entry.visitCount !== undefined;
+  const entryType = normalizeBillingEntryType(entry && (entry.type || entry.entryType));
+  const visitCount = Number(entry.visitCount);
+  return entryType === 'self_pay'
+    && Number.isFinite(visitCount)
+    && visitCount > 0;
 }
 
 function resolveSelfPayVisitEntry(entries) {

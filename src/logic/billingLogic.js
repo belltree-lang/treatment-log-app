@@ -541,7 +541,6 @@ function generateBillingJsonFromSource(sourceData) {
       visitCount,
       selfPayVisitCount,
       selfPayCount: selfPayVisitCount,
-      manualUnitPrice,
       unitPrice: amountCalc.unitPrice,
       treatmentAmount: amountCalc.treatmentAmount,
       manualTransportAmount: amountCalc.manualTransportAmount,

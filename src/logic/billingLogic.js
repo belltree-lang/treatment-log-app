@@ -188,12 +188,9 @@ function normalizeBurdenRateInt_(burdenRate) {
   return 0;
 }
 
-function resolveInvoiceUnitPrice_(insuranceType, burdenRate, customUnitPrice, medicalAssistance, patientUnitPrice, options) {
+function resolveInvoiceUnitPrice_(insuranceType, burdenRate, medicalAssistance, patientUnitPrice, options) {
   const type = String(insuranceType || '').trim();
   if (type === 'マッサージ') return 0;
-  const manualUnitPrice = normalizeMoneyNumber_(customUnitPrice);
-  const hasManualUnitPrice = Number.isFinite(manualUnitPrice) && manualUnitPrice !== 0;
-  if (hasManualUnitPrice) return manualUnitPrice;
 
   const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag_(medicalAssistance);
   if (normalizedMedicalAssistance === 1) return 0;
@@ -222,8 +219,8 @@ function calculateBillingAmounts_(params) {
     && Number(visitCountSource.mixed) > 0;
   const ignoreSelfPayInsuranceType = !!(params && params.ignoreSelfPayInsuranceType) || hasMixedVisitCount;
   const medicalAssistance = normalizeMedicalAssistanceFlag_(params.medicalAssistance);
-  const manualUnitPrice = normalizeMoneyNumber_(params.manualUnitPrice != null ? params.manualUnitPrice : params.unitPrice);
   const patientUnitPrice = normalizeMoneyNumber_(params.unitPrice);
+  const manualUnitPrice = patientUnitPrice;
   const manualTransportInput = Object.prototype.hasOwnProperty.call(params, 'manualTransportAmount')
     ? params.manualTransportAmount
     : params.transportAmount;
@@ -233,7 +230,6 @@ function calculateBillingAmounts_(params) {
   const unitPrice = resolveInvoiceUnitPrice_(
     insuranceType,
     normalizedBurdenRate,
-    manualUnitPrice,
     medicalAssistance,
     patientUnitPrice,
     { ignoreSelfPayInsuranceType }
@@ -395,22 +391,16 @@ function generateBillingJsonFromSource(sourceData) {
     const carryOverFromHistory = isMedicalSubsidy && hasOnlineFee
       ? 0
       : normalizeMoneyNumber_(carryOverByPatient[pid]);
-    const manualUnitPriceEntryType = normalizeBillingEntryType_(patient.manualUnitPriceEntryType);
     const manualBillingAmountEntryType = normalizeBillingEntryType_(patient.manualBillingAmountEntryType);
     const manualSelfPayAmountEntryType = normalizeBillingEntryType_(patient.manualSelfPayAmountEntryType);
-    const manualUnitPriceValue = normalizeMoneyNumber_(patient.manualUnitPrice != null ? patient.manualUnitPrice : patient.unitPrice);
-    const manualUnitPriceAppliesToInsurance = shouldApplyOverrideForEntryType_(manualUnitPriceEntryType, 'insurance');
-    const manualUnitPrice = manualUnitPriceAppliesToInsurance
-      ? manualUnitPriceValue
-      : normalizeMoneyNumber_(patient.unitPrice);
     const patientUnitPrice = normalizeMoneyNumber_(patient.unitPrice);
     const normalizedBurdenRate = normalizeBurdenRateInt_(patient.burdenRate);
     const normalizedMedicalAssistance = normalizeMedicalAssistanceFlag_(patient.medicalAssistance);
-    const hasManualUnitPriceInput = patient.manualUnitPrice !== '' && patient.manualUnitPrice !== null
-      && patient.manualUnitPrice !== undefined
-      && shouldApplyOverrideForEntryType_(manualUnitPriceEntryType, 'self_pay');
-    const selfPayUnitPriceSource = hasManualUnitPriceInput ? patient.manualUnitPrice : patient.unitPrice;
-    const resolvedSelfPayUnitPrice = normalizeMoneyNumber_(selfPayUnitPriceSource);
+    const hasSelfPayUnitPriceOverride = patient.selfPayUnitPrice !== '' && patient.selfPayUnitPrice !== null
+      && patient.selfPayUnitPrice !== undefined;
+    const resolvedSelfPayUnitPrice = hasSelfPayUnitPriceOverride
+      ? normalizeMoneyNumber_(patient.selfPayUnitPrice)
+      : patientUnitPrice;
     const selfPayChargeAmount = selfPayVisitCount > 0 && resolvedSelfPayUnitPrice > 0
       ? resolvedSelfPayUnitPrice * selfPayVisitCount
       : 0;
@@ -441,7 +431,6 @@ function generateBillingJsonFromSource(sourceData) {
       insuranceType: patient.insuranceType,
       burdenRate: normalizedBurdenRate,
       ignoreSelfPayInsuranceType: hasMixedVisitCount,
-      manualUnitPrice,
       manualTransportAmount: isMedicalSubsidy && hasOnlineFee ? '' : patient.manualTransportAmount,
       manualSelfPayAmount: isMedicalSubsidy && hasOnlineFee
         ? 0

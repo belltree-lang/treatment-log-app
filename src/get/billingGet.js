@@ -1340,14 +1340,16 @@ function getBillingPatientRecords() {
       ? ''
       : normalizeMoneyValue_(transportRaw);
 
+    const raw = buildPatientRawObject_(headers, row);
     return {
       patientId: pid,
-      raw: buildPatientRawObject_(headers, row),
+      raw,
       nameKanji: colName ? String(row[colName - 1] || '').trim() : '',
       nameKana: colKana ? String(row[colKana - 1] || '').trim() : '',
       insuranceType,
       burdenRate: normalizedBurden,
       unitPrice: colUnitPrice ? normalizeMoneyValue_(unitPriceRaw) : 0,
+      selfPayUnitPrice: raw.selfPayUnitPrice,
       manualUnitPrice,
       manualTransportAmount,
       address: colAddress ? String(row[colAddress - 1] || '').trim() : '',

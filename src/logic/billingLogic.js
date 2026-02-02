@@ -368,8 +368,10 @@ function generateBillingJsonFromSource(sourceData) {
     const rawVisitCount = treatmentVisitCounts[pid];
     const visitCount = normalizeVisitCount_(rawVisitCount);
     const selfPayVisitCount = normalizeSelfPayCount_(rawVisitCount);
-    const hasMixedVisitCount = rawVisitCount && typeof rawVisitCount === 'object'
-      && Number(rawVisitCount.mixed) > 0;
+    const mixedCount = rawVisitCount && typeof rawVisitCount === 'object'
+      ? Number(rawVisitCount.mixed)
+      : 0;
+    const hasMixedVisitCount = mixedCount > 0;
     if (!visitCount && zeroVisitDebug.length < 20) {
       zeroVisitDebug.push({
         patientId: pid,
@@ -474,7 +476,7 @@ function generateBillingJsonFromSource(sourceData) {
         type: 'insurance',
         entryType: 'insurance',
         unitPrice: amountCalc.unitPrice,
-        visitCount: amountCalc.visits,
+        visitCount,
         treatmentAmount: amountCalc.treatmentAmount,
         transportAmount: amountCalc.transportAmount,
         billingAmount: amountCalc.billingAmount,
@@ -547,7 +549,7 @@ function generateBillingJsonFromSource(sourceData) {
       insuranceType: patient.insuranceType || '',
       burdenRate: normalizedBurdenRate,
       medicalAssistance: normalizedMedicalAssistance,
-      visitCount: amountCalc.visits,
+      visitCount,
       selfPayVisitCount,
       selfPayCount: selfPayVisitCount,
       manualUnitPrice,

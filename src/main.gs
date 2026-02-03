@@ -4678,6 +4678,7 @@ function buildInsuranceInvoiceEntryForPdf_(entry) {
     ? insuranceEntry.manualOverride.amount
     : undefined;
   const insuranceTotal = resolveBillingEntryTotalAmount_(insuranceEntry);
+  const selfPayItems = buildSelfPayItemsForInvoice_(entry);
   return Object.assign({}, entry, {
     visitCount: insuranceEntry.visitCount,
     unitPrice: insuranceEntry.unitPrice,
@@ -4688,8 +4689,8 @@ function buildInsuranceInvoiceEntryForPdf_(entry) {
     grandTotal: insuranceTotal,
     manualBillingAmount: manualOverride !== undefined ? manualOverride : '',
     manualSelfPayAmount: '',
-    selfPayItems: [],
-    selfPayCount: 0
+    selfPayItems,
+    selfPayCount: Number(entry && entry.selfPayCount) || 0
   });
 }
 
@@ -4827,13 +4828,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const receiptMonths = resolveReceiptTargetMonths(entry && entry.patientId, billingMonth, cache);
   const currentFlags = getBankWithdrawalStatusByPatient_(billingMonth, entry && entry.patientId, cache);
   const isAggregateMonth = !!(currentFlags && currentFlags.af);
-  const shouldShowReceipt = !!(receiptDisplay && receiptDisplay.visible) && !isAggregateMonth;
-  if (amount.forceHideReceipt || isAggregateMonth) {
-    amount.forceHideReceipt = true;
-  }
-  if (previousReceipt) {
-    previousReceipt.visible = shouldShowReceipt;
-  }
+  let shouldShowReceipt = !!(receiptDisplay && receiptDisplay.visible);
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   const displayFlags = resolveInvoiceDisplayMode_(entry, billingMonth, {
     showReceipt: shouldShowReceipt,
@@ -4841,6 +4836,19 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceiptAmount: resolvedPreviousReceiptAmount,
     carryOverAmount
   });
+  if (displayFlags.displayMode === 'aggregate' && isAggregateMonth) {
+    shouldShowReceipt = false;
+    amount.forceHideReceipt = true;
+  }
+  if (previousReceipt) {
+    previousReceipt.visible = shouldShowReceipt;
+  }
+  const entrySelfPayItems = Array.isArray(entry && entry.selfPayItems)
+    ? entry.selfPayItems
+    : [];
+  const previousReceiptMonth = Array.isArray(receiptDisplay && receiptDisplay.receiptMonths) && receiptDisplay.receiptMonths.length
+    ? receiptDisplay.receiptMonths[receiptDisplay.receiptMonths.length - 1]
+    : '';
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,
@@ -4869,6 +4877,8 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     receiptRemark: receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '',
     receiptMonthBreakdown: receiptMonthBreakdown.length ? receiptMonthBreakdown : undefined,
     previousReceiptAmount: resolvedPreviousReceiptAmount,
+    previousReceiptMonth,
+    selfPayItems: displayFlags.displayMode === 'standard' ? entrySelfPayItems : [],
     showReceipt: shouldShowReceipt,
     previousReceipt,
     displayMode: displayFlags.displayMode,

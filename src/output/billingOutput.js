@@ -281,9 +281,8 @@ function resolveInvoiceDisplayMode_(entry, billingMonth, amount) {
   const currentChargeTotal = treatmentAmount + transportAmount + selfPayItemsTotal;
   const isOnlyPastUnpaidSettlement = currentChargeTotal === 0 && carryOverAmount !== 0;
   const hasPrevReceiptAmount = entry ? hasPreviousReceiptAmount_(entry) : false;
-  const prevReceiptSettled = entry ? isPreviousReceiptSettled_(entry) : false;
   const shouldShowReceipt = !!(amount && amount.showReceipt);
-  const requiresPreviousReceipt = (hasPrevReceiptAmount && prevReceiptSettled) || shouldShowReceipt;
+  const requiresPreviousReceipt = hasPrevReceiptAmount || shouldShowReceipt;
   const needsMonthlyExplanation = requiresMonthlyExplanation_(entry);
 
   const canAggregateDisplay = !hasInsuranceTreatment

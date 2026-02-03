@@ -2260,10 +2260,12 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
   try {
     validatePreparedBillingPhase4A_(payload);
   } catch (err) {
-    try {
-      billingLogger_.log('[billing] Phase4-A validation failed to run: ' + err);
-    } catch (logErr) {
-      // ignore logging errors in non-GAS environments
+    if (isBillingDebugEnabled_()) {
+      try {
+        billingLogger_.log('[billing] Phase4-A validation failed to run: ' + err);
+      } catch (logErr) {
+        // ignore logging errors in non-GAS environments
+      }
     }
   }
 
@@ -2271,6 +2273,7 @@ function validatePreparedBillingPayload_(payload, expectedMonthKey) {
 }
 
 function logPreparedBillingPhase4AMismatch_(patientId, billingMonth, field, expected, actual) {
+  if (!isBillingDebugEnabled_()) return;
   try {
     billingLogger_.log('[billing] Phase4-A mismatch ' + JSON.stringify({
       patientId: patientId || '',

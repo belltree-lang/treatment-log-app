@@ -4738,7 +4738,7 @@ function buildStandardInvoiceAmountDataForPdf_(entry, billingMonth) {
     : [];
   selfPayItems.forEach(item => {
     if (!item) return;
-    rows.push({ label: item.type || '', detail: '', amount: item.amount });
+    rows.push({ label: resolveInvoiceItemLabel_(item), detail: '', amount: item.amount });
   });
 
   return {
@@ -4768,6 +4768,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const baseAmount = isAggregateInvoice
     ? buildAggregateInvoiceAmountDataForPdf_(normalizedAggregateMonths, billingMonth, entry && entry.patientId, cache)
     : buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
+  const displayAmount = buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
   const aggregateMonthTotals = Array.isArray(baseAmount.aggregateMonthTotals)
     ? baseAmount.aggregateMonthTotals
     : [];
@@ -4834,6 +4835,12 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceipt.visible = shouldShowReceipt;
   }
   const carryOverAmount = normalizeBillingCarryOver_(entry);
+  const displayFlags = resolveInvoiceDisplayMode_(entry, billingMonth, {
+    showReceipt: shouldShowReceipt,
+    previousReceipt,
+    previousReceiptAmount: resolvedPreviousReceiptAmount,
+    carryOverAmount
+  });
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,
@@ -4864,6 +4871,11 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceiptAmount: resolvedPreviousReceiptAmount,
     showReceipt: shouldShowReceipt,
     previousReceipt,
+    displayMode: displayFlags.displayMode,
+    showOnlineConsentNote: displayFlags.showOnlineConsentNote,
+    showPreviousReceipt: displayFlags.showPreviousReceipt,
+    displayRows: Array.isArray(displayAmount && displayAmount.rows) ? displayAmount.rows : [],
+    carryOverAmount,
     watermark
   });
 }

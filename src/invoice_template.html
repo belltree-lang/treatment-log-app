@@ -57,15 +57,16 @@
   <? } ?>
   <div class="wrapper">
     <header class="header">
-      <? var isAggregateInvoice = data.isAggregateInvoice; ?>
+      <? var displayMode = data.displayMode || (data.isAggregateInvoice ? 'aggregate' : 'standard'); ?>
+      <? var isAggregateDisplay = displayMode === 'aggregate'; ?>
       <? var chargeMonthLabel = (amount && amount.chargeMonthLabel) || normalizeBillingMonthLabel_(data.billingMonth); ?>
       <? var chargePeriodLabel = buildInvoiceChargePeriodLabel_(data); ?>
       <div>
         <div class="brand">べるつりー訪問鍼灸マッサージ</div>
-        <div class="note"><?= isAggregateInvoice ? '合算／未回収考慮モード' : '月次請求書' ?></div>
+        <div class="note"><?= isAggregateDisplay ? '合算／未回収考慮モード' : '月次請求書' ?></div>
       </div>
       <div class="meta">
-        <div><?= isAggregateInvoice ? '請求対象: ' : '請求月: ' ?><?= chargeMonthLabel ?></div>
+        <div><?= isAggregateDisplay ? '請求対象: ' : '請求月: ' ?><?= chargeMonthLabel ?></div>
         <div>発行日: <?= Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Tokyo', 'yyyy年MM月dd日') ?></div>
       </div>
     </header>
@@ -83,12 +84,12 @@
   </section>
 
   <section class="card">
-    <h3 class="section-title">ご請求内容（<?= isAggregateInvoice ? '未回収合算' : '当月' ?>）</h3>
+    <h3 class="section-title">ご請求内容（<?= isAggregateDisplay ? '未回収合算' : '当月' ?>）</h3>
       <? var aggregateMonthTotals = Array.isArray(amount.aggregateMonthTotals)
         ? amount.aggregateMonthTotals
         : [];
       ?>
-      <? if (isAggregateInvoice) { ?>
+      <? if (isAggregateDisplay) { ?>
         <div class="subsection-title">月別内訳</div>
         <table class="subtable">
           <thead>
@@ -115,12 +116,16 @@
           </tfoot>
         </table>
       <? } else { ?>
+        <? var displayRows = Array.isArray(amount.displayRows) && amount.displayRows.length
+          ? amount.displayRows
+          : amount.rows;
+        ?>
         <table>
           <thead>
             <tr><th>項目</th><th>詳細</th><th class="amount">金額</th></tr>
           </thead>
           <tbody>
-            <? amount.rows.forEach(function(row) { ?>
+            <? displayRows.forEach(function(row) { ?>
               <tr>
                 <td><?= row.label ?></td>
                 <td><?= row.detail || '' ?></td>
@@ -141,7 +146,10 @@
           </tfoot>
         </table>
       <? } ?>
-      <div class="note"><?= isAggregateInvoice ? '未回収期間を含めた合計金額です。（前月未回収分を含む）' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+      <div class="note"><?= isAggregateDisplay ? '未回収期間を含めた合計金額です。（前月未回収分を含む）' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+      <? if (isAggregateDisplay && data.showOnlineConsentNote) { ?>
+        <div class="note"><strong>注記:</strong> オンライン同意費用（1,000円）を含む</div>
+      <? } ?>
       <? if (amount.aggregateRemark) { ?>
         <div class="note"><strong>備考:</strong> <?= amount.aggregateRemark ?></div>
       <? } ?>
@@ -154,7 +162,7 @@
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptAmount = receipt.amount != null ? receipt.amount : 0; ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
-    <? if (!amount.forceHideReceipt && amount.showReceipt === true) { ?>
+    <? if (!amount.forceHideReceipt && !isAggregateDisplay && data.showPreviousReceipt === true) { ?>
       <section class="card">
         <h3 class="section-title">前月分領収書</h3>
         <div class="info">

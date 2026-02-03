@@ -825,6 +825,8 @@ function normalizeInvoicePdfContext_(context) {
   const source = context && typeof context === 'object' ? context : {};
   const amount = source.amount && typeof source.amount === 'object' ? source.amount : {};
   const months = Array.isArray(source.months) ? source.months : [];
+  const normalizedDisplayMode = amount.displayMode || '';
+  const normalizedPreviousReceiptAmount = Number(amount.previousReceiptAmount) || 0;
   return {
     patientId: source.patientId ? String(source.patientId) : '',
     billingMonth: source.billingMonth ? String(source.billingMonth) : '',
@@ -841,15 +843,20 @@ function normalizeInvoicePdfContext_(context) {
       receiptMonths: Array.isArray(amount.receiptMonths) ? amount.receiptMonths : [],
       receiptRemark: amount.receiptRemark || '',
       showReceipt: !!amount.showReceipt,
-      showPreviousReceipt: amount.showPreviousReceipt != null ? !!amount.showPreviousReceipt : !!amount.showReceipt,
+      showPreviousReceipt: amount.showPreviousReceipt != null
+        ? !!amount.showPreviousReceipt
+        : (!!amount.showReceipt || (normalizedDisplayMode !== 'aggregate' && normalizedPreviousReceiptAmount > 0)),
       showOnlineConsentNote: !!amount.showOnlineConsentNote,
       displayMode: amount.displayMode || '',
       previousReceipt: amount.previousReceipt || null,
+      previousReceiptAmount: amount.previousReceiptAmount,
+      previousReceiptMonth: amount.previousReceiptMonth || '',
       forceHideReceipt: !!amount.forceHideReceipt,
       watermark: amount.watermark || null,
       aggregateStatus: amount.aggregateStatus || '',
       aggregateConfirmed: !!amount.aggregateConfirmed,
-      carryOverAmount: amount.carryOverAmount
+      carryOverAmount: amount.carryOverAmount,
+      selfPayItems: Array.isArray(amount.selfPayItems) ? amount.selfPayItems : []
     }, amount),
     name: source.name || source.nameKanji || '',
     isAggregateInvoice: !!source.isAggregateInvoice,

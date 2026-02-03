@@ -4674,6 +4674,7 @@ function buildInsuranceInvoiceEntryForPdf_(entry) {
   if (!entry) return null;
   const insuranceEntry = resolveBillingEntryByType_(entry, 'insurance');
   if (!insuranceEntry) return null;
+  const selfPayItems = buildSelfPayItemsForInvoice_(entry);
   const manualOverride = insuranceEntry && insuranceEntry.manualOverride
     ? insuranceEntry.manualOverride.amount
     : undefined;
@@ -4688,8 +4689,8 @@ function buildInsuranceInvoiceEntryForPdf_(entry) {
     grandTotal: insuranceTotal,
     manualBillingAmount: manualOverride !== undefined ? manualOverride : '',
     manualSelfPayAmount: '',
-    selfPayItems: [],
-    selfPayCount: 0
+    selfPayItems,
+    selfPayCount: entry.selfPayCount || 0
   });
 }
 
@@ -4743,7 +4744,8 @@ function buildStandardInvoiceAmountDataForPdf_(entry, billingMonth) {
 
   return {
     rows,
-    grandTotal: breakdown.grandTotal || 0
+    grandTotal: breakdown.grandTotal || 0,
+    selfPayItems
   };
 }
 
@@ -4825,6 +4827,9 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const aggregateConfirmed = !!(receiptDisplay && receiptDisplay.aggregateConfirmed);
   const watermark = buildInvoiceWatermark_(entry);
   const receiptMonths = resolveReceiptTargetMonths(entry && entry.patientId, billingMonth, cache);
+  const previousReceiptMonth = Array.isArray(receiptMonths) && receiptMonths.length
+    ? receiptMonths[receiptMonths.length - 1]
+    : '';
   const currentFlags = getBankWithdrawalStatusByPatient_(billingMonth, entry && entry.patientId, cache);
   const isAggregateMonth = !!(currentFlags && currentFlags.af);
   const shouldShowReceipt = !!(receiptDisplay && receiptDisplay.visible) && !isAggregateMonth;
@@ -4869,12 +4874,14 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     receiptRemark: receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '',
     receiptMonthBreakdown: receiptMonthBreakdown.length ? receiptMonthBreakdown : undefined,
     previousReceiptAmount: resolvedPreviousReceiptAmount,
+    previousReceiptMonth,
     showReceipt: shouldShowReceipt,
     previousReceipt,
     displayMode: displayFlags.displayMode,
     showOnlineConsentNote: displayFlags.showOnlineConsentNote,
     showPreviousReceipt: displayFlags.showPreviousReceipt,
     displayRows: Array.isArray(displayAmount && displayAmount.rows) ? displayAmount.rows : [],
+    selfPayItems: Array.isArray(displayAmount && displayAmount.selfPayItems) ? displayAmount.selfPayItems : [],
     carryOverAmount,
     watermark
   });

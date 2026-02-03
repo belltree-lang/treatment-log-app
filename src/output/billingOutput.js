@@ -284,13 +284,11 @@ function resolveInvoiceDisplayMode_(entry, billingMonth, amount) {
   const prevReceiptSettled = entry ? isPreviousReceiptSettled_(entry) : false;
   const shouldShowReceipt = !!(amount && amount.showReceipt);
   const requiresPreviousReceipt = (hasPrevReceiptAmount && prevReceiptSettled) || shouldShowReceipt;
-  const needsMonthlyExplanation = requiresMonthlyExplanation_(entry);
 
   const canAggregateDisplay = !hasInsuranceTreatment
     && !hasNewSelfPayCharge
-    && isOnlyPastUnpaidSettlement
-    && !requiresPreviousReceipt
-    && !needsMonthlyExplanation;
+    && !hasPrevReceiptAmount
+    && isOnlyPastUnpaidSettlement;
   const displayMode = canAggregateDisplay ? 'aggregate' : 'standard';
 
   return {

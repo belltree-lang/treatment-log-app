@@ -947,32 +947,9 @@ function resolveAggregatePreparedBillingEntry_(monthKey, patientId, fallbackItem
 
   if (!entry) {
     const fallbackStore = cache.preparedEntriesByMonth || (cache.preparedEntriesByMonth = {});
-    let fallbackEntries = null;
-    if (Object.prototype.hasOwnProperty.call(fallbackStore, monthKey)) {
-      fallbackEntries = fallbackStore[monthKey];
-    } else if (typeof loadPreparedBillingWithSheetFallback_ === 'function') {
-      try {
-        const prepared = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
-        const payload = prepared && prepared.prepared !== undefined ? prepared.prepared : prepared;
-        const normalizedPrepared = typeof normalizePreparedBilling_ === 'function'
-          ? normalizePreparedBilling_(payload)
-          : payload;
-        const billingEntries = normalizedPrepared && normalizedPrepared.billingJson;
-        if (Array.isArray(billingEntries)) {
-          fallbackEntries = {};
-          billingEntries.forEach(row => {
-            const pid = typeof billingNormalizePatientId_ === 'function'
-              ? billingNormalizePatientId_(row && row.patientId)
-              : (row && row.patientId ? String(row.patientId).trim() : '');
-            if (!pid || Object.prototype.hasOwnProperty.call(fallbackEntries, pid)) return;
-            fallbackEntries[pid] = row;
-          });
-        }
-      } catch (err) {
-        fallbackEntries = null;
-      }
-      fallbackStore[monthKey] = fallbackEntries;
-    }
+    const fallbackEntries = Object.prototype.hasOwnProperty.call(fallbackStore, monthKey)
+      ? fallbackStore[monthKey]
+      : null;
     if (!entry && fallbackEntries && normalizedPatientId) {
       entry = fallbackEntries[normalizedPatientId] || null;
     }
@@ -985,12 +962,83 @@ function resolveAggregatePreparedBillingEntry_(monthKey, patientId, fallbackItem
   return entry ? Object.assign({ billingMonth: monthKey }, entry) : null;
 }
 
+let INVOICE_PREPARED_MONTH_CACHE_ = null;
+
+function getInvoicePreparedMonthCache_() {
+  if (!INVOICE_PREPARED_MONTH_CACHE_) {
+    INVOICE_PREPARED_MONTH_CACHE_ = { preparedByMonth: {}, preparedEntriesByMonth: {} };
+  }
+  return INVOICE_PREPARED_MONTH_CACHE_;
+}
+
+function collectInvoicePreparedMonths_(item, aggregateMonths) {
+  const billingMonth = normalizeInvoiceMonthKey_(item && item.billingMonth);
+  const monthSet = new Set();
+  if (billingMonth) monthSet.add(billingMonth);
+  const previousMonth = resolvePreviousBillingMonthKey_(billingMonth);
+  if (previousMonth) monthSet.add(previousMonth);
+
+  const aggregateCandidates = []
+    .concat(aggregateMonths || [])
+    .concat(item && item.aggregateMonths || [])
+    .concat(item && item.aggregateTargetMonths || [])
+    .concat(item && item.receiptMonths || []);
+  normalizeAggregateMonthsForInvoice_(aggregateCandidates, billingMonth)
+    .forEach(month => monthSet.add(month));
+
+  return Array.from(monthSet).filter(Boolean);
+}
+
+function loadPreparedBillingMonthsIntoCache_(monthKeys, options) {
+  const cache = options && options.monthCache ? options.monthCache : getInvoicePreparedMonthCache_();
+  // monthCache is responsible for prepared billing payloads for a billing run.
+  // Load once per month up-front; patient loops must only read from monthCache.
+  if (!cache.preparedByMonth) cache.preparedByMonth = {};
+  if (!cache.preparedEntriesByMonth) cache.preparedEntriesByMonth = {};
+
+  const normalizedMonths = Array.from(new Set((monthKeys || [])
+    .map(month => normalizeInvoiceMonthKey_(month))
+    .filter(Boolean)));
+
+  normalizedMonths.forEach(monthKey => {
+    if (Object.prototype.hasOwnProperty.call(cache.preparedByMonth, monthKey)) return;
+    let prepared = null;
+    if (typeof loadPreparedBillingWithSheetFallback_ === 'function') {
+      const loaded = loadPreparedBillingWithSheetFallback_(monthKey, { allowInvalid: true, restoreCache: false });
+      prepared = loaded && loaded.prepared !== undefined ? loaded.prepared : loaded;
+    }
+    const normalizedPrepared = typeof normalizePreparedBilling_ === 'function'
+      ? normalizePreparedBilling_(prepared)
+      : prepared;
+    cache.preparedByMonth[monthKey] = normalizedPrepared || null;
+
+    let entryMap = null;
+    const billingEntries = normalizedPrepared && normalizedPrepared.billingJson;
+    if (Array.isArray(billingEntries)) {
+      entryMap = {};
+      billingEntries.forEach(row => {
+        const pid = typeof billingNormalizePatientId_ === 'function'
+          ? billingNormalizePatientId_(row && row.patientId)
+          : (row && row.patientId ? String(row.patientId).trim() : '');
+        if (!pid || Object.prototype.hasOwnProperty.call(entryMap, pid)) return;
+        entryMap[pid] = row;
+      });
+    }
+    cache.preparedEntriesByMonth[monthKey] = entryMap;
+  });
+
+  return cache;
+}
+
 function filterAggregateMonthsByPrepared_(item, aggregateMonths, options) {
   const billingMonth = item && item.billingMonth;
   const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(item && item.patientId)
     : (item && item.patientId ? String(item.patientId).trim() : '');
-  const monthCache = options && options.monthCache ? options.monthCache : {};
+  const monthCache = loadPreparedBillingMonthsIntoCache_(
+    collectInvoicePreparedMonths_(item, aggregateMonths),
+    options
+  );
   const months = normalizeAggregateMonthsForInvoice_(aggregateMonths, billingMonth);
   const availableMonths = [];
   const missingMonths = [];
@@ -1023,7 +1071,10 @@ function buildAggregateInvoiceBreakdowns_(item, aggregateMonths, options) {
   const normalizedPatientId = typeof billingNormalizePatientId_ === 'function'
     ? billingNormalizePatientId_(item && item.patientId)
     : (item && item.patientId ? String(item.patientId).trim() : '');
-  const monthCache = options && options.monthCache ? options.monthCache : {};
+  const monthCache = loadPreparedBillingMonthsIntoCache_(
+    collectInvoicePreparedMonths_(item, months),
+    options
+  );
 
   const breakdowns = months.map(monthKey => {
     const entry = resolveAggregatePreparedBillingEntry_(monthKey, normalizedPatientId, item, monthCache);
@@ -1084,7 +1135,10 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
       : (Array.isArray(item && item.aggregateTargetMonths) ? item.aggregateTargetMonths : [])),
     billingMonth
   );
-  const monthCache = {};
+  const monthCache = loadPreparedBillingMonthsIntoCache_(
+    collectInvoicePreparedMonths_(item, months),
+    {}
+  );
   const preparedAggregate = filterAggregateMonthsByPrepared_(item, months, { monthCache });
   const filteredMonths = preparedAggregate.months;
   const missingAggregateMonths = preparedAggregate.missingMonths;
@@ -1168,7 +1222,13 @@ function buildInvoiceTemplateData_(item) {
     ? (initialReceipt ? initialReceipt.aggregateStatus : normalizeAggregateStatus_(item && item.aggregateStatus))
     : '';
   const aggregateConfirmed = aggregateEligible;
-  const monthCache = {};
+  const candidateMonths = []
+    .concat(initialReceipt && initialReceipt.explicitReceiptMonths ? initialReceipt.explicitReceiptMonths : [])
+    .concat(item && item.aggregateTargetMonths ? item.aggregateTargetMonths : []);
+  const monthCache = loadPreparedBillingMonthsIntoCache_(
+    collectInvoicePreparedMonths_(item, candidateMonths),
+    {}
+  );
   const aggregateDecision = resolveAggregateInvoiceDecision_(item, initialReceipt, billingMonth, { monthCache });
   const aggregateDecisionMonths = aggregateDecision && aggregateDecision.aggregateDecisionMonths
     ? aggregateDecision.aggregateDecisionMonths

@@ -285,6 +285,15 @@ function resolveInvoiceDisplayMode_(entry, billingMonth, amount) {
   const shouldShowReceipt = !!(amount && amount.showReceipt);
   const requiresPreviousReceipt = (hasPrevReceiptAmount && prevReceiptSettled) || shouldShowReceipt;
 
+  if (hasInsuranceTreatment || hasNewSelfPayCharge || hasPrevReceiptAmount) {
+    return {
+      displayMode: 'standard',
+      showOnlineConsentNote: false,
+      showPreviousReceipt: requiresPreviousReceipt,
+      hasOnlineConsentFee
+    };
+  }
+
   const canAggregateDisplay = !hasInsuranceTreatment
     && !hasNewSelfPayCharge
     && !hasPrevReceiptAmount
@@ -657,6 +666,12 @@ function resolveAggregateInvoiceDecision_(item, receipt, billingMonth, options) 
 }
 
 function logAggregateDecisionTrace_(label, payload) {
+  const isDebug = typeof isBillingDebugEnabled_ === 'function'
+    ? isBillingDebugEnabled_()
+    : (typeof getConfig === 'function'
+      ? String(getConfig('BILLING_DEBUG') || getConfig('billing_debug') || getConfig('BILLING_DEBUG_LOG') || '').trim() === '1'
+      : false);
+  if (!isDebug) return;
   const logger = typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function'
     ? billingLogger_
     : null;

@@ -57,7 +57,9 @@
   <? } ?>
   <div class="wrapper">
     <header class="header">
-      <? var isAggregateInvoice = data.isAggregateInvoice; ?>
+      <? var aggregateCalculation = data.aggregateCalculation != null ? data.aggregateCalculation : data.isAggregateInvoice; ?>
+      <? var aggregatePresentation = data.aggregatePresentation || (aggregateCalculation ? 'aggregate' : 'standard'); ?>
+      <? var isAggregateInvoice = aggregatePresentation === 'aggregate'; ?>
       <? var chargeMonthLabel = (amount && amount.chargeMonthLabel) || normalizeBillingMonthLabel_(data.billingMonth); ?>
       <? var chargePeriodLabel = buildInvoiceChargePeriodLabel_(data); ?>
       <div>
@@ -154,7 +156,8 @@
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptAmount = receipt.amount != null ? receipt.amount : 0; ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
-    <? if (!amount.forceHideReceipt && amount.showReceipt === true) { ?>
+    <? var shouldShowReceipt = !amount.forceHideReceipt && (amount.showReceipt === true || (aggregateCalculation && aggregatePresentation === 'standard')); ?>
+    <? if (shouldShowReceipt) { ?>
       <section class="card">
         <h3 class="section-title">前月分領収書</h3>
         <div class="info">

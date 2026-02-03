@@ -1248,12 +1248,12 @@ function resolveInvoiceGenerationMode(patientId, billingMonth, cache) {
     : String(patientId || '').trim();
 
   if (!monthKey || !pid) {
-    return { mode: 'standard', aggregateMonths: [] };
+    return { aggregateCalculation: false, aggregateMonths: [] };
   }
 
   const currentFlags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
   if (!(currentFlags && currentFlags.af)) {
-    return { mode: 'standard', aggregateMonths: [] };
+    return { aggregateCalculation: false, aggregateMonths: [] };
   }
 
   const aeMonths = [];
@@ -1274,11 +1274,11 @@ function resolveInvoiceGenerationMode(patientId, billingMonth, cache) {
   }
 
   if (!aeMonths.length) {
-    return { mode: 'standard', aggregateMonths: [] };
+    return { aggregateCalculation: false, aggregateMonths: [] };
   }
 
   const aggregateMonths = normalizePastBillingMonths_(aeMonths.concat(monthKey), monthKey);
-  return { mode: 'aggregate', aggregateMonths };
+  return { aggregateCalculation: true, aggregateMonths };
 }
 
 function resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache) {
@@ -1469,11 +1469,11 @@ function buildReceiptSummaryMap_(prepared, cache, options) {
     const decision = resolveInvoiceGenerationMode(pid, monthKey, cache);
     const decisionMonths = decision && Array.isArray(decision.aggregateMonths) ? decision.aggregateMonths : [];
     const aggregateMonths = normalizePastBillingMonths_(decisionMonths, monthKey);
-    const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
+    const aggregateCalculation = !!(decision && decision.aggregateCalculation && aggregateMonths.length > 1);
     map[pid] = {
       decision,
       aggregateMonths,
-      isAggregateInvoice
+      aggregateCalculation
     };
   });
 
@@ -1486,7 +1486,7 @@ function resolveReceiptSummaryForPatient_(patientId, billingMonth, cache, summar
     ? billingNormalizePatientId_(patientId)
     : String(patientId || '').trim();
   if (!pid || !monthKey) {
-    return { decision: { mode: 'standard', aggregateMonths: [] }, aggregateMonths: [], isAggregateInvoice: false };
+    return { decision: { aggregateCalculation: false, aggregateMonths: [] }, aggregateMonths: [], aggregateCalculation: false };
   }
   if (summaryMap && Object.prototype.hasOwnProperty.call(summaryMap, pid)) {
     return summaryMap[pid];
@@ -1494,11 +1494,11 @@ function resolveReceiptSummaryForPatient_(patientId, billingMonth, cache, summar
   const decision = resolveInvoiceGenerationMode(pid, monthKey, cache);
   const decisionMonths = decision && Array.isArray(decision.aggregateMonths) ? decision.aggregateMonths : [];
   const aggregateMonths = normalizePastBillingMonths_(decisionMonths, monthKey);
-  const isAggregateInvoice = !!(decision && decision.mode === 'aggregate' && aggregateMonths.length > 1);
+  const aggregateCalculation = !!(decision && decision.aggregateCalculation && aggregateMonths.length > 1);
   return {
     decision,
     aggregateMonths,
-    isAggregateInvoice
+    aggregateCalculation
   };
 }
 
@@ -4745,6 +4745,10 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const baseAmount = isAggregateInvoice
     ? buildAggregateInvoiceAmountDataForPdf_(normalizedAggregateMonths, billingMonth, entry && entry.patientId, cache)
     : buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
+  const standardAmount = buildStandardInvoiceAmountDataForPdf_(entry, billingMonth);
+  const resolvedRows = Array.isArray(baseAmount.rows) && baseAmount.rows.length
+    ? baseAmount.rows
+    : standardAmount.rows;
   const aggregateMonthTotals = Array.isArray(baseAmount.aggregateMonthTotals)
     ? baseAmount.aggregateMonthTotals
     : [];
@@ -4770,6 +4774,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     }
   }
   const amount = Object.assign({}, baseAmount, {
+    rows: resolvedRows,
     insuranceType: entry && entry.insuranceType ? String(entry.insuranceType).trim() : '',
     burdenRate: entry && entry.burdenRate != null ? entry.burdenRate : '',
     chargeMonthLabel: normalizeBillingMonthLabel_(billingMonth),
@@ -4864,16 +4869,18 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache, receiptSummaryM
   }
   const receiptSummary = resolveReceiptSummaryForPatient_(patientId, billingMonth, cache, receiptSummaryMap);
   const aggregateMonths = receiptSummary.aggregateMonths || [];
-  const isAggregateInvoice = !!receiptSummary.isAggregateInvoice;
-  const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache, prepared);
+  const aggregateCalculation = !!receiptSummary.aggregateCalculation;
+  const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, aggregateCalculation, cache, prepared);
 
   return {
     patientId,
     billingMonth,
-    months: isAggregateInvoice ? aggregateMonths : [],
+    months: aggregateCalculation ? aggregateMonths : [],
     amount,
     name: receiptEntry && receiptEntry.nameKanji ? String(receiptEntry.nameKanji) : '',
-    isAggregateInvoice,
+    isAggregateInvoice: aggregateCalculation,
+    aggregateCalculation,
+    aggregatePresentation: receiptEntry && receiptEntry.aggregatePresentation ? receiptEntry.aggregatePresentation : '',
     responsibleName: receiptEntry && receiptEntry.responsibleName ? String(receiptEntry.responsibleName) : ''
   };
 }
@@ -4894,6 +4901,8 @@ function buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, cach
     amount,
     name: entry && entry.nameKanji ? String(entry.nameKanji) : '',
     isAggregateInvoice: true,
+    aggregateCalculation: true,
+    aggregatePresentation: 'aggregate',
     responsibleName: entry && entry.responsibleName ? String(entry.responsibleName) : ''
   };
 }

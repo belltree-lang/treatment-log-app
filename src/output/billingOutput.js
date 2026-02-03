@@ -304,7 +304,10 @@ function buildInvoiceChargePeriodLabel_(data) {
   };
 
   const amount = data && data.amount ? data.amount : data;
-  const isAggregate = data && (data.isAggregateInvoice || data.invoiceMode === 'aggregate');
+  const aggregateCalculation = data && data.aggregateCalculation != null
+    ? !!data.aggregateCalculation
+    : !!(data && (data.isAggregateInvoice || data.invoiceMode === 'aggregate'));
+  const isAggregate = aggregateCalculation;
   if (isAggregate && Array.isArray(amount && amount.aggregateMonthTotals)) {
     amount.aggregateMonthTotals.forEach(row => pushMonth(row && row.month));
   }
@@ -338,6 +341,14 @@ function buildInvoiceChargePeriodLabel_(data) {
   if (!endLabel) return `${startLabel}分`;
 
   return `${startLabel}分〜${endLabel}分`;
+}
+
+function resolveAggregatePresentationMode_(item, aggregateCalculation) {
+  const raw = item && item.aggregatePresentation != null ? String(item.aggregatePresentation).trim() : '';
+  if (raw === 'standard' || raw === 'aggregate') return raw;
+  const invoiceMode = item && item.invoiceMode != null ? String(item.invoiceMode).trim() : '';
+  if (invoiceMode === 'standard' || invoiceMode === 'aggregate') return invoiceMode;
+  return aggregateCalculation ? 'aggregate' : 'standard';
 }
 
 function buildInclusiveMonthRange_(fromYm, toYm) {
@@ -725,6 +736,11 @@ function normalizeInvoicePdfContext_(context) {
   const source = context && typeof context === 'object' ? context : {};
   const amount = source.amount && typeof source.amount === 'object' ? source.amount : {};
   const months = Array.isArray(source.months) ? source.months : [];
+  const aggregateCalculation = source.aggregateCalculation != null
+    ? !!source.aggregateCalculation
+    : !!source.isAggregateInvoice;
+  const aggregatePresentation = resolveAggregatePresentationMode_(source, aggregateCalculation);
+  const isAggregateInvoice = aggregatePresentation === 'aggregate';
   return {
     patientId: source.patientId ? String(source.patientId) : '',
     billingMonth: source.billingMonth ? String(source.billingMonth) : '',
@@ -747,7 +763,9 @@ function normalizeInvoicePdfContext_(context) {
       aggregateConfirmed: !!amount.aggregateConfirmed
     }, amount),
     name: source.name || source.nameKanji || '',
-    isAggregateInvoice: !!source.isAggregateInvoice,
+    isAggregateInvoice,
+    aggregateCalculation,
+    aggregatePresentation,
     responsibleName: source.responsibleName || ''
   };
 }
@@ -759,7 +777,9 @@ function buildInvoiceTemplateContext_(normalizedContext) {
     months: normalizedContext.months,
     amount: normalizedContext.amount,
     name: normalizedContext.name,
-    isAggregateInvoice: normalizedContext.isAggregateInvoice
+    isAggregateInvoice: normalizedContext.isAggregateInvoice,
+    aggregateCalculation: normalizedContext.aggregateCalculation,
+    aggregatePresentation: normalizedContext.aggregatePresentation
   };
 }
 
@@ -1002,6 +1022,8 @@ function buildAggregateInvoiceTemplateData_(item, aggregateMonths) {
     monthLabel: aggregateLabel,
     chargeMonthLabel: monthLabel,
     isAggregateInvoice: true,
+    aggregateCalculation: true,
+    aggregatePresentation: 'aggregate',
     invoiceMode: 'aggregate',
     watermark,
     aggregateStatus,
@@ -1062,7 +1084,9 @@ function buildInvoiceTemplateData_(item) {
     },
     aggregateDecisionTrace
   ));
-  const isAggregateInvoice = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
+  const aggregateCalculation = !!(aggregateDecision && aggregateDecision.isAggregateInvoice);
+  const aggregatePresentation = resolveAggregatePresentationMode_(item, aggregateCalculation);
+  const isAggregateInvoice = aggregatePresentation === 'aggregate';
   const chargeMonthLabel = monthLabel;
   const baseBreakdown = calculateInvoiceChargeBreakdown_(Object.assign({}, item, { billingMonth }));
   let breakdown = baseBreakdown;
@@ -1074,7 +1098,7 @@ function buildInvoiceTemplateData_(item) {
   let grandTotal = breakdown.grandTotal;
   const baseSelfPayItems = Array.isArray(baseBreakdown.selfPayItems) ? baseBreakdown.selfPayItems : [];
 
-  if (isAggregateInvoice && aggregateDecisionMonths.length > 1) {
+  if (aggregateCalculation && aggregateDecisionMonths.length > 1) {
     const aggregateData = buildAggregateInvoiceBreakdowns_(item, aggregateDecisionMonths, { monthCache });
     const totals = aggregateData.totals || {};
     visits = totals.visits || 0;
@@ -1114,6 +1138,8 @@ function buildInvoiceTemplateData_(item) {
     monthLabel,
     chargeMonthLabel,
     isAggregateInvoice,
+    aggregateCalculation,
+    aggregatePresentation,
     invoiceMode: isAggregateInvoice ? 'aggregate' : 'standard',
     watermark,
     aggregateStatus,
@@ -1400,7 +1426,7 @@ function saveInvoicePdf(item, pdfBlob, options) {
 
 function generateInvoicePdf(context, options) {
   const normalizedContext = normalizeInvoicePdfContext_(context || {});
-  const blob = normalizedContext.isAggregateInvoice
+  const blob = normalizedContext.aggregatePresentation === 'aggregate'
     ? createAggregateInvoicePdfBlob_(normalizedContext, options)
     : createInvoicePdfBlob_(normalizedContext, options);
   return saveInvoicePdf(normalizedContext, blob, options);

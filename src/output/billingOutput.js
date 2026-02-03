@@ -217,6 +217,60 @@ function resolveInvoiceItemLabel_(item) {
   return type;
 }
 
+function isOnlineConsentItem_(item) {
+  if (!item) return false;
+  const type = item.type != null ? String(item.type).trim() : '';
+  if (type === 'online_fee') return true;
+  const label = item.label != null ? String(item.label).trim() : '';
+  return label.indexOf('オンライン同意') >= 0;
+}
+
+function resolveInvoiceDisplayMode_(entry, billingMonth, amount) {
+  const targetMonth = normalizeInvoiceMonthKey_(billingMonth || (entry && entry.billingMonth));
+  const breakdown = entry
+    ? calculateInvoiceChargeBreakdown_(Object.assign({}, entry, { billingMonth: targetMonth }))
+    : null;
+  const visits = breakdown ? breakdown.visits || 0 : 0;
+  const treatmentAmount = breakdown ? breakdown.treatmentAmount || 0 : 0;
+  const transportAmount = breakdown ? breakdown.transportAmount || 0 : 0;
+  const selfPayItems = breakdown && Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
+  const onlineConsentItems = selfPayItems.filter(isOnlineConsentItem_);
+  const hasOnlineConsentFee = onlineConsentItems.some(item => normalizeInvoiceMoney_(item && item.amount) > 0);
+  const nonOnlineSelfPayItems = selfPayItems.filter(item => !isOnlineConsentItem_(item));
+  const nonOnlineSelfPayTotal = nonOnlineSelfPayItems.reduce(
+    (sum, item) => sum + (normalizeInvoiceMoney_(item && item.amount) || 0),
+    0
+  );
+  const insuranceType = entry && entry.insuranceType ? String(entry.insuranceType).trim() : '';
+  const burdenRate = entry && entry.burdenRate != null ? entry.burdenRate : '';
+  const isSelfPaid = insuranceType === '自費' || burdenRate === '自費';
+  const hasInsuranceTreatment = visits > 0 && !isSelfPaid;
+  const hasSelfPayTreatment = isSelfPaid && treatmentAmount > 0;
+  const hasNewSelfPayCharge = nonOnlineSelfPayTotal > 0 || hasSelfPayTreatment;
+  const carryOverAmount = entry
+    ? normalizeBillingCarryOver_(entry)
+    : (amount && amount.carryOverAmount != null ? Number(amount.carryOverAmount) : 0);
+  const currentChargeTotal = treatmentAmount + transportAmount + nonOnlineSelfPayTotal;
+  const isOnlyPastUnpaidSettlement = currentChargeTotal === 0 && carryOverAmount !== 0;
+  const hasPrevReceiptAmount = entry ? hasPreviousReceiptAmount_(entry) : false;
+  const prevReceiptSettled = entry ? isPreviousReceiptSettled_(entry) : false;
+  const shouldShowReceipt = !!(amount && amount.showReceipt);
+  const requiresPreviousReceipt = (hasPrevReceiptAmount && prevReceiptSettled) || shouldShowReceipt;
+
+  const canAggregateDisplay = !hasInsuranceTreatment
+    && !hasNewSelfPayCharge
+    && isOnlyPastUnpaidSettlement
+    && !requiresPreviousReceipt;
+  const displayMode = canAggregateDisplay ? 'aggregate' : 'standard';
+
+  return {
+    displayMode,
+    showOnlineConsentNote: displayMode === 'aggregate' && hasOnlineConsentFee,
+    showPreviousReceipt: displayMode === 'standard' && requiresPreviousReceipt,
+    hasOnlineConsentFee
+  };
+}
+
 function normalizeInvoiceVisitCount_(value) {
   const source = value && value.visitCount != null ? value.visitCount : value;
   if (typeof source === 'number') {
@@ -749,6 +803,7 @@ function normalizeInvoicePdfContext_(context) {
     months,
     amount: Object.assign({
       rows: Array.isArray(amount.rows) ? amount.rows : [],
+      displayRows: Array.isArray(amount.displayRows) ? amount.displayRows : [],
       aggregateMonthTotals: Array.isArray(amount.aggregateMonthTotals) ? amount.aggregateMonthTotals : [],
       aggregateRemark: amount.aggregateRemark || '',
       grandTotal: Number.isFinite(amount.grandTotal) ? amount.grandTotal : 0,
@@ -758,15 +813,26 @@ function normalizeInvoicePdfContext_(context) {
       receiptMonths: Array.isArray(amount.receiptMonths) ? amount.receiptMonths : [],
       receiptRemark: amount.receiptRemark || '',
       showReceipt: !!amount.showReceipt,
+      showPreviousReceipt: amount.showPreviousReceipt != null ? !!amount.showPreviousReceipt : !!amount.showReceipt,
+      showOnlineConsentNote: !!amount.showOnlineConsentNote,
+      displayMode: amount.displayMode || '',
       previousReceipt: amount.previousReceipt || null,
       forceHideReceipt: !!amount.forceHideReceipt,
       watermark: amount.watermark || null,
       aggregateStatus: amount.aggregateStatus || '',
-      aggregateConfirmed: !!amount.aggregateConfirmed
+      aggregateConfirmed: !!amount.aggregateConfirmed,
+      carryOverAmount: amount.carryOverAmount
     }, amount),
     name: source.name || source.nameKanji || '',
     isAggregateInvoice: !!source.isAggregateInvoice,
-    responsibleName: source.responsibleName || ''
+    responsibleName: source.responsibleName || '',
+    displayMode: source.displayMode || amount.displayMode || '',
+    showOnlineConsentNote: source.showOnlineConsentNote != null
+      ? !!source.showOnlineConsentNote
+      : !!amount.showOnlineConsentNote,
+    showPreviousReceipt: source.showPreviousReceipt != null
+      ? !!source.showPreviousReceipt
+      : (amount.showPreviousReceipt != null ? !!amount.showPreviousReceipt : !!amount.showReceipt)
   };
 }
 
@@ -777,7 +843,10 @@ function buildInvoiceTemplateContext_(normalizedContext) {
     months: normalizedContext.months,
     amount: normalizedContext.amount,
     name: normalizedContext.name,
-    isAggregateInvoice: normalizedContext.isAggregateInvoice
+    isAggregateInvoice: normalizedContext.isAggregateInvoice,
+    displayMode: normalizedContext.displayMode || (normalizedContext.isAggregateInvoice ? 'aggregate' : 'standard'),
+    showOnlineConsentNote: !!normalizedContext.showOnlineConsentNote,
+    showPreviousReceipt: !!normalizedContext.showPreviousReceipt
   };
 }
 

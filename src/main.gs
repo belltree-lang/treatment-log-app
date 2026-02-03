@@ -4805,7 +4805,20 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     forceHideReceipt: !!(entry && entry.forceHideReceipt)
   });
   if (entry && entry.grandTotal != null && entry.grandTotal !== '') {
-    amount.grandTotal = normalizeMoneyNumber_(entry.grandTotal);
+    const entryGrandTotal = normalizeMoneyNumber_(entry.grandTotal);
+    const entryInsuranceTotal = entry && entry.total != null && entry.total !== ''
+      ? normalizeMoneyNumber_(entry.total)
+      : normalizeMoneyNumber_(entry && entry.billingAmount);
+    const selfPayItems = Array.isArray(entry && entry.selfPayItems) ? entry.selfPayItems : [];
+    const selfPayItemsTotal = selfPayItems.reduce(
+      (sum, item) => sum + (normalizeMoneyNumber_(item && item.amount) || 0),
+      0
+    );
+    if (selfPayItemsTotal > 0 && entryGrandTotal === entryInsuranceTotal) {
+      amount.grandTotal = entryGrandTotal + selfPayItemsTotal;
+    } else {
+      amount.grandTotal = entryGrandTotal;
+    }
   }
   if (isAggregateInvoice && aggregateMonthTotals.length) {
     amount.grandTotal = aggregateMonthTotals.reduce(
@@ -4841,6 +4854,9 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   }
   if (previousReceipt) {
     previousReceipt.visible = shouldShowReceipt;
+    if (!previousReceipt.note && Array.isArray(receiptMonths) && receiptMonths.length) {
+      previousReceipt.note = formatReceiptRemarkFromMonths_(receiptMonths);
+    }
   }
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   const displayFlags = resolveInvoiceDisplayMode_(entry, billingMonth, {
@@ -4870,11 +4886,17 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     aggregateConfirmed
   });
 
+  const fallbackReceiptRemark = Array.isArray(receiptMonths) && receiptMonths.length
+    ? formatReceiptRemarkFromMonths_(receiptMonths)
+    : '';
+
   return Object.assign({}, amount, {
     aggregateStatus,
     aggregateConfirmed,
     receiptMonths,
-    receiptRemark: receiptDisplay && receiptDisplay.receiptRemark ? receiptDisplay.receiptRemark : '',
+    receiptRemark: receiptDisplay && receiptDisplay.receiptRemark
+      ? receiptDisplay.receiptRemark
+      : fallbackReceiptRemark,
     receiptMonthBreakdown: receiptMonthBreakdown.length ? receiptMonthBreakdown : undefined,
     previousReceiptAmount: resolvedPreviousReceiptAmount,
     previousReceiptMonth,

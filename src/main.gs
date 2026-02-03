@@ -4846,9 +4846,12 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const entrySelfPayItems = Array.isArray(entry && entry.selfPayItems)
     ? entry.selfPayItems
     : [];
-  const previousReceiptMonth = Array.isArray(receiptDisplay && receiptDisplay.receiptMonths) && receiptDisplay.receiptMonths.length
+  let previousReceiptMonth = Array.isArray(receiptDisplay && receiptDisplay.receiptMonths) && receiptDisplay.receiptMonths.length
     ? receiptDisplay.receiptMonths[receiptDisplay.receiptMonths.length - 1]
     : '';
+  if (!previousReceiptMonth && resolvedPreviousReceiptAmount != null) {
+    previousReceiptMonth = resolvePreviousBillingMonthKey_(billingMonth);
+  }
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,

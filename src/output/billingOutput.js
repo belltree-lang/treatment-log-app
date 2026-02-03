@@ -511,6 +511,9 @@ function resolveInvoiceReceiptDisplay_(item, options) {
 
 function resolveAggregateInvoiceDecision_(item, receipt, billingMonth, options) {
   const billingMonthKey = normalizeInvoiceMonthKey_(billingMonth);
+  const pid = typeof billingNormalizePatientId_ === 'function'
+    ? billingNormalizePatientId_(item && item.patientId)
+    : String(item && item.patientId || '').trim();
   const explicitReceiptMonths = Array.isArray(receipt && receipt.explicitReceiptMonths)
     ? normalizeAggregateMonthsForInvoice_(receipt.explicitReceiptMonths, billingMonthKey)
     : [];
@@ -526,7 +529,8 @@ function resolveAggregateInvoiceDecision_(item, receipt, billingMonth, options) 
     requestedAggregateMonths,
     options
   );
-  const aggregateDecisionMonths = preparedAggregate.months;
+  const preparedFilteredMonths = preparedAggregate.months;
+  const aggregateDecisionMonths = preparedFilteredMonths;
   const missingAggregateMonths = preparedAggregate.missingMonths;
   const usesExplicitReceiptMonths = explicitReceiptMonths.length > 0;
   const usesAggregateTargetMonths = !usesExplicitReceiptMonths && requestedAggregateMonths.length > 0;
@@ -548,9 +552,23 @@ function resolveAggregateInvoiceDecision_(item, receipt, billingMonth, options) 
     aggregateMonthsSource
   };
 
+  const isAggregateInvoice = !!(aggregateDecisionMonths && aggregateDecisionMonths.length > 1);
+
+  if (typeof shouldLogReceiptDebug_ === 'function' && shouldLogReceiptDebug_(pid)) {
+    Logger.log('[receipt-debug][resolveAggregateInvoiceDecision_] ' + JSON.stringify({
+      patientId: pid,
+      billingMonth: billingMonthKey,
+      explicitReceiptMonths,
+      aggregateTargetMonths,
+      preparedFilteredMonths,
+      aggregateDecisionMonths,
+      isAggregateInvoice
+    }));
+  }
+
   return {
     aggregateDecisionMonths,
-    isAggregateInvoice: !!(aggregateDecisionMonths && aggregateDecisionMonths.length > 1),
+    isAggregateInvoice,
     decisionSources,
     trace
   };

@@ -1253,16 +1253,28 @@ function resolveInvoiceGenerationMode(patientId, billingMonth, cache) {
 
   const currentFlags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
   if (!(currentFlags && currentFlags.af)) {
+    if (typeof shouldLogReceiptDebug_ === 'function' && shouldLogReceiptDebug_(pid)) {
+      Logger.log('[receipt-debug][resolveInvoiceGenerationMode] ' + JSON.stringify({
+        patientId: pid,
+        billingMonth: monthKey,
+        currentFlags,
+        priorMonthsChecked: [],
+        aeMonths: [],
+        resolvedMode: 'standard'
+      }));
+    }
     return { mode: 'standard', aggregateMonths: [] };
   }
 
   const aeMonths = [];
+  const priorMonthsChecked = [];
   let cursor = resolvePreviousBillingMonthKey_(monthKey);
   let guard = 0;
 
   while (cursor && guard < 48) {
     const cursorKey = normalizeBillingMonthKeySafe_(cursor);
     if (!cursorKey) break;
+    priorMonthsChecked.push(cursorKey);
     const flags = getBankWithdrawalStatusByPatient_(cursorKey, pid, cache);
     if (flags && flags.ae) {
       aeMonths.unshift(cursorKey);
@@ -1273,12 +1285,23 @@ function resolveInvoiceGenerationMode(patientId, billingMonth, cache) {
     break;
   }
 
-  if (!aeMonths.length) {
-    return { mode: 'standard', aggregateMonths: [] };
+  const resolvedMode = aeMonths.length ? 'aggregate' : 'standard';
+  const aggregateMonths = resolvedMode === 'aggregate'
+    ? normalizePastBillingMonths_(aeMonths.concat(monthKey), monthKey)
+    : [];
+
+  if (typeof shouldLogReceiptDebug_ === 'function' && shouldLogReceiptDebug_(pid)) {
+    Logger.log('[receipt-debug][resolveInvoiceGenerationMode] ' + JSON.stringify({
+      patientId: pid,
+      billingMonth: monthKey,
+      currentFlags,
+      priorMonthsChecked,
+      aeMonths,
+      resolvedMode
+    }));
   }
 
-  const aggregateMonths = normalizePastBillingMonths_(aeMonths.concat(monthKey), monthKey);
-  return { mode: 'aggregate', aggregateMonths };
+  return { mode: resolvedMode, aggregateMonths };
 }
 
 function resolveInvoiceModeFromBankFlags_(billingMonth, patientId, cache) {

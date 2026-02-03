@@ -57,7 +57,7 @@
   <? } ?>
   <div class="wrapper">
     <header class="header">
-      <? var displayMode = data.displayMode || (data.isAggregateInvoice ? 'aggregate' : 'standard'); ?>
+      <? var displayMode = data && data.displayMode ? data.displayMode : 'standard'; ?>
       <? var isAggregateDisplay = displayMode === 'aggregate'; ?>
       <? var chargeMonthLabel = (amount && amount.chargeMonthLabel) || normalizeBillingMonthLabel_(data.billingMonth); ?>
       <? var chargePeriodLabel = buildInvoiceChargePeriodLabel_(data); ?>
@@ -148,7 +148,7 @@
       <? } ?>
       <div class="note"><?= isAggregateDisplay ? '未回収期間を含めた合計金額です。（前月未回収分を含む）' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
       <? if (isAggregateDisplay && data.showOnlineConsentNote) { ?>
-        <div class="note"><strong>注記:</strong> オンライン同意費用（1,000円）を含む</div>
+        <div class="note"><strong>注記:</strong> オンライン同意費用（1,000円）を含みます</div>
       <? } ?>
       <? if (amount.aggregateRemark) { ?>
         <div class="note"><strong>備考:</strong> <?= amount.aggregateRemark ?></div>

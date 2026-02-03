@@ -225,6 +225,35 @@ function isOnlineConsentItem_(item) {
   return label.indexOf('オンライン同意') >= 0;
 }
 
+function requiresMonthlyExplanation_(entry) {
+  if (!entry) return false;
+  const keywordPattern = /(家族|後見|保護者|事務|事業所|施設|法人|会社|オフィス|事務所)/;
+  const matchesKeyword = (value) => keywordPattern.test(String(value || ''));
+  const directFields = [
+    entry.payerType,
+    entry.payerName,
+    entry.billingRecipient,
+    entry.billingRecipientType,
+    entry.billingAddressee,
+    entry.invoiceRecipient,
+    entry.invoiceAddressee,
+    entry.recipient,
+    entry.recipientType,
+    entry.addressee,
+    entry.billingDestination,
+    entry.billingTarget
+  ];
+  if (directFields.some(matchesKeyword)) return true;
+
+  const raw = entry.raw && typeof entry.raw === 'object' ? entry.raw : null;
+  if (!raw) return false;
+  const keyPattern = /(請求|宛名|支払|受取|請求先|支払先|領収|後見|保護者|家族|事務|事業所|施設|法人|会社)/;
+  return Object.keys(raw).some((key) => {
+    if (!keyPattern.test(String(key || ''))) return false;
+    return matchesKeyword(raw[key]);
+  });
+}
+
 function resolveInvoiceDisplayMode_(entry, billingMonth, amount) {
   const targetMonth = normalizeInvoiceMonthKey_(billingMonth || (entry && entry.billingMonth));
   const breakdown = entry
@@ -236,8 +265,7 @@ function resolveInvoiceDisplayMode_(entry, billingMonth, amount) {
   const selfPayItems = breakdown && Array.isArray(breakdown.selfPayItems) ? breakdown.selfPayItems : [];
   const onlineConsentItems = selfPayItems.filter(isOnlineConsentItem_);
   const hasOnlineConsentFee = onlineConsentItems.some(item => normalizeInvoiceMoney_(item && item.amount) > 0);
-  const nonOnlineSelfPayItems = selfPayItems.filter(item => !isOnlineConsentItem_(item));
-  const nonOnlineSelfPayTotal = nonOnlineSelfPayItems.reduce(
+  const selfPayItemsTotal = selfPayItems.reduce(
     (sum, item) => sum + (normalizeInvoiceMoney_(item && item.amount) || 0),
     0
   );
@@ -246,21 +274,23 @@ function resolveInvoiceDisplayMode_(entry, billingMonth, amount) {
   const isSelfPaid = insuranceType === '自費' || burdenRate === '自費';
   const hasInsuranceTreatment = visits > 0 && !isSelfPaid;
   const hasSelfPayTreatment = isSelfPaid && treatmentAmount > 0;
-  const hasNewSelfPayCharge = nonOnlineSelfPayTotal > 0 || hasSelfPayTreatment;
+  const hasNewSelfPayCharge = selfPayItemsTotal > 0 || hasSelfPayTreatment;
   const carryOverAmount = entry
     ? normalizeBillingCarryOver_(entry)
     : (amount && amount.carryOverAmount != null ? Number(amount.carryOverAmount) : 0);
-  const currentChargeTotal = treatmentAmount + transportAmount + nonOnlineSelfPayTotal;
+  const currentChargeTotal = treatmentAmount + transportAmount + selfPayItemsTotal;
   const isOnlyPastUnpaidSettlement = currentChargeTotal === 0 && carryOverAmount !== 0;
   const hasPrevReceiptAmount = entry ? hasPreviousReceiptAmount_(entry) : false;
   const prevReceiptSettled = entry ? isPreviousReceiptSettled_(entry) : false;
   const shouldShowReceipt = !!(amount && amount.showReceipt);
   const requiresPreviousReceipt = (hasPrevReceiptAmount && prevReceiptSettled) || shouldShowReceipt;
+  const needsMonthlyExplanation = requiresMonthlyExplanation_(entry);
 
   const canAggregateDisplay = !hasInsuranceTreatment
     && !hasNewSelfPayCharge
     && isOnlyPastUnpaidSettlement
-    && !requiresPreviousReceipt;
+    && !requiresPreviousReceipt
+    && !needsMonthlyExplanation;
   const displayMode = canAggregateDisplay ? 'aggregate' : 'standard';
 
   return {
@@ -844,7 +874,7 @@ function buildInvoiceTemplateContext_(normalizedContext) {
     amount: normalizedContext.amount,
     name: normalizedContext.name,
     isAggregateInvoice: normalizedContext.isAggregateInvoice,
-    displayMode: normalizedContext.displayMode || (normalizedContext.isAggregateInvoice ? 'aggregate' : 'standard'),
+    displayMode: normalizedContext.displayMode || 'standard',
     showOnlineConsentNote: !!normalizedContext.showOnlineConsentNote,
     showPreviousReceipt: !!normalizedContext.showPreviousReceipt
   };

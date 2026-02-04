@@ -5001,6 +5001,8 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache, receiptSummaryM
   const isAggregateInvoice = !!receiptSummary.isAggregateInvoice;
   const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache, prepared);
   const normalizedAggregateMonths = normalizePastBillingMonths_(aggregateMonths, billingMonth);
+  const isAggregate = Array.isArray(normalizedAggregateMonths) && normalizedAggregateMonths.length >= 2;
+  amount.displayMode = isAggregate ? 'aggregate' : 'standard';
   amount.showAggregateUnpaidNotice = amount.displayMode === 'aggregate'
     && normalizedAggregateMonths.length >= 2;
 
@@ -5023,6 +5025,8 @@ function buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, cach
 
   const normalizedMonths = normalizePastBillingMonths_(aggregateMonths, billingMonth);
   const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, normalizedMonths, true, cache, prepared);
+  const isAggregate = Array.isArray(normalizedMonths) && normalizedMonths.length >= 2;
+  amount.displayMode = isAggregate ? 'aggregate' : 'standard';
   amount.showAggregateUnpaidNotice = amount.displayMode === 'aggregate'
     && normalizedMonths.length >= 2;
 

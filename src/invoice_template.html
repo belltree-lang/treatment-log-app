@@ -147,6 +147,9 @@
         </table>
       <? } ?>
       <div class="note"><?= isAggregateDisplay ? '未回収期間を含めた合計金額です。（前月未回収分を含む）' : '前月繰越を含む合計金額です。' ?>口座振替日：毎月20日（祝日の場合は翌営業日）</div>
+      <? if (isAggregateDisplay && amount.showAggregateUnpaidNotice) { ?>
+        <div class="note"><strong>注意:</strong> 手続き不備または残高不足等により前月分の引き落としが確認できなかったため、当月分と合算してご請求させていただいております。</div>
+      <? } ?>
       <? if (isAggregateDisplay && data.showOnlineConsentNote) { ?>
         <div class="note"><strong>注記:</strong> オンライン同意費用（1,000円）を含みます</div>
       <? } ?>

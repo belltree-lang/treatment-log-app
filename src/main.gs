@@ -1967,6 +1967,18 @@ function resolveAggregateMonthsFromUnpaid_(billingMonth, patientId, options, pre
   return normalizePastBillingMonths_(unpaidMonths.concat(previousMonthKey), monthKey);
 }
 
+function hasAggregateUnpaidFlagForMonths_(patientId, aggregateMonths, cache) {
+  const pid = billingNormalizePatientId_(patientId);
+  const months = Array.isArray(aggregateMonths) ? aggregateMonths : [];
+  if (!pid || !months.length) return false;
+  return months.some(month => {
+    const monthKey = normalizeBillingMonthKeySafe_(month);
+    if (!monthKey) return false;
+    const flags = getBankWithdrawalStatusByPatient_(monthKey, pid, cache);
+    return !!(flags && flags.ae);
+  });
+}
+
 function sanitizeAggregateFieldsForBankFlags_(entry, bankFlags) {
   const flags = bankFlags || {};
   if (flags.af === true) return entry;
@@ -4933,6 +4945,8 @@ function buildInvoicePdfContextForEntry_(entry, prepared, cache, receiptSummaryM
   const aggregateMonths = receiptSummary.aggregateMonths || [];
   const isAggregateInvoice = !!receiptSummary.isAggregateInvoice;
   const amount = finalizeInvoiceAmountDataForPdf_(receiptEntry, billingMonth, aggregateMonths, isAggregateInvoice, cache, prepared);
+  amount.showAggregateUnpaidNotice = amount.displayMode === 'aggregate'
+    && hasAggregateUnpaidFlagForMonths_(patientId, aggregateMonths, cache);
 
   return {
     patientId,
@@ -4953,6 +4967,8 @@ function buildAggregateInvoicePdfContext_(entry, aggregateMonths, prepared, cach
 
   const normalizedMonths = normalizePastBillingMonths_(aggregateMonths, billingMonth);
   const amount = finalizeInvoiceAmountDataForPdf_(entry, billingMonth, normalizedMonths, true, cache, prepared);
+  amount.showAggregateUnpaidNotice = amount.displayMode === 'aggregate'
+    && hasAggregateUnpaidFlagForMonths_(patientId, normalizedMonths, cache);
 
   return {
     patientId,

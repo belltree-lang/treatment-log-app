@@ -4871,7 +4871,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const previousReceiptUnpaid = previousReceiptMonth
     ? !!(getBankWithdrawalStatusByPatient_(previousReceiptMonth, entry && entry.patientId, cache) || {}).ae
     : false;
-  const canShowPreviousReceipt = resolvedPreviousReceiptAmount != null
+  let canShowPreviousReceipt = resolvedPreviousReceiptAmount != null
     && !receiptMonthHasUnpaid
     && !previousReceiptUnpaid;
   const currentFlags = getBankWithdrawalStatusByPatient_(billingMonth, entry && entry.patientId, cache);
@@ -4880,12 +4880,6 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   if (amount.forceHideReceipt || isAggregateMonth) {
     amount.forceHideReceipt = true;
   }
-  if (previousReceipt) {
-    previousReceipt.visible = shouldShowReceipt && canShowPreviousReceipt;
-    if (!previousReceipt.note && Array.isArray(receiptMonths) && receiptMonths.length) {
-      previousReceipt.note = formatReceiptRemarkFromMonths_(receiptMonths);
-    }
-  }
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   const displayFlags = resolveInvoiceDisplayMode_(entry, billingMonth, {
     showReceipt: shouldShowReceipt,
@@ -4893,6 +4887,21 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceiptAmount: resolvedPreviousReceiptAmount,
     carryOverAmount
   });
+  if (displayFlags && displayFlags.displayMode === 'aggregate' && unpaidTargetMonths.length) {
+    const hasAggregateUnpaid = unpaidTargetMonths.some(month => {
+      const flags = getBankWithdrawalStatusByPatient_(month, entry && entry.patientId, cache);
+      return !!(flags && flags.ae);
+    });
+    if (hasAggregateUnpaid) {
+      canShowPreviousReceipt = false;
+    }
+  }
+  if (previousReceipt) {
+    previousReceipt.visible = shouldShowReceipt && canShowPreviousReceipt;
+    if (!previousReceipt.note && Array.isArray(receiptMonths) && receiptMonths.length) {
+      previousReceipt.note = formatReceiptRemarkFromMonths_(receiptMonths);
+    }
+  }
   const showPreviousReceipt = !!(displayFlags && displayFlags.showPreviousReceipt) && canShowPreviousReceipt;
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',

@@ -4858,6 +4858,22 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
   const previousReceiptMonth = Array.isArray(receiptMonths) && receiptMonths.length
     ? receiptMonths[receiptMonths.length - 1]
     : '';
+  const unpaidTargetMonths = Array.from(new Set(
+    (Array.isArray(normalizedAggregateMonths) ? normalizedAggregateMonths : [])
+      .concat(Array.isArray(receiptMonths) ? receiptMonths : [])
+  ));
+  const receiptMonthHasUnpaid = unpaidTargetMonths.length
+    ? unpaidTargetMonths.some(month => {
+      const flags = getBankWithdrawalStatusByPatient_(month, entry && entry.patientId, cache);
+      return !!(flags && flags.ae);
+    })
+    : false;
+  const previousReceiptUnpaid = previousReceiptMonth
+    ? !!(getBankWithdrawalStatusByPatient_(previousReceiptMonth, entry && entry.patientId, cache) || {}).ae
+    : false;
+  const canShowPreviousReceipt = resolvedPreviousReceiptAmount != null
+    && !receiptMonthHasUnpaid
+    && !previousReceiptUnpaid;
   const currentFlags = getBankWithdrawalStatusByPatient_(billingMonth, entry && entry.patientId, cache);
   const isAggregateMonth = !!(currentFlags && currentFlags.af);
   const shouldShowReceipt = !!(receiptDisplay && receiptDisplay.visible) && !isAggregateMonth;
@@ -4865,7 +4881,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     amount.forceHideReceipt = true;
   }
   if (previousReceipt) {
-    previousReceipt.visible = shouldShowReceipt;
+    previousReceipt.visible = shouldShowReceipt && canShowPreviousReceipt;
     if (!previousReceipt.note && Array.isArray(receiptMonths) && receiptMonths.length) {
       previousReceipt.note = formatReceiptRemarkFromMonths_(receiptMonths);
     }
@@ -4877,6 +4893,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceiptAmount: resolvedPreviousReceiptAmount,
     carryOverAmount
   });
+  const showPreviousReceipt = !!(displayFlags && displayFlags.showPreviousReceipt) && canShowPreviousReceipt;
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,
@@ -4916,7 +4933,8 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceipt,
     displayMode: displayFlags.displayMode,
     showOnlineConsentNote: displayFlags.showOnlineConsentNote,
-    showPreviousReceipt: displayFlags.showPreviousReceipt,
+    showPreviousReceipt,
+    previousReceiptVisible: canShowPreviousReceipt,
     displayRows: Array.isArray(displayAmount && displayAmount.rows) ? displayAmount.rows : [],
     selfPayItems: Array.isArray(displayAmount && displayAmount.selfPayItems) ? displayAmount.selfPayItems : [],
     carryOverAmount,

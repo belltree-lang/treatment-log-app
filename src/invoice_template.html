@@ -165,7 +165,7 @@
     <? var receiptDate = receipt.date || receipt.receiptDate || ''; ?>
     <? var receiptAmount = receipt.amount != null ? receipt.amount : 0; ?>
     <? var receiptNote = receipt.note || receipt.description || ''; ?>
-    <? if (!amount.forceHideReceipt && !isAggregateDisplay && (data.showPreviousReceipt === true || (amount.previousReceiptAmount != null && amount.previousReceiptAmount > 0))) { ?>
+    <? if (!amount.forceHideReceipt && !isAggregateDisplay && amount.previousReceiptVisible !== false && (data.showPreviousReceipt === true || (amount.previousReceiptAmount != null && amount.previousReceiptAmount > 0))) { ?>
       <section class="card">
         <h3 class="section-title">前月分領収書</h3>
         <div class="info">

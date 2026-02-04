@@ -1,4 +1,3 @@
-const DEBUG_RECEIPT_TRACE = true;
 function doGet(e) {
   return handleBillingDoGet_(e);
 }

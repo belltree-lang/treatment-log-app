@@ -4903,8 +4903,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     }
   }
   const showPreviousReceipt = !!(displayFlags && displayFlags.showPreviousReceipt) && canShowPreviousReceipt;
-  if (displayFlags && displayFlags.displayMode === 'aggregate'
-      && resolvedPreviousReceiptAmount != null
+  if (resolvedPreviousReceiptAmount != null
       && typeof DEBUG_RECEIPT_TRACE !== 'undefined'
       && DEBUG_RECEIPT_TRACE === true) {
     const aeByMonth = unpaidTargetMonths.reduce((result, month) => {

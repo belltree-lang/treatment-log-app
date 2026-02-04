@@ -4862,7 +4862,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     (Array.isArray(normalizedAggregateMonths) ? normalizedAggregateMonths : [])
       .concat(Array.isArray(receiptMonths) ? receiptMonths : [])
   ));
-  const receiptMonthHasUnpaid = unpaidTargetMonths.length
+  const unpaidTargetMonthsHasAe = unpaidTargetMonths.length
     ? unpaidTargetMonths.some(month => {
       const flags = getBankWithdrawalStatusByPatient_(month, entry && entry.patientId, cache);
       return !!(flags && flags.ae);
@@ -4872,7 +4872,7 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     ? !!(getBankWithdrawalStatusByPatient_(previousReceiptMonth, entry && entry.patientId, cache) || {}).ae
     : false;
   let canShowPreviousReceipt = resolvedPreviousReceiptAmount != null
-    && !receiptMonthHasUnpaid
+    && !unpaidTargetMonthsHasAe
     && !previousReceiptUnpaid;
   const currentFlags = getBankWithdrawalStatusByPatient_(billingMonth, entry && entry.patientId, cache);
   const isAggregateMonth = !!(currentFlags && currentFlags.af);
@@ -4887,15 +4887,6 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     previousReceiptAmount: resolvedPreviousReceiptAmount,
     carryOverAmount
   });
-  if (displayFlags && displayFlags.displayMode === 'aggregate' && unpaidTargetMonths.length) {
-    const hasAggregateUnpaid = unpaidTargetMonths.some(month => {
-      const flags = getBankWithdrawalStatusByPatient_(month, entry && entry.patientId, cache);
-      return !!(flags && flags.ae);
-    });
-    if (hasAggregateUnpaid) {
-      canShowPreviousReceipt = false;
-    }
-  }
   if (previousReceipt) {
     previousReceipt.visible = shouldShowReceipt && canShowPreviousReceipt;
     if (!previousReceipt.note && Array.isArray(receiptMonths) && receiptMonths.length) {

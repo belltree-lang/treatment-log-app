@@ -3,12 +3,11 @@ function handleDashboardDoGet_(e) {
 
   if (shouldHandleDashboardApi_(e)) {
     const user = dashboardResolveRequestUser_(e);
-    const cacheFlag = dashboardResolveDashboardCacheFlag_(e);
     const useMock = shouldUseDashboardMockData_(e);
     const data = useMock && typeof getDashboardMockData === 'function'
-      ? getDashboardMockData({ user, cache: cacheFlag })
+      ? getDashboardMockData({ user })
       : typeof getDashboardData === 'function'
-        ? getDashboardData({ user, cache: cacheFlag })
+        ? getDashboardData({ user })
         : {};
     return createJsonResponse_(data);
   }
@@ -44,14 +43,6 @@ function dashboardResolveRequestUser_(e) {
   if (paramUser) return String(paramUser || '').trim();
   if (typeof dashboardResolveUser_ === 'function') return dashboardResolveUser_();
   return '';
-}
-
-function dashboardResolveDashboardCacheFlag_(e) {
-  const raw = e && e.parameter ? e.parameter.cache : undefined;
-  if (raw === undefined || raw === null || raw === '') return undefined;
-  const normalized = String(raw).trim().toLowerCase();
-  if (normalized === 'false' || normalized === '0' || normalized === 'off' || normalized === 'no') return false;
-  return true;
 }
 
 function shouldUseDashboardMockData_(e) {

@@ -107,7 +107,6 @@ function buildDashboardMockData_(overrides) {
   return Object.assign({
     user: 'mock@example.com',
     now,
-    cache: false,
     patientInfo,
     treatmentLogs,
     notes,

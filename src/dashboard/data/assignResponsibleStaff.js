@@ -12,7 +12,7 @@ function assignResponsibleStaff(options) {
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];
   const setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
 
-  const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs({ patientInfo, cache: opts.cache, now: opts.now }) : null);
+  const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs({ patientInfo, now: opts.now }) : null);
   const lastStaffByPatient = treatment && treatment.lastStaffByPatient ? treatment.lastStaffByPatient : {};
   if (treatment && Array.isArray(treatment.warnings)) {
     warnings.push.apply(warnings, treatment.warnings);

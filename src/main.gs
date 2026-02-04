@@ -4903,6 +4903,34 @@ function finalizeInvoiceAmountDataForPdf_(entry, billingMonth, aggregateMonths, 
     }
   }
   const showPreviousReceipt = !!(displayFlags && displayFlags.showPreviousReceipt) && canShowPreviousReceipt;
+  if (displayFlags && displayFlags.displayMode === 'aggregate'
+      && resolvedPreviousReceiptAmount != null
+      && typeof DEBUG_RECEIPT_TRACE !== 'undefined'
+      && DEBUG_RECEIPT_TRACE === true) {
+    const aeByMonth = unpaidTargetMonths.reduce((result, month) => {
+      const flags = getBankWithdrawalStatusByPatient_(month, entry && entry.patientId, cache);
+      result[month] = !!(flags && flags.ae);
+      return result;
+    }, {});
+    const tracePayload = {
+      patientId: entry && entry.patientId,
+      billingMonth,
+      displayMode: displayFlags.displayMode,
+      shouldShowReceipt,
+      forceHideReceipt: amount.forceHideReceipt,
+      canShowPreviousReceipt,
+      previousReceiptAmount: resolvedPreviousReceiptAmount,
+      receiptMonths,
+      normalizedAggregateMonths,
+      unpaidTargetMonths,
+      aeByMonth
+    };
+    if (typeof billingLogger_ !== 'undefined' && billingLogger_ && typeof billingLogger_.log === 'function') {
+      billingLogger_.log(JSON.stringify(tracePayload));
+    } else if (typeof console !== 'undefined' && typeof console.log === 'function') {
+      console.log(JSON.stringify(tracePayload));
+    }
+  }
   logReceiptDebug_(entry && entry.patientId, {
     step: 'finalizeInvoiceAmountDataForPdf_',
     billingMonth,

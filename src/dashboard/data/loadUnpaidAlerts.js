@@ -18,6 +18,14 @@ function loadUnpaidAlertsUncached_(options) {
   const opts = options || {};
   const threshold = normalizeUnpaidThreshold_(opts.consecutiveMonths);
   const tz = dashboardResolveTimeZone_();
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo(opts) : null);
   const patients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
@@ -31,6 +39,7 @@ function loadUnpaidAlertsUncached_(options) {
 
   const alerts = buildUnpaidAlerts_(history.entries, patients, threshold, tz);
 
+  logContext('loadUnpaidAlerts:done', `alerts=${alerts.length} warnings=${warnings.length} setupIncomplete=${!!(patientInfo && patientInfo.setupIncomplete) || !!(history && history.setupIncomplete)} threshold=${threshold}`);
   return {
     alerts,
     warnings,
@@ -43,11 +52,20 @@ function readUnpaidHistory_(options) {
   const entries = [];
   const warnings = [];
   let setupIncomplete = false;
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   const wb = dashboardGetSpreadsheet_();
   if (!wb) {
     warnings.push('スプレッドシートを取得できませんでした');
     setupIncomplete = true;
+    logContext('readUnpaidHistory:done', `entries=0 warnings=${warnings.length} setupIncomplete=true`);
     return { entries, warnings, setupIncomplete };
   }
 
@@ -56,11 +74,15 @@ function readUnpaidHistory_(options) {
   if (!sheet) {
     warnings.push(`${sheetName}シートが見つかりません`);
     setupIncomplete = true;
+    logContext('readUnpaidHistory:done', `entries=0 warnings=${warnings.length} setupIncomplete=true`);
     return { entries, warnings, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { entries, warnings, setupIncomplete };
+  if (lastRow < 2) {
+    logContext('readUnpaidHistory:done', `entries=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete} lastRow=${lastRow}`);
+    return { entries, warnings, setupIncomplete };
+  }
 
   const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : sheet.getMaxColumns ? sheet.getMaxColumns() : 0;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
@@ -104,6 +126,7 @@ function readUnpaidHistory_(options) {
     entries.push({ patientId, monthKey, amount, reason, memo, recordedAt });
   }
 
+  logContext('readUnpaidHistory:done', `entries=${entries.length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { entries, warnings, setupIncomplete };
 }
 

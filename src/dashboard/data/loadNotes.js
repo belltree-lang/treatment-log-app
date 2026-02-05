@@ -5,6 +5,14 @@ function loadNotes(options) {
   const opts = options || {};
   const email = opts.email;
   const base = loadNotesUncached_(opts);
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   const lastReadAt = loadHandoverLastRead_(email);
   const notes = {};
@@ -19,6 +27,7 @@ function loadNotes(options) {
 
   const warnings = [];
   if (Array.isArray(base.warnings)) warnings.push.apply(warnings, base.warnings);
+  logContext('loadNotes:done', `notes=${Object.keys(notes).length} warnings=${warnings.length} setupIncomplete=${!!base.setupIncomplete}`);
   return { notes, warnings, lastReadAt, setupIncomplete: !!base.setupIncomplete };
 }
 
@@ -26,6 +35,14 @@ function loadNotesUncached_(_options) {
   const warnings = [];
   const latestByPatient = {};
   let setupIncomplete = false;
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   const wb = dashboardGetSpreadsheet_();
   if (!wb) {
@@ -33,6 +50,7 @@ function loadNotesUncached_(_options) {
     warnings.push(warning);
     setupIncomplete = true;
     dashboardWarn_('[loadNotes] spreadsheet unavailable');
+    logContext('loadNotesUncached:done', `notes=0 warnings=${warnings.length} setupIncomplete=true`);
     return { notes: latestByPatient, warnings, setupIncomplete };
   }
   const sheetName = typeof DASHBOARD_SHEET_NOTES !== 'undefined' ? DASHBOARD_SHEET_NOTES : '申し送り';
@@ -42,11 +60,15 @@ function loadNotesUncached_(_options) {
     warnings.push(warning);
     setupIncomplete = true;
     dashboardWarn_(`[loadNotes] sheet not found: ${sheetName}`);
+    logContext('loadNotesUncached:done', `notes=0 warnings=${warnings.length} setupIncomplete=true`);
     return { notes: latestByPatient, warnings, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { notes: latestByPatient, warnings, setupIncomplete };
+  if (lastRow < 2) {
+    logContext('loadNotesUncached:done', `notes=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete} lastRow=${lastRow}`);
+    return { notes: latestByPatient, warnings, setupIncomplete };
+  }
 
   const lastCol = Math.max(5, sheet.getLastColumn ? sheet.getLastColumn() : (sheet.getMaxColumns ? sheet.getMaxColumns() : 0));
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
@@ -89,6 +111,7 @@ function loadNotesUncached_(_options) {
     }
   }
 
+  logContext('loadNotesUncached:done', `notes=${Object.keys(latestByPatient).length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { notes: latestByPatient, warnings, setupIncomplete };
 }
 

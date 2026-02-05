@@ -10,12 +10,21 @@ function loadAIReportsUncached_() {
   const reports = {};
   const warnings = [];
   let setupIncomplete = false;
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   const wb = dashboardGetSpreadsheet_();
   if (!wb || typeof wb.getSheetByName !== 'function') {
     warnings.push('スプレッドシートを取得できませんでした');
     setupIncomplete = true;
     dashboardWarn_('[loadAIReports] spreadsheet unavailable');
+    logContext('loadAIReports:done', `reports=0 warnings=${warnings.length} setupIncomplete=true`);
     return { reports, warnings, setupIncomplete };
   }
 
@@ -26,11 +35,15 @@ function loadAIReportsUncached_() {
     warnings.push(warning);
     setupIncomplete = true;
     dashboardWarn_(`[loadAIReports] sheet not found: ${sheetName}`);
+    logContext('loadAIReports:done', `reports=0 warnings=${warnings.length} setupIncomplete=true`);
     return { reports, warnings, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { reports, warnings, setupIncomplete };
+  if (lastRow < 2) {
+    logContext('loadAIReports:done', `reports=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete} lastRow=${lastRow}`);
+    return { reports, warnings, setupIncomplete };
+  }
 
   const lastCol = Math.max(2, sheet.getLastColumn ? sheet.getLastColumn() : (sheet.getMaxColumns ? sheet.getMaxColumns() : 2));
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
@@ -61,5 +74,6 @@ function loadAIReportsUncached_() {
     reports[patientId] = dashboardFormatDate_(tsDate, tz, 'yyyy-MM-dd HH:mm');
   }
 
+  logContext('loadAIReports:done', `reports=${Object.keys(reports).length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { reports, warnings, setupIncomplete };
 }

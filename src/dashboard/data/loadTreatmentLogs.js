@@ -16,12 +16,21 @@ function loadTreatmentLogsUncached_(options) {
   let setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
   const logs = [];
   const lastStaffByPatient = {};
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   const wb = dashboardGetSpreadsheet_();
   if (!wb) {
     warnings.push('スプレッドシートを取得できませんでした');
     setupIncomplete = true;
     dashboardWarn_('[loadTreatmentLogs] spreadsheet unavailable');
+    logContext('loadTreatmentLogs:done', `logs=0 warnings=${warnings.length} setupIncomplete=true`);
     return { logs, warnings, lastStaffByPatient, setupIncomplete };
   }
   const sheetName = typeof DASHBOARD_SHEET_TREATMENTS !== 'undefined' ? DASHBOARD_SHEET_TREATMENTS : '施術録';
@@ -31,11 +40,15 @@ function loadTreatmentLogsUncached_(options) {
     warnings.push(warning);
     setupIncomplete = true;
     dashboardWarn_(`[loadTreatmentLogs] sheet not found: ${sheetName}`);
+    logContext('loadTreatmentLogs:done', `logs=0 warnings=${warnings.length} setupIncomplete=true`);
     return { logs, warnings, lastStaffByPatient, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { logs, warnings, lastStaffByPatient, setupIncomplete };
+  if (lastRow < 2) {
+    logContext('loadTreatmentLogs:done', `logs=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete} lastRow=${lastRow}`);
+    return { logs, warnings, lastStaffByPatient, setupIncomplete };
+  }
 
   const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : sheet.getMaxColumns ? sheet.getMaxColumns() : 0;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
@@ -101,5 +114,6 @@ function loadTreatmentLogsUncached_(options) {
     lastStaffByPatient[pid] = entry ? entry.email || '' : '';
   });
 
+  logContext('loadTreatmentLogs:done', `logs=${logs.length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { logs, warnings, lastStaffByPatient, setupIncomplete };
 }

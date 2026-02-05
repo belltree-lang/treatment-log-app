@@ -131,6 +131,12 @@ const dashboardState = {
   marking: new Set()
 };
 
+function logDashboardUi_(label, details) {
+  if (typeof console === 'undefined') return;
+  const payload = details === undefined ? '' : details;
+  console.info(`[dashboard-ui] ${label}`, payload);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const refreshBtn = document.getElementById('refreshBtn');
   refreshBtn.addEventListener('click', fetchDashboardData);
@@ -140,15 +146,26 @@ document.addEventListener('DOMContentLoaded', () => {
 function fetchDashboardData() {
   setLoading(true);
   dashboardState.error = '';
+  logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
   const onSuccess = (payload) => {
     dashboardState.data = payload || {};
     setLoading(false);
+    const summary = {
+      tasks: Array.isArray(payload && payload.tasks) ? payload.tasks.length : 0,
+      visits: Array.isArray(payload && payload.todayVisits) ? payload.todayVisits.length : 0,
+      patients: Array.isArray(payload && payload.patients) ? payload.patients.length : 0,
+      unpaidAlerts: Array.isArray(payload && payload.unpaidAlerts) ? payload.unpaidAlerts.length : 0,
+      warnings: Array.isArray(payload && payload.warnings) ? payload.warnings.length : 0,
+      metaError: payload && payload.meta && payload.meta.error ? payload.meta.error : ''
+    };
+    logDashboardUi_('fetchDashboardData:success', summary);
     renderAll();
   };
   const onFailure = (err) => {
     dashboardState.error = err && err.message ? err.message : String(err || '不明なエラー');
     setLoading(false);
+    logDashboardUi_('fetchDashboardData:failure', dashboardState.error);
     renderAll();
   };
 
@@ -156,6 +173,7 @@ function fetchDashboardData() {
   if (runner && typeof runner.getDashboardData === 'function') {
     const mockFlag = resolveDashboardMockParam_();
     const args = mockFlag ? { mock: mockFlag } : {};
+    logDashboardUi_('fetchDashboardData:appsScript', { mock: mockFlag || null });
     runner.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getDashboardData(args);
     return;
   }
@@ -163,6 +181,7 @@ function fetchDashboardData() {
   const mock = resolveDashboardMockParam_();
   const mockQuery = mock ? `&mock=${encodeURIComponent(mock)}` : '';
   const url = (typeof baseUrl !== 'undefined' ? baseUrl : '') + `?action=getDashboardData${mockQuery}`;
+  logDashboardUi_('fetchDashboardData:fetch', { url });
   fetch(url)
     .then(res => res.json())
     .then(onSuccess)

@@ -23,6 +23,14 @@ function loadInvoicesUncached_(options) {
   const setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
   const invoices = {};
   const latestMeta = {};
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   Object.keys(patients).forEach(pid => {
     const normalized = dashboardNormalizePatientId_(pid);
@@ -35,6 +43,7 @@ function loadInvoicesUncached_(options) {
   if (!root || typeof root.getFolders !== 'function') {
     warnings.push('請求書フォルダが取得できませんでした');
     dashboardWarn_('[loadInvoices] invoice root folder not found');
+    logContext('loadInvoices:done', `patients=${Object.keys(invoices).length} linked=0 warnings=${warnings.length} setupIncomplete=true`);
     return { invoices, warnings, setupIncomplete: true };
   }
 
@@ -75,6 +84,8 @@ function loadInvoicesUncached_(options) {
     }
   }
 
+  const linkedCount = Object.keys(invoices).reduce((count, pid) => (invoices[pid] ? count + 1 : count), 0);
+  logContext('loadInvoices:done', `patients=${Object.keys(invoices).length} linked=${linkedCount} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { invoices, warnings, setupIncomplete };
 }
 

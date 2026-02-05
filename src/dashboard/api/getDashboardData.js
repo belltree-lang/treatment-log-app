@@ -74,6 +74,7 @@ function getDashboardData(options) {
       responsible,
       treatmentLogs
     });
+    logContext('getDashboardData:buildPatients', `patients=${patients.length}`);
 
     const warningState = collectDashboardWarnings_([
       patientInfo,

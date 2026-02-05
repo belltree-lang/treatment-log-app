@@ -11,6 +11,14 @@ function loadPatientInfoUncached_(_options) {
   const nameToId = {};
   const warnings = [];
   let setupIncomplete = false;
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
 
   const wb = dashboardGetSpreadsheet_();
   if (!wb) {
@@ -18,6 +26,7 @@ function loadPatientInfoUncached_(_options) {
     warnings.push(warning);
     setupIncomplete = true;
     dashboardWarn_('[loadPatientInfo] spreadsheet unavailable');
+    logContext('loadPatientInfo:done', `patients=0 warnings=${warnings.length} setupIncomplete=true`);
     return { patients, nameToId, warnings, setupIncomplete };
   }
   const sheetName = typeof DASHBOARD_SHEET_PATIENTS !== 'undefined' ? DASHBOARD_SHEET_PATIENTS : '患者情報';
@@ -27,11 +36,15 @@ function loadPatientInfoUncached_(_options) {
     warnings.push(warning);
     setupIncomplete = true;
     dashboardWarn_(`[loadPatientInfo] sheet not found: ${sheetName}`);
+    logContext('loadPatientInfo:done', `patients=0 warnings=${warnings.length} setupIncomplete=true`);
     return { patients, nameToId, warnings, setupIncomplete };
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
-  if (lastRow < 2) return { patients, nameToId, warnings, setupIncomplete };
+  if (lastRow < 2) {
+    logContext('loadPatientInfo:done', `patients=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete} lastRow=${lastRow}`);
+    return { patients, nameToId, warnings, setupIncomplete };
+  }
 
   const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : sheet.getMaxColumns ? sheet.getMaxColumns() : 0;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
@@ -83,5 +96,6 @@ function loadPatientInfoUncached_(_options) {
     };
   }
 
+  logContext('loadPatientInfo:done', `patients=${Object.keys(patients).length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { patients, nameToId, warnings, setupIncomplete };
 }

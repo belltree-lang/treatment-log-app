@@ -1267,6 +1267,7 @@ function buildInvoiceTemplateData_(item) {
   let unitPrice = breakdown.treatmentUnitPrice || 0;
   let carryOverAmount = normalizeBillingCarryOver_(item);
   let transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
+  const burdenRateInt = normalizeInvoiceBurdenRateInt_(item && item.burdenRate);
   let aggregateMonthTotals = [];
   let grandTotal = breakdown.grandTotal;
   const baseSelfPayItems = Array.isArray(baseBreakdown.selfPayItems) ? baseBreakdown.selfPayItems : [];
@@ -1295,8 +1296,13 @@ function buildInvoiceTemplateData_(item) {
     grandTotal = breakdown.grandTotal;
   }
 
+  const treatmentDetail = [
+    formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回',
+    (burdenRateInt === 1 || burdenRateInt === 2 || burdenRateInt === 3) ? burdenRateInt + '割' : ''
+  ].filter(Boolean).join(' × ');
+
   const rows = [
-    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount },
+    { label: '施術料', detail: treatmentDetail, amount: breakdown.treatmentAmount },
     { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount }
   ];
   if (carryOverAmount !== 0) {

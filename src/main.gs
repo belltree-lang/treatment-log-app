@@ -4744,9 +4744,14 @@ function buildStandardInvoiceAmountDataForPdf_(entry, billingMonth) {
   const carryOverAmount = normalizeBillingCarryOver_(entry);
   const unitPrice = breakdown.treatmentUnitPrice || 0;
   const transportDetail = breakdown.transportDetail || (formatBillingCurrency_(TRANSPORT_PRICE) + '円 × ' + visits + '回');
+  const burdenRateInt = normalizeInvoiceBurdenRateInt_(entry && entry.burdenRate);
+  const treatmentDetail = [
+    formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回',
+    (burdenRateInt === 1 || burdenRateInt === 2 || burdenRateInt === 3) ? burdenRateInt + '割' : ''
+  ].filter(Boolean).join(' × ');
   const rows = [
     { label: '前月繰越', detail: '', amount: carryOverAmount },
-    { label: '施術料', detail: formatBillingCurrency_(unitPrice) + '円 × ' + visits + '回', amount: breakdown.treatmentAmount || 0 },
+    { label: '施術料', detail: treatmentDetail, amount: breakdown.treatmentAmount || 0 },
     { label: '交通費', detail: transportDetail, amount: breakdown.transportAmount || 0 }
   ];
   const selfPayItems = Array.isArray(entry && entry.selfPayItems)

@@ -322,9 +322,9 @@ function buildOverviewFromVisits_(visits, scope, patientNameMap, now, tz) {
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const dateKey = entry.dateKey || '';
     if (!Object.prototype.hasOwnProperty.call(byDate, dateKey)) return;
-    byDate[dateKey].count += 1;
     if (seenByDate[dateKey].has(pid)) return;
     seenByDate[dateKey].add(pid);
+    byDate[dateKey].count += 1;
     const name = entry.patientName || patientNameMap[pid] || '';
     byDate[dateKey].items.push({ patientId: pid, name });
   });

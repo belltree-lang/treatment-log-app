@@ -97,12 +97,21 @@ function getDashboardData(options) {
       patients,
       unpaidAlerts: unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [],
       warnings: warningState.warnings,
+      overview: buildDashboardOverview_({
+        tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
+        visits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
+        patients,
+        patientInfo,
+        treatmentLogs,
+        user: meta.user,
+        now: opts.now
+      }),
       meta
     };
   } catch (err) {
     meta.error = err && err.message ? err.message : String(err);
     logContext('getDashboardData:error', meta.error);
-    return { tasks: [], todayVisits: [], patients: [], warnings: [], meta };
+    return { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
   }
 }
 
@@ -159,6 +168,174 @@ function normalizeDashboardNote_(note, patientId) {
     lastReadAt: note.lastReadAt || '',
     authorEmail: note.authorEmail || '',
     row: note.row || null
+  };
+}
+
+function buildDashboardOverview_(params) {
+  const payload = params || {};
+  const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+  const visits = Array.isArray(payload.visits) ? payload.visits : [];
+  const patients = Array.isArray(payload.patients) ? payload.patients : [];
+  const patientInfo = payload.patientInfo && payload.patientInfo.patients ? payload.patientInfo.patients : {};
+  const treatmentLogs = payload.treatmentLogs && Array.isArray(payload.treatmentLogs.logs) ? payload.treatmentLogs.logs : [];
+  const now = dashboardCoerceDate_(payload.now) || new Date();
+  const tz = dashboardResolveTimeZone_();
+  const userEmail = dashboardNormalizeEmail_(payload.user || '');
+  const isAdmin = typeof isAdminUser_ === 'function' ? !!isAdminUser_() : false;
+
+  const patientNameMap = {};
+  patients.forEach(entry => {
+    if (entry && entry.patientId) {
+      patientNameMap[entry.patientId] = entry.name || entry.patientName || '';
+    }
+  });
+  Object.keys(patientInfo || {}).forEach(pid => {
+    if (!pid || patientNameMap[pid]) return;
+    const info = patientInfo[pid] || {};
+    patientNameMap[pid] = info.name || info.patientName || '';
+  });
+
+  const targetScope = resolveDashboardOverviewTargets_({
+    userEmail,
+    isAdmin,
+    patientInfo,
+    patients,
+    treatmentLogs,
+    now,
+    tz
+  });
+
+  const invoiceUnconfirmed = buildOverviewFromTasks_(tasks, ['invoiceUnconfirmed'], targetScope, patientNameMap);
+  const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, targetScope, patientNameMap);
+  const visitSummary = buildOverviewFromVisits_(visits, targetScope, patientNameMap, now, tz);
+
+  return {
+    invoiceUnconfirmed,
+    consentRelated,
+    visitSummary
+  };
+}
+
+function resolveDashboardOverviewTargets_(params) {
+  const payload = params || {};
+  const isAdmin = !!payload.isAdmin;
+  const userEmail = dashboardNormalizeEmail_(payload.userEmail || '');
+  const patients = Array.isArray(payload.patients) ? payload.patients : [];
+  const patientInfo = payload.patientInfo || {};
+  const treatmentLogs = Array.isArray(payload.treatmentLogs) ? payload.treatmentLogs : [];
+  const now = dashboardCoerceDate_(payload.now) || new Date();
+  const tz = payload.tz || dashboardResolveTimeZone_();
+  const monthStart = dashboardStartOfMonth_(tz, now);
+  const allowed = new Set();
+
+  const addAllPatients = () => {
+    patients.forEach(entry => {
+      if (entry && entry.patientId) allowed.add(entry.patientId);
+    });
+    Object.keys(patientInfo || {}).forEach(pid => {
+      if (pid) allowed.add(pid);
+    });
+  };
+
+  if (isAdmin || !userEmail) {
+    addAllPatients();
+    return { patientIds: allowed, applyFilter: false };
+  }
+
+  treatmentLogs.forEach(entry => {
+    if (!entry || !entry.patientId || !entry.timestamp) return;
+    const ts = dashboardCoerceDate_(entry.timestamp);
+    if (!ts || ts < monthStart) return;
+    const email = dashboardNormalizeEmail_(entry.createdByEmail || '');
+    if (!email || email !== userEmail) return;
+    allowed.add(entry.patientId);
+  });
+
+  return { patientIds: allowed, applyFilter: true };
+}
+
+function buildOverviewFromTasks_(tasks, targetTypes, scope, patientNameMap) {
+  const typeSet = new Set(targetTypes || []);
+  const items = [];
+  const seen = new Set();
+  const allowedPatientIds = scope ? scope.patientIds : null;
+  const applyFilter = scope ? scope.applyFilter : false;
+
+  (tasks || []).forEach(task => {
+    const pid = task && task.patientId ? String(task.patientId).trim() : '';
+    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
+    const type = task && task.type ? String(task.type) : '';
+    if (!typeSet.has(type)) return;
+    if (seen.has(pid)) return;
+    seen.add(pid);
+    items.push({ patientId: pid, name: task.name || patientNameMap[pid] || '' });
+  });
+
+  items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  return { count: items.length, items };
+}
+
+function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap) {
+  const items = [];
+  const seen = new Set();
+  const taskItems = buildOverviewFromTasks_(tasks, ['consentExpired', 'consentWarning'], scope, patientNameMap);
+  const allowedPatientIds = scope ? scope.patientIds : null;
+  const applyFilter = scope ? scope.applyFilter : false;
+  (taskItems.items || []).forEach(entry => {
+    if (!entry.patientId || seen.has(entry.patientId)) return;
+    seen.add(entry.patientId);
+    items.push(entry);
+  });
+
+  Object.keys(patientInfo || {}).forEach(pid => {
+    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
+    if (seen.has(pid)) return;
+    const info = patientInfo[pid] || {};
+    const consentValue = info.consentExpiry || (info.raw && (info.raw['同意期限'] || info.raw['同意有効期限'])) || '';
+    if (String(consentValue || '').trim()) return;
+    seen.add(pid);
+    items.push({ patientId: pid, name: info.name || patientNameMap[pid] || '' });
+  });
+
+  items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  return { count: items.length, items };
+}
+
+function buildOverviewFromVisits_(visits, scope, patientNameMap, now, tz) {
+  const targetNow = dashboardCoerceDate_(now) || new Date();
+  const todayKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM-dd');
+  const yesterday = new Date(targetNow.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = dashboardFormatDate_(yesterday, tz, 'yyyy-MM-dd');
+  const allowedPatientIds = scope ? scope.patientIds : null;
+  const applyFilter = scope ? scope.applyFilter : false;
+  const byDate = {
+    [todayKey]: { count: 0, items: [] },
+    [yesterdayKey]: { count: 0, items: [] }
+  };
+  const seenByDate = {
+    [todayKey]: new Set(),
+    [yesterdayKey]: new Set()
+  };
+
+  (visits || []).forEach(entry => {
+    const pid = entry && entry.patientId ? String(entry.patientId).trim() : '';
+    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
+    const dateKey = entry.dateKey || '';
+    if (!Object.prototype.hasOwnProperty.call(byDate, dateKey)) return;
+    byDate[dateKey].count += 1;
+    if (seenByDate[dateKey].has(pid)) return;
+    seenByDate[dateKey].add(pid);
+    const name = entry.patientName || patientNameMap[pid] || '';
+    byDate[dateKey].items.push({ patientId: pid, name });
+  });
+
+  Object.keys(byDate).forEach(key => {
+    byDate[key].items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  });
+
+  return {
+    today: byDate[todayKey] || { count: 0, items: [] },
+    yesterday: byDate[yesterdayKey] || { count: 0, items: [] }
   };
 }
 

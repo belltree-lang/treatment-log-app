@@ -72,10 +72,12 @@
   .summary-header h3{ margin:0; font-size:1rem; }
   .summary-count{ font-weight:700; font-size:1.1rem; color:#fff; }
   .summary-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
-  .summary-list li{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .summary-list li{ display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:6px 8px; border-radius:10px; border:1px solid var(--border); background:rgba(255,255,255,0.02); }
+  .summary-main{ display:flex; flex-direction:column; gap:2px; }
   .summary-link{ color:var(--accent); text-decoration:none; font-weight:600; }
   .summary-link:hover{ text-decoration:underline; }
   .summary-meta{ font-size:0.85rem; color:var(--muted); }
+  .summary-subtext{ font-size:0.82rem; color:var(--muted); }
   @keyframes spin{ to{ transform:rotate(360deg); } }
   @media (max-width:640px){
     .visit{ grid-template-columns:60px 1fr; }
@@ -131,7 +133,6 @@
       <h2>担当患者一覧</h2>
       <span class="small" id="patientCount"></span>
     </div>
-    <div class="warning-list" id="warningList"></div>
     <div class="section" id="patientList"></div>
   </div>
 </div>
@@ -216,7 +217,6 @@ function setLoading(flag) {
 
 function renderAll() {
   renderMeta();
-  renderWarnings();
   renderOverview();
   renderTasks();
   renderUnpaidAlerts();
@@ -247,28 +247,6 @@ function renderError() {
   }
   box.style.display = 'none';
   box.textContent = '';
-}
-
-function renderWarnings() {
-  const list = document.getElementById('warningList');
-  if (!list) return;
-  list.innerHTML = '';
-  const warnings = dashboardState.data && Array.isArray(dashboardState.data.warnings)
-    ? dashboardState.data.warnings
-    : [];
-  if (!warnings.length) {
-    const empty = document.createElement('div');
-    empty.className = 'muted';
-    empty.textContent = '警告はありません';
-    list.appendChild(empty);
-    return;
-  }
-  warnings.forEach(w => {
-    const item = document.createElement('div');
-    item.className = 'warning-item';
-    item.textContent = w;
-    list.appendChild(item);
-  });
 }
 
 function renderOverview() {
@@ -693,13 +671,28 @@ function renderSummaryList_(items, emptyText) {
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))
     .forEach(item => {
       const row = document.createElement('li');
+      const main = document.createElement('div');
+      main.className = 'summary-main';
       const link = document.createElement('a');
       link.className = 'summary-link';
       link.href = buildRecordLink_(item.patientId);
       link.target = '_top';
       link.rel = 'noreferrer';
       link.textContent = item.name || item.patientId;
-      row.appendChild(link);
+      main.appendChild(link);
+      if (item.subText) {
+        const sub = document.createElement('div');
+        sub.className = 'summary-subtext';
+        sub.textContent = item.subText;
+        main.appendChild(sub);
+      }
+      row.appendChild(main);
+      if (item.badge) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = item.badge;
+        row.appendChild(badge);
+      }
       list.appendChild(row);
     });
   return list;

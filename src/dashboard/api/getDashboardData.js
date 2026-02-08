@@ -67,13 +67,23 @@ function getDashboardData(options) {
     }) : { visits: [], warnings: [] });
     logContext('getDashboardData:getTodayVisits', `visits=${(visitsResult && visitsResult.visits ? visitsResult.visits.length : 0)} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
 
+    const displayTargets = resolveDashboardDisplayTargets_({
+      patientInfo,
+      treatmentLogs,
+      now: opts.now
+    });
+    const filteredTasks = filterDashboardItemsByPatientId_(tasksResult && tasksResult.tasks ? tasksResult.tasks : [], displayTargets.patientIds);
+    const filteredVisits = filterDashboardItemsByPatientId_(visitsResult && visitsResult.visits ? visitsResult.visits : [], displayTargets.patientIds);
+    const filteredAlerts = filterDashboardItemsByPatientId_(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [], displayTargets.patientIds);
+    const filteredTreatmentLogs = filterDashboardItemsByPatientId_(treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : [], displayTargets.patientIds);
+
     const patients = buildDashboardPatients_(patientInfo, {
       notes,
       aiReports,
       invoices,
       responsible,
       treatmentLogs
-    });
+    }, displayTargets.patientIds);
     logContext('getDashboardData:buildPatients', `patients=${patients.length}`);
 
     const warningState = collectDashboardWarnings_([
@@ -92,17 +102,17 @@ function getDashboardData(options) {
     logContext('getDashboardData:setupIncomplete', `result=${meta.setupIncomplete} warnings=${warningState.warnings.length}`);
 
     return {
-      tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
-      todayVisits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
+      tasks: filteredTasks,
+      todayVisits: filteredVisits,
       patients,
-      unpaidAlerts: unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [],
+      unpaidAlerts: filteredAlerts,
       warnings: warningState.warnings,
       overview: buildDashboardOverview_({
-        tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
-        visits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
+        tasks: filteredTasks,
+        visits: filteredVisits,
         patients,
         patientInfo,
-        treatmentLogs,
+        treatmentLogs: { logs: filteredTreatmentLogs },
         user: meta.user,
         now: opts.now
       }),
@@ -115,7 +125,7 @@ function getDashboardData(options) {
   }
 }
 
-function buildDashboardPatients_(patientInfo, sources) {
+function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
   const patients = [];
   const basePatients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
   const notes = sources && sources.notes && sources.notes.notes ? sources.notes.notes : {};
@@ -127,6 +137,8 @@ function buildDashboardPatients_(patientInfo, sources) {
   const addPatient = (pid, payload) => {
     const patientId = dashboardNormalizePatientId_(pid);
     if (!patientId || seen.has(patientId)) return;
+    if (allowedPatientIds && !allowedPatientIds.has(patientId)) return;
+    if (!Object.prototype.hasOwnProperty.call(basePatients, patientId)) return;
     seen.add(patientId);
 
     const base = payload || {};
@@ -143,17 +155,6 @@ function buildDashboardPatients_(patientInfo, sources) {
   };
 
   Object.keys(basePatients).forEach(pid => addPatient(pid, basePatients[pid]));
-
-  const additionalIds = new Set([
-    ...Object.keys(notes || {}),
-    ...Object.keys(aiReports || {}),
-    ...Object.keys(invoices || {}),
-    ...Object.keys(responsible || {})
-  ]);
-  additionalIds.forEach(pid => {
-    if (!pid || Object.prototype.hasOwnProperty.call(basePatients, pid)) return;
-    addPatient(pid, {});
-  });
 
   return patients;
 }
@@ -375,7 +376,10 @@ function collectDashboardWarnings_(results) {
 }
 
 function normalizeDashboardWarning_(warning) {
-  return String(warning == null ? '' : warning).trim();
+  const normalized = String(warning == null ? '' : warning).trim();
+  if (!normalized) return '';
+  if (shouldSuppressDashboardWarning_(normalized)) return '';
+  return normalized;
 }
 
 function isDashboardSetupIncompleteWarning_(warning) {
@@ -385,6 +389,55 @@ function isDashboardSetupIncompleteWarning_(warning) {
   if (normalized.indexOf('スプレッドシートを取得できませんでした') >= 0) return true;
   if (normalized.indexOf('請求書フォルダが取得できませんでした') >= 0) return true;
   return false;
+}
+
+function shouldSuppressDashboardWarning_(warning) {
+  const normalized = String(warning == null ? '' : warning);
+  if (!normalized) return true;
+  if (/(row[:：]\s*\d+)/i.test(normalized)) return true;
+  if (normalized.indexOf('患者ID') >= 0 && (normalized.indexOf('空') >= 0 || normalized.indexOf('未入力') >= 0)) return true;
+  if (normalized.indexOf('患者名をIDに紐付け') >= 0) return true;
+  if (normalized.indexOf('氏名が未入力') >= 0) return true;
+  return false;
+}
+
+function resolveDashboardDisplayTargets_(params) {
+  const payload = params || {};
+  const patientInfo = payload.patientInfo && payload.patientInfo.patients ? payload.patientInfo.patients : {};
+  const treatmentLogs = payload.treatmentLogs && Array.isArray(payload.treatmentLogs.logs)
+    ? payload.treatmentLogs.logs
+    : [];
+  const now = dashboardCoerceDate_(payload.now) || new Date();
+  const tz = dashboardResolveTimeZone_();
+  const monthStart = dashboardStartOfMonth_(tz, now);
+  const todayKey = dashboardFormatDate_(now, tz, 'yyyy-MM-dd');
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = dashboardFormatDate_(yesterday, tz, 'yyyy-MM-dd');
+  const allowed = new Set();
+
+  (treatmentLogs || []).forEach(entry => {
+    if (!entry || !entry.timestamp) return;
+    const ts = dashboardCoerceDate_(entry.timestamp);
+    if (!ts) return;
+    const dateKey = entry.dateKey || dashboardFormatDate_(ts, tz, 'yyyy-MM-dd');
+    const inMonthlyScope = ts >= monthStart;
+    const inDailyScope = dateKey === todayKey || dateKey === yesterdayKey;
+    if (!inMonthlyScope && !inDailyScope) return;
+    const pid = dashboardNormalizePatientId_(entry.patientId);
+    if (!pid || !Object.prototype.hasOwnProperty.call(patientInfo, pid)) return;
+    allowed.add(pid);
+  });
+
+  return { patientIds: allowed };
+}
+
+function filterDashboardItemsByPatientId_(items, allowedPatientIds) {
+  if (!Array.isArray(items)) return [];
+  if (!allowedPatientIds || !(allowedPatientIds instanceof Set)) return items.slice();
+  return items.filter(item => {
+    const pid = dashboardNormalizePatientId_(item && item.patientId);
+    return pid && allowedPatientIds.has(pid);
+  });
 }
 
 function dashboardResolveUser_() {

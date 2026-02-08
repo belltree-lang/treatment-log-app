@@ -114,7 +114,8 @@ function getDashboardData(options) {
         patientInfo,
         treatmentLogs: { logs: filteredTreatmentLogs },
         user: meta.user,
-        now: opts.now
+        now: opts.now,
+        allowedPatientIds: displayTargets.patientIds
       }),
       meta
     };
@@ -178,11 +179,10 @@ function buildDashboardOverview_(params) {
   const visits = Array.isArray(payload.visits) ? payload.visits : [];
   const patients = Array.isArray(payload.patients) ? payload.patients : [];
   const patientInfo = payload.patientInfo && payload.patientInfo.patients ? payload.patientInfo.patients : {};
-  const treatmentLogs = payload.treatmentLogs && Array.isArray(payload.treatmentLogs.logs) ? payload.treatmentLogs.logs : [];
   const now = dashboardCoerceDate_(payload.now) || new Date();
   const tz = dashboardResolveTimeZone_();
-  const userEmail = dashboardNormalizeEmail_(payload.user || '');
-  const isAdmin = typeof isAdminUser_ === 'function' ? !!isAdminUser_() : false;
+  const allowedPatientIds = payload.allowedPatientIds instanceof Set ? payload.allowedPatientIds : null;
+  const scope = { patientIds: allowedPatientIds, applyFilter: !!allowedPatientIds };
 
   const patientNameMap = {};
   patients.forEach(entry => {
@@ -196,19 +196,9 @@ function buildDashboardOverview_(params) {
     patientNameMap[pid] = info.name || info.patientName || '';
   });
 
-  const targetScope = resolveDashboardOverviewTargets_({
-    userEmail,
-    isAdmin,
-    patientInfo,
-    patients,
-    treatmentLogs,
-    now,
-    tz
-  });
-
-  const invoiceUnconfirmed = buildOverviewFromTasks_(tasks, ['invoiceUnconfirmed'], targetScope, patientNameMap);
-  const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, targetScope, patientNameMap);
-  const visitSummary = buildOverviewFromVisits_(visits, targetScope, patientNameMap, now, tz);
+  const invoiceUnconfirmed = buildOverviewFromInvoiceUnconfirmed_(tasks, scope, patientNameMap);
+  const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap);
+  const visitSummary = buildOverviewFromVisits_(visits, scope, patientNameMap, now, tz);
 
   return {
     invoiceUnconfirmed,
@@ -217,46 +207,7 @@ function buildDashboardOverview_(params) {
   };
 }
 
-function resolveDashboardOverviewTargets_(params) {
-  const payload = params || {};
-  const isAdmin = !!payload.isAdmin;
-  const userEmail = dashboardNormalizeEmail_(payload.userEmail || '');
-  const patients = Array.isArray(payload.patients) ? payload.patients : [];
-  const patientInfo = payload.patientInfo || {};
-  const treatmentLogs = Array.isArray(payload.treatmentLogs) ? payload.treatmentLogs : [];
-  const now = dashboardCoerceDate_(payload.now) || new Date();
-  const tz = payload.tz || dashboardResolveTimeZone_();
-  const monthStart = dashboardStartOfMonth_(tz, now);
-  const allowed = new Set();
-
-  const addAllPatients = () => {
-    patients.forEach(entry => {
-      if (entry && entry.patientId) allowed.add(entry.patientId);
-    });
-    Object.keys(patientInfo || {}).forEach(pid => {
-      if (pid) allowed.add(pid);
-    });
-  };
-
-  if (isAdmin || !userEmail) {
-    addAllPatients();
-    return { patientIds: allowed, applyFilter: false };
-  }
-
-  treatmentLogs.forEach(entry => {
-    if (!entry || !entry.patientId || !entry.timestamp) return;
-    const ts = dashboardCoerceDate_(entry.timestamp);
-    if (!ts || ts < monthStart) return;
-    const email = dashboardNormalizeEmail_(entry.createdByEmail || '');
-    if (!email || email !== userEmail) return;
-    allowed.add(entry.patientId);
-  });
-
-  return { patientIds: allowed, applyFilter: true };
-}
-
-function buildOverviewFromTasks_(tasks, targetTypes, scope, patientNameMap) {
-  const typeSet = new Set(targetTypes || []);
+function buildOverviewFromInvoiceUnconfirmed_(tasks, scope, patientNameMap) {
   const items = [];
   const seen = new Set();
   const allowedPatientIds = scope ? scope.patientIds : null;
@@ -266,10 +217,14 @@ function buildOverviewFromTasks_(tasks, targetTypes, scope, patientNameMap) {
     const pid = task && task.patientId ? String(task.patientId).trim() : '';
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const type = task && task.type ? String(task.type) : '';
-    if (!typeSet.has(type)) return;
+    if (type !== 'invoiceUnconfirmed') return;
     if (seen.has(pid)) return;
     seen.add(pid);
-    items.push({ patientId: pid, name: task.name || patientNameMap[pid] || '' });
+    items.push({
+      patientId: pid,
+      name: task.name || patientNameMap[pid] || '',
+      subText: '未確認'
+    });
   });
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
@@ -279,13 +234,24 @@ function buildOverviewFromTasks_(tasks, targetTypes, scope, patientNameMap) {
 function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap) {
   const items = [];
   const seen = new Set();
-  const taskItems = buildOverviewFromTasks_(tasks, ['consentExpired', 'consentWarning'], scope, patientNameMap);
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
-  (taskItems.items || []).forEach(entry => {
-    if (!entry.patientId || seen.has(entry.patientId)) return;
-    seen.add(entry.patientId);
-    items.push(entry);
+
+  (tasks || []).forEach(task => {
+    const pid = task && task.patientId ? String(task.patientId).trim() : '';
+    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
+    const type = task && task.type ? String(task.type) : '';
+    if (type !== 'consentExpired' && type !== 'consentWarning') return;
+    if (seen.has(pid)) return;
+    const detail = task.detail ? String(task.detail) : '';
+    const label = type === 'consentExpired' ? '期限切れ' : '期限間近';
+    const subText = detail ? `${label}: ${detail}` : label;
+    seen.add(pid);
+    items.push({
+      patientId: pid,
+      name: task.name || patientNameMap[pid] || '',
+      subText
+    });
   });
 
   Object.keys(patientInfo || {}).forEach(pid => {
@@ -295,7 +261,11 @@ function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap) {
     const consentValue = info.consentExpiry || (info.raw && (info.raw['同意期限'] || info.raw['同意有効期限'])) || '';
     if (String(consentValue || '').trim()) return;
     seen.add(pid);
-    items.push({ patientId: pid, name: info.name || patientNameMap[pid] || '' });
+    items.push({
+      patientId: pid,
+      name: info.name || patientNameMap[pid] || '',
+      subText: '未取得'
+    });
   });
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
@@ -313,9 +283,9 @@ function buildOverviewFromVisits_(visits, scope, patientNameMap, now, tz) {
     [todayKey]: { count: 0, items: [] },
     [yesterdayKey]: { count: 0, items: [] }
   };
-  const seenByDate = {
-    [todayKey]: new Set(),
-    [yesterdayKey]: new Set()
+  const countsByDate = {
+    [todayKey]: {},
+    [yesterdayKey]: {}
   };
 
   (visits || []).forEach(entry => {
@@ -323,14 +293,25 @@ function buildOverviewFromVisits_(visits, scope, patientNameMap, now, tz) {
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const dateKey = entry.dateKey || '';
     if (!Object.prototype.hasOwnProperty.call(byDate, dateKey)) return;
-    if (seenByDate[dateKey].has(pid)) return;
-    seenByDate[dateKey].add(pid);
-    byDate[dateKey].count += 1;
+    countsByDate[dateKey][pid] = (countsByDate[dateKey][pid] || 0) + 1;
     const name = entry.patientName || patientNameMap[pid] || '';
-    byDate[dateKey].items.push({ patientId: pid, name });
+    if (!byDate[dateKey].items.some(item => item.patientId === pid)) {
+      byDate[dateKey].items.push({ patientId: pid, name });
+    }
   });
 
   Object.keys(byDate).forEach(key => {
+    const label = key === todayKey ? '施術日: 今日' : '施術日: 昨日';
+    byDate[key].items = byDate[key].items.map(item => {
+      const count = countsByDate[key][item.patientId] || 0;
+      return {
+        patientId: item.patientId,
+        name: item.name,
+        subText: label,
+        badge: count > 1 ? `${count}件` : ''
+      };
+    });
+    byDate[key].count = byDate[key].items.length;
     byDate[key].items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   });
 

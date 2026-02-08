@@ -14,6 +14,7 @@ function loadTreatmentLogsUncached_(options) {
   const nameToId = opts.nameToId || (patientInfo && patientInfo.nameToId) || {};
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];
   let setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
+  const patients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
   const logs = [];
   const lastStaffByPatient = {};
   const logContext = (label, details) => {
@@ -82,29 +83,31 @@ function loadTreatmentLogsUncached_(options) {
     const createdByEmail = colEmail ? String(rowDisplay[colEmail - 1] || row[colEmail - 1] || '').trim() : '';
     const dateKey = dashboardFormatDate_(timestamp, tz, 'yyyy-MM-dd');
 
-    if (!mappedPatientId) {
-      warnings.push(`患者名をIDに紐付けできません: ${patientName || '(空白)'} (row:${rowNumber})`);
+    const normalizedPatientId = mappedPatientId ? dashboardNormalizePatientId_(mappedPatientId) : '';
+    if (!normalizedPatientId) {
+      logContext('loadTreatmentLogs:skipMissingPatientId', `row=${rowNumber}`);
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(patients, normalizedPatientId)) {
+      logContext('loadTreatmentLogs:skipUnknownPatientId', `row=${rowNumber} patientId=${normalizedPatientId}`);
+      continue;
     }
 
     const entry = {
       row: rowNumber,
-      patientId: mappedPatientId || '',
+      patientId: normalizedPatientId,
       patientName,
       createdByEmail,
       timestamp,
       dateKey
     };
-    if (!mappedPatientId) {
-      entry.unmapped = true;
-      entry.unmappedName = patientName || '';
-    }
 
     logs.push(entry);
 
-    if (mappedPatientId && timestamp <= prevMonthEnd) {
-      const prev = lastStaffByPatient[mappedPatientId];
+    if (timestamp <= prevMonthEnd) {
+      const prev = lastStaffByPatient[normalizedPatientId];
       if (!prev || (prev.timestamp && prev.timestamp < timestamp)) {
-        lastStaffByPatient[mappedPatientId] = { email: createdByEmail, timestamp };
+        lastStaffByPatient[normalizedPatientId] = { email: createdByEmail, timestamp };
       }
     }
   }

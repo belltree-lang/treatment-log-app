@@ -516,6 +516,8 @@ let _patientIdInitialRenderBuffer = null;
 let _patientIdInitialRenderWaiters = [];
 let _patientIdInitialRenderNoticeShown = false;
 let _confirmedPatientId = '';
+let _initialPatientIdRequested = '';
+let _initialPatientIdResolved = false;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
@@ -602,6 +604,25 @@ function waitMs(ms){
     const delay = typeof ms === 'number' && ms > 0 ? ms : 0;
     setTimeout(resolve, delay);
   });
+}
+
+function resolveInitialPatientIdRequest(){
+  let candidate = '';
+  try {
+    const templatePid = "<?= patientId ?>";
+    if (templatePid) candidate = String(templatePid).trim();
+  } catch (err){
+    console.warn('[resolveInitialPatientIdRequest] template read failed', err);
+  }
+  if (!candidate && typeof window !== 'undefined' && window.location){
+    try {
+      const params = new URLSearchParams(window.location.search);
+      candidate = params.get('patientId') || params.get('id') || '';
+    } catch (err){
+      console.warn('[resolveInitialPatientIdRequest] URL params read failed', err);
+    }
+  }
+  return normalizePatientIdKey(candidate);
 }
 
 function invalidatePatientInfoRequests(){
@@ -2570,8 +2591,18 @@ function savePatientIdCache(list){
 }
 
 function loadPidList(){
-  const ensureAfterApply = () => {
+  const ensureAfterApply = (options) => {
+    const opts = Object.assign({ finalize: false }, options || {});
     try {
+      const initialApplied = applyInitialPatientSelectionFromRequest_({ finalize: opts.finalize });
+      if (initialApplied) {
+        schedulePatientIdSearchUpdate(true);
+        return;
+      }
+      if (_initialPatientIdRequested && !_initialPatientIdResolved && !_patientIdList.length && !opts.finalize){
+        schedulePatientIdSearchUpdate(true);
+        return;
+      }
       const result = ensurePatientIdDisplayFromInput({
         allowPlainOnMiss: !_patientIdList.length,
         clearOnReject: !!_patientIdList.length,
@@ -2589,13 +2620,13 @@ function loadPidList(){
       console.error('[loadPidList] ensurePatientIdDisplayFromInput failed', err);
     }
   };
-  const useList = (list, source) => {
+  const useList = (list, source, options) => {
     return applyPatientIdList(list, { source })
       .catch(err => {
         console.error('[applyPatientIdList] failed', err);
       })
       .then(() => {
-        ensureAfterApply();
+        ensureAfterApply(options);
       });
   };
   let cacheApplied = false;
@@ -2606,7 +2637,7 @@ function loadPidList(){
         return Promise.resolve(true);
       }
       cacheApplied = true;
-      return useList(cached, 'cache').then(() => true);
+      return useList(cached, 'cache', { finalize: false }).then(() => true);
     }
     return Promise.resolve(false);
   };
@@ -2617,11 +2648,13 @@ function loadPidList(){
     .withSuccessHandler(list => {
       if (Array.isArray(list) && list.length){
         savePatientIdCache(list);
-        useList(list, 'network');
+        useList(list, 'network', { finalize: true });
       } else {
         applyCache().then(fromCache => {
           if (!fromCache){
-            useList([], 'network');
+            useList([], 'network', { finalize: true });
+          } else {
+            applyInitialPatientSelectionFromRequest_({ finalize: true });
           }
         });
       }
@@ -2630,9 +2663,10 @@ function loadPidList(){
       console.error('[loadPidList] failed', err);
       applyCache().then(fromCache => {
         if (fromCache){
+          applyInitialPatientSelectionFromRequest_({ finalize: true });
           toast('ID候補の取得に失敗したため、キャッシュから復元しました。');
         } else {
-          useList([], 'network').then(() => {
+          useList([], 'network', { finalize: true }).then(() => {
             toast('ID候補の取得に失敗しました。IDのみで続行します。');
           });
         }
@@ -2650,6 +2684,34 @@ function handlePatientIdKeydown(evt){
     evt.preventDefault();
     handlePatientIdConfirm();
   }
+}
+
+function applyInitialPatientSelectionFromRequest_(options){
+  const opts = Object.assign({ finalize: false }, options || {});
+  if (_initialPatientIdResolved) return false;
+  if (!_initialPatientIdRequested) return false;
+  const record = _patientIdIndex[_initialPatientIdRequested];
+  if (record){
+    setConfirmedPatientId(record.id);
+    setv('pid', formatPatientIdDisplay(record.id, record.name, record.kana));
+    _initialPatientIdResolved = true;
+    refresh();
+    return true;
+  }
+  if (!opts.finalize){
+    return false;
+  }
+  _initialPatientIdResolved = true;
+  const inputEl = q('pid');
+  if (inputEl){
+    const currentKey = normalizePatientIdKey(splitPatientIdDisplay(String(inputEl.value || '')).id);
+    if (currentKey === _initialPatientIdRequested){
+      setv('pid', '');
+    }
+  }
+  clearConfirmedPatientId();
+  hideGlobalLoading();
+  return true;
 }
 
 function handlePatientIdInput(){
@@ -4082,17 +4144,17 @@ function saveHandoverUI(){
 }
 /* 起動時 */
 (function init(){
+  _initialPatientIdRequested = resolveInitialPatientIdRequest();
+  if (_initialPatientIdRequested){
+    setv('pid', _initialPatientIdRequested);
+  }
   loadPidList();
   loadPresets();
   setupIcfSummaryUI();
   if (!IS_STANDALONE_DISPLAY_MODE){
     focusPatientIdInput();
   }
-  const p = "<?= patientId ?>";
-  if (p) {
-    setConfirmedPatientId(p);
-    refresh();
-  } else {
+  if (!_initialPatientIdRequested) {
     hideGlobalLoading();
   }
   q('consentModal')?.classList.remove('open');

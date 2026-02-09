@@ -3413,9 +3413,9 @@ function renderThisMonthList(rows, options){
             ${emailHtml}
           </td>
           <td class="actions">
-            <button class="btn ghost" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
-            <button class="btn ghost" onclick="editRowTime(${r.row}, '${isoWhen}')">日時</button>
-            <button class="btn warn" data-treatment-id="${treatmentIdAttr}" onclick="delRow(this.dataset.treatmentId)">削除</button>
+            <button class="btn ghost" type="button" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
+            <button class="btn ghost" type="button" data-action="edit-time" data-row="${r.row}" data-when="${escapeHtml(isoWhen)}">日時</button>
+            <button class="btn warn" type="button" data-treatment-id="${treatmentIdAttr}" onclick="delRow(this.dataset.treatmentId)">削除</button>
 
           </td>
         </tr>`;
@@ -3427,6 +3427,25 @@ function renderThisMonthList(rows, options){
     </tbody>
   </table>`;
   if (done) done();
+}
+function setupTreatmentListActions(){
+  const el = q('list');
+  if (!el || el.dataset.actionsBound === 'true') return;
+  el.dataset.actionsBound = 'true';
+  el.addEventListener('click', event => {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const button = target.closest('button[data-action="edit-time"]');
+    if (!button || !el.contains(button)) return;
+    event.preventDefault();
+    const row = Number(button.dataset.row);
+    const when = button.dataset.when || '';
+    if (!Number.isFinite(row)) {
+      alert('対象行を取得できませんでした。画面を再読み込みしてやり直してください。');
+      return;
+    }
+    editRowTime(row, when);
+  });
 }
 function loadThisMonth(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
@@ -4185,6 +4204,7 @@ function saveHandoverUI(){
   loadPidList();
   loadPresets();
   setupIcfSummaryUI();
+  setupTreatmentListActions();
   if (!IS_STANDALONE_DISPLAY_MODE){
     focusPatientIdInput();
   }

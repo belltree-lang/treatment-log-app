@@ -42,7 +42,7 @@ const SystemPrompt_DoctorReport_JP = [
   '・文章全体は敬体（です・ます調）で統一し、医療文書としての客観性を保ちます。',
   '・主観的・推測的な表現（例：「思います」「感じます」「〜と思われます」など）は使用しないでください。',
   '・施術内容は「当院では〜を実施しております。」の形で現在進行形を基本とします（過去形「いたしました」は避ける）。',
-  '・同一文中で「安全に配慮しながら施術を継続してまいります。」を複数回繰り返さないこと。必要に応じて一度のみ使用します。',
+  '・判断・決定・継続指示は記載せず、当院の観察事実と経過のみを記載してください。',
   '・段落間は1行空けて構成してください。',
   '・敬称は患者様・医師へ適切に付し、報告書全体を一つの文書として自然な流れにしてください。',
   '・本報告書は「当院（施術提供者）」が「主治医」に対して提出する正式な経過報告書です。',
@@ -60,9 +60,9 @@ const SystemPrompt_DoctorReport_JP = [
   '・「施術の内容・頻度」では、冒頭で必ず「頂いている『〇〇』の同意に対して、〜」という形で同意内容を引用し、施術目的と関連付けて記載してください。',
   '・「施術の内容・頻度」では、同意内容 → 施術目的（可動域改善・筋力強化・疼痛緩和など） → 頻度（直近〇か月で〇回の施術を実施、など事実ベース）の順に簡潔に述べてください。',
   '・同意内容が空欄の場合は、「同意内容の記載なし」とせず、施術目的と頻度のみで自然に構成してください。',
-  '・「患者の状態・経過」では観察事実を中心に、改善傾向・課題・留意点を簡潔に述べてください。',
-  '・医師が判断すべき内容（施術継続の要否、有効性評価、医学的判断）は記載せず、当院が実施している内容と配慮事項のみを事実として記載してください。',
-  '・「特記すべき事項」では安全配慮・施術方針・今後の対応などを記載し、最終文は必ず「今後も安全に配慮しながら施術を継続してまいります。」で締めてください（句点を含む）。',
+  '・「患者の状態・経過」では観察事実を中心に、経過を簡潔に述べてください。',
+  '・医師が判断すべき内容（施術継続の要否、有効性評価、医学的判断）は記載しないでください。',
+  '・「特記すべき事項」では安全配慮や注意点などの事実のみを記載してください。',
   '',
   '【過去報告書の扱い】',
   '・同一患者様の過去報告書が提示された場合は、内容を参考にしつつ、重複表現を避け、経過の変化を中心にまとめてください。',
@@ -6388,7 +6388,6 @@ function checkConsentExpiration_(){
   const existing = readNewsRows_();
   const existingKeys = new Set();
   const existingDoctorReportKeys = new Set();
-  const existingDoctorReportMissingKeys = new Set();
   existing.forEach(row => {
     if (row.cleared) return;
     if (!row.pid) return;
@@ -6398,12 +6397,6 @@ function checkConsentExpiration_(){
     let expiryKey = '';
     if (meta && typeof meta === 'object' && meta.consentExpiry) {
       expiryKey = String(meta.consentExpiry);
-    }
-    if (typeText === '申し送り') {
-      if (meta && typeof meta === 'object' && meta.type === 'missing_moushiokuri') {
-        existingDoctorReportMissingKeys.add(row.pid + '|' + expiryKey);
-      }
-      return;
     }
     if (typeText !== '同意') return;
     const message = String(row.message || '').trim();
@@ -6427,10 +6420,6 @@ function checkConsentExpiration_(){
   const toInsert = [];
   const insertedKeys = new Set();
   const insertedDoctorReportKeys = new Set();
-  const insertedDoctorReportMissingKeys = new Set();
-  const doctorReportRemindersToClear = new Map();
-  const missingHandoverRemindersToClear = new Map();
-  const latestHandoversMap = buildLatestHandoverMap_();
   const dayMs = 24 * 60 * 60 * 1000;
   const parseIsoLocal = (text) => {
     const m = text && text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -6463,36 +6452,15 @@ function checkConsentExpiration_(){
     const daysSinceReportTrigger = Math.floor((todayStart.getTime() - reportTriggerDate.getTime()) / dayMs);
     if (daysSinceReportTrigger >= 0 && daysUntilExpiry >= 0) {
       const reportKey = pidNormalized + '|' + expiryStr;
-      const latestHandover = latestHandoversMap[pidNormalized] || null;
-      const hasRecentHandover = isRecentHandoverEntry_(latestHandover, todayStart);
-      if (!hasRecentHandover) {
-        if (!existingDoctorReportMissingKeys.has(reportKey) && !insertedDoctorReportMissingKeys.has(reportKey)) {
-          const missingMeta = {
-            source: 'auto',
-            type: 'missing_moushiokuri',
-            consentExpiry: expiryStr,
-            triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
-          };
-          toInsert.push(formatNewsRow_(pidForNews, '申し送り', '申し送りが未入力のため報告書を生成できません。申し送りを入力してください。', missingMeta));
-          insertedDoctorReportMissingKeys.add(reportKey);
-        }
-        if (existingDoctorReportKeys.has(reportKey) && !doctorReportRemindersToClear.has(reportKey)) {
-          doctorReportRemindersToClear.set(reportKey, pidForNews);
-        }
-      } else {
-        if (existingDoctorReportMissingKeys.has(reportKey) && !missingHandoverRemindersToClear.has(reportKey)) {
-          missingHandoverRemindersToClear.set(reportKey, { pid: pidForNews, consentExpiry: expiryStr });
-        }
-        if (!existingDoctorReportKeys.has(reportKey) && !insertedDoctorReportKeys.has(reportKey)) {
-          const reportMeta = {
-            source: 'auto',
-            type: 'consent_verification',
-            consentExpiry: expiryStr,
-            triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
-          };
-          toInsert.push(formatNewsRow_(pidForNews, '同意', '⚠️ 同意期限50日前になりました', reportMeta));
-          insertedDoctorReportKeys.add(reportKey);
-        }
+      if (!existingDoctorReportKeys.has(reportKey) && !insertedDoctorReportKeys.has(reportKey)) {
+        const reportMeta = {
+          source: 'auto',
+          type: 'consent_verification',
+          consentExpiry: expiryStr,
+          triggerDate: Utilities.formatDate(reportTriggerDate, tz, 'yyyy-MM-dd')
+        };
+        toInsert.push(formatNewsRow_(pidForNews, '同意', '⚠️ 同意期限50日前になりました', reportMeta));
+        insertedDoctorReportKeys.add(reportKey);
       }
     }
     const key = pidNormalized + '|' + expiryStr;
@@ -6509,27 +6477,6 @@ function checkConsentExpiration_(){
     insertedKeys.add(key);
   }
 
-  if (doctorReportRemindersToClear.size) {
-    doctorReportRemindersToClear.forEach(pidValue => {
-      try {
-        markNewsClearedByType(pidValue, '同意', {
-          metaType: 'consent_verification',
-          messageContains: '同意期限50日前'
-        });
-      } catch (err) {
-        Logger.log('[checkConsentExpiration_] failed to clear doctor report reminder: ' + (err && err.message ? err.message : err));
-      }
-    });
-  }
-  if (missingHandoverRemindersToClear.size) {
-    missingHandoverRemindersToClear.forEach(item => {
-      try {
-        clearDoctorReportMissingReminder_(item.pid, item.consentExpiry);
-      } catch (err) {
-        Logger.log('[checkConsentExpiration_] failed to clear missing handover reminder: ' + (err && err.message ? err.message : err));
-      }
-    });
-  }
   if (toInsert.length) {
     pushNewsRows_(toInsert);
   }
@@ -6541,90 +6488,10 @@ function checkConsentExpiration(){
 }
 
 function checkMonthlyHandovers_(){
-  ensureAuxSheets_();
   const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
   const today = new Date();
   const monthKey = Utilities.formatDate(today, tz, 'yyyy-MM');
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
-  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-
-  const handoverSheet = ensureHandoverSheet_();
-  const handoverSet = new Set();
-  const handoverLastRow = handoverSheet.getLastRow();
-  if (handoverLastRow >= 2) {
-    const handoverValues = handoverSheet.getRange(2, 1, handoverLastRow - 1, 5).getValues();
-    handoverValues.forEach(row => {
-      const pid = normId_(row[1]);
-      if (!pid) return;
-      let ts = row[0];
-      if (!(ts instanceof Date)) {
-        ts = parseDateTimeFlexible_(ts, tz) || parseDateFlexible_(ts);
-      }
-      if (!(ts instanceof Date) || isNaN(ts.getTime())) return;
-      const time = ts.getTime();
-      if (time < monthStart.getTime() || time > monthEnd.getTime()) return;
-      handoverSet.add(pid);
-    });
-  }
-
-  const existingNews = readNewsRows_();
-  const existingReminderKeys = new Set();
-  existingNews.forEach(row => {
-    if (row.cleared) return;
-    if (!row.pid) return;
-    if (String(row.type || '').trim() !== '申し送り') return;
-    const meta = row.meta;
-    if (meta && typeof meta === 'object' && meta.type === 'handover_missing_monthly') {
-      if (!meta.month || meta.month === monthKey) {
-        existingReminderKeys.add(row.pid);
-      }
-      return;
-    }
-    const message = String(row.message || '');
-    if (message.indexOf('申し送りが未入力') >= 0) {
-      existingReminderKeys.add(row.pid);
-    }
-  });
-
-  const statusMap = buildPatientStatusMap_();
-  const patientSheet = sh('患者情報');
-  const lastRow = patientSheet.getLastRow();
-  if (lastRow < 2) {
-    return { ok: true, month: monthKey, scanned: 0, inserted: 0 };
-  }
-  const lastCol = patientSheet.getLastColumn();
-  const head = patientSheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
-  const cRec = getColFlexible_(head, LABELS.recNo, PATIENT_COLS_FIXED.recNo, '施術録番号');
-  const rows = patientSheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
-  const reminders = [];
-  let scanned = 0;
-
-  rows.forEach(row => {
-    const pidRaw = row[cRec - 1];
-    const pidNormalized = normId_(pidRaw);
-    if (!pidNormalized) return;
-    scanned += 1;
-    if (handoverSet.has(pidNormalized)) return;
-    if (existingReminderKeys.has(pidNormalized)) return;
-    const statusInfo = statusMap[pidNormalized] || { status: 'active', pauseUntil: '' };
-    if (statusInfo.status === 'stopped') return;
-    if (statusInfo.status === 'suspended') {
-      const pauseUntil = parseDateFlexible_(statusInfo.pauseUntil);
-      if (pauseUntil && pauseUntil.getTime() >= todayStart.getTime()) {
-        return;
-      }
-    }
-    const pidForNews = String(pidRaw || '').trim() || pidNormalized;
-    const meta = { type: 'handover_missing_monthly', month: monthKey };
-    reminders.push(formatNewsRow_(pidForNews, '申し送り', '今月の申し送りが未入力です', meta));
-  });
-
-  if (reminders.length) {
-    pushNewsRows_(reminders);
-  }
-
-  return { ok: true, month: monthKey, scanned, inserted: reminders.length };
+  return { ok: true, month: monthKey, scanned: 0, inserted: 0 };
 }
 
 function checkMonthlyHandovers(){
@@ -7970,17 +7837,7 @@ function buildDoctorReportPdfData_(patientId){
   const treatmentSummary = treatmentLines.length ? treatmentLines.join('\n') : '施術頻度：情報不足';
 
   const reportSummary = section2 && String(section2).trim() ? String(section2).trim() : String(entry.text || '').trim();
-  const closingSentence = '今後も安全に配慮しながら施術を継続してまいります。';
-  let plan = sections['今後の方針'] && String(sections['今後の方針']).trim() || '';
-  if (!plan) {
-    if (reportSummary.indexOf(closingSentence) >= 0) {
-      plan = closingSentence;
-    } else if (section3 && String(section3).indexOf(closingSentence) >= 0) {
-      plan = closingSentence;
-    } else {
-      plan = closingSentence;
-    }
-  }
+  const plan = sections['今後の方針'] && String(sections['今後の方針']).trim() || '';
 
   let remarks = section3 && String(section3).trim() ? String(section3).trim() : '';
   if (!remarks) {
@@ -8340,16 +8197,11 @@ function buildDoctorReportTemplate_(header, context, statusSections){
     '社会参加や外出状況に大きな変化はありません。'
   );
 
-  let safetySource = normalizeDoctorReportText_(status.safety);
-  let safety = ensureDoctorSentenceWithFallback_(
+  const safetySource = normalizeDoctorReportText_(status.safety);
+  const safety = ensureDoctorSentenceWithFallback_(
     safetySource,
     '重大なリスクはみられず、訪問ごとにバイタルを確認しています。'
   );
-  const complianceSentence = '同意内容に沿った施術を継続しております。';
-  if (safety.indexOf(complianceSentence) < 0) {
-    const trimmed = safety.replace(/[。．]+$/, '');
-    safety = trimmed ? `${trimmed}。${complianceSentence}` : complianceSentence;
-  }
 
   const specialList = normalizeDoctorSpecialList_(status.special).slice(0, 3);
   const special = (specialList
@@ -8379,10 +8231,8 @@ return [
     : '（情報不足のため生成できません）',
   '',
   '【特記すべき事項】',
-  // AI抽出部分：リスク・体調管理＋末尾に必ず同意内容に沿った施術を継続しております。」
-  (safety && !safety.includes('同意内容に沿った施術を継続しております。'))
-    ? `${safety} 同意内容に沿った施術を継続しております。`
-    : (safety || '特記すべき事項はありません。 同意内容に沿った施術を継続しております。'),
+  // AI抽出部分：リスク・体調管理
+  safety || '特記すべき事項はありません。',
   '',
   `作成日：${createdAt}`,
   'べるつりー鍼灸マッサージ院',
@@ -8400,10 +8250,10 @@ function buildHandoverDigestForSummary_(handovers, audience){
   if (!entries.length) return '';
   const joined = entries.join(' / ');
   if (audience === 'doctor') {
-    return `最近の申し送りでは、${joined}。`;
+    return `最近の報告書作成ヒントでは、${joined}。`;
   }
   if (audience === 'caremanager') {
-    return `申し送りの要点：${joined}。`;
+    return `報告書作成ヒントの要点：${joined}。`;
   }
   return `最近のようす：${joined}。`;
 }
@@ -8553,7 +8403,8 @@ function buildAiReportPrompt_(header, context){
 
   const handovers = Array.isArray(context?.handovers) ? context.handovers : [];
   if (handovers.length) {
-    lines.push('【申し送り（古い順に最大10件）】');
+    lines.push('【報告書作成ヒント（参考・古い順に最大10件）】');
+    lines.push('※ 原文の転記・引用は禁止。要点を抽象化して報告書に反映すること。');
     handovers.slice(-10).forEach(entry => {
       const when = String(entry?.when || '').trim();
       const note = String(entry?.note || '').trim();
@@ -8611,23 +8462,6 @@ function generateAiSummaryServer(patientId, rangeKey, audience) {
 
   let referenceReport = null;
   if (audienceMeta.key === 'doctor') {
-    const latestHandover = getLatestHandoverEntry_(patientId);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (!isRecentHandoverEntry_(latestHandover, today)) {
-      return {
-        ok: false,
-        usedAi: false,
-        audience: audienceMeta.key,
-        audienceLabel: audienceMeta.label,
-        text: '申し送りが未入力のため、報告書を生成できません。申し送りを入力してください。',
-        meta: {
-          patientFound: true,
-          rangeLabel: range.label,
-          handoverRequired: true
-        }
-      };
-    }
     referenceReport = findLatestDoctorReportEntry_(header.patientId);
     if (referenceReport && referenceReport.text) {
       context.previousDoctorReport = {
@@ -8761,12 +8595,14 @@ function buildReportPrompt_(header, context, audienceKey) {
     lines.push(`【同意内容】${safe(context && context.consentText)}`);
     lines.push(`【施術頻度】${safe(context && context.frequencyLabel)}`);
     lines.push('');
-    lines.push('【申し送り（最新順）】');
+    lines.push('【報告書作成ヒント（最新順・参考）】');
     lines.push(formatEntries(context && context.handovers, { includeVitals: false }));
     lines.push('');
     lines.push('【施術録メモ（最新順）】');
     lines.push(formatEntries(context && context.notes, { includeVitals: true }));
     lines.push('');
+    lines.push('※ 報告書作成ヒントは参考メモです。原文の転記は行わず、要点を抽象化して反映してください。');
+    lines.push('※ 判断・決定・継続指示は記載しないでください。');
     lines.push('上記情報をもとに医師向け施術報告書を作成してください。');
     lines.push('必要に応じてVASやADLなどの客観指標を強調して構成してください。');
     if (context && context.previousDoctorReport && context.previousDoctorReport.text) {
@@ -8802,7 +8638,6 @@ function buildReportPrompt_(header, context, audienceKey) {
   defaultLines.push(`【施術頻度】${safe(context && context.frequencyLabel)}`);
   defaultLines.push('');
   defaultLines.push(`${roleLabel}向けに患者様の状態・経過をまとめてください。`);
-  defaultLines.push('必ず「同意内容に沿った施術を継続しております。」という一文を含めてください。');
   defaultLines.push('');
   defaultLines.push('参考情報：');
   defaultLines.push(`- Notes: ${JSON.stringify((context && context.notes) || [])}`);

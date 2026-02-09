@@ -421,7 +421,7 @@ function renderVisits() {
       const badge = document.createElement('span');
       const hasNote = v.noteStatus === '◎';
       badge.className = `badge ${hasNote ? 'success' : 'warn'}`;
-      badge.textContent = hasNote ? '申し送り済' : '申し送り未入力';
+      badge.textContent = hasNote ? '報告書作成ヒントあり' : '報告書作成ヒント未入力';
       meta.appendChild(badge);
       if (v.patientId) {
         const idBadge = document.createElement('span');
@@ -483,7 +483,7 @@ function renderPatients() {
     if (p.note && p.note.unread) {
       const unread = document.createElement('span');
       unread.className = 'tag';
-      unread.textContent = '未読申し送り';
+      unread.textContent = '未読報告書作成ヒント';
       tags.appendChild(unread);
     }
     if (p.responsible) {
@@ -510,7 +510,7 @@ function renderPatients() {
     const fields = document.createElement('div');
     fields.className = 'meta-row';
     if (p.patientId) fields.appendChild(makeBadge('ID: ' + p.patientId));
-    if (p.note && p.note.when) fields.appendChild(makeBadge('最終申し送り: ' + p.note.when));
+    if (p.note && p.note.when) fields.appendChild(makeBadge('最終報告書作成ヒント: ' + p.note.when));
     if (p.note && p.note.lastReadAt) fields.appendChild(makeBadge('最終既読: ' + p.note.lastReadAt));
     body.appendChild(fields);
 
@@ -651,7 +651,16 @@ function buildTreatmentAppLink_(patientId) {
   const id = encodeURIComponent(patientId || '');
   return `${normalizedBase}/treatmentApp?patientId=${id}`;
 }
-
+function formatTaskLabel(type) {
+  switch(type) {
+    case 'consentExpired': return '同意書期限切れ';
+    case 'consentWarning': return '同意書期限間近';
+    case 'handoverDelayed': return '報告書作成ヒント未入力';
+    case 'aiReportDelayed': return '医師報告書遅延';
+    case 'invoiceUnconfirmed': return '請求書確認待ち';
+    default: return 'タスク';
+  }
+}
 function formatCurrency(amount) {
   const num = Number(amount) || 0;
   try {

@@ -20,6 +20,8 @@
   *{ box-sizing:border-box; }
   body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif; background:var(--bg); color:var(--text); }
   a{ color:var(--accent); }
+  .patient-link{ color:inherit; text-decoration:none; }
+  .patient-link:hover{ text-decoration:underline; }
   .page{ max-width:1080px; margin:0 auto; padding:20px 16px 64px; display:flex; flex-direction:column; gap:18px; }
   header{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   h1{ margin:0; font-size:1.4rem; letter-spacing:0.02em; }
@@ -353,7 +355,13 @@ function renderTasks() {
 
     card.appendChild(meta);
 
-    const name = document.createElement('div');
+    const name = document.createElement(task.patientId ? 'a' : 'div');
+    if (task.patientId) {
+      name.href = buildTreatmentAppLink_(task.patientId);
+      name.target = '_top';
+      name.rel = 'noreferrer';
+      name.className = 'patient-link';
+    }
     name.style.fontWeight = '700';
     name.textContent = task.name || '患者不明';
     card.appendChild(name);
@@ -394,8 +402,13 @@ function renderUnpaidAlerts() {
 
     const header = document.createElement('div');
     header.className = 'patient-header';
-    const name = document.createElement('div');
-    name.className = 'patient-name';
+    const name = document.createElement(alert.patientId ? 'a' : 'div');
+    name.className = alert.patientId ? 'patient-name patient-link' : 'patient-name';
+    if (alert.patientId) {
+      name.href = buildTreatmentAppLink_(alert.patientId);
+      name.target = '_top';
+      name.rel = 'noreferrer';
+    }
     name.textContent = alert.patientName || '氏名未登録';
     header.appendChild(name);
     const tags = document.createElement('div');
@@ -469,7 +482,13 @@ function renderVisits() {
 
       const body = document.createElement('div');
       body.className = 'visit-body';
-      const name = document.createElement('div');
+      const name = document.createElement(v.patientId ? 'a' : 'div');
+      if (v.patientId) {
+        name.href = buildTreatmentAppLink_(v.patientId);
+        name.target = '_top';
+        name.rel = 'noreferrer';
+        name.className = 'patient-link';
+      }
       name.textContent = v.patientName || v.patientId || '患者不明';
       name.style.fontWeight = '700';
       body.appendChild(name);
@@ -523,8 +542,13 @@ function renderPatients() {
     const summary = document.createElement('summary');
     const header = document.createElement('div');
     header.className = 'patient-header';
-    const name = document.createElement('div');
-    name.className = 'patient-name';
+    const name = document.createElement(p.patientId ? 'a' : 'div');
+    name.className = p.patientId ? 'patient-name patient-link' : 'patient-name';
+    if (p.patientId) {
+      name.href = buildTreatmentAppLink_(p.patientId);
+      name.target = '_top';
+      name.rel = 'noreferrer';
+    }
     name.textContent = p.name || '氏名未登録';
     header.appendChild(name);
 
@@ -675,7 +699,7 @@ function renderSummaryList_(items, emptyText) {
       main.className = 'summary-main';
       const link = document.createElement('a');
       link.className = 'summary-link';
-      link.href = buildRecordLink_(item.patientId);
+      link.href = buildTreatmentAppLink_(item.patientId);
       link.target = '_top';
       link.rel = 'noreferrer';
       link.textContent = item.name || item.patientId;
@@ -698,10 +722,11 @@ function renderSummaryList_(items, emptyText) {
   return list;
 }
 
-function buildRecordLink_(patientId) {
-  const base = typeof baseUrl !== 'undefined' ? baseUrl : '';
+function buildTreatmentAppLink_(patientId) {
+  const base = typeof baseUrl !== 'undefined' ? String(baseUrl) : '';
+  const normalizedBase = base.replace(/\/+$/, '');
   const id = encodeURIComponent(patientId || '');
-  return `${base}?view=record&id=${id}`;
+  return `${normalizedBase}/treatmentApp?patientId=${id}`;
 }
 
 function formatTaskLabel(type) {

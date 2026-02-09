@@ -9601,7 +9601,11 @@ function doGet(e) {
     return createJsonResponse_(data);
   }
 
-  const view = e.parameter ? (e.parameter.view || 'welcome') : 'welcome';
+  const path = (e && e.pathInfo ? String(e.pathInfo) : '').replace(/^\/+|\/+$/g, '').toLowerCase();
+  let view = e.parameter ? (e.parameter.view || 'welcome') : 'welcome';
+  if (path === 'treatmentapp') {
+    view = 'record';
+  }
   let templateFile = '';
 
   switch(view){
@@ -9628,9 +9632,9 @@ function doGet(e) {
   // ここでURLを渡す
   t.baseUrl = ScriptApp.getService().getUrl();
 
-  // 患者ID（?id=XXXX）をテンプレートに渡す
-  if (e.parameter && e.parameter.id) {
-    t.patientId = e.parameter.id;
+  // 患者ID（?patientId=XXXX / ?id=XXXX）をテンプレートに渡す
+  if (e.parameter && (e.parameter.patientId || e.parameter.id)) {
+    t.patientId = e.parameter.patientId || e.parameter.id;
   } else {
     t.patientId = "";
   }

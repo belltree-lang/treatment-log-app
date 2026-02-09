@@ -37,13 +37,6 @@
   .section h2{ margin:0; font-size:1.1rem; letter-spacing:0.01em; }
   .section-header{ display:flex; align-items:center; gap:10px; }
   .small{ font-size:0.82rem; color:var(--muted); }
-  .task-card{ display:flex; flex-direction:column; gap:6px; border-left:4px solid var(--border); padding-left:12px; }
-  .task-card.warning{ border-color:var(--warning); }
-  .task-card.critical{ border-color:var(--critical); }
-  .task-meta{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .severity-dot{ width:10px; height:10px; border-radius:50%; background:var(--muted); }
-  .severity-dot.warning{ background:var(--warning); }
-  .severity-dot.critical{ background:var(--critical); }
   .timeline{ display:flex; flex-direction:column; gap:10px; }
   .visit{ display:grid; grid-template-columns:70px 1fr; gap:10px; align-items:center; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel); }
   .visit-time{ font-variant-numeric:tabular-nums; color:#fff; font-weight:700; }
@@ -104,14 +97,6 @@
       <div class="card summary-card" id="consentSummary"></div>
       <div class="card summary-card" id="visitSummary"></div>
     </div>
-  </div>
-
-  <div class="section">
-    <div class="section-header">
-      <h2>要注意タスク</h2>
-      <span class="small" id="taskCount"></span>
-    </div>
-    <div class="grid" id="taskList"></div>
   </div>
 
   <div class="section">
@@ -220,7 +205,6 @@ function setLoading(flag) {
 function renderAll() {
   renderMeta();
   renderOverview();
-  renderTasks();
   renderUnpaidAlerts();
   renderVisits();
   renderPatients();
@@ -314,67 +298,6 @@ function renderVisitSummary() {
   yesterdayBlock.textContent = '昨日の患者';
   container.appendChild(yesterdayBlock);
   container.appendChild(renderSummaryList_(yesterday.items || [], '昨日の施術はありません'));
-}
-
-function renderTasks() {
-  const list = document.getElementById('taskList');
-  const count = document.getElementById('taskCount');
-  if (list) list.innerHTML = '';
-
-  const tasks = dashboardState.data && Array.isArray(dashboardState.data.tasks)
-    ? dashboardState.data.tasks
-    : [];
-  if (count) count.textContent = tasks.length ? `${tasks.length}件` : 'タスクなし';
-
-  if (!tasks.length) {
-    const empty = document.createElement('div');
-    empty.className = 'card task-card';
-    empty.textContent = '現在対応すべきタスクはありません';
-    list.appendChild(empty);
-    return;
-  }
-
-  tasks.forEach(task => {
-    const card = document.createElement('div');
-    card.className = `card task-card ${task.severity || ''}`;
-
-    const meta = document.createElement('div');
-    meta.className = 'task-meta';
-    const dot = document.createElement('span');
-    dot.className = `severity-dot ${task.severity || ''}`;
-    meta.appendChild(dot);
-
-    const type = document.createElement('span');
-    type.textContent = formatTaskLabel(task.type);
-    meta.appendChild(type);
-
-    const pid = document.createElement('span');
-    pid.className = 'badge';
-    pid.textContent = task.patientId || '-';
-    meta.appendChild(pid);
-
-    card.appendChild(meta);
-
-    const name = document.createElement(task.patientId ? 'a' : 'div');
-    if (task.patientId) {
-      name.href = buildTreatmentAppLink_(task.patientId);
-      name.target = '_top';
-      name.rel = 'noreferrer';
-      name.className = 'patient-link';
-    }
-    name.style.fontWeight = '700';
-    name.textContent = task.name || '患者不明';
-    card.appendChild(name);
-
-    if (task.detail) {
-      const detail = document.createElement('div');
-      detail.className = 'muted';
-      detail.textContent = String(task.detail);
-      card.appendChild(detail);
-    }
-
-    list.appendChild(card);
-  });
 }
 
 function renderUnpaidAlerts() {
@@ -728,7 +651,6 @@ function buildTreatmentAppLink_(patientId) {
   const id = encodeURIComponent(patientId || '');
   return `${normalizedBase}/treatmentApp?patientId=${id}`;
 }
-
 function formatTaskLabel(type) {
   switch(type) {
     case 'consentExpired': return '同意書期限切れ';
@@ -739,7 +661,6 @@ function formatTaskLabel(type) {
     default: return 'タスク';
   }
 }
-
 function formatCurrency(amount) {
   const num = Number(amount) || 0;
   try {

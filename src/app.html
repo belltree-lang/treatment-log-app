@@ -529,6 +529,7 @@ let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
 let _queuedPatientIdForLoad = null;
 let _patientInfoRequestToken = 0;
+let _currentHandoverPatientId = '';
 
 function parsePatientIdChunkSizeCandidate(candidate){
   if (candidate == null) return NaN;
@@ -2728,6 +2729,10 @@ function handlePatientIdInput(){
   const inputEl = q('pid');
   const rawValue = inputEl && inputEl.value != null ? String(inputEl.value) : '';
   const trimmed = rawValue.trim();
+  const candidateId = normalizePatientIdKey(splitPatientIdDisplay(rawValue).id);
+  if (candidateId !== _currentHandoverPatientId) {
+    resetHandoverDisplay(candidateId);
+  }
   _patientIdSelectionLocked = false;
 
   if (!trimmed){
@@ -3091,6 +3096,7 @@ function renderEmptyPatientState(){
   if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
   _icfReportHistoryState = { loading: false, rows: [], error: null };
   renderIcfReportHistory();
+  resetHandoverDisplay('');
   loadNews('', () => {
     hideGlobalLoading();
   });
@@ -3162,6 +3168,7 @@ function loadPatientInfoWithRetry(patientId, options){
     return Promise.resolve();
   }
 
+  resetHandoverDisplay(targetPatientId);
   setPatientLoadingPlaceholders();
 
   let bundleDone = false;
@@ -4039,6 +4046,19 @@ function clearHandoverForm(){
   q('handoverPreview').innerHTML = '';
 }
 
+function resetHandoverDisplay(patientId){
+  const normalized = normalizePatientIdKey(patientId);
+  if (normalized && normalized === _currentHandoverPatientId) {
+    return;
+  }
+  _currentHandoverPatientId = normalized || '';
+  clearHandoverForm();
+  const box = q('handoverList');
+  if (box) {
+    box.innerHTML = '';
+  }
+}
+
 function previewHandoverFiles(){
   const el = q('handoverFile'); const out = q('handoverPreview'); out.innerHTML='';
   if(!el.files || !el.files.length) return;
@@ -4056,12 +4076,17 @@ function previewHandoverFiles(){
 function loadHandovers(){
   const p = pid();
   if(!p){ alert("患者IDを入力してください"); return; }
+  const requestPid = normalizePatientIdKey(p);
+  _currentHandoverPatientId = requestPid;
 
   const box = q('handoverList');
   box.innerHTML = '<div class="muted">読み込み中…</div>';
 
   google.script.run
     .withSuccessHandler(list=>{
+      if (normalizePatientIdKey(pid()) !== requestPid) {
+        return;
+      }
       if(!list || !list.length){
         box.innerHTML = '<div class="muted">報告書作成ヒントはありません</div>';
         return;
@@ -4086,6 +4111,9 @@ function loadHandovers(){
 
     })
     .withFailureHandler(e=>{
+      if (normalizePatientIdKey(pid()) !== requestPid) {
+        return;
+      }
       const msg = (e && e.message) ? e.message : String(e);
       console.error('[handover load error]', e);
       box.innerHTML = `<div class="muted" style="color:#b91c1c">報告書作成ヒントの取得に失敗しました：${escapeHtml(msg)}</div>`;

@@ -27,13 +27,44 @@ function handleDashboardDoGet_(e) {
 function resolveDashboardTreatmentAppExecUrl_() {
   const configured = resolveDashboardTreatmentAppExecUrlFromConstant_();
   if (configured) return configured;
-  return ScriptApp.getService().getUrl() || '';
+
+  const serviceUrl = normalizeDashboardTreatmentAppExecUrl_(ScriptApp.getService().getUrl() || '');
+  if (serviceUrl) return serviceUrl;
+
+  return '';
 }
 
 function resolveDashboardTreatmentAppExecUrlFromConstant_() {
-  return typeof DASHBOARD_TREATMENT_APP_EXEC_URL !== 'undefined'
-    ? String(DASHBOARD_TREATMENT_APP_EXEC_URL || '').trim()
-    : '';
+  if (typeof DASHBOARD_TREATMENT_APP_EXEC_URL !== 'undefined') {
+    const fromConstant = normalizeDashboardTreatmentAppExecUrl_(String(DASHBOARD_TREATMENT_APP_EXEC_URL || '').trim());
+    if (fromConstant) return fromConstant;
+  }
+
+  return resolveDashboardTreatmentAppExecUrlFromProperties_();
+}
+
+function resolveDashboardTreatmentAppExecUrlFromProperties_() {
+  try {
+    if (typeof PropertiesService === 'undefined' || !PropertiesService || typeof PropertiesService.getScriptProperties !== 'function') {
+      return '';
+    }
+    const scriptProperties = PropertiesService.getScriptProperties();
+    if (!scriptProperties || typeof scriptProperties.getProperty !== 'function') return '';
+    const raw = scriptProperties.getProperty('DASHBOARD_TREATMENT_APP_EXEC_URL') || '';
+    return normalizeDashboardTreatmentAppExecUrl_(String(raw || '').trim());
+  } catch (err) {
+    return '';
+  }
+}
+
+function normalizeDashboardTreatmentAppExecUrl_(url) {
+  const value = String(url || '').trim();
+  if (!value) return '';
+  const normalized = value.toLowerCase();
+  if (normalized.indexOf('googleusercontent.com/usercodeapppanel') >= 0) return '';
+  if (normalized.indexOf('script.google.com/') < 0) return '';
+  if (normalized.indexOf('/exec') < 0) return '';
+  return value;
 }
 
 function shouldHandleDashboardRequest_(e) {
@@ -75,3 +106,8 @@ function createJsonResponse_(payload) {
   }
   return output;
 }
+
+// 共有用サマリー
+// - 変更点: ダッシュボード向け施術録WebアプリURLの解決元を定数→スクリプトプロパティ→現在デプロイURLに整理し、googleusercontent系URLを除外する正規化を追加。
+// - 理由: 患者遷移先が userCodeAppPanel に化ける不具合を防ぎ、常に公開exec URLを優先するため。
+// - 影響範囲: dashboard doGetテンプレート注入時のURL解決ロジックのみ。

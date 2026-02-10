@@ -527,6 +527,7 @@ let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
 let _initialPatientIdResolveFailureNotified = false;
 let _initialPatientIdRecordView = false;
+let _initialRecordViewRefreshCompleted = false;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
@@ -2659,6 +2660,9 @@ function loadPidList(){
       if (!result && _patientIdList.length){
         clearPatientDisplay({ keepInput: false, force: true });
       }
+      if (opts.finalize){
+        runInitialRecordViewRefreshOnce_('finalize fallback after initial patient selection from request');
+      }
       schedulePatientIdSearchUpdate(true);
     } catch (err){
       console.error('[loadPidList] ensurePatientIdDisplayFromInput failed', err);
@@ -2743,6 +2747,18 @@ function notifyInitialPatientIdResolveFailure_(reason){
   toast(`指定された患者ID（${_initialPatientIdRequested}）を初期表示で確定できませんでした。${detail}`);
 }
 
+function runInitialRecordViewRefreshOnce_(reason){
+  if (!_initialPatientIdRecordView || !_initialPatientIdRequested) return false;
+  if (_initialRecordViewRefreshCompleted) return false;
+  _initialRecordViewRefreshCompleted = true;
+  console.info('[initialRecordViewRefresh] refresh', {
+    reason: reason || 'fallback',
+    patientId: _initialPatientIdRequested
+  });
+  refresh();
+  return true;
+}
+
 function applyInitialPatientSelectionFromRequest_(options){
   const opts = Object.assign({ finalize: false }, options || {});
   if (_initialPatientIdResolved){
@@ -2769,7 +2785,7 @@ function applyInitialPatientSelectionFromRequest_(options){
       finalize: opts.finalize,
       patientId: record.id
     });
-    refresh();
+    runInitialRecordViewRefreshOnce_('matched candidate list record');
     return true;
   }
   if (!opts.finalize){
@@ -2797,7 +2813,7 @@ function applyInitialPatientSelectionFromRequest_(options){
             finalize: opts.finalize,
             patientId: _initialPatientIdRequested
           });
-          refresh();
+          runInitialRecordViewRefreshOnce_('record view URL fallback resolved by input value on finalize');
           return true;
         }
         if (resolved && resolved.skipped){
@@ -2820,6 +2836,7 @@ function applyInitialPatientSelectionFromRequest_(options){
     patientId: _initialPatientIdRequested
   });
   notifyInitialPatientIdResolveFailure_(failureReason);
+  runInitialRecordViewRefreshOnce_('finalize fallback after unresolved URL patientId');
   return true;
 }
 

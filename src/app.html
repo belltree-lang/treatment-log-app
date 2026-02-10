@@ -643,7 +643,13 @@ function resolveInitialPatientIdRequest(){
       console.warn('[resolveInitialPatientIdRequest] URL params read failed', err);
     }
   }
-  return normalizePatientIdKey(candidate);
+  const normalized = normalizePatientIdKey(candidate);
+  console.info('[resolveInitialPatientIdRequest]', {
+    rawPatientId: candidate,
+    normalizedPatientId: normalized,
+    shouldAutoLoad
+  });
+  return normalized;
 }
 
 function invalidatePatientInfoRequests(){
@@ -2615,8 +2621,19 @@ function loadPidList(){
   const ensureAfterApply = (options) => {
     const opts = Object.assign({ finalize: false }, options || {});
     try {
+      console.info('[loadPidList] ensureAfterApply start', {
+        finalize: opts.finalize,
+        requestedInitialPatientId: _initialPatientIdRequested,
+        initialPatientIdResolved: _initialPatientIdResolved,
+        patientIdListLength: _patientIdList.length,
+        patientIdPreview: _patientIdList.slice(0, 5).map(item => item && item.id)
+      });
       const initialApplied = applyInitialPatientSelectionFromRequest_({ finalize: opts.finalize });
       if (initialApplied) {
+        console.info('[loadPidList] initial patient selection applied', {
+          finalize: opts.finalize,
+          patientId: _initialPatientIdRequested
+        });
         schedulePatientIdSearchUpdate(true);
         return;
       }
@@ -2630,6 +2647,10 @@ function loadPidList(){
         skipIfEditing: true
       });
       if (result && result.skipped){
+        console.info('[loadPidList] ensurePatientIdDisplayFromInput skipped', {
+          finalize: opts.finalize,
+          reason: 'input editing'
+        });
         schedulePatientIdSearchUpdate(true);
         return;
       }
@@ -2667,6 +2688,10 @@ function loadPidList(){
 
   google.script.run
     .withSuccessHandler(list => {
+      console.info('[loadPidList] network list fetched', {
+        length: Array.isArray(list) ? list.length : 0,
+        preview: Array.isArray(list) ? list.slice(0, 5) : []
+      });
       if (Array.isArray(list) && list.length){
         savePatientIdCache(list);
         useList(list, 'network', { finalize: true });
@@ -2721,17 +2746,39 @@ function notifyInitialPatientIdResolveFailure_(reason){
 
 function applyInitialPatientSelectionFromRequest_(options){
   const opts = Object.assign({ finalize: false }, options || {});
-  if (_initialPatientIdResolved) return false;
-  if (!_initialPatientIdRequested) return false;
+  if (_initialPatientIdResolved){
+    console.info('[applyInitialPatientSelectionFromRequest_] skip refresh', {
+      reason: 'already resolved',
+      finalize: opts.finalize
+    });
+    return false;
+  }
+  if (!_initialPatientIdRequested){
+    console.info('[applyInitialPatientSelectionFromRequest_] skip refresh', {
+      reason: 'no initial patient id requested',
+      finalize: opts.finalize
+    });
+    return false;
+  }
   const record = _patientIdIndex[_initialPatientIdRequested];
   if (record){
     setConfirmedPatientId(record.id);
     setv('pid', formatPatientIdDisplay(record.id, record.name, record.kana));
     _initialPatientIdResolved = true;
+    console.info('[applyInitialPatientSelectionFromRequest_] refresh', {
+      reason: 'matched candidate list record',
+      finalize: opts.finalize,
+      patientId: record.id
+    });
     refresh();
     return true;
   }
   if (!opts.finalize){
+    console.info('[applyInitialPatientSelectionFromRequest_] skip refresh', {
+      reason: 'requested patientId not found yet and not finalized',
+      finalize: opts.finalize,
+      patientId: _initialPatientIdRequested
+    });
     return false;
   }
   let failureReason = 'patientId not found in candidate list';
@@ -2746,6 +2793,11 @@ function applyInitialPatientSelectionFromRequest_(options){
         skipIfEditing: false
       });
       if (resolved){
+        console.info('[applyInitialPatientSelectionFromRequest_] refresh', {
+          reason: 'resolved by input value on finalize',
+          finalize: opts.finalize,
+          patientId: _initialPatientIdRequested
+        });
         refresh();
         return true;
       }
@@ -2759,6 +2811,11 @@ function applyInitialPatientSelectionFromRequest_(options){
   }
   clearConfirmedPatientId();
   hideGlobalLoading();
+  console.info('[applyInitialPatientSelectionFromRequest_] skip refresh', {
+    reason: failureReason,
+    finalize: opts.finalize,
+    patientId: _initialPatientIdRequested
+  });
   notifyInitialPatientIdResolveFailure_(failureReason);
   return true;
 }

@@ -162,9 +162,13 @@ function dashboardCoerceDate_(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function dashboardNormalizePatientId_(value) {
+function dashboardTrimText_(value) {
   const raw = value == null ? '' : value;
-  return String(raw).trim();
+  return String(raw).replace(/^[\s\u3000]+|[\s\u3000]+$/g, '');
+}
+
+function dashboardNormalizePatientId_(value) {
+  return dashboardTrimText_(value);
 }
 
 function dashboardNormalizeNameKey_(name) {

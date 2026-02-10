@@ -135,6 +135,9 @@
 
 <script>
 const DASHBOARD_TREATMENT_APP_EXEC_URL = <?!= JSON.stringify(typeof dashboardTreatmentAppExecUrlConstant !== 'undefined' ? dashboardTreatmentAppExecUrlConstant : '') ?>;
+// 一時対応: Issue #1449
+// 将来的に再有効化できるよう、データ生成ロジックは維持したままUI表示のみ抑止する。
+const DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI = true;
 const dashboardState = {
   loading: true,
   data: null,
@@ -435,9 +438,11 @@ function renderVisits() {
       meta.className = 'meta-row';
       const badge = document.createElement('span');
       const hasNote = v.noteStatus === '◎';
-      badge.className = `badge ${hasNote ? 'success' : 'warn'}`;
-      badge.textContent = hasNote ? '報告書作成ヒントあり' : '報告書作成ヒント未入力';
-      meta.appendChild(badge);
+      if (!(DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI && !hasNote)) {
+        badge.className = `badge ${hasNote ? 'success' : 'warn'}`;
+        badge.textContent = hasNote ? '報告書作成ヒントあり' : '報告書作成ヒント未入力';
+        meta.appendChild(badge);
+      }
       if (v.patientId) {
         const idBadge = document.createElement('span');
         idBadge.className = 'badge';
@@ -717,7 +722,10 @@ function formatTaskLabel(type) {
   switch(type) {
     case 'consentExpired': return '同意書期限切れ';
     case 'consentWarning': return '同意書期限間近';
-    case 'handoverDelayed': return '報告書作成ヒント未入力';
+    case 'handoverDelayed':
+      // 一時対応: Issue #1449
+      // 表示上は非表示にするが、タスクデータ自体は保持して将来の再有効化に備える。
+      return DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI ? '' : '報告書作成ヒント未入力';
     case 'aiReportDelayed': return '医師報告書遅延';
     case 'invoiceUnconfirmed': return '請求書確認待ち';
     default: return 'タスク';
@@ -764,12 +772,14 @@ function resolveDashboardMockParam_() {
 /*
 共有用サマリー
 - 変更点
-  - 患者遷移URL解決を `resolveTreatmentAppExecUrl_` に集約し、優先順位を「DASHBOARD_TREATMENT_APP_EXEC_URL → treatmentAppExecUrl」に固定。
-  - window.location / baseUrl 由来のフォールバックを削除し、URL未設定時は例外を投げて明示的に失敗させるよう変更。
+  - `DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI` を追加し、「報告書作成ヒント未入力」のUI表示を一時抑止。
+  - タイムラインの報告書作成ヒントバッジで、未入力時のみ描画をスキップする条件分岐を追加。
+  - `formatTaskLabel('handoverDelayed')` で未入力ラベルを空文字にし、アラート表示文言を無効化（データは保持）。
 - 理由
-  - googleusercontent.com 由来のURLが患者遷移に混入する経路を完全に排除するため。
+  - 現時点では「報告書作成ヒント未入力」警告がノイズとなるため、将来再有効化可能な形でUIのみ一時的に非表示化するため。
 - 影響範囲
-  - ダッシュボード内の患者リンク生成（概要カード、タイムライン、担当患者一覧、行クリック遷移）。
+  - ダッシュボードのタイムラインバッジ表示。
+  - ダッシュボードのタスクラベル表示（handoverDelayed）。
 */
 </script>
 </body>

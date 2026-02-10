@@ -14,12 +14,21 @@ function handleDashboardDoGet_(e) {
 
   const template = HtmlService.createTemplateFromFile('dashboard');
   template.baseUrl = ScriptApp.getService().getUrl() || '';
+  template.treatmentAppExecUrl = resolveDashboardTreatmentAppExecUrl_();
 
   return template
     .evaluate()
     .setTitle('施術者ダッシュボード')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function resolveDashboardTreatmentAppExecUrl_() {
+  const configured = typeof DASHBOARD_TREATMENT_APP_EXEC_URL !== 'undefined'
+    ? String(DASHBOARD_TREATMENT_APP_EXEC_URL || '').trim()
+    : '';
+  if (configured) return configured;
+  return ScriptApp.getService().getUrl() || '';
 }
 
 function shouldHandleDashboardRequest_(e) {

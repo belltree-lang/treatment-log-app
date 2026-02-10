@@ -66,13 +66,18 @@
   .summary-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .summary-header h3{ margin:0; font-size:1rem; }
   .summary-count{ font-weight:700; font-size:1.1rem; color:#fff; }
-  .summary-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
-  .summary-list li{ display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:6px 8px; border-radius:10px; border:1px solid var(--border); background:rgba(255,255,255,0.02); }
-  .summary-main{ display:flex; flex-direction:column; gap:2px; }
-  .summary-link{ color:var(--accent); text-decoration:none; font-weight:600; }
-  .summary-link:hover{ text-decoration:underline; }
-  .summary-meta{ font-size:0.85rem; color:var(--muted); }
-  .summary-subtext{ font-size:0.82rem; color:var(--muted); }
+  .overview-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .overview-row{ display:flex; flex-direction:column; gap:4px; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:rgba(255,255,255,0.02); cursor:pointer; transition:background .15s ease, border-color .15s ease, transform .15s ease; }
+  .overview-row:hover{ background:rgba(56,189,248,0.12); border-color:rgba(56,189,248,0.4); }
+  .overview-row:active{ transform:translateY(1px); }
+  .overview-row-title{ font-weight:700; display:flex; align-items:center; gap:8px; }
+  .overview-count{ font-weight:700; color:#fff; font-size:0.9rem; }
+  .overview-row-subtext{ font-size:0.82rem; color:var(--muted); }
+  .overview-empty{ color:var(--muted); font-size:0.9rem; padding:4px 2px; }
+  .overview-metrics{ display:flex; flex-direction:column; gap:8px; }
+  .overview-metric{ display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:rgba(255,255,255,0.02); }
+  .overview-metric-label{ color:var(--muted); font-size:0.85rem; }
+  .overview-metric-value{ font-weight:700; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
   @media (max-width:640px){
     .visit{ grid-template-columns:60px 1fr; }
@@ -246,11 +251,10 @@ function renderInvoiceSummary() {
   if (!container) return;
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
   const data = overview && overview.invoiceUnconfirmed ? overview.invoiceUnconfirmed : { count: 0, items: [] };
-  renderSummaryCard_(container, {
-    title: '請求書受渡 未確認',
-    count: data.count || 0,
+  renderOverviewCard_(container, {
+    title: '①請求',
     items: data.items || [],
-    emptyText: '未確認の請求書はありません'
+    emptyText: '全員対応済み'
   });
 }
 
@@ -259,11 +263,10 @@ function renderConsentSummary() {
   if (!container) return;
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
   const data = overview && overview.consentRelated ? overview.consentRelated : { count: 0, items: [] };
-  renderSummaryCard_(container, {
-    title: '同意期限／未取得／関連通知',
-    count: data.count || 0,
+  renderOverviewCard_(container, {
+    title: '②同意',
     items: data.items || [],
-    emptyText: '同意に関する注意はありません'
+    emptyText: '対象者なし'
   });
 }
 
@@ -272,32 +275,43 @@ function renderVisitSummary() {
   if (!container) return;
   container.innerHTML = '';
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
-  const data = overview && overview.visitSummary ? overview.visitSummary : null;
-  const today = data && data.today ? data.today : { count: 0, items: [] };
-  const yesterday = data && data.yesterday ? data.yesterday : { count: 0, items: [] };
+  const data = overview && overview.visitSummary ? overview.visitSummary : { todayCount: 0, lastDate: '' };
 
   const header = document.createElement('div');
   header.className = 'summary-header';
   const title = document.createElement('h3');
-  title.textContent = '今日／昨日の施術実績';
+  title.textContent = '③施術実績';
   header.appendChild(title);
-  const count = document.createElement('div');
-  count.className = 'summary-count';
-  count.textContent = `今日${today.count || 0}件／昨日${yesterday.count || 0}件`;
-  header.appendChild(count);
   container.appendChild(header);
 
-  const todayBlock = document.createElement('div');
-  todayBlock.className = 'summary-meta';
-  todayBlock.textContent = '今日の患者';
-  container.appendChild(todayBlock);
-  container.appendChild(renderSummaryList_(today.items || [], '今日の施術はありません'));
+  const metrics = document.createElement('div');
+  metrics.className = 'overview-metrics';
 
-  const yesterdayBlock = document.createElement('div');
-  yesterdayBlock.className = 'summary-meta';
-  yesterdayBlock.textContent = '昨日の患者';
-  container.appendChild(yesterdayBlock);
-  container.appendChild(renderSummaryList_(yesterday.items || [], '昨日の施術はありません'));
+  const todayRow = document.createElement('div');
+  todayRow.className = 'overview-metric';
+  const todayLabel = document.createElement('span');
+  todayLabel.className = 'overview-metric-label';
+  todayLabel.textContent = '今日';
+  const todayValue = document.createElement('span');
+  todayValue.className = 'overview-metric-value';
+  todayValue.textContent = `${data.todayCount || 0}件`;
+  todayRow.appendChild(todayLabel);
+  todayRow.appendChild(todayValue);
+  metrics.appendChild(todayRow);
+
+  const lastRow = document.createElement('div');
+  lastRow.className = 'overview-metric';
+  const lastLabel = document.createElement('span');
+  lastLabel.className = 'overview-metric-label';
+  lastLabel.textContent = '直近の施術日';
+  const lastValue = document.createElement('span');
+  lastValue.className = 'overview-metric-value';
+  lastValue.textContent = data.lastDate || 'なし';
+  lastRow.appendChild(lastLabel);
+  lastRow.appendChild(lastValue);
+  metrics.appendChild(lastRow);
+
+  container.appendChild(metrics);
 }
 
 function renderUnpaidAlerts() {
@@ -583,7 +597,7 @@ function makeBadge(text) {
   return span;
 }
 
-function renderSummaryCard_(container, options) {
+function renderOverviewCard_(container, options) {
   const opts = options || {};
   container.innerHTML = '';
 
@@ -592,57 +606,90 @@ function renderSummaryCard_(container, options) {
   const title = document.createElement('h3');
   title.textContent = opts.title || '';
   header.appendChild(title);
-  const count = document.createElement('div');
-  count.className = 'summary-count';
-  count.textContent = `${opts.count || 0}件`;
-  header.appendChild(count);
   container.appendChild(header);
 
   const items = Array.isArray(opts.items) ? opts.items : [];
-  container.appendChild(renderSummaryList_(items, opts.emptyText || '対象はありません'));
+  container.appendChild(renderOverviewList_(items, opts.emptyText || '対象はありません'));
 }
 
-function renderSummaryList_(items, emptyText) {
+function renderOverviewList_(items, emptyText) {
   const filteredItems = (items || []).filter(item => item && item.patientId);
   if (!filteredItems.length) {
     const empty = document.createElement('div');
-    empty.className = 'muted';
+    empty.className = 'overview-empty';
     empty.textContent = emptyText || '対象はありません';
     return empty;
   }
 
-  const list = document.createElement('ul');
-  list.className = 'summary-list';
+  const list = document.createElement('div');
+  list.className = 'overview-list';
   filteredItems
     .slice()
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))
     .forEach(item => {
-      const row = document.createElement('li');
-      const main = document.createElement('div');
-      main.className = 'summary-main';
-      const link = document.createElement('a');
-      link.className = 'summary-link';
-      link.href = buildTreatmentAppLink_(item.patientId);
-      link.target = '_top';
-      link.rel = 'noreferrer';
-      link.textContent = item.name || item.patientId;
-      main.appendChild(link);
-      if (item.subText) {
-        const sub = document.createElement('div');
-        sub.className = 'summary-subtext';
-        sub.textContent = item.subText;
-        main.appendChild(sub);
-      }
-      row.appendChild(main);
-      if (item.badge) {
-        const badge = document.createElement('span');
-        badge.className = 'badge';
-        badge.textContent = item.badge;
-        row.appendChild(badge);
-      }
+      const row = document.createElement('div');
+      row.className = 'overview-row';
+      const title = document.createElement('div');
+      title.className = 'overview-row-title';
+      const name = document.createElement('span');
+      name.textContent = item.name || item.patientId;
+      const count = document.createElement('span');
+      count.className = 'overview-count';
+      const displayCount = Math.max(1, Number(item.count) || 1);
+      count.textContent = `［${displayCount}件］`;
+      title.appendChild(name);
+      title.appendChild(count);
+      row.appendChild(title);
+
+      const sub = document.createElement('div');
+      sub.className = 'overview-row-subtext';
+      sub.textContent = item.subText || '';
+      row.appendChild(sub);
+
+      bindPatientRow_(row, item.patientId);
       list.appendChild(row);
     });
   return list;
+}
+
+function bindPatientRow_(row, patientId) {
+  if (!row || !patientId) return;
+  row.setAttribute('role', 'link');
+  row.setAttribute('tabindex', '0');
+  row.dataset.patientId = patientId;
+
+  row.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    row.dataset.pointerDownX = String(event.clientX);
+    row.dataset.pointerDownY = String(event.clientY);
+  });
+
+  row.addEventListener('pointerup', (event) => {
+    if (event.button !== 0) return;
+    const startX = Number(row.dataset.pointerDownX || 0);
+    const startY = Number(row.dataset.pointerDownY || 0);
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance > 6) return;
+    navigateToPatient_(patientId);
+  });
+
+  row.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    navigateToPatient_(patientId);
+  });
+}
+
+function navigateToPatient_(patientId) {
+  if (!patientId) return;
+  const link = buildTreatmentAppLink_(patientId);
+  if (typeof window !== 'undefined' && window.top) {
+    window.top.location.href = link;
+    return;
+  }
+  window.location.href = link;
 }
 
 function buildTreatmentAppLink_(patientId) {

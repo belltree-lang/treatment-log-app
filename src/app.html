@@ -38,6 +38,7 @@
   .news-item[data-type="警告"],
   .news-item[data-type="再同意"]{ background-color:#ffebee; }
   .news-item[data-status="consent-reminder"]{ background:#fff3d4; border-left-color:#fb923c; }
+  .news-item[data-status="consent-needs-review"]{ background:#ffebee; border-left-color:#dc2626; }
   .news-item[data-status="consent-handout-followup"]{ background:#dbeafe; border-left-color:#2563eb; }
   .news-item[data-status="handover-reminder"]{ background:#fef3c7; border-left-color:#f59e0b; }
   .news-item[data-status="consent-doctor-report"]{ background:#ede9fe; border-left-color:#7c3aed; }
@@ -3282,9 +3283,8 @@ function loadHeader(patientId, next){
     .getPatientHeader(targetPid);
 }
 function buildNewsItemHtml(news, idx){
-  const messageHtml = news && news.htmlMessage
-    ? news.htmlMessage
-    : escapeHtml(news && news.message ? news.message : '').replace(/\n/g,'<br>');
+  const messageText = getNewsMessageForDisplay(news);
+  const messageHtml = escapeHtml(messageText).replace(/\n/g,'<br>');
   const showConsentEdit = shouldShowConsentEditButton(news);
   const showVisitPlanEdit = shouldShowVisitPlanEditButton(news);
   const showConsentDismiss = shouldShowConsentDismissButton(news);
@@ -3587,6 +3587,32 @@ function isConsentReminderNews(news){
   return isConsentReminderMessage(news.message);
 }
 
+function resolveVisitPlanUndecidedState(news){
+  if(!news) return '';
+  if (String(news.type || '').trim() !== '同意') return '';
+  const message = String(news.message || '');
+  const meta = news.meta && typeof news.meta === 'object' ? news.meta : null;
+  const reason = meta && meta.reason ? String(meta.reason) : '';
+  const isUndecided = reason === 'consent_undecided' || message.indexOf('通院日未定') >= 0;
+  if (!isUndecided) return '';
+  const ts = Number(news.ts);
+  if (!Number.isFinite(ts) || ts <= 0) return 'pending';
+  const elapsedMs = Date.now() - ts;
+  if (elapsedMs <= 14 * 24 * 60 * 60 * 1000) return 'pending';
+  return 'needs_review';
+}
+
+function getNewsMessageForDisplay(news){
+  const visitPlanState = resolveVisitPlanUndecidedState(news);
+  if (visitPlanState === 'pending') {
+    return '通院予定：仮予定（pending） 登録から14日以内のため確認待ちです。';
+  }
+  if (visitPlanState === 'needs_review') {
+    return '通院予定：要再確認（needs_review） 登録から14日を超過しています。通院日を更新してください。';
+  }
+  return String(news && news.message ? news.message : '');
+}
+
 function resolveNewsStatus(news){
   if(!news) return '';
   const type = String(news.type || '').trim();
@@ -3598,6 +3624,8 @@ function resolveNewsStatus(news){
     return '';
   }
   if (type !== '同意') return '';
+  const visitPlanState = resolveVisitPlanUndecidedState(news);
+  if (visitPlanState === 'needs_review') return 'consent-needs-review';
   if (metaType === 'consent_verification') return 'consent-doctor-report';
   if (metaType === 'consent_reminder') return 'consent-reminder';
   if (isConsentReminderMessage(news.message)) return 'consent-reminder';
@@ -3636,8 +3664,10 @@ function shouldShowVisitPlanEditButton(news){
   if (!news) return false;
   const type = String(news.type || '').trim();
   if (type !== '同意') return false;
+  const visitPlanState = resolveVisitPlanUndecidedState(news);
+  if (visitPlanState === 'needs_review') return true;
   const message = String(news.message || '');
-  return message.indexOf('通院日未定') >= 0;
+  return message.indexOf('通院日未定') >= 0 || visitPlanState === 'pending';
 }
 
 function shouldShowHandoverReminderButton(news){

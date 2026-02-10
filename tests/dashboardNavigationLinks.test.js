@@ -54,6 +54,18 @@ function createContext() {
   );
 })();
 
+(function testBuildTreatmentAppLinkAlwaysUsesCanonicalQuery() {
+  const context = createContext();
+  context.DASHBOARD_TREATMENT_APP_EXEC_URL = 'https://script.google.com/macros/s/DEPLOY123/exec?foo=bar#anchor';
+
+  const link = context.buildTreatmentAppLink_('P-003');
+  assert.strictEqual(
+    link,
+    'https://script.google.com/macros/s/DEPLOY123/exec?view=record&id=P-003',
+    'buildTreatmentAppLink_ never reuses existing query parameters'
+  );
+})();
+
 
 (function testInvalidGoogleusercontentExecUrlIsRejected() {
   const context = createContext();
@@ -81,6 +93,15 @@ function createContext() {
     '施術録WebアプリURLが未設定のため、患者画面を開けません。',
     'navigate sets a clear UI error message when URL is missing'
   );
+})();
+
+(function testFalsyPatientIdDoesNotNavigate() {
+  const context = createContext();
+  context.DASHBOARD_TREATMENT_APP_EXEC_URL = 'https://script.google.com/macros/s/DEPLOY123/exec';
+
+  assert.strictEqual(context.buildTreatmentAppLink_(''), '', 'empty patient id does not build URL');
+  context.navigateToPatient_('');
+  assert.strictEqual(context.__openCalls.length, 0, 'empty patient id does not open new tab');
 })();
 
 console.log('dashboard navigation link tests passed');

@@ -400,18 +400,20 @@ function buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz) {
     const entryEmail = dashboardNormalizeEmail_(entry && entry.createdByEmail ? entry.createdByEmail : '');
     return entryEmail && entryEmail === normalizedUser;
   });
-  const todayCount = filtered.reduce((count, entry) => {
-    if (entry && entry.dateKey === todayKey) return count + 1;
-    return count;
-  }, 0);
-  let latestTs = null;
+
+  const countsByDate = {};
   filtered.forEach(entry => {
-    const ts = entry && entry.timestamp ? dashboardCoerceDate_(entry.timestamp) : null;
-    if (!ts) return;
-    if (!latestTs || ts > latestTs) latestTs = ts;
+    const key = entry && entry.dateKey ? String(entry.dateKey).trim() : '';
+    if (!key) return;
+    countsByDate[key] = (countsByDate[key] || 0) + 1;
   });
-  const lastDate = latestTs ? dashboardFormatDate_(latestTs, tz, 'yyyy/MM/dd') : '';
-  return { todayCount, lastDate };
+
+  const todayCount = countsByDate[todayKey] || 0;
+  const dateKeys = Object.keys(countsByDate).sort();
+  const latestDateKey = dateKeys.length ? dateKeys[dateKeys.length - 1] : '';
+  const recentOneDayCount = latestDateKey ? (countsByDate[latestDateKey] || 0) : 0;
+
+  return { todayCount, recentOneDayCount };
 }
 
 function collectDashboardWarnings_(results) {

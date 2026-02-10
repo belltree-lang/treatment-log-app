@@ -18,3 +18,7 @@ const DASHBOARD_SHEET_UNPAID_HISTORY = '未回収履歴';
 
 // 未回収アラート判定に利用する連続月数のデフォルト値
 const DASHBOARD_UNPAID_ALERT_MONTHS = 3;
+
+// ダッシュボードから施術録へ遷移する公開Webアプリ(exec) URL
+// 運用環境で固定URLがある場合はこの定数に設定し、未設定時は同一デプロイURLを利用する。
+const DASHBOARD_TREATMENT_APP_EXEC_URL = '';

@@ -275,7 +275,7 @@ function renderVisitSummary() {
   if (!container) return;
   container.innerHTML = '';
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
-  const data = overview && overview.visitSummary ? overview.visitSummary : { todayCount: 0, lastDate: '' };
+  const data = overview && overview.visitSummary ? overview.visitSummary : { todayCount: 0, recentOneDayCount: 0 };
 
   const header = document.createElement('div');
   header.className = 'summary-header';
@@ -303,10 +303,10 @@ function renderVisitSummary() {
   lastRow.className = 'overview-metric';
   const lastLabel = document.createElement('span');
   lastLabel.className = 'overview-metric-label';
-  lastLabel.textContent = '直近の施術日';
+  lastLabel.textContent = '直近1日施術';
   const lastValue = document.createElement('span');
   lastValue.className = 'overview-metric-value';
-  lastValue.textContent = data.lastDate || 'なし';
+  lastValue.textContent = `${data.recentOneDayCount || 0}件`;
   lastRow.appendChild(lastLabel);
   lastRow.appendChild(lastValue);
   metrics.appendChild(lastRow);
@@ -693,10 +693,21 @@ function navigateToPatient_(patientId) {
 }
 
 function buildTreatmentAppLink_(patientId) {
-  const base = typeof baseUrl !== 'undefined' ? String(baseUrl) : '';
-  const normalizedBase = base.replace(/\/+$/, '');
+  const rawExecUrl = resolveTreatmentAppExecUrl_();
   const id = encodeURIComponent(patientId || '');
-  return `${normalizedBase}/treatmentApp?patientId=${id}`;
+  const joiner = rawExecUrl.indexOf('?') >= 0 ? '&' : '?';
+  return `${rawExecUrl}${joiner}view=record&id=${id}`;
+}
+
+function resolveTreatmentAppExecUrl_() {
+  const configured = typeof treatmentAppExecUrl !== 'undefined' ? String(treatmentAppExecUrl || '').trim() : '';
+  if (configured) return configured;
+  const fallback = typeof baseUrl !== 'undefined' ? String(baseUrl || '').trim() : '';
+  if (fallback) return fallback;
+  if (typeof window !== 'undefined' && window.location) {
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+  return '';
 }
 function formatTaskLabel(type) {
   switch(type) {

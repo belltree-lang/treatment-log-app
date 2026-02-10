@@ -158,6 +158,43 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
   assert.ok(Number(matchedCountLog.details) >= 1, '少なくとも1件の一致ログがある');
 }
 
+
+function testVisitSummaryUsesCountsForTodayAndRecentOneDay() {
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        if (fmt === 'yyyy-MM-dd') return new Date(date).toISOString().slice(0, 10);
+        return new Date(date).toISOString();
+      }
+    }
+  });
+
+  const logs = [
+    { dateKey: '2025-02-01', createdByEmail: 'user@example.com' },
+    { dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
+    { dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
+    { dateKey: '2025-01-30', createdByEmail: 'other@example.com' }
+  ];
+
+  const resultToday = ctx.buildOverviewFromTreatmentProgress_(
+    logs,
+    'user@example.com',
+    new Date('2025-02-01T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+  assert.strictEqual(resultToday.todayCount, 1, '今日の件数を返す');
+  assert.strictEqual(resultToday.recentOneDayCount, 1, '直近1日施術は最新日の件数を返す');
+
+  const resultNoToday = ctx.buildOverviewFromTreatmentProgress_(
+    logs,
+    'user@example.com',
+    new Date('2025-02-02T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+  assert.strictEqual(resultNoToday.todayCount, 0, '今日が0件の場合は0件を返す');
+  assert.strictEqual(resultNoToday.recentOneDayCount, 1, '今日0件の場合は過去で最も新しい施術日の件数を返す');
+}
+
 function testErrorIsCapturedInMeta() {
   const ctx = createContext({
     loadPatientInfo: () => { throw new Error('boom'); }
@@ -192,6 +229,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
 (function run() {
   testAggregatesDashboardData();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
+  testVisitSummaryUsesCountsForTodayAndRecentOneDay();
   testErrorIsCapturedInMeta();
   testWarningsAreDedupedAndSetupFlagged();
   console.log('dashboardGetDashboardData tests passed');

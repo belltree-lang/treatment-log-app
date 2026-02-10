@@ -57,7 +57,9 @@ function loadTreatmentLogsUncached_(options) {
   const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
 
   const colTimestamp = dashboardResolveColumn_(headers, ['日時', '日付', 'timestamp', 'ts', 'タイムスタンプ'], 1);
-  const colPatientId = dashboardResolveColumn_(headers, ['患者ID', 'patientId', 'id'], 0);
+  const colPatientId = dashboardResolveColumn_(headers, [
+    '施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号', 'recNo', 'patientId', 'id'
+  ], 2);
   const colPatientName = dashboardResolveColumn_(headers, ['氏名', '名前', '患者名'], colPatientId ? 0 : 2);
   const colEmail = dashboardResolveColumn_(headers, ['作成者', '担当者', 'email', 'createdbyemail'], 0);
 
@@ -77,7 +79,11 @@ function loadTreatmentLogsUncached_(options) {
       continue;
     }
 
-    const patientIdRaw = colPatientId ? dashboardNormalizePatientId_(row[colPatientId - 1] || rowDisplay[colPatientId - 1]) : '';
+    const patientIdCell = colPatientId ? row[colPatientId - 1] : '';
+    const patientIdDisplay = colPatientId ? rowDisplay[colPatientId - 1] : '';
+    const patientIdRaw = colPatientId
+      ? (dashboardNormalizePatientId_(patientIdCell) || dashboardNormalizePatientId_(patientIdDisplay))
+      : '';
     const patientName = String((colPatientName && (rowDisplay[colPatientName - 1] || row[colPatientName - 1])) || '').trim();
     const mappedPatientId = patientIdRaw || dashboardResolvePatientIdFromName_(patientName, nameToId);
     const createdByEmail = colEmail ? String(rowDisplay[colEmail - 1] || row[colEmail - 1] || '').trim() : '';

@@ -35,7 +35,7 @@ function getDashboardData(options) {
     const aiReports = opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports() : { reports: {}, warnings: [] });
     logContext('getDashboardData:loadAIReports', `reports=${Object.keys(aiReports && aiReports.reports ? aiReports.reports : {}).length} warnings=${(aiReports && aiReports.warnings ? aiReports.warnings.length : 0)} setupIncomplete=${!!(aiReports && aiReports.setupIncomplete)}`);
     const invoices = opts.invoices || (typeof loadInvoices === 'function'
-      ? loadInvoices({ patientInfo, now: opts.now })
+      ? loadInvoices({ patientInfo, now: opts.now, includePreviousMonth: true })
       : { invoices: {}, warnings: [] });
     logContext('getDashboardData:loadInvoices', `invoices=${Object.keys(invoices && invoices.invoices ? invoices.invoices : {}).length} warnings=${(invoices && invoices.warnings ? invoices.warnings.length : 0)} setupIncomplete=${!!(invoices && invoices.setupIncomplete)}`);
     const treatmentLogs = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
@@ -112,7 +112,8 @@ function getDashboardData(options) {
         visits: filteredVisits,
         patients,
         patientInfo,
-        treatmentLogs: { logs: filteredTreatmentLogs },
+        treatmentLogs,
+        invoices,
         user: meta.user,
         now: opts.now,
         allowedPatientIds: displayTargets.patientIds
@@ -176,11 +177,15 @@ function normalizeDashboardNote_(note, patientId) {
 function buildDashboardOverview_(params) {
   const payload = params || {};
   const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
-  const visits = Array.isArray(payload.visits) ? payload.visits : [];
   const patients = Array.isArray(payload.patients) ? payload.patients : [];
   const patientInfo = payload.patientInfo && payload.patientInfo.patients ? payload.patientInfo.patients : {};
+  const invoices = payload.invoices || {};
+  const treatmentLogs = payload.treatmentLogs && Array.isArray(payload.treatmentLogs.logs)
+    ? payload.treatmentLogs.logs
+    : [];
   const now = dashboardCoerceDate_(payload.now) || new Date();
   const tz = dashboardResolveTimeZone_();
+  const user = payload.user || '';
   const allowedPatientIds = payload.allowedPatientIds instanceof Set ? payload.allowedPatientIds : null;
   const scope = { patientIds: allowedPatientIds, applyFilter: !!allowedPatientIds };
 
@@ -196,9 +201,9 @@ function buildDashboardOverview_(params) {
     patientNameMap[pid] = info.name || info.patientName || '';
   });
 
-  const invoiceUnconfirmed = buildOverviewFromInvoiceUnconfirmed_(tasks, scope, patientNameMap);
-  const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap);
-  const visitSummary = buildOverviewFromVisits_(visits, scope, patientNameMap, now, tz);
+  const invoiceUnconfirmed = buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, scope, patientNameMap, now, tz);
+  const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz);
+  const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz);
 
   return {
     invoiceUnconfirmed,
@@ -207,23 +212,48 @@ function buildDashboardOverview_(params) {
   };
 }
 
-function buildOverviewFromInvoiceUnconfirmed_(tasks, scope, patientNameMap) {
+function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, scope, patientNameMap, now, tz) {
   const items = [];
-  const seen = new Set();
+  const issuesByPatient = {};
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
+  const targetNow = dashboardCoerceDate_(now) || new Date();
+  const currentMonthKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM');
+  const previousMonthKey = dashboardFormatDate_(new Date(targetNow.getFullYear(), targetNow.getMonth() - 1, 1), tz, 'yyyy-MM');
+  const invoiceMeta = invoices && invoices.invoiceMeta ? invoices.invoiceMeta : {};
+  const invoiceTaskPids = new Set();
 
   (tasks || []).forEach(task => {
     const pid = task && task.patientId ? String(task.patientId).trim() : '';
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const type = task && task.type ? String(task.type) : '';
     if (type !== 'invoiceUnconfirmed') return;
-    if (seen.has(pid)) return;
-    seen.add(pid);
+    if (!issuesByPatient[pid]) issuesByPatient[pid] = { months: [], name: '' };
+    if (!issuesByPatient[pid].name && task.name) issuesByPatient[pid].name = task.name;
+    issuesByPatient[pid].unconfirmed = true;
+    invoiceTaskPids.add(pid);
+  });
+
+  const candidatePids = Object.keys(invoiceMeta || {}).filter(pid => {
+    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return false;
+    const meta = invoiceMeta && invoiceMeta[pid] && invoiceMeta[pid].months ? invoiceMeta[pid].months : {};
+    return [currentMonthKey, previousMonthKey].some(key => !!(meta && meta[key]));
+  });
+
+  const targets = invoiceTaskPids.size ? Array.from(invoiceTaskPids) : candidatePids;
+  targets.forEach(pid => {
+    const meta = invoiceMeta && invoiceMeta[pid] && invoiceMeta[pid].months ? invoiceMeta[pid].months : {};
+    const monthsInScope = [currentMonthKey, previousMonthKey].filter(key => !!(meta && meta[key]));
+    const displayMonths = monthsInScope.length ? monthsInScope : [];
+    const issueCount = Math.max(1, displayMonths.length || 1);
+    const subText = displayMonths.length
+      ? `受渡未確認（対象月: ${displayMonths.join('・')}）`
+      : '受渡未確認';
     items.push({
       patientId: pid,
-      name: task.name || patientNameMap[pid] || '',
-      subText: '未確認'
+      name: (issuesByPatient[pid] && issuesByPatient[pid].name) || patientNameMap[pid] || '',
+      count: issueCount,
+      subText
     });
   });
 
@@ -231,9 +261,9 @@ function buildOverviewFromInvoiceUnconfirmed_(tasks, scope, patientNameMap) {
   return { count: items.length, items };
 }
 
-function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap) {
+function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz) {
   const items = [];
-  const seen = new Set();
+  const issuesByPatient = {};
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
 
@@ -242,29 +272,47 @@ function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap) {
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const type = task && task.type ? String(task.type) : '';
     if (type !== 'consentExpired' && type !== 'consentWarning') return;
-    if (seen.has(pid)) return;
     const detail = task.detail ? String(task.detail) : '';
     const label = type === 'consentExpired' ? '期限切れ' : '期限間近';
-    const subText = detail ? `${label}: ${detail}` : label;
-    seen.add(pid);
-    items.push({
-      patientId: pid,
-      name: task.name || patientNameMap[pid] || '',
-      subText
-    });
+    const message = detail ? `${label}: ${detail}` : label;
+    if (!issuesByPatient[pid]) issuesByPatient[pid] = [];
+    issuesByPatient[pid].push(message);
   });
 
   Object.keys(patientInfo || {}).forEach(pid => {
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
-    if (seen.has(pid)) return;
     const info = patientInfo[pid] || {};
-    const consentValue = info.consentExpiry || (info.raw && (info.raw['同意期限'] || info.raw['同意有効期限'])) || '';
-    if (String(consentValue || '').trim()) return;
-    seen.add(pid);
+    const consentHandout = resolvePatientRawValue_(info.raw, [
+      '配布', '配布欄', '配布状況', '配布日', '配布（同意書）', '同意書受渡', '同意書受け渡し', '同意書受渡日'
+    ]);
+    const consentDate = resolvePatientRawValue_(info.raw, [
+      '同意年月日', '同意日', '同意開始日', '同意開始'
+    ]);
+    const visitPlanDate = resolvePatientRawValue_(info.raw, [
+      '通院予定日', '通院日', '来院日', '通院予定', '来院予定'
+    ]);
+
+    if (consentHandout && !consentDate) {
+      if (!issuesByPatient[pid]) issuesByPatient[pid] = [];
+      issuesByPatient[pid].push('同意未取得');
+    }
+    if (consentHandout && !visitPlanDate) {
+      if (!issuesByPatient[pid]) issuesByPatient[pid] = [];
+      issuesByPatient[pid].push('通院日未定');
+    }
+  });
+
+  Object.keys(issuesByPatient).forEach(pid => {
+    const reasons = issuesByPatient[pid] || [];
+    if (!reasons.length) return;
+    const info = patientInfo[pid] || {};
+    const name = info.name || patientNameMap[pid] || '';
+    const subText = reasons.join(' / ');
     items.push({
       patientId: pid,
-      name: info.name || patientNameMap[pid] || '',
-      subText: '未取得'
+      name,
+      count: Math.max(1, reasons.length),
+      subText
     });
   });
 
@@ -272,53 +320,40 @@ function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap) {
   return { count: items.length, items };
 }
 
-function buildOverviewFromVisits_(visits, scope, patientNameMap, now, tz) {
+function resolvePatientRawValue_(raw, candidates) {
+  if (!raw) return '';
+  const keys = Array.isArray(candidates) ? candidates : [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (Object.prototype.hasOwnProperty.call(raw, key)) {
+      const value = raw[key];
+      if (value != null && String(value).trim()) return value;
+    }
+  }
+  return '';
+}
+
+function buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz) {
   const targetNow = dashboardCoerceDate_(now) || new Date();
   const todayKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM-dd');
-  const yesterday = new Date(targetNow.getTime() - 24 * 60 * 60 * 1000);
-  const yesterdayKey = dashboardFormatDate_(yesterday, tz, 'yyyy-MM-dd');
-  const allowedPatientIds = scope ? scope.patientIds : null;
-  const applyFilter = scope ? scope.applyFilter : false;
-  const byDate = {
-    [todayKey]: { count: 0, items: [] },
-    [yesterdayKey]: { count: 0, items: [] }
-  };
-  const countsByDate = {
-    [todayKey]: {},
-    [yesterdayKey]: {}
-  };
-
-  (visits || []).forEach(entry => {
-    const pid = entry && entry.patientId ? String(entry.patientId).trim() : '';
-    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
-    const dateKey = entry.dateKey || '';
-    if (!Object.prototype.hasOwnProperty.call(byDate, dateKey)) return;
-    countsByDate[dateKey][pid] = (countsByDate[dateKey][pid] || 0) + 1;
-    const name = entry.patientName || patientNameMap[pid] || '';
-    if (!byDate[dateKey].items.some(item => item.patientId === pid)) {
-      byDate[dateKey].items.push({ patientId: pid, name });
-    }
+  const normalizedUser = dashboardNormalizeEmail_(user || '');
+  const filtered = (treatmentLogs || []).filter(entry => {
+    if (!normalizedUser) return true;
+    const entryEmail = dashboardNormalizeEmail_(entry && entry.createdByEmail ? entry.createdByEmail : '');
+    return entryEmail && entryEmail === normalizedUser;
   });
-
-  Object.keys(byDate).forEach(key => {
-    const label = key === todayKey ? '施術日: 今日' : '施術日: 昨日';
-    byDate[key].items = byDate[key].items.map(item => {
-      const count = countsByDate[key][item.patientId] || 0;
-      return {
-        patientId: item.patientId,
-        name: item.name,
-        subText: label,
-        badge: count > 1 ? `${count}件` : ''
-      };
-    });
-    byDate[key].count = byDate[key].items.length;
-    byDate[key].items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  const todayCount = filtered.reduce((count, entry) => {
+    if (entry && entry.dateKey === todayKey) return count + 1;
+    return count;
+  }, 0);
+  let latestTs = null;
+  filtered.forEach(entry => {
+    const ts = entry && entry.timestamp ? dashboardCoerceDate_(entry.timestamp) : null;
+    if (!ts) return;
+    if (!latestTs || ts > latestTs) latestTs = ts;
   });
-
-  return {
-    today: byDate[todayKey] || { count: 0, items: [] },
-    yesterday: byDate[yesterdayKey] || { count: 0, items: [] }
-  };
+  const lastDate = latestTs ? dashboardFormatDate_(latestTs, tz, 'yyyy/MM/dd') : '';
+  return { todayCount, lastDate };
 }
 
 function collectDashboardWarnings_(results) {

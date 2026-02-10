@@ -526,6 +526,7 @@ let _confirmedPatientId = '';
 let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
 let _initialPatientIdResolveFailureNotified = false;
+let _initialPatientIdRecordView = false;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
@@ -626,6 +627,7 @@ function resolveInitialPatientIdRequest(){
       console.warn('[resolveInitialPatientIdRequest] failed to inspect view param', err);
     }
   }
+  _initialPatientIdRecordView = shouldAutoLoad;
   if (!shouldAutoLoad) return '';
 
   let candidate = '';
@@ -2737,10 +2739,7 @@ function notifyInitialPatientIdResolveFailure_(reason){
   if (!_initialPatientIdRequested) return;
   _initialPatientIdResolveFailureNotified = true;
   const detail = String(reason || 'unknown').trim() || 'unknown';
-  console.warn('[initialPatientId] resolve failed', {
-    patientId: _initialPatientIdRequested,
-    reason: detail
-  });
+  console.warn('[initialPatientId] resolve failed', detail, _initialPatientIdRequested);
   toast(`指定された患者ID（${_initialPatientIdRequested}）を初期表示で確定できませんでした。${detail}`);
 }
 
@@ -2783,31 +2782,35 @@ function applyInitialPatientSelectionFromRequest_(options){
   }
   let failureReason = 'patientId not found in candidate list';
   _initialPatientIdResolved = true;
-  const inputEl = q('pid');
-  if (inputEl){
-    const currentKey = normalizePatientIdKey(splitPatientIdDisplay(String(inputEl.value || '')).id);
-    if (currentKey === _initialPatientIdRequested){
-      const resolved = ensurePatientIdDisplayFromInput({
-        allowPlainOnMiss: true,
-        clearOnReject: false,
-        skipIfEditing: false
-      });
-      if (resolved){
-        console.info('[applyInitialPatientSelectionFromRequest_] refresh', {
-          reason: 'resolved by input value on finalize',
-          finalize: opts.finalize,
-          patientId: _initialPatientIdRequested
+  if (_initialPatientIdRecordView && _initialPatientIdRequested){
+    const inputEl = q('pid');
+    if (inputEl){
+      const currentKey = normalizePatientIdKey(splitPatientIdDisplay(String(inputEl.value || '')).id);
+      if (currentKey === _initialPatientIdRequested){
+        const resolved = ensurePatientIdDisplayFromInput({
+          clearOnReject: false,
+          skipIfEditing: true
         });
-        refresh();
-        return true;
+        if (resolved && !resolved.skipped){
+          console.info('[applyInitialPatientSelectionFromRequest_] refresh', {
+            reason: 'record view URL fallback resolved by input value on finalize',
+            finalize: opts.finalize,
+            patientId: _initialPatientIdRequested
+          });
+          refresh();
+          return true;
+        }
+        if (resolved && resolved.skipped){
+          failureReason = 'patientId fallback skipped while editing';
+        } else {
+          failureReason = 'patientId fallback rejected while applying URL requested value';
+        }
+      } else {
+        failureReason = 'patientId input changed before URL fallback';
       }
-      failureReason = 'patientId rejected while applying input value';
-      setv('pid', '');
     } else {
-      failureReason = 'patientId input changed before initial resolution';
+      failureReason = 'patientId input element missing before URL fallback';
     }
-  } else {
-    failureReason = 'patientId input element missing';
   }
   clearConfirmedPatientId();
   hideGlobalLoading();

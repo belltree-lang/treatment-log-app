@@ -25,7 +25,8 @@ function getDashboardData(options) {
     user: opts.user || dashboardResolveUser_(),
     setupIncomplete: false
   };
-  logContext('getDashboardData:start', `user=${meta.user || 'unknown'} mock=${opts.mock ? 'true' : 'false'}`);
+  const normalizedUser = dashboardNormalizeEmail_(meta.user || '');
+  logContext('getDashboardData:start', `user=${meta.user || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
     const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : { patients: {}, nameToId: {}, warnings: [] });
@@ -41,7 +42,24 @@ function getDashboardData(options) {
     const treatmentLogs = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
       ? loadTreatmentLogs({ patientInfo, now: opts.now })
       : { logs: [], warnings: [] });
-    logContext('getDashboardData:loadTreatmentLogs', `logs=${(treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0)} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
+    const totalTreatmentLogs = treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0;
+    logContext('getDashboardData:loadTreatmentLogs', `logs=${totalTreatmentLogs} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
+    const staffMatchedLogs = (treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : []).filter(entry => {
+      if (!normalizedUser) return false;
+      const entryEmail = dashboardNormalizeEmail_(entry && entry.createdByEmail ? entry.createdByEmail : '');
+      return entryEmail && entryEmail === normalizedUser;
+    });
+    const matchedPatientIds = new Set();
+    staffMatchedLogs.forEach(entry => {
+      const pid = dashboardNormalizePatientId_(entry && entry.patientId);
+      if (pid) matchedPatientIds.add(pid);
+    });
+    const patientMaster = patientInfo && patientInfo.patients ? patientInfo.patients : {};
+    const matchedPatientIdsInMaster = Array.from(matchedPatientIds).filter(pid => Object.prototype.hasOwnProperty.call(patientMaster, pid));
+    logContext(
+      'getDashboardData:staffMatchSummary',
+      `normalizedUser=${normalizedUser || 'unknown'} totalLogs=${totalTreatmentLogs} staffMatchedLogs=${staffMatchedLogs.length} matchedPatientIds=${matchedPatientIds.size} matchedPatientIdsInMaster=${matchedPatientIdsInMaster.length}`
+    );
     const responsible = opts.responsible || (typeof assignResponsibleStaff === 'function'
       ? assignResponsibleStaff({ patientInfo, treatmentLogs, now: opts.now })
       : { responsible: {}, warnings: [] });
@@ -72,6 +90,7 @@ function getDashboardData(options) {
       treatmentLogs,
       now: opts.now
     });
+    logContext('getDashboardData:displayTargets', `allowedPatientIds=${displayTargets && displayTargets.patientIds ? displayTargets.patientIds.size : 0}`);
     const filteredTasks = filterDashboardItemsByPatientId_(tasksResult && tasksResult.tasks ? tasksResult.tasks : [], displayTargets.patientIds);
     const filteredVisits = filterDashboardItemsByPatientId_(visitsResult && visitsResult.visits ? visitsResult.visits : [], displayTargets.patientIds);
     const filteredAlerts = filterDashboardItemsByPatientId_(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [], displayTargets.patientIds);
@@ -430,20 +449,40 @@ function resolveDashboardDisplayTargets_(params) {
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const yesterdayKey = dashboardFormatDate_(yesterday, tz, 'yyyy-MM-dd');
   const allowed = new Set();
+  const logContext = (label, details) => {
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_(label, details);
+    } else if (typeof dashboardWarn_ === 'function') {
+      const payload = details ? ` ${details}` : '';
+      dashboardWarn_(`[${label}]${payload}`);
+    }
+  };
+  let scopedCount = 0;
+  let monthlyCount = 0;
+  let dailyCount = 0;
+  let totalCount = 0;
 
   (treatmentLogs || []).forEach(entry => {
     if (!entry || !entry.timestamp) return;
+    totalCount += 1;
     const ts = dashboardCoerceDate_(entry.timestamp);
     if (!ts) return;
     const dateKey = entry.dateKey || dashboardFormatDate_(ts, tz, 'yyyy-MM-dd');
     const inMonthlyScope = ts >= monthStart;
     const inDailyScope = dateKey === todayKey || dateKey === yesterdayKey;
     if (!inMonthlyScope && !inDailyScope) return;
+    if (inMonthlyScope) monthlyCount += 1;
+    if (inDailyScope) dailyCount += 1;
+    scopedCount += 1;
     const pid = dashboardNormalizePatientId_(entry.patientId);
     if (!pid || !Object.prototype.hasOwnProperty.call(patientInfo, pid)) return;
     allowed.add(pid);
   });
 
+  logContext(
+    'resolveDashboardDisplayTargets:summary',
+    `totalLogs=${totalCount} inMonthlyScope=${monthlyCount} inDailyScope=${dailyCount} scopedLogs=${scopedCount} allowedPatientIds=${allowed.size}`
+  );
   return { patientIds: allowed };
 }
 

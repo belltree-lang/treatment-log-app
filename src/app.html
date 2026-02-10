@@ -324,7 +324,30 @@
 <script>
 function q(id){ return document.getElementById(id); }
 function val(id){ return q(id).value.trim(); }
-function setv(id,v){ q(id).value=v; }
+function detectCallerFunctionName_(){
+  try {
+    const stack = new Error().stack || '';
+    const lines = stack.split('\n').map(line => line.trim()).filter(Boolean);
+    for (let i = 0; i < lines.length; i++){
+      const line = lines[i];
+      if (line.includes('detectCallerFunctionName_') || line.includes('tracePatientIdState_') || line.includes('setv ')) continue;
+      const m = line.match(/at\s+([^\s(]+)/);
+      if (m && m[1]) return m[1];
+    }
+  } catch (err){
+    console.warn('[trace] detect caller failed', err);
+  }
+  return 'unknown';
+}
+function tracePatientIdState_(phase, label, value, caller){
+  console.log(`[${phase}] ${label} =`, value, 'caller=' + (caller || detectCallerFunctionName_()));
+}
+function setv(id,v){
+  q(id).value=v;
+  if (id === 'pid'){
+    tracePatientIdState_('inputUpdate', 'input.value(patientId)', q(id).value, detectCallerFunctionName_());
+  }
+}
 function jsString(s){ return JSON.stringify(String(s == null ? '' : s)); }
 
 function setGlobalLoadingText(message){
@@ -630,6 +653,7 @@ function resolveInitialPatientIdRequest(){
     }
   }
   _initialPatientIdRecordView = shouldAutoLoad;
+  tracePatientIdState_('init', '_initialPatientIdRecordView', _initialPatientIdRecordView, 'resolveInitialPatientIdRequest');
   if (!shouldAutoLoad) return '';
 
   let candidate = '';
@@ -648,6 +672,7 @@ function resolveInitialPatientIdRequest(){
     }
   }
   const normalized = normalizePatientIdKey(candidate);
+  tracePatientIdState_('init', 'currentKey', normalized, 'resolveInitialPatientIdRequest');
   console.info('[resolveInitialPatientIdRequest]', {
     rawPatientId: candidate,
     normalizedPatientId: normalized,
@@ -1275,6 +1300,7 @@ function setPatientIdInputDisplay(id, name, options){
     }
     const parsedCurrent = splitPatientIdDisplay(currentInput);
     const currentKey = normalizePatientIdKey(parsedCurrent.id);
+    tracePatientIdState_('loadPidList', 'currentKey', currentKey, 'setPatientIdInputDisplay');
     if (!currentInput && !currentKey){
       return;
     }
@@ -2625,6 +2651,7 @@ function loadPidList(){
   const ensureAfterApply = (options) => {
     const opts = Object.assign({ finalize: false }, options || {});
     try {
+      tracePatientIdState_('loadPidList', '_initialPatientIdRequested', _initialPatientIdRequested, 'loadPidList.ensureAfterApply');
       console.info('[loadPidList] ensureAfterApply start', {
         finalize: opts.finalize,
         requestedInitialPatientId: _initialPatientIdRequested,
@@ -2817,6 +2844,7 @@ function applyInitialPatientSelectionFromRequest_(options){
     const inputEl = q('pid');
     if (inputEl){
       const currentKey = normalizePatientIdKey(splitPatientIdDisplay(String(inputEl.value || '')).id);
+      tracePatientIdState_(opts.finalize ? 'finalize' : 'applyInitial', 'currentKey', currentKey, 'applyInitialPatientSelectionFromRequest_');
       if (currentKey === _initialPatientIdRequested){
         const resolved = ensurePatientIdDisplayFromInput({
           clearOnReject: false,
@@ -4361,8 +4389,11 @@ function saveHandoverUI(){
 /* 起動時 */
 (function init(){
   _initialPatientIdRequested = resolveInitialPatientIdRequest();
+  tracePatientIdState_('init', '_initialPatientIdRequested', _initialPatientIdRequested, 'init');
   if (_initialPatientIdRequested){
     setv('pid', _initialPatientIdRequested);
+    const pidInput = q('pid');
+    tracePatientIdState_('init', 'input.value(patientId)', pidInput && pidInput.value != null ? String(pidInput.value) : '', 'init');
   }
   loadPidList();
   loadPresets();

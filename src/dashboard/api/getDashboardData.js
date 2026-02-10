@@ -259,7 +259,16 @@ function buildDashboardOverview_(params) {
     patientNameMap[pid] = info.name || info.patientName || '';
   });
 
-  const invoiceUnconfirmed = buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, scope, patientNameMap, now, tz);
+  const invoiceUnconfirmed = buildOverviewFromInvoiceUnconfirmed_(
+    tasks,
+    invoices,
+    treatmentLogs,
+    payload.notes,
+    scope,
+    patientNameMap,
+    now,
+    tz
+  );
   const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz);
   const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz);
 
@@ -270,53 +279,100 @@ function buildDashboardOverview_(params) {
   };
 }
 
-function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, scope, patientNameMap, now, tz) {
+function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, notes, scope, patientNameMap, now, tz) {
   const items = [];
-  const issuesByPatient = {};
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
   const targetNow = dashboardCoerceDate_(now) || new Date();
-  const currentMonthKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM');
   const previousMonthKey = dashboardFormatDate_(new Date(targetNow.getFullYear(), targetNow.getMonth() - 1, 1), tz, 'yyyy-MM');
+  const currentMonthKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM');
+  const confirmationPhrase = '請求書・領収書を受け渡し済み';
   const invoiceMeta = invoices && invoices.invoiceMeta ? invoices.invoiceMeta : {};
-  const invoiceTaskPids = new Set();
 
-  (tasks || []).forEach(task => {
-    const pid = task && task.patientId ? String(task.patientId).trim() : '';
+  const billedPatients = {};
+  (treatmentLogs || []).forEach(entry => {
+    const pid = dashboardNormalizePatientId_(entry && entry.patientId);
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
-    const type = task && task.type ? String(task.type) : '';
-    if (type !== 'invoiceUnconfirmed') return;
-    if (!issuesByPatient[pid]) issuesByPatient[pid] = { months: [], name: '' };
-    if (!issuesByPatient[pid].name && task.name) issuesByPatient[pid].name = task.name;
-    issuesByPatient[pid].unconfirmed = true;
-    invoiceTaskPids.add(pid);
+    const monthKey = resolveDashboardMonthKey_(entry, tz);
+    if (monthKey !== previousMonthKey) return;
+    billedPatients[pid] = (billedPatients[pid] || 0) + 1;
   });
 
-  const candidatePids = Object.keys(invoiceMeta || {}).filter(pid => {
-    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return false;
+  Object.keys(invoiceMeta || {}).forEach(pid => {
+    if (!pid || billedPatients[pid] || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const meta = invoiceMeta && invoiceMeta[pid] && invoiceMeta[pid].months ? invoiceMeta[pid].months : {};
-    return [currentMonthKey, previousMonthKey].some(key => !!(meta && meta[key]));
+    if (meta && meta[previousMonthKey]) billedPatients[pid] = 1;
   });
 
-  const targets = invoiceTaskPids.size ? Array.from(invoiceTaskPids) : candidatePids;
-  targets.forEach(pid => {
-    const meta = invoiceMeta && invoiceMeta[pid] && invoiceMeta[pid].months ? invoiceMeta[pid].months : {};
-    const monthsInScope = [currentMonthKey, previousMonthKey].filter(key => !!(meta && meta[key]));
-    const displayMonths = monthsInScope.length ? monthsInScope : [];
-    const issueCount = Math.max(1, displayMonths.length || 1);
-    const subText = displayMonths.length
-      ? `受渡未確認（対象月: ${displayMonths.join('・')}）`
-      : '受渡未確認';
+  const confirmedPatients = new Set();
+  (treatmentLogs || []).forEach(entry => {
+    const pid = dashboardNormalizePatientId_(entry && entry.patientId);
+    if (!pid || !billedPatients[pid]) return;
+    if (!isDashboardInvoiceConfirmationInWindow_(entry, currentMonthKey, tz)) return;
+    const searchable = buildDashboardInvoiceSearchText_(entry);
+    if (searchable.indexOf(confirmationPhrase) >= 0) confirmedPatients.add(pid);
+  });
+
+  const noteEntries = notes && notes.notes ? notes.notes : {};
+  Object.keys(noteEntries).forEach(pidRaw => {
+    const pid = dashboardNormalizePatientId_(pidRaw);
+    if (!pid || !billedPatients[pid] || confirmedPatients.has(pid)) return;
+    const note = noteEntries[pidRaw] || {};
+    if (!isDashboardInvoiceConfirmationInWindow_(note, currentMonthKey, tz)) return;
+    const searchable = buildDashboardInvoiceSearchText_(note);
+    if (searchable.indexOf(confirmationPhrase) >= 0) confirmedPatients.add(pid);
+  });
+
+  Object.keys(billedPatients).forEach(pid => {
+    if (confirmedPatients.has(pid)) return;
     items.push({
       patientId: pid,
-      name: (issuesByPatient[pid] && issuesByPatient[pid].name) || patientNameMap[pid] || '',
-      count: issueCount,
-      subText
+      name: patientNameMap[pid] || '',
+      count: 1,
+      subText: `受渡未確認（対象月: ${previousMonthKey}）`
     });
   });
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   return { count: items.length, items };
+}
+
+function resolveDashboardMonthKey_(entry, tz) {
+  const dateKey = entry && entry.dateKey ? String(entry.dateKey).trim() : '';
+  if (dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return dateKey.slice(0, 7);
+  const ts = dashboardCoerceDate_(entry && entry.timestamp ? entry.timestamp : (entry && entry.when ? entry.when : null));
+  if (!ts) return '';
+  return dashboardFormatDate_(ts, tz, 'yyyy-MM');
+}
+
+function isDashboardInvoiceConfirmationInWindow_(entry, currentMonthKey, tz) {
+  const dateKey = entry && entry.dateKey ? String(entry.dateKey).trim() : '';
+  let dayKey = dateKey;
+  if (!dayKey || !/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
+    const ts = dashboardCoerceDate_(entry && entry.timestamp ? entry.timestamp : (entry && entry.when ? entry.when : null));
+    if (!ts) return false;
+    dayKey = dashboardFormatDate_(ts, tz, 'yyyy-MM-dd');
+  }
+  if (dayKey.slice(0, 7) !== currentMonthKey) return false;
+  const day = Number(dayKey.slice(8, 10));
+  return day >= 1 && day <= 20;
+}
+
+function buildDashboardInvoiceSearchText_(entry) {
+  if (!entry || typeof entry !== 'object') return '';
+  const candidates = [
+    entry.text,
+    entry.note,
+    entry.memo,
+    entry.body,
+    entry.content,
+    entry.summary,
+    entry.searchText
+  ];
+  return candidates
+    .map(value => String(value == null ? '' : value).trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz) {

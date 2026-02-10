@@ -65,6 +65,10 @@ function loadTreatmentLogsUncached_(options) {
   const colStaffName = dashboardResolveColumn_(headers, ['施術者', '担当者', '担当', 'スタッフ名', 'staffName', 'staff'], 0);
   const colStaffEmail = dashboardResolveColumn_(headers, ['メール', '担当メール', 'email', 'mail', 'createdbyemail'], 0);
   const colStaffId = dashboardResolveColumn_(headers, ['担当者ID', 'スタッフID', 'staffId', 'staffid'], 0);
+  const searchableColumns = [
+    dashboardResolveColumn_(headers, ['施術内容', '内容', '記録', 'メモ', 'ノート', '備考', 'コメント', '対応内容', '申し送り', '自由記述', 'text', 'note', 'memo', 'comment', 'body', 'content'], 0),
+    dashboardResolveColumn_(headers, ['SOAP', 'S', 'O', 'A', 'P'], 0)
+  ].filter(function(col, index, arr) { return !!col && arr.indexOf(col) === index; });
 
   const tz = dashboardResolveTimeZone_();
   const now = dashboardCoerceDate_(opts.now) || new Date();
@@ -102,6 +106,12 @@ function loadTreatmentLogsUncached_(options) {
     const staffEmailRaw = colStaffEmail ? String(rowDisplay[colStaffEmail - 1] || row[colStaffEmail - 1] || '').trim() : '';
     const staffIdRaw = colStaffId ? String(rowDisplay[colStaffId - 1] || row[colStaffId - 1] || '').trim() : '';
     const dateKey = dashboardFormatDate_(timestamp, tz, 'yyyy-MM-dd');
+    const searchText = searchableColumns
+      .map(function(col) {
+        return String(rowDisplay[col - 1] || row[col - 1] || '').trim();
+      })
+      .filter(function(text) { return !!text; })
+      .join('\n');
 
     if (i < 20) {
       logContext('loadTreatmentLogs:staffValueSample', JSON.stringify({
@@ -136,7 +146,8 @@ function loadTreatmentLogsUncached_(options) {
         staffId: dashboardNormalizeStaffKey_(staffIdRaw)
       },
       timestamp,
-      dateKey
+      dateKey,
+      searchText
     };
 
     logs.push(entry);

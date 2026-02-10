@@ -14,6 +14,7 @@ function handleDashboardDoGet_(e) {
 
   const template = HtmlService.createTemplateFromFile('dashboard');
   template.baseUrl = ScriptApp.getService().getUrl() || '';
+  template.dashboardTreatmentAppExecUrlConstant = resolveDashboardTreatmentAppExecUrlFromConstant_();
   template.treatmentAppExecUrl = resolveDashboardTreatmentAppExecUrl_();
 
   return template
@@ -24,11 +25,15 @@ function handleDashboardDoGet_(e) {
 }
 
 function resolveDashboardTreatmentAppExecUrl_() {
-  const configured = typeof DASHBOARD_TREATMENT_APP_EXEC_URL !== 'undefined'
-    ? String(DASHBOARD_TREATMENT_APP_EXEC_URL || '').trim()
-    : '';
+  const configured = resolveDashboardTreatmentAppExecUrlFromConstant_();
   if (configured) return configured;
   return ScriptApp.getService().getUrl() || '';
+}
+
+function resolveDashboardTreatmentAppExecUrlFromConstant_() {
+  return typeof DASHBOARD_TREATMENT_APP_EXEC_URL !== 'undefined'
+    ? String(DASHBOARD_TREATMENT_APP_EXEC_URL || '').trim()
+    : '';
 }
 
 function shouldHandleDashboardRequest_(e) {

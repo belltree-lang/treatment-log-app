@@ -134,6 +134,7 @@
 </div>
 
 <script>
+const DASHBOARD_TREATMENT_APP_EXEC_URL = <?!= JSON.stringify(typeof dashboardTreatmentAppExecUrlConstant !== 'undefined' ? dashboardTreatmentAppExecUrlConstant : '') ?>;
 const dashboardState = {
   loading: true,
   data: null,
@@ -700,14 +701,17 @@ function buildTreatmentAppLink_(patientId) {
 }
 
 function resolveTreatmentAppExecUrl_() {
-  const configured = typeof treatmentAppExecUrl !== 'undefined' ? String(treatmentAppExecUrl || '').trim() : '';
+  const configured = typeof DASHBOARD_TREATMENT_APP_EXEC_URL !== 'undefined'
+    ? String(DASHBOARD_TREATMENT_APP_EXEC_URL || '').trim()
+    : '';
   if (configured) return configured;
-  const fallback = typeof baseUrl !== 'undefined' ? String(baseUrl || '').trim() : '';
-  if (fallback) return fallback;
-  if (typeof window !== 'undefined' && window.location) {
-    return `${window.location.origin}${window.location.pathname}`;
-  }
-  return '';
+
+  const injected = typeof treatmentAppExecUrl !== 'undefined'
+    ? String(treatmentAppExecUrl || '').trim()
+    : '';
+  if (injected) return injected;
+
+  throw new Error('施術録WebアプリURLが未設定です: DASHBOARD_TREATMENT_APP_EXEC_URL または treatmentAppExecUrl を設定してください。');
 }
 function formatTaskLabel(type) {
   switch(type) {
@@ -755,6 +759,18 @@ function resolveDashboardMockParam_() {
   const search = new URLSearchParams(window.location.search);
   return search.get('mock') || '';
 }
+
+
+/*
+共有用サマリー
+- 変更点
+  - 患者遷移URL解決を `resolveTreatmentAppExecUrl_` に集約し、優先順位を「DASHBOARD_TREATMENT_APP_EXEC_URL → treatmentAppExecUrl」に固定。
+  - window.location / baseUrl 由来のフォールバックを削除し、URL未設定時は例外を投げて明示的に失敗させるよう変更。
+- 理由
+  - googleusercontent.com 由来のURLが患者遷移に混入する経路を完全に排除するため。
+- 影響範囲
+  - ダッシュボード内の患者リンク生成（概要カード、タイムライン、担当患者一覧、行クリック遷移）。
+*/
 </script>
 </body>
 </html>

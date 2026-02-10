@@ -9531,6 +9531,7 @@ function doGet(e) {
   } else {
     t.patientId = "";
   }
+  console.log('[init] t.patientId =', t.patientId, 'caller=doGet');
   t.payrollPdfData = {};
 
   if(e.parameter && e.parameter.lead) t.lead = e.parameter.lead;

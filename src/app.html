@@ -663,14 +663,6 @@ function resolveInitialPatientIdRequest(){
   } catch (err){
     console.warn('[resolveInitialPatientIdRequest] template read failed', err);
   }
-  if (!candidate && typeof window !== 'undefined' && window.location){
-    try {
-      const params = new URLSearchParams(window.location.search);
-      candidate = params.get('patientId') || params.get('id') || '';
-    } catch (err){
-      console.warn('[resolveInitialPatientIdRequest] URL params read failed', err);
-    }
-  }
   const normalized = normalizePatientIdKey(candidate);
   tracePatientIdState_('init', 'currentKey', normalized, 'resolveInitialPatientIdRequest');
   console.info('[resolveInitialPatientIdRequest]', {
@@ -2793,8 +2785,14 @@ function resolveDirectRecordViewPatientIdFromUrl_(){
     const params = new URLSearchParams(window.location.search || '');
     const view = String(params.get('view') || '').trim().toLowerCase();
     if (view !== 'record') return '';
-    const candidate = params.get('patientId') || params.get('id') || '';
-    return normalizePatientIdKey(candidate);
+
+    let candidate = '';
+    if (params.has('patientId')){
+      candidate = params.get('patientId') || '';
+    } else if (params.has('id')){
+      candidate = params.get('id') || '';
+    }
+    return String(candidate);
   } catch (err){
     console.warn('[resolveDirectRecordViewPatientIdFromUrl_] URL params read failed', err);
     return '';
@@ -2804,13 +2802,13 @@ function resolveDirectRecordViewPatientIdFromUrl_(){
 function maybeAutoRefreshFromUrl_(){
   if (_initialRecordViewUrlAutoRefreshDone) return;
   const directRecordPatientId = resolveDirectRecordViewPatientIdFromUrl_();
-  if (!directRecordPatientId) return;
+  if (!String(directRecordPatientId || '').trim()) return;
 
   _initialRecordViewUrlAutoRefreshDone = true;
-  setv('pid', directRecordPatientId);
   _initialRecordViewRefreshCompleted = true;
-  console.info('[record-view] auto refresh from URL', directRecordPatientId);
-  refresh();
+  setv('pid', directRecordPatientId);
+  console.info('[record-view] confirm from URL', directRecordPatientId);
+  handlePatientIdConfirm();
 }
 
 function applyInitialPatientSelectionFromRequest_(options){

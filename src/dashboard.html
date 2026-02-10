@@ -400,60 +400,46 @@ function renderVisits() {
     return;
   }
 
-  const grouped = visits.reduce((map, entry) => {
-    const key = entry.dateKey || '不明';
-    if (!map[key]) map[key] = [];
-    map[key].push(entry);
-    return map;
-  }, {});
+  visits.forEach(v => {
+    const row = document.createElement('div');
+    row.className = 'visit';
+    const time = document.createElement('div');
+    time.className = 'visit-time';
+    time.textContent = v.time || '--:--';
+    row.appendChild(time);
 
-  Object.keys(grouped).sort().forEach(dateKey => {
-    const header = document.createElement('div');
-    header.className = 'muted';
-    header.textContent = formatDateLabel(dateKey);
-    list.appendChild(header);
+    const body = document.createElement('div');
+    body.className = 'visit-body';
+    const name = document.createElement(v.patientId ? 'a' : 'div');
+    if (v.patientId) {
+      name.href = buildTreatmentAppLink_(v.patientId);
+      name.target = '_top';
+      name.rel = 'noreferrer';
+      name.className = 'patient-link';
+    }
+    name.textContent = v.patientName || v.patientId || '患者不明';
+    name.style.fontWeight = '700';
+    body.appendChild(name);
 
-    grouped[dateKey].forEach(v => {
-      const row = document.createElement('div');
-      row.className = 'visit';
-      const time = document.createElement('div');
-      time.className = 'visit-time';
-      time.textContent = v.time || '--:--';
-      row.appendChild(time);
+    const meta = document.createElement('div');
+    meta.className = 'meta-row';
+    const badge = document.createElement('span');
+    const hasNote = v.noteStatus === '◎';
+    if (!(DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI && !hasNote)) {
+      badge.className = `badge ${hasNote ? 'success' : 'warn'}`;
+      badge.textContent = hasNote ? '報告書作成ヒントあり' : '報告書作成ヒント未入力';
+      meta.appendChild(badge);
+    }
+    if (v.patientId) {
+      const idBadge = document.createElement('span');
+      idBadge.className = 'badge';
+      idBadge.textContent = v.patientId;
+      meta.appendChild(idBadge);
+    }
+    body.appendChild(meta);
+    row.appendChild(body);
 
-      const body = document.createElement('div');
-      body.className = 'visit-body';
-      const name = document.createElement(v.patientId ? 'a' : 'div');
-      if (v.patientId) {
-        name.href = buildTreatmentAppLink_(v.patientId);
-        name.target = '_top';
-        name.rel = 'noreferrer';
-        name.className = 'patient-link';
-      }
-      name.textContent = v.patientName || v.patientId || '患者不明';
-      name.style.fontWeight = '700';
-      body.appendChild(name);
-
-      const meta = document.createElement('div');
-      meta.className = 'meta-row';
-      const badge = document.createElement('span');
-      const hasNote = v.noteStatus === '◎';
-      if (!(DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI && !hasNote)) {
-        badge.className = `badge ${hasNote ? 'success' : 'warn'}`;
-        badge.textContent = hasNote ? '報告書作成ヒントあり' : '報告書作成ヒント未入力';
-        meta.appendChild(badge);
-      }
-      if (v.patientId) {
-        const idBadge = document.createElement('span');
-        idBadge.className = 'badge';
-        idBadge.textContent = v.patientId;
-        meta.appendChild(idBadge);
-      }
-      body.appendChild(meta);
-      row.appendChild(body);
-
-      list.appendChild(row);
-    });
+    list.appendChild(row);
   });
 }
 
@@ -485,13 +471,8 @@ function renderPatients() {
     const summary = document.createElement('summary');
     const header = document.createElement('div');
     header.className = 'patient-header';
-    const name = document.createElement(p.patientId ? 'a' : 'div');
+    const name = document.createElement('span');
     name.className = p.patientId ? 'patient-name patient-link' : 'patient-name';
-    if (p.patientId) {
-      name.href = buildTreatmentAppLink_(p.patientId);
-      name.target = '_top';
-      name.rel = 'noreferrer';
-    }
     name.textContent = p.name || '氏名未登録';
     header.appendChild(name);
 
@@ -521,6 +502,20 @@ function renderPatients() {
     if (p.aiReportAt) meta.appendChild(makeBadge('AI報告: ' + p.aiReportAt));
     if (p.invoiceUrl) meta.appendChild(makeBadge('請求書リンクあり'));
     summary.appendChild(meta);
+
+    if (p.patientId) {
+      summary.setAttribute('role', 'link');
+      summary.setAttribute('tabindex', '0');
+      summary.addEventListener('click', (event) => {
+        event.preventDefault();
+        navigateToPatient_(p.patientId);
+      });
+      summary.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        navigateToPatient_(p.patientId);
+      });
+    }
 
     details.appendChild(summary);
 
@@ -700,6 +695,7 @@ function navigateToPatient_(patientId) {
 
 function buildTreatmentAppLink_(patientId) {
   const rawExecUrl = resolveTreatmentAppExecUrl_();
+  if (rawExecUrl === '#') return '#';
   const id = encodeURIComponent(patientId || '');
   const joiner = rawExecUrl.indexOf('?') >= 0 ? '&' : '?';
   return `${rawExecUrl}${joiner}view=record&id=${id}`;
@@ -716,7 +712,8 @@ function resolveTreatmentAppExecUrl_() {
     : '';
   if (injected) return injected;
 
-  throw new Error('施術録WebアプリURLが未設定です: DASHBOARD_TREATMENT_APP_EXEC_URL または treatmentAppExecUrl を設定してください。');
+  console.error('施術録WebアプリURLが未設定です');
+  return '#';
 }
 function formatTaskLabel(type) {
   switch(type) {

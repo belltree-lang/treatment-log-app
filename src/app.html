@@ -615,6 +615,18 @@ function waitMs(ms){
 }
 
 function resolveInitialPatientIdRequest(){
+  let shouldAutoLoad = false;
+  if (typeof window !== 'undefined' && window.location){
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      const view = String(params.get('view') || '').trim().toLowerCase();
+      shouldAutoLoad = view === 'record';
+    } catch (err){
+      console.warn('[resolveInitialPatientIdRequest] failed to inspect view param', err);
+    }
+  }
+  if (!shouldAutoLoad) return '';
+
   let candidate = '';
   try {
     const templatePid = "<?= patientId ?>";
@@ -2714,6 +2726,15 @@ function applyInitialPatientSelectionFromRequest_(options){
   if (inputEl){
     const currentKey = normalizePatientIdKey(splitPatientIdDisplay(String(inputEl.value || '')).id);
     if (currentKey === _initialPatientIdRequested){
+      const resolved = ensurePatientIdDisplayFromInput({
+        allowPlainOnMiss: true,
+        clearOnReject: false,
+        skipIfEditing: false
+      });
+      if (resolved){
+        refresh();
+        return true;
+      }
       setv('pid', '');
     }
   }

@@ -525,6 +525,7 @@ let _patientIdInitialRenderNoticeShown = false;
 let _confirmedPatientId = '';
 let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
+let _initialPatientIdResolveFailureNotified = false;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
@@ -2706,6 +2707,18 @@ function handlePatientIdKeydown(evt){
   }
 }
 
+function notifyInitialPatientIdResolveFailure_(reason){
+  if (_initialPatientIdResolveFailureNotified) return;
+  if (!_initialPatientIdRequested) return;
+  _initialPatientIdResolveFailureNotified = true;
+  const detail = String(reason || 'unknown').trim() || 'unknown';
+  console.warn('[initialPatientId] resolve failed', {
+    patientId: _initialPatientIdRequested,
+    reason: detail
+  });
+  toast(`指定された患者ID（${_initialPatientIdRequested}）を初期表示で確定できませんでした。${detail}`);
+}
+
 function applyInitialPatientSelectionFromRequest_(options){
   const opts = Object.assign({ finalize: false }, options || {});
   if (_initialPatientIdResolved) return false;
@@ -2721,6 +2734,7 @@ function applyInitialPatientSelectionFromRequest_(options){
   if (!opts.finalize){
     return false;
   }
+  let failureReason = 'patientId not found in candidate list';
   _initialPatientIdResolved = true;
   const inputEl = q('pid');
   if (inputEl){
@@ -2735,11 +2749,17 @@ function applyInitialPatientSelectionFromRequest_(options){
         refresh();
         return true;
       }
+      failureReason = 'patientId rejected while applying input value';
       setv('pid', '');
+    } else {
+      failureReason = 'patientId input changed before initial resolution';
     }
+  } else {
+    failureReason = 'patientId input element missing';
   }
   clearConfirmedPatientId();
   hideGlobalLoading();
+  notifyInitialPatientIdResolveFailure_(failureReason);
   return true;
 }
 

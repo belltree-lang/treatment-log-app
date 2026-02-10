@@ -44,10 +44,40 @@ function getDashboardData(options) {
       : { logs: [], warnings: [] });
     const totalTreatmentLogs = treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0;
     logContext('getDashboardData:loadTreatmentLogs', `logs=${totalTreatmentLogs} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
-    const staffMatchedLogs = (treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : []).filter(entry => {
-      if (!normalizedUser) return false;
-      const entryEmail = dashboardNormalizeEmail_(entry && entry.createdByEmail ? entry.createdByEmail : '');
-      return entryEmail && entryEmail === normalizedUser;
+    const normalizedUserName = dashboardNormalizeStaffKey_(meta.user || '');
+    const normalizedUserId = dashboardNormalizeStaffKey_(meta.user || '');
+    const staffMatchedLogs = [];
+    const matchStats = { email: 0, name: 0, staffId: 0, none: 0 };
+    const matchSamples = [];
+    (treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : []).forEach(entry => {
+      const staffKeys = entry && entry.staffKeys ? entry.staffKeys : {};
+      const emailKey = dashboardNormalizeStaffKey_(staffKeys.email || (entry && entry.createdByEmail ? entry.createdByEmail : ''));
+      const nameKey = dashboardNormalizeStaffKey_(staffKeys.name || (entry && entry.staffName ? entry.staffName : ''));
+      const staffIdKey = dashboardNormalizeStaffKey_(staffKeys.staffId || (entry && entry.staffId ? entry.staffId : ''));
+
+      let strategy = 'none';
+      if (normalizedUser && emailKey && emailKey === normalizedUser) {
+        strategy = 'email';
+      } else if (normalizedUserName && nameKey && nameKey === normalizedUserName) {
+        strategy = 'name';
+      } else if (normalizedUserId && staffIdKey && staffIdKey === normalizedUserId) {
+        strategy = 'staffId';
+      }
+
+      if (strategy !== 'none') {
+        const matchedEntry = Object.assign({}, entry, { staffMatchStrategy: strategy });
+        staffMatchedLogs.push(matchedEntry);
+      }
+      matchStats[strategy] += 1;
+      if (matchSamples.length < 20 && strategy !== 'none') {
+        matchSamples.push({
+          row: entry && entry.row ? entry.row : null,
+          staffMatchStrategy: strategy,
+          emailKey,
+          nameKey,
+          staffIdKey
+        });
+      }
     });
     const matchedPatientIds = new Set();
     staffMatchedLogs.forEach(entry => {
@@ -56,6 +86,15 @@ function getDashboardData(options) {
     });
     const patientMaster = patientInfo && patientInfo.patients ? patientInfo.patients : {};
     const matchedPatientIdsInMaster = Array.from(matchedPatientIds).filter(pid => Object.prototype.hasOwnProperty.call(patientMaster, pid));
+    logContext('getDashboardData:staffMatchStrategy', JSON.stringify({
+      normalizedUser: normalizedUser || 'unknown',
+      normalizedUserName: normalizedUserName || 'unknown',
+      normalizedUserId: normalizedUserId || 'unknown',
+      matchStats,
+      samples: matchSamples
+    }));
+    logContext('getDashboardData:staffMatchedLogs', String(staffMatchedLogs.length));
+    logContext('getDashboardData:matchedPatientIds', JSON.stringify(Array.from(matchedPatientIds)));
     logContext(
       'getDashboardData:staffMatchSummary',
       `normalizedUser=${normalizedUser || 'unknown'} totalLogs=${totalTreatmentLogs} staffMatchedLogs=${staffMatchedLogs.length} matchedPatientIds=${matchedPatientIds.size} matchedPatientIdsInMaster=${matchedPatientIdsInMaster.length}`

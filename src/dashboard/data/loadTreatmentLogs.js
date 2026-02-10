@@ -61,12 +61,23 @@ function loadTreatmentLogsUncached_(options) {
     '施術録番号', '施術録No', '施術録NO', '記録番号', 'カルテ番号', '患者ID', '患者番号', 'recNo', 'patientId', 'id'
   ], 2);
   const colPatientName = dashboardResolveColumn_(headers, ['氏名', '名前', '患者名'], colPatientId ? 0 : 2);
-  const colEmail = dashboardResolveColumn_(headers, ['作成者', '担当者', 'email', 'createdbyemail'], 0);
+  const colCreatedBy = dashboardResolveColumn_(headers, ['作成者', '記録者', '入力者', '編集者', 'createdby', 'createdBy'], 0);
+  const colStaffName = dashboardResolveColumn_(headers, ['施術者', '担当者', '担当', 'スタッフ名', 'staffName', 'staff'], 0);
+  const colStaffEmail = dashboardResolveColumn_(headers, ['メール', '担当メール', 'email', 'mail', 'createdbyemail'], 0);
+  const colStaffId = dashboardResolveColumn_(headers, ['担当者ID', 'スタッフID', 'staffId', 'staffid'], 0);
 
   const tz = dashboardResolveTimeZone_();
   const now = dashboardCoerceDate_(opts.now) || new Date();
   const monthStart = dashboardStartOfMonth_(tz, now);
   const prevMonthEnd = dashboardEndOfPreviousMonth_(monthStart);
+
+  const headerSnapshot = {
+    createdBy: colCreatedBy ? headers[colCreatedBy - 1] : '',
+    staffName: colStaffName ? headers[colStaffName - 1] : '',
+    staffEmail: colStaffEmail ? headers[colStaffEmail - 1] : '',
+    staffId: colStaffId ? headers[colStaffId - 1] : ''
+  };
+  logContext('loadTreatmentLogs:staffColumns', JSON.stringify(headerSnapshot));
 
   for (let i = 0; i < values.length; i++) {
     const row = values[i] || [];
@@ -86,8 +97,21 @@ function loadTreatmentLogsUncached_(options) {
       : '';
     const patientName = String((colPatientName && (rowDisplay[colPatientName - 1] || row[colPatientName - 1])) || '').trim();
     const mappedPatientId = patientIdRaw || dashboardResolvePatientIdFromName_(patientName, nameToId);
-    const createdByEmail = colEmail ? String(rowDisplay[colEmail - 1] || row[colEmail - 1] || '').trim() : '';
+    const createdByRaw = colCreatedBy ? String(rowDisplay[colCreatedBy - 1] || row[colCreatedBy - 1] || '').trim() : '';
+    const staffNameRaw = colStaffName ? String(rowDisplay[colStaffName - 1] || row[colStaffName - 1] || '').trim() : '';
+    const staffEmailRaw = colStaffEmail ? String(rowDisplay[colStaffEmail - 1] || row[colStaffEmail - 1] || '').trim() : '';
+    const staffIdRaw = colStaffId ? String(rowDisplay[colStaffId - 1] || row[colStaffId - 1] || '').trim() : '';
     const dateKey = dashboardFormatDate_(timestamp, tz, 'yyyy-MM-dd');
+
+    if (i < 20) {
+      logContext('loadTreatmentLogs:staffValueSample', JSON.stringify({
+        row: rowNumber,
+        createdByRaw,
+        staffNameRaw,
+        staffEmailRaw,
+        staffIdRaw
+      }));
+    }
 
     const normalizedPatientId = mappedPatientId ? dashboardNormalizePatientId_(mappedPatientId) : '';
     if (!normalizedPatientId) {
@@ -103,7 +127,14 @@ function loadTreatmentLogsUncached_(options) {
       row: rowNumber,
       patientId: normalizedPatientId,
       patientName,
-      createdByEmail,
+      createdByEmail: staffEmailRaw || createdByRaw,
+      staffName: staffNameRaw,
+      staffId: staffIdRaw,
+      staffKeys: {
+        email: dashboardNormalizeStaffKey_(staffEmailRaw),
+        name: dashboardNormalizeStaffKey_(staffNameRaw || createdByRaw),
+        staffId: dashboardNormalizeStaffKey_(staffIdRaw)
+      },
       timestamp,
       dateKey
     };
@@ -113,7 +144,7 @@ function loadTreatmentLogsUncached_(options) {
     if (timestamp <= prevMonthEnd) {
       const prev = lastStaffByPatient[normalizedPatientId];
       if (!prev || (prev.timestamp && prev.timestamp < timestamp)) {
-        lastStaffByPatient[normalizedPatientId] = { email: createdByEmail, timestamp };
+        lastStaffByPatient[normalizedPatientId] = { email: entry.createdByEmail, timestamp };
       }
     }
   }

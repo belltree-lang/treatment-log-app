@@ -49,7 +49,7 @@ function testAggregatesDashboardData() {
   };
   const aiReports = { reports: { '001': '2025-01-15 10:00' }, warnings: ['a1'] };
   const invoices = { invoices: { '001': 'https://example.com/invoice.pdf' }, warnings: ['i1'] };
-  const treatmentLogs = { logs: [], warnings: ['t1'] };
+  const treatmentLogs = { logs: [{ patientId: '001', timestamp: new Date('2025-02-01T09:00:00Z'), dateKey: '2025-02-01', createdByEmail: 'user@example.com', staffKeys: { email: 'user@example.com', name: '', staffId: '' } }], warnings: ['t1'] };
   const responsible = { responsible: { '001': 'staff@example.com' }, warnings: ['r1'] };
   const tasksResult = { tasks: [{ type: 'consentWarning', patientId: '001' }], warnings: ['task'] };
   const visitsResult = { visits: [{ patientId: '001', time: '10:00' }], warnings: ['visit'] };
@@ -58,6 +58,7 @@ function testAggregatesDashboardData() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
     user: 'user@example.com',
+    now: new Date('2025-02-01T12:00:00Z'),
     patientInfo,
     notes,
     aiReports,
@@ -98,6 +99,65 @@ function testAggregatesDashboardData() {
   assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'u1', 'visit'].sort());
 }
 
+
+function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
+  const logEntries = [];
+  const ctx = createContext();
+  ctx.dashboardLogContext_ = (label, details) => {
+    logEntries.push({ label, details: String(details || '') });
+  };
+
+  const resultByEmail = ctx.getDashboardData({
+    user: 'belltree@belltree1102.com',
+    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { row: 2, patientId: '001', createdByEmail: 'belltree+billing@belltree1102.com', staffName: '別名', staffId: '', staffKeys: { email: 'belltree+billing@belltree1102.com', name: '別名', staffId: '' } },
+        { row: 3, patientId: '002', createdByEmail: '', staffName: '管理者ID', staffId: 'admin001', staffKeys: { email: '', name: '管理者ID', staffId: 'admin001' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.strictEqual(resultByEmail.meta.error, undefined);
+
+  const resultByStaffId = ctx.getDashboardData({
+    user: 'admin001',
+    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { row: 2, patientId: '001', createdByEmail: 'other@example.com', staffName: '別名', staffId: '', staffKeys: { email: 'other@example.com', name: '別名', staffId: '' } },
+        { row: 3, patientId: '002', createdByEmail: '', staffName: '管理者ID', staffId: 'admin001', staffKeys: { email: '', name: '管理者ID', staffId: 'admin001' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.strictEqual(resultByStaffId.meta.error, undefined);
+
+  const strategyLog = logEntries.find(entry => entry.label === 'getDashboardData:staffMatchStrategy');
+  const matchedCountLog = logEntries.find(entry => entry.label === 'getDashboardData:staffMatchedLogs');
+  const matchedIdsLog = logEntries.find(entry => entry.label === 'getDashboardData:matchedPatientIds');
+  assert.ok(strategyLog, 'staffMatchStrategy ログが出力される');
+  assert.ok(matchedCountLog, 'staffMatchedLogs ログが出力される');
+  assert.ok(matchedIdsLog, 'matchedPatientIds ログが出力される');
+  assert.ok(Number(matchedCountLog.details) >= 1, '少なくとも1件の一致ログがある');
+}
+
 function testErrorIsCapturedInMeta() {
   const ctx = createContext({
     loadPatientInfo: () => { throw new Error('boom'); }
@@ -131,6 +191,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
 
 (function run() {
   testAggregatesDashboardData();
+  testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
   testErrorIsCapturedInMeta();
   testWarningsAreDedupedAndSetupFlagged();
   console.log('dashboardGetDashboardData tests passed');

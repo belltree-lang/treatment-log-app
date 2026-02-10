@@ -22,6 +22,7 @@
   a{ color:var(--accent); }
   .patient-link{ color:inherit; text-decoration:none; }
   .patient-link:hover{ text-decoration:underline; }
+  .disabled{ opacity:0.55; cursor:not-allowed; pointer-events:none; }
   .page{ max-width:1080px; margin:0 auto; padding:20px 16px 64px; display:flex; flex-direction:column; gap:18px; }
   header{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   h1{ margin:0; font-size:1.4rem; letter-spacing:0.02em; }
@@ -240,6 +241,11 @@ function renderError() {
     box.style.display = 'block';
     return;
   }
+  if (!resolveTreatmentAppExecUrl_()) {
+    box.textContent = '施術録WebアプリURLが未設定のため、患者画面への遷移を無効化しています。';
+    box.style.display = 'block';
+    return;
+  }
   box.style.display = 'none';
   box.textContent = '';
 }
@@ -346,9 +352,7 @@ function renderUnpaidAlerts() {
     const name = document.createElement(alert.patientId ? 'a' : 'div');
     name.className = alert.patientId ? 'patient-name patient-link' : 'patient-name';
     if (alert.patientId) {
-      name.href = buildTreatmentAppLink_(alert.patientId);
-      name.target = '_top';
-      name.rel = 'noreferrer';
+      configurePatientLinkElement_(name, alert.patientId);
     }
     name.textContent = alert.patientName || '氏名未登録';
     header.appendChild(name);
@@ -412,9 +416,7 @@ function renderVisits() {
     body.className = 'visit-body';
     const name = document.createElement(v.patientId ? 'a' : 'div');
     if (v.patientId) {
-      name.href = buildTreatmentAppLink_(v.patientId);
-      name.target = '_top';
-      name.rel = 'noreferrer';
+      configurePatientLinkElement_(name, v.patientId);
       name.className = 'patient-link';
     }
     name.textContent = v.patientName || v.patientId || '患者不明';
@@ -503,7 +505,7 @@ function renderPatients() {
     if (p.invoiceUrl) meta.appendChild(makeBadge('請求書リンクあり'));
     summary.appendChild(meta);
 
-    if (p.patientId) {
+    if (p.patientId && buildTreatmentAppLink_(p.patientId)) {
       summary.setAttribute('role', 'link');
       summary.setAttribute('tabindex', '0');
       summary.addEventListener('click', (event) => {
@@ -541,7 +543,7 @@ function renderPatients() {
       link.href = p.invoiceUrl;
       link.textContent = '請求書PDFを開く';
       link.target = '_blank';
-      link.rel = 'noreferrer';
+      link.rel = 'noopener noreferrer';
       body.appendChild(link);
     }
 
@@ -655,6 +657,11 @@ function renderOverviewList_(items, emptyText) {
 
 function bindPatientRow_(row, patientId) {
   if (!row || !patientId) return;
+  if (!buildTreatmentAppLink_(patientId)) {
+    row.classList.add('disabled');
+    row.setAttribute('aria-disabled', 'true');
+    return;
+  }
   row.setAttribute('role', 'link');
   row.setAttribute('tabindex', '0');
   row.dataset.patientId = patientId;
@@ -686,17 +693,40 @@ function bindPatientRow_(row, patientId) {
 function navigateToPatient_(patientId) {
   if (!patientId) return;
   const link = buildTreatmentAppLink_(patientId);
-  if (typeof window !== 'undefined' && window.top) {
-    window.top.location.href = link;
+  if (!link) {
+    showNavigationError_('施術録WebアプリURLが未設定のため、患者画面を開けません。');
     return;
   }
-  window.location.href = link;
+  if (typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(link, '_blank', 'noopener,noreferrer');
+  }
+}
+
+function configurePatientLinkElement_(anchor, patientId) {
+  if (!anchor || !patientId) return;
+  const link = buildTreatmentAppLink_(patientId);
+  if (!link) {
+    anchor.removeAttribute('href');
+    anchor.removeAttribute('target');
+    anchor.removeAttribute('rel');
+    anchor.classList.add('disabled');
+    anchor.setAttribute('aria-disabled', 'true');
+    anchor.addEventListener('click', (event) => {
+      event.preventDefault();
+      showNavigationError_('施術録WebアプリURLが未設定のため、患者画面を開けません。');
+    });
+    return;
+  }
+  anchor.href = link;
+  anchor.target = '_blank';
+  anchor.rel = 'noopener noreferrer';
 }
 
 function buildTreatmentAppLink_(patientId) {
   const rawExecUrl = resolveTreatmentAppExecUrl_();
-  if (rawExecUrl === '#') return '#';
+  if (!rawExecUrl) return '';
   const id = encodeURIComponent(patientId || '');
+  if (!id) return '';
   const joiner = rawExecUrl.indexOf('?') >= 0 ? '&' : '?';
   return `${rawExecUrl}${joiner}view=record&id=${id}`;
 }
@@ -705,15 +735,28 @@ function resolveTreatmentAppExecUrl_() {
   const configured = typeof DASHBOARD_TREATMENT_APP_EXEC_URL !== 'undefined'
     ? String(DASHBOARD_TREATMENT_APP_EXEC_URL || '').trim()
     : '';
-  if (configured) return configured;
 
   const injected = typeof treatmentAppExecUrl !== 'undefined'
     ? String(treatmentAppExecUrl || '').trim()
     : '';
-  if (injected) return injected;
+  const resolved = configured || injected;
+  if (resolved && isValidTreatmentExecUrl_(resolved)) return resolved;
 
-  console.error('施術録WebアプリURLが未設定です');
-  return '#';
+  return '';
+}
+
+function isValidTreatmentExecUrl_(url) {
+  if (!url) return false;
+  const normalized = String(url || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.indexOf('googleusercontent.com/usercodeapppanel') >= 0) return false;
+  return normalized.indexOf('script.google.com/') >= 0 && normalized.indexOf('/exec') >= 0;
+}
+
+function showNavigationError_(message) {
+  if (!message) return;
+  dashboardState.error = message;
+  renderError();
 }
 function formatTaskLabel(type) {
   switch(type) {
@@ -768,15 +811,15 @@ function resolveDashboardMockParam_() {
 
 /*
 共有用サマリー
-- 変更点
-  - `DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI` を追加し、「報告書作成ヒント未入力」のUI表示を一時抑止。
-  - タイムラインの報告書作成ヒントバッジで、未入力時のみ描画をスキップする条件分岐を追加。
-  - `formatTaskLabel('handoverDelayed')` で未入力ラベルを空文字にし、アラート表示文言を無効化（データは保持）。
-- 理由
-  - 現時点では「報告書作成ヒント未入力」警告がノイズとなるため、将来再有効化可能な形でUIのみ一時的に非表示化するため。
-- 影響範囲
-  - ダッシュボードのタイムラインバッジ表示。
-  - ダッシュボードのタスクラベル表示（handoverDelayed）。
+- 変更点:
+  - 患者遷移URLの組み立てを `buildTreatmentAppLink_` / `navigateToPatient_` / `configurePatientLinkElement_` に集約し、常に `.../exec?view=record&id=...` 形式で新規タブ遷移するよう統一。
+  - `resolveTreatmentAppExecUrl_` がURL未設定・不正（googleusercontent系）時に空文字を返すよう修正し、`#` フォールバックを廃止。
+  - exec URLが解決できない場合は `#errorBox` にエラーを表示し、患者リンク/行の操作を無効化する防御処理を追加。
+- 理由:
+  - ダッシュボードから患者クリック時に userCodeAppPanel へ飛んで空白になる問題を防ぎ、必ず公開Webアプリexec URLに遷移させるため。
+- 影響範囲:
+  - 未回収アラート、訪問タイムライン、概要カード、担当患者一覧の患者遷移動線。
+  - 施術録URL解決とナビゲーション時のエラー表示。
 */
 </script>
 </body>

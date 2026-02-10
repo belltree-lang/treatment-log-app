@@ -179,8 +179,36 @@ function dashboardNormalizeNameKey_(name) {
 
 function dashboardNormalizeEmail_(email) {
   const raw = email == null ? '' : email;
-  const normalized = String(raw).trim().toLowerCase();
+  const normalized = String(raw).normalize('NFKC').trim().toLowerCase();
   return normalized || '';
+}
+
+function dashboardNormalizeStaffKey_(value) {
+  const raw = dashboardTrimText_(value);
+  if (!raw) return '';
+
+  const email = dashboardExtractEmail_(raw);
+  if (email) {
+    const normalizedEmail = dashboardNormalizeEmail_(email)
+      .replace(/\+[^@]+(?=@)/, '');
+    if (normalizedEmail) return normalizedEmail;
+  }
+
+  return String(raw)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\s\u3000・･]/g, '')
+    .replace(/[ー－ｰ−]/g, '')
+    .replace(/[._]/g, '')
+    .replace(/[^0-9a-z\u3040-\u30ff\u3400-\u9FFF]/g, '')
+    .replace(/-/g, '');
+}
+
+function dashboardExtractEmail_(value) {
+  const text = dashboardTrimText_(value);
+  if (!text) return '';
+  const matched = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return matched ? matched[0] : '';
 }
 
 function dashboardResolvePatientIdFromName_(name, nameToId) {

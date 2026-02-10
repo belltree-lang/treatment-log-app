@@ -527,6 +527,7 @@ let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
 let _initialPatientIdResolveFailureNotified = false;
 let _initialPatientIdRecordView = false;
+let _initialRecordViewAutoRefreshDone = false;
 let _initialRecordViewRefreshCompleted = false;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
@@ -2759,6 +2760,20 @@ function runInitialRecordViewRefreshOnce_(reason){
   return true;
 }
 
+function maybeAutoRefreshFromUrl_(){
+  const isDirectRecordLink =
+    _initialPatientIdRecordView === true &&
+    typeof _initialPatientIdRequested === 'string' &&
+    _initialPatientIdRequested.length > 0;
+  if (_initialRecordViewAutoRefreshDone) return;
+  if (!isDirectRecordLink) return;
+
+  _initialRecordViewAutoRefreshDone = true;
+  _initialRecordViewRefreshCompleted = true;
+  console.info('[record-view] auto refresh from URL', _initialPatientIdRequested);
+  refresh();
+}
+
 function applyInitialPatientSelectionFromRequest_(options){
   const opts = Object.assign({ finalize: false }, options || {});
   if (_initialPatientIdResolved){
@@ -4360,6 +4375,7 @@ function saveHandoverUI(){
     hideGlobalLoading();
   }
   q('consentModal')?.classList.remove('open');
+  maybeAutoRefreshFromUrl_();
 })();
 
 google.script.run.withSuccessHandler(r=>console.log('[ping]', r))

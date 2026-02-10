@@ -550,7 +550,7 @@ let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
 let _initialPatientIdResolveFailureNotified = false;
 let _initialPatientIdRecordView = false;
-let _initialRecordViewAutoRefreshDone = false;
+let _initialRecordViewUrlAutoRefreshDone = false;
 let _initialRecordViewRefreshCompleted = false;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
@@ -2787,17 +2787,29 @@ function runInitialRecordViewRefreshOnce_(reason){
   return true;
 }
 
-function maybeAutoRefreshFromUrl_(){
-  const isDirectRecordLink =
-    _initialPatientIdRecordView === true &&
-    typeof _initialPatientIdRequested === 'string' &&
-    _initialPatientIdRequested.length > 0;
-  if (_initialRecordViewAutoRefreshDone) return;
-  if (!isDirectRecordLink) return;
+function resolveDirectRecordViewPatientIdFromUrl_(){
+  if (typeof window === 'undefined' || !window.location) return '';
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    const view = String(params.get('view') || '').trim().toLowerCase();
+    if (view !== 'record') return '';
+    const candidate = params.get('patientId') || params.get('id') || '';
+    return normalizePatientIdKey(candidate);
+  } catch (err){
+    console.warn('[resolveDirectRecordViewPatientIdFromUrl_] URL params read failed', err);
+    return '';
+  }
+}
 
-  _initialRecordViewAutoRefreshDone = true;
+function maybeAutoRefreshFromUrl_(){
+  if (_initialRecordViewUrlAutoRefreshDone) return;
+  const directRecordPatientId = resolveDirectRecordViewPatientIdFromUrl_();
+  if (!directRecordPatientId) return;
+
+  _initialRecordViewUrlAutoRefreshDone = true;
+  setv('pid', directRecordPatientId);
   _initialRecordViewRefreshCompleted = true;
-  console.info('[record-view] auto refresh from URL', _initialPatientIdRequested);
+  console.info('[record-view] auto refresh from URL', directRecordPatientId);
   refresh();
 }
 

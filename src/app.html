@@ -552,6 +552,7 @@ let _initialPatientIdResolveFailureNotified = false;
 let _initialPatientIdRecordView = false;
 let _initialRecordViewUrlAutoRefreshDone = false;
 let _initialRecordViewRefreshCompleted = false;
+let _initialRecordViewUrlPatientId = '';
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
@@ -2657,6 +2658,9 @@ function loadPidList(){
           finalize: opts.finalize,
           patientId: _initialPatientIdRequested
         });
+        if (opts.finalize){
+          maybeAutoRefreshFromUrl_({ finalize: true });
+        }
         schedulePatientIdSearchUpdate(true);
         return;
       }
@@ -2681,6 +2685,7 @@ function loadPidList(){
         clearPatientDisplay({ keepInput: false, force: true });
       }
       if (opts.finalize){
+        maybeAutoRefreshFromUrl_({ finalize: true });
         runInitialRecordViewRefreshOnce_('finalize fallback after initial patient selection from request');
       }
       schedulePatientIdSearchUpdate(true);
@@ -2799,13 +2804,15 @@ function resolveDirectRecordViewPatientIdFromUrl_(){
   }
 }
 
-function maybeAutoRefreshFromUrl_(){
+function maybeAutoRefreshFromUrl_(options){
+  const opts = Object.assign({ finalize: false }, options || {});
   if (_initialRecordViewUrlAutoRefreshDone) return;
-  const directRecordPatientId = resolveDirectRecordViewPatientIdFromUrl_();
+  if (!opts.finalize) return;
+
+  const directRecordPatientId = _initialRecordViewUrlPatientId || resolveDirectRecordViewPatientIdFromUrl_();
   if (!String(directRecordPatientId || '').trim()) return;
 
   _initialRecordViewUrlAutoRefreshDone = true;
-  _initialRecordViewRefreshCompleted = true;
   setv('pid', directRecordPatientId);
   console.info('[record-view] confirm from URL', directRecordPatientId);
   handlePatientIdConfirm();
@@ -4399,6 +4406,7 @@ function saveHandoverUI(){
 /* 起動時 */
 (function init(){
   _initialPatientIdRequested = resolveInitialPatientIdRequest();
+  _initialRecordViewUrlPatientId = resolveDirectRecordViewPatientIdFromUrl_();
   tracePatientIdState_('init', '_initialPatientIdRequested', _initialPatientIdRequested, 'init');
   if (_initialPatientIdRequested){
     setv('pid', _initialPatientIdRequested);
@@ -4416,7 +4424,6 @@ function saveHandoverUI(){
     hideGlobalLoading();
   }
   q('consentModal')?.classList.remove('open');
-  maybeAutoRefreshFromUrl_();
 })();
 
 google.script.run.withSuccessHandler(r=>console.log('[ping]', r))

@@ -703,7 +703,15 @@ function navigateToPatient_(patientId) {
 }
 
 function configurePatientLinkElement_(anchor, patientId) {
-  if (!anchor || !patientId) return;
+  if (!anchor) return;
+  if (!patientId) {
+    anchor.removeAttribute('href');
+    anchor.removeAttribute('target');
+    anchor.removeAttribute('rel');
+    anchor.classList.add('disabled');
+    anchor.setAttribute('aria-disabled', 'true');
+    return;
+  }
   const link = buildTreatmentAppLink_(patientId);
   if (!link) {
     anchor.removeAttribute('href');
@@ -727,8 +735,7 @@ function buildTreatmentAppLink_(patientId) {
   if (!rawExecUrl) return '';
   const id = encodeURIComponent(patientId || '');
   if (!id) return '';
-  const joiner = rawExecUrl.indexOf('?') >= 0 ? '&' : '?';
-  return `${rawExecUrl}${joiner}view=record&id=${id}`;
+  return `${rawExecUrl}?view=record&id=${id}`;
 }
 
 function resolveTreatmentAppExecUrl_() {
@@ -740,9 +747,19 @@ function resolveTreatmentAppExecUrl_() {
     ? String(treatmentAppExecUrl || '').trim()
     : '';
   const resolved = configured || injected;
-  if (resolved && isValidTreatmentExecUrl_(resolved)) return resolved;
+  if (resolved && isValidTreatmentExecUrl_(resolved)) {
+    return normalizeTreatmentExecUrl_(resolved);
+  }
 
   return '';
+}
+
+function normalizeTreatmentExecUrl_(url) {
+  if (!url) return '';
+  const trimmed = String(url || '').trim();
+  if (!trimmed) return '';
+  const noHash = trimmed.split('#')[0];
+  return noHash.split('?')[0];
 }
 
 function isValidTreatmentExecUrl_(url) {

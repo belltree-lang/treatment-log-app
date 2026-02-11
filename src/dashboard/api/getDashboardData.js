@@ -6,6 +6,8 @@
  */
 function getDashboardData(options) {
   const opts = options || {};
+  const perfStartedAt = Date.now();
+  const perfSteps = [];
   const logContext = (label, details) => {
     if (typeof dashboardLogContext_ === 'function') {
       dashboardLogContext_(label, details);
@@ -13,6 +15,23 @@ function getDashboardData(options) {
       const payload = details ? ` ${details}` : '';
       dashboardWarn_(`[${label}]${payload}`);
     }
+  };
+  const logPerf = message => {
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log(message);
+    } else if (typeof dashboardWarn_ === 'function') {
+      dashboardWarn_(message);
+    } else {
+      logContext('perf', message);
+    }
+  };
+  const measureStep = (step, runner) => {
+    const start = Date.now();
+    const result = runner();
+    const duration = Date.now() - start;
+    perfSteps.push({ step, duration });
+    logPerf(`[perf] step=${step} duration=${duration}ms`);
+    return result;
   };
   if (opts.mock && typeof buildDashboardMockData_ === 'function') {
     const mockOptions = buildDashboardMockData_(opts) || {};
@@ -29,61 +48,72 @@ function getDashboardData(options) {
   logContext('getDashboardData:start', `user=${meta.user || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
-    const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : { patients: {}, nameToId: {}, warnings: [] });
+    measureStep('dashboardGetSpreadsheet', () => {
+      if (opts.dashboardSpreadsheet) return opts.dashboardSpreadsheet;
+      return typeof dashboardGetSpreadsheet_ === 'function' ? dashboardGetSpreadsheet_() : null;
+    });
+    const patientInfo = measureStep('loadPatientInfo', () => (opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : { patients: {}, nameToId: {}, warnings: [] })));
     logContext('getDashboardData:loadPatientInfo', `patients=${Object.keys(patientInfo && patientInfo.patients ? patientInfo.patients : {}).length} warnings=${(patientInfo && patientInfo.warnings ? patientInfo.warnings.length : 0)} setupIncomplete=${!!(patientInfo && patientInfo.setupIncomplete)}`);
-    const notes = opts.notes || (typeof loadNotes === 'function' ? loadNotes({ email: meta.user }) : { notes: {}, warnings: [] });
+    const notes = measureStep('loadNotes', () => (opts.notes || (typeof loadNotes === 'function' ? loadNotes({ email: meta.user }) : { notes: {}, warnings: [] })));
     logContext('getDashboardData:loadNotes', `notes=${Object.keys(notes && notes.notes ? notes.notes : {}).length} warnings=${(notes && notes.warnings ? notes.warnings.length : 0)} setupIncomplete=${!!(notes && notes.setupIncomplete)}`);
-    const aiReports = opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports() : { reports: {}, warnings: [] });
+    const aiReports = measureStep('loadAIReports', () => (opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports() : { reports: {}, warnings: [] })));
     logContext('getDashboardData:loadAIReports', `reports=${Object.keys(aiReports && aiReports.reports ? aiReports.reports : {}).length} warnings=${(aiReports && aiReports.warnings ? aiReports.warnings.length : 0)} setupIncomplete=${!!(aiReports && aiReports.setupIncomplete)}`);
-    const invoices = opts.invoices || (typeof loadInvoices === 'function'
-      ? loadInvoices({ patientInfo, now: opts.now, includePreviousMonth: true })
-      : { invoices: {}, warnings: [] });
+    const invoices = measureStep('loadInvoices', () => (opts.invoices || (typeof loadInvoices === 'function'
+      ? loadInvoices({ patientInfo, now: opts.now, cache: opts.cache, includePreviousMonth: true })
+      : { invoices: {}, warnings: [] })));
     logContext('getDashboardData:loadInvoices', `invoices=${Object.keys(invoices && invoices.invoices ? invoices.invoices : {}).length} warnings=${(invoices && invoices.warnings ? invoices.warnings.length : 0)} setupIncomplete=${!!(invoices && invoices.setupIncomplete)}`);
-    const treatmentLogs = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
-      ? loadTreatmentLogs({ patientInfo, now: opts.now })
-      : { logs: [], warnings: [] });
+    const treatmentLogs = measureStep('loadTreatmentLogs', () => (opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
+      ? loadTreatmentLogs({ patientInfo, now: opts.now, cache: opts.cache })
+      : { logs: [], warnings: [] })));
     const totalTreatmentLogs = treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0;
     logContext('getDashboardData:loadTreatmentLogs', `logs=${totalTreatmentLogs} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
     const normalizedUserName = dashboardNormalizeStaffKey_(meta.user || '');
     const normalizedUserId = dashboardNormalizeStaffKey_(meta.user || '');
-    const staffMatchedLogs = [];
-    const matchStats = { email: 0, name: 0, staffId: 0, none: 0 };
-    const matchSamples = [];
-    (treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : []).forEach(entry => {
-      const staffKeys = entry && entry.staffKeys ? entry.staffKeys : {};
-      const emailKey = dashboardNormalizeStaffKey_(staffKeys.email || (entry && entry.createdByEmail ? entry.createdByEmail : ''));
-      const nameKey = dashboardNormalizeStaffKey_(staffKeys.name || (entry && entry.staffName ? entry.staffName : ''));
-      const staffIdKey = dashboardNormalizeStaffKey_(staffKeys.staffId || (entry && entry.staffId ? entry.staffId : ''));
+    const staffMatchResult = measureStep('staffMatch処理', () => {
+      const staffMatchedLogs = [];
+      const matchStats = { email: 0, name: 0, staffId: 0, none: 0 };
+      const matchSamples = [];
+      (treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : []).forEach(entry => {
+        const staffKeys = entry && entry.staffKeys ? entry.staffKeys : {};
+        const emailKey = dashboardNormalizeStaffKey_(staffKeys.email || (entry && entry.createdByEmail ? entry.createdByEmail : ''));
+        const nameKey = dashboardNormalizeStaffKey_(staffKeys.name || (entry && entry.staffName ? entry.staffName : ''));
+        const staffIdKey = dashboardNormalizeStaffKey_(staffKeys.staffId || (entry && entry.staffId ? entry.staffId : ''));
 
-      let strategy = 'none';
-      if (normalizedUser && emailKey && emailKey === normalizedUser) {
-        strategy = 'email';
-      } else if (normalizedUserName && nameKey && nameKey === normalizedUserName) {
-        strategy = 'name';
-      } else if (normalizedUserId && staffIdKey && staffIdKey === normalizedUserId) {
-        strategy = 'staffId';
-      }
+        let strategy = 'none';
+        if (normalizedUser && emailKey && emailKey === normalizedUser) {
+          strategy = 'email';
+        } else if (normalizedUserName && nameKey && nameKey === normalizedUserName) {
+          strategy = 'name';
+        } else if (normalizedUserId && staffIdKey && staffIdKey === normalizedUserId) {
+          strategy = 'staffId';
+        }
 
-      if (strategy !== 'none') {
-        const matchedEntry = Object.assign({}, entry, { staffMatchStrategy: strategy });
-        staffMatchedLogs.push(matchedEntry);
-      }
-      matchStats[strategy] += 1;
-      if (matchSamples.length < 20 && strategy !== 'none') {
-        matchSamples.push({
-          row: entry && entry.row ? entry.row : null,
-          staffMatchStrategy: strategy,
-          emailKey,
-          nameKey,
-          staffIdKey
-        });
-      }
+        if (strategy !== 'none') {
+          const matchedEntry = Object.assign({}, entry, { staffMatchStrategy: strategy });
+          staffMatchedLogs.push(matchedEntry);
+        }
+        matchStats[strategy] += 1;
+        if (matchSamples.length < 20 && strategy !== 'none') {
+          matchSamples.push({
+            row: entry && entry.row ? entry.row : null,
+            staffMatchStrategy: strategy,
+            emailKey,
+            nameKey,
+            staffIdKey
+          });
+        }
+      });
+      const matchedPatientIds = new Set();
+      staffMatchedLogs.forEach(entry => {
+        const pid = dashboardNormalizePatientId_(entry && entry.patientId);
+        if (pid) matchedPatientIds.add(pid);
+      });
+      return { staffMatchedLogs, matchStats, matchSamples, matchedPatientIds };
     });
-    const matchedPatientIds = new Set();
-    staffMatchedLogs.forEach(entry => {
-      const pid = dashboardNormalizePatientId_(entry && entry.patientId);
-      if (pid) matchedPatientIds.add(pid);
-    });
+    const staffMatchedLogs = staffMatchResult.staffMatchedLogs;
+    const matchStats = staffMatchResult.matchStats;
+    const matchSamples = staffMatchResult.matchSamples;
+    const matchedPatientIds = staffMatchResult.matchedPatientIds;
     const patientMaster = patientInfo && patientInfo.patients ? patientInfo.patients : {};
     const matchedPatientIdsInMaster = Array.from(matchedPatientIds).filter(pid => Object.prototype.hasOwnProperty.call(patientMaster, pid));
     logContext('getDashboardData:staffMatchStrategy', JSON.stringify({
@@ -99,49 +129,49 @@ function getDashboardData(options) {
       'getDashboardData:staffMatchSummary',
       `normalizedUser=${normalizedUser || 'unknown'} totalLogs=${totalTreatmentLogs} staffMatchedLogs=${staffMatchedLogs.length} matchedPatientIds=${matchedPatientIds.size} matchedPatientIdsInMaster=${matchedPatientIdsInMaster.length}`
     );
-    const responsible = opts.responsible || (typeof assignResponsibleStaff === 'function'
-      ? assignResponsibleStaff({ patientInfo, treatmentLogs, now: opts.now })
-      : { responsible: {}, warnings: [] });
+    const responsible = measureStep('assignResponsible', () => (opts.responsible || (typeof assignResponsibleStaff === 'function'
+      ? assignResponsibleStaff({ patientInfo, treatmentLogs, now: opts.now, cache: opts.cache })
+      : { responsible: {}, warnings: [] })));
     logContext('getDashboardData:assignResponsible', `responsible=${Object.keys(responsible && responsible.responsible ? responsible.responsible : {}).length} warnings=${(responsible && responsible.warnings ? responsible.warnings.length : 0)} setupIncomplete=${!!(responsible && responsible.setupIncomplete)}`);
-    const unpaidAlertsResult = opts.unpaidAlerts || (typeof loadUnpaidAlerts === 'function'
-      ? loadUnpaidAlerts({ patientInfo, now: opts.now })
-      : { alerts: [], warnings: [] });
+    const unpaidAlertsResult = measureStep('loadUnpaidAlerts', () => (opts.unpaidAlerts || (typeof loadUnpaidAlerts === 'function'
+      ? loadUnpaidAlerts({ patientInfo, now: opts.now, cache: opts.cache })
+      : { alerts: [], warnings: [] })));
     logContext('getDashboardData:loadUnpaidAlerts', `alerts=${(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts.length : 0)} warnings=${(unpaidAlertsResult && unpaidAlertsResult.warnings ? unpaidAlertsResult.warnings.length : 0)} setupIncomplete=${!!(unpaidAlertsResult && unpaidAlertsResult.setupIncomplete)}`);
 
-    const tasksResult = opts.tasksResult || (typeof getTasks === 'function' ? getTasks({
+    const tasksResult = measureStep('getTasks', () => (opts.tasksResult || (typeof getTasks === 'function' ? getTasks({
       patientInfo,
       notes,
       aiReports,
       invoiceConfirmations: opts.invoiceConfirmations,
       now: opts.now
-    }) : { tasks: [], warnings: [] });
+    }) : { tasks: [], warnings: [] })));
     logContext('getDashboardData:getTasks', `tasks=${(tasksResult && tasksResult.tasks ? tasksResult.tasks.length : 0)} warnings=${(tasksResult && tasksResult.warnings ? tasksResult.warnings.length : 0)} setupIncomplete=${!!(tasksResult && tasksResult.setupIncomplete)}`);
 
-    const visitsResult = opts.visitsResult || (typeof getTodayVisits === 'function' ? getTodayVisits({
+    const visitsResult = measureStep('getTodayVisits', () => (opts.visitsResult || (typeof getTodayVisits === 'function' ? getTodayVisits({
       treatmentLogs,
       notes,
       now: opts.now
-    }) : { visits: [], warnings: [] });
+    }) : { visits: [], warnings: [] })));
     logContext('getDashboardData:getTodayVisits', `visits=${(visitsResult && visitsResult.visits ? visitsResult.visits.length : 0)} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
 
-    const displayTargets = resolveDashboardDisplayTargets_({
+    const displayTargets = measureStep('resolveDashboardDisplayTargets', () => resolveDashboardDisplayTargets_({
       patientInfo,
       treatmentLogs,
       now: opts.now
-    });
+    }));
     logContext('getDashboardData:displayTargets', `allowedPatientIds=${displayTargets && displayTargets.patientIds ? displayTargets.patientIds.size : 0}`);
     const filteredTasks = filterDashboardItemsByPatientId_(tasksResult && tasksResult.tasks ? tasksResult.tasks : [], displayTargets.patientIds);
     const filteredVisits = filterDashboardItemsByPatientId_(visitsResult && visitsResult.visits ? visitsResult.visits : [], displayTargets.patientIds);
     const filteredAlerts = filterDashboardItemsByPatientId_(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [], displayTargets.patientIds);
     const filteredTreatmentLogs = filterDashboardItemsByPatientId_(treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : [], displayTargets.patientIds);
 
-    const patients = buildDashboardPatients_(patientInfo, {
+    const patients = measureStep('buildPatients', () => buildDashboardPatients_(patientInfo, {
       notes,
       aiReports,
       invoices,
       responsible,
       treatmentLogs
-    }, displayTargets.patientIds);
+    }, displayTargets.patientIds));
     logContext('getDashboardData:buildPatients', `patients=${patients.length}`);
 
     const warningState = collectDashboardWarnings_([
@@ -182,6 +212,56 @@ function getDashboardData(options) {
     meta.error = err && err.message ? err.message : String(err);
     logContext('getDashboardData:error', meta.error);
     return { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
+  } finally {
+    const totalDuration = Date.now() - perfStartedAt;
+    logPerf(`[perf] total=${totalDuration}ms`);
+
+    const plannedSteps = [
+      'dashboardGetSpreadsheet',
+      'loadPatientInfo',
+      'loadNotes',
+      'loadAIReports',
+      'loadInvoices',
+      'loadTreatmentLogs',
+      'staffMatch処理',
+      'assignResponsible',
+      'loadUnpaidAlerts',
+      'getTasks',
+      'getTodayVisits',
+      'resolveDashboardDisplayTargets',
+      'buildPatients'
+    ];
+    const perfMap = {};
+    perfSteps.forEach(entry => {
+      perfMap[entry.step] = entry.duration;
+    });
+    const summaryLines = plannedSteps.map(step => {
+      const duration = Object.prototype.hasOwnProperty.call(perfMap, step) ? `${perfMap[step]}ms` : 'not_run';
+      return `  - ${step}: ${duration}`;
+    });
+    const top3 = perfSteps
+      .slice()
+      .sort((a, b) => b.duration - a.duration)
+      .slice(0, 3)
+      .map((entry, index) => `  - ${index + 1}. ${entry.step}: ${entry.duration}ms`);
+    const top3Lines = top3.length ? top3 : ['  - 計測データなし'];
+
+    logPerf('■ 処理時間サマリー');
+    summaryLines.forEach(line => logPerf(line));
+    logPerf(`  - 合計処理時間: ${totalDuration}ms`);
+
+    logPerf('■ 最重処理トップ3');
+    top3Lines.forEach(line => logPerf(line));
+
+    logPerf('■ 5秒以内にするための削減候補');
+    logPerf('  - 何を: loadTreatmentLogs の対象行数と列数 / どう削るか: 直近期間で先に絞り込み、必要列のみを読み込んで全件走査を削減する。');
+    logPerf('  - 何を: loadAIReports・loadInvoices の逐次読み込み / どう削るか: キャッシュ（更新時刻付き）を導入して差分時のみ再計算する。');
+    logPerf('  - 何を: staffMatch処理の全ログループ照合 / どう削るか: 正規化済みキーでインデックスを構築して比較回数を減らす。');
+
+    logPerf('■ 副作用リスク');
+    logPerf('  - データ欠損: 期間・列の絞り込みを誤ると過去必要データが取り込まれず、患者情報や請求情報が欠ける。');
+    logPerf('  - 表示整合性: キャッシュや差分更新が古いと、タスク件数や未払いアラート件数が画面と実データで乖離する。');
+    logPerf('  - 権限影響: ユーザー別フィルタを前段キャッシュへ寄せると、権限境界を跨いだデータ混入リスクが上がる。');
   }
 }
 

@@ -152,6 +152,7 @@ function getDashboardData(options) {
 
     const visitsResult = measureStep('getTodayVisits', () => (opts.visitsResult || (typeof getTodayVisits === 'function' ? getTodayVisits({
       treatmentLogs,
+      patientInfo,
       notes,
       now: opts.now
     }) : { visits: [], warnings: [] })));

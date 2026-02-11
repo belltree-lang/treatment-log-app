@@ -24,9 +24,6 @@ function loadInvoicesUncached_(options) {
   const invoices = {};
   const invoiceMeta = {};
   const latestMeta = {};
-  const debugFilesFound = { count: 0 };
-  const debugExtractedRawIds = [];
-  const debugNormalizedIds = [];
   const logContext = (label, details) => {
     if (typeof dashboardLogContext_ === 'function') {
       dashboardLogContext_(label, details);
@@ -48,13 +45,6 @@ function loadInvoicesUncached_(options) {
     warnings.push('請求書フォルダが取得できませんでした');
     dashboardWarn_('[loadInvoices] invoice root folder not found');
     logContext('loadInvoices:done', `patients=${Object.keys(invoices).length} linked=0 warnings=${warnings.length} setupIncomplete=true`);
-    logInvoiceDebugSummary_({
-      filesFound: debugFilesFound.count,
-      extractedRawIds: debugExtractedRawIds,
-      normalizedIds: debugNormalizedIds,
-      patientMasterIds: Object.keys(invoices),
-      linkedInvoices: invoices
-    });
     return { invoices, warnings, setupIncomplete: true };
   }
 
@@ -65,15 +55,12 @@ function loadInvoicesUncached_(options) {
   const currentMonthKey = dashboardFormatDate_(now, tz, 'yyyy-MM');
 
   const folderEntries = [];
-  const folderNames = [];
   const folders = root.getFolders();
   while (folders && typeof folders.hasNext === 'function' && folders.hasNext()) {
     const folder = folders.next();
     const name = folder && typeof folder.getName === 'function' ? folder.getName() : '';
     folderEntries.push({ folder, name });
-    folderNames.push(name);
   }
-  invoiceDebugLog_('[invoice-debug] rootFolders=' + JSON.stringify(folderNames));
 
   for (let i = 0; i < folderEntries.length; i++) {
     const entry = folderEntries[i];
@@ -84,18 +71,13 @@ function loadInvoicesUncached_(options) {
     while (folderFiles && typeof folderFiles.hasNext === 'function' && folderFiles.hasNext()) {
       files.push(folderFiles.next());
     }
-    invoiceDebugLog_('[invoice-debug] folder=' + name + ' fileCount=' + files.length);
 
     const isTargetFolder = isTargetInvoiceFolder_(name, targetMonths);
-    invoiceDebugLog_('[invoice-debug] folderMatch=' + name + ' result=' + isTargetFolder);
-    invoiceDebugLog_('[invoice-debug] monthMatch folder=' + name + ' currentMonthKey=' + currentMonthKey);
     if (!isTargetFolder) continue;
 
     for (let j = 0; j < files.length; j++) {
       const file = files[j];
-      debugFilesFound.count += 1;
       const fileName = file && typeof file.getName === 'function' ? file.getName() : '';
-      invoiceDebugLog_('[invoice-debug] fileName=' + fileName);
       const parsed = parseInvoiceFileName_(fileName, targetMonths);
       if (!parsed) continue;
 
@@ -104,9 +86,6 @@ function loadInvoicesUncached_(options) {
         warnings.push(`患者名をIDに紐付けできません: ${parsed.patientName}`);
         continue;
       }
-      debugExtractedRawIds.push(pid);
-      const normalizedPid = dashboardNormalizePatientId_(pid);
-      if (normalizedPid) debugNormalizedIds.push(normalizedPid);
 
       const updated = file && typeof file.getLastUpdated === 'function' ? file.getLastUpdated() : null;
       const updatedDate = dashboardCoerceDate_(updated);
@@ -132,77 +111,7 @@ function loadInvoicesUncached_(options) {
 
   const linkedCount = Object.keys(invoices).reduce((count, pid) => (invoices[pid] ? count + 1 : count), 0);
   logContext('loadInvoices:done', `patients=${Object.keys(invoices).length} linked=${linkedCount} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
-  logInvoiceDebugSummary_({
-    filesFound: debugFilesFound.count,
-    extractedRawIds: debugExtractedRawIds,
-    normalizedIds: debugNormalizedIds,
-    patientMasterIds: Object.keys(invoices),
-    linkedInvoices: invoices
-  });
   return { invoices, invoiceMeta, warnings, setupIncomplete };
-}
-
-function invoiceDebugLog_(message) {
-  if (typeof Logger === 'undefined' || !Logger || typeof Logger.log !== 'function') return;
-  Logger.log(message);
-}
-
-function logInvoiceDebugSummary_(payload) {
-  if (typeof Logger === 'undefined' || !Logger || typeof Logger.log !== 'function') return;
-  const data = payload || {};
-  const filesFound = Number(data.filesFound || 0);
-  const extractedRawIds = Array.isArray(data.extractedRawIds) ? data.extractedRawIds : [];
-  const normalizedIds = uniqueNormalizedIds_(data.normalizedIds);
-  const patientMasterIds = uniqueNormalizedIds_(data.patientMasterIds);
-  const linkedInvoices = data.linkedInvoices && typeof data.linkedInvoices === 'object' ? data.linkedInvoices : {};
-  const matchedIds = normalizedIds.filter(pid => Object.prototype.hasOwnProperty.call(linkedInvoices, pid));
-  const invoicesBeforeLink = patientMasterIds.length;
-  const invoicesAfterLink = Object.keys(linkedInvoices).filter(pid => !!linkedInvoices[pid]).length;
-
-  Logger.log(`[invoice-debug] filesFound=${filesFound}`);
-  Logger.log(`[invoice-debug] extractedRawIds=${JSON.stringify(extractedRawIds.slice(0, 50))}`);
-  Logger.log(`[invoice-debug] normalizedIds=${JSON.stringify(normalizedIds.slice(0, 50))}`);
-  Logger.log(`[invoice-debug] masterIdsCount=${patientMasterIds.length}`);
-  Logger.log(`[invoice-debug] matchedIds=${JSON.stringify(uniqueNormalizedIds_(matchedIds).slice(0, 50))}`);
-  Logger.log(`[invoice-debug] invoicesBeforeLink=${invoicesBeforeLink}`);
-  Logger.log(`[invoice-debug] invoicesAfterLink=${invoicesAfterLink}`);
-
-  let directCause = '該当なし';
-  if (filesFound === 0) {
-    directCause = '対象フォルダ内で請求ファイルが検出されていない';
-  } else if (!normalizedIds.length) {
-    directCause = 'ファイル名から patientId を解決できていない（nameToId 解決失敗）';
-  } else if (!matchedIds.length) {
-    directCause = '解決した patientId が患者マスタIDに一致していない';
-  } else if (invoicesAfterLink === 0) {
-    directCause = 'マスタ一致はあるが当月リンクURLが invoices に反映されていない';
-  }
-
-  Logger.log('■ linked=0 の直接原因');
-  Logger.log(directCause);
-
-  Logger.log('■ 想定される3つの論理パターン');
-  Logger.log('- パターン1: フォルダ/ファイル走査段階で対象ファイルが0件（filesFound=0）');
-  Logger.log('- パターン2: ファイルはあるが patientId 解決に失敗（normalizedIds=0）');
-  Logger.log('- パターン3: patientId 解決後にマスタ不一致またはリンク未反映（matchedIds=0 または invoicesAfterLink=0）');
-
-  Logger.log('■ 修正候補');
-  Logger.log('- フォルダ名/ファイル名規約（isTargetInvoiceFolder_ / parseInvoiceFileName_）の実データ整合を確認');
-  Logger.log('- dashboardResolvePatientIdFromName_ の nameToId 対応表・患者名正規化ルールを確認');
-  Logger.log('- currentMonthKey と請求書月の一致条件、最新URL選定（getLastUpdated）を確認');
-}
-
-function uniqueNormalizedIds_(values) {
-  const list = Array.isArray(values) ? values : [];
-  const seen = Object.create(null);
-  const result = [];
-  for (let i = 0; i < list.length; i++) {
-    const normalized = dashboardNormalizePatientId_(list[i]);
-    if (!normalized || seen[normalized]) continue;
-    seen[normalized] = true;
-    result.push(normalized);
-  }
-  return result;
 }
 
 function buildInvoiceMonthTargets_(now, tz, includePreviousMonth) {

@@ -643,18 +643,7 @@ function resolveDashboardDisplayTargets_(params) {
   const todayKey = dashboardFormatDate_(now, tz, 'yyyy-MM-dd');
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const yesterdayKey = dashboardFormatDate_(yesterday, tz, 'yyyy-MM-dd');
-  const patientMasterIds = Object.keys(patientInfo || {});
-  const staffMatchedPatientIds = [];
-  const invoiceLinkedPatientIds = [];
-  const consentTargetPatientIds = [];
-  const unpaidAlertPatientIds = [];
-  const treatmentLogScopedPatientIds = [];
   const allowed = new Set();
-  const debugLog = message => {
-    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      Logger.log(message);
-    }
-  };
   const logContext = (label, details) => {
     if (typeof dashboardLogContext_ === 'function') {
       dashboardLogContext_(label, details);
@@ -682,40 +671,8 @@ function resolveDashboardDisplayTargets_(params) {
     scopedCount += 1;
     const pid = dashboardNormalizePatientId_(entry.patientId);
     if (!pid || !Object.prototype.hasOwnProperty.call(patientInfo, pid)) return;
-    const beforeSize = allowed.size;
     allowed.add(pid);
-    if (allowed.size !== beforeSize) treatmentLogScopedPatientIds.push(pid);
   });
-
-  const mergedBeforeFilterCount = allowed.size;
-  const finalAllowedIds = Array.from(allowed);
-  const excludedSample = patientMasterIds.filter(pid => !allowed.has(pid)).slice(0, 10);
-
-  debugLog(`[allowed-debug] source=staffMatched count=${staffMatchedPatientIds.length}`);
-  debugLog(`[allowed-debug] source=invoiceLinked count=${invoiceLinkedPatientIds.length}`);
-  debugLog(`[allowed-debug] source=consentTarget count=${consentTargetPatientIds.length}`);
-  debugLog(`[allowed-debug] source=unpaidAlert count=${unpaidAlertPatientIds.length}`);
-  debugLog(`[allowed-debug] source=treatmentLogScoped count=${treatmentLogScopedPatientIds.length}`);
-  debugLog(`[allowed-debug] source=patientMaster count=${patientMasterIds.length}`);
-  debugLog(`[allowed-debug] mergedBeforeFilter count=${mergedBeforeFilterCount}`);
-  debugLog(`[allowed-debug] finalAllowed count=${finalAllowedIds.length}`);
-  debugLog(`[allowed-debug] excludedSample=${JSON.stringify(excludedSample)}`);
-  debugLog('■ 患者ID決定サマリー');
-  debugLog(`- staffMatched: ${staffMatchedPatientIds.length}`);
-  debugLog(`- invoiceLinked: ${invoiceLinkedPatientIds.length}`);
-  debugLog(`- consentTarget: ${consentTargetPatientIds.length}`);
-  debugLog(`- unpaidAlert: ${unpaidAlertPatientIds.length}`);
-  debugLog(`- treatmentLogScoped: ${treatmentLogScopedPatientIds.length}`);
-  debugLog(`- patientMaster: ${patientMasterIds.length}`);
-  debugLog(`- mergedBeforeFilter: ${mergedBeforeFilterCount}`);
-  debugLog(`- finalAllowed: ${finalAllowedIds.length}`);
-  debugLog('■ 除外原因の仮説（ログベース）');
-  debugLog('- 現状の allowedPatientIds は treatmentLogScoped のみで構成され、他ソースは未使用のため 0 件。');
-  debugLog('- patientMaster に存在しても、当月または当日/前日に該当ログがない患者は finalAllowed から除外される。');
-  debugLog('■ ロジック依存関係まとめ');
-  debugLog('- treatmentLogs の timestamp/dateKey が日付スコープ判定の起点。');
-  debugLog('- patientInfo に存在する患者IDのみ allowedPatientIds に採用。');
-  debugLog('- allowedPatientIds は Set で重複排除される。');
 
   logContext(
     'resolveDashboardDisplayTargets:summary',

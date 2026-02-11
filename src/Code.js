@@ -6906,17 +6906,18 @@ function getPatientHeader(pid){
   }, PATIENT_CACHE_TTL_SECONDS);
 }
 
-function getPatientBundle(pid){
+function getPatientBundle(pid, year, month){
   const normalized = normId_(pid);
   if (!normalized) {
     return { header: null, news: [], treatments: [] };
   }
 
+  const resolvedMonth = resolveYearMonthOrCurrent_(year, month);
   const header = getPatientHeader(normalized);
   const news = (getNews(normalized) || []).map(item => Object.assign({}, item, {
     htmlMessage: convertPlainTextToSafeHtml_(item && item.message ? item.message : '')
   }));
-  const treatments = listTreatmentsForCurrentMonth(normalized);
+  const treatments = listTreatmentsForMonth(normalized, resolvedMonth.year, resolvedMonth.month);
 
   return { header, news, treatments };
 }
@@ -7131,18 +7132,24 @@ function executeAfterTreatmentJobs_(jobs){
 
 /***** 当月の施術一覧 取得・更新・削除 *****/
 function listTreatmentsForCurrentMonth(pid){
+  const now = new Date();
+  return listTreatmentsForMonth(pid, now.getFullYear(), now.getMonth() + 1);
+}
+
+function listTreatmentsForMonth(pid, year, month){
   const normalized = normId_(pid);
   if (!normalized) return [];
-  const cacheKey = PATIENT_CACHE_KEYS.treatments(normalized);
+  const resolved = resolveYearMonthOrCurrent_(year, month);
+  const monthKey = String(resolved.year) + String(resolved.month).padStart(2, '0');
+  const cacheKey = PATIENT_CACHE_KEYS.treatments(normalized) + ':' + monthKey;
   return cacheFetch_(cacheKey, () => {
     const s = sh('施術録');
     const lr = s.getLastRow();
     if (lr < 2) return [];
     const rows = lr - 1;
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-    const end   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const start = new Date(resolved.year, resolved.month - 1, 1, 0, 0, 0);
+    const end   = new Date(resolved.year, resolved.month, 0, 23, 59, 59);
     const timestamps = s.getRange(2, 1, rows, 1).getValues();
     const ids = s.getRange(2, 2, rows, 1).getDisplayValues();
     const notes = s.getRange(2, 3, rows, 1).getValues();
@@ -7202,9 +7209,25 @@ function listTreatmentsForCurrentMonth(pid){
       });
   }, PATIENT_CACHE_TTL_SECONDS);
 }
+function assertTreatmentRowIsCurrentMonth_(dateValue, actionLabel){
+  const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    throw new Error('対象の施術日時が不正です。');
+  }
+  const currentMonth = Utilities.formatDate(new Date(), tz, 'yyyyMM');
+  const targetMonth = Utilities.formatDate(date, tz, 'yyyyMM');
+  if (currentMonth !== targetMonth) {
+    throw new Error('当月以外の施術記録は' + actionLabel + 'できません。');
+  }
+}
+
 function updateTreatmentRow(row, note) {
   const s = sh('施術録');
   if (row <= 1 || row > s.getLastRow()) throw new Error('行が不正です');
+
+  const timestamp = s.getRange(row, 1).getValue();
+  assertTreatmentRowIsCurrentMonth_(timestamp, '編集');
 
   const newNote = String(note || '').trim();
 
@@ -7243,6 +7266,7 @@ function deleteTreatmentRow(treatmentId){
     ? found.row
     : s.getRange(targetRow, 1, 1, Math.min(TREATMENT_SHEET_HEADER.length, s.getMaxColumns())).getValues()[0];
   const pid = String(rowVals[1] || '').trim();
+  assertTreatmentRowIsCurrentMonth_(rowVals[0], '削除');
 
   s.deleteRow(targetRow);
   clearNewsByTreatment_(normalizedTreatmentId);

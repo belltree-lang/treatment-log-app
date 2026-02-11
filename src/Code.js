@@ -6115,6 +6115,7 @@ function formatNewsOutput_(rows){
     .slice()
     .sort((a, b) => (b.ts || 0) - (a.ts || 0))
       .map(row => ({
+        ts: row.ts,
         when: row.when,
         type: row.type,
         message: row.message,

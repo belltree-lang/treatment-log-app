@@ -3392,6 +3392,14 @@ function buildNewsItemHtml(news, idx){
   const statusAttr = status ? ` data-status="${escapeHtml(status)}"` : '';
   return `<div class="news-item" data-type="${typeAttr}"${statusAttr}><div class="muted">${escapeHtml(news && news.when||'')} ／ ${typeLabel}</div><div>${messageHtml}</div>${actions}</div>`;
 }
+
+function isExpiredRecordNews(news){
+  if(!news || String(news.type || '').trim() !== '記録') return false;
+  const ts = Number(news.ts);
+  if (!Number.isFinite(ts) || ts <= 0) return false;
+  return (Date.now() - ts) > (30 * 24 * 60 * 60 * 1000);
+}
+
 function renderNewsList(list, options){
   const el = q('news');
   const done = options && options.done;
@@ -3406,7 +3414,7 @@ function renderNewsList(list, options){
     return;
   }
   const visibleList = Array.isArray(list)
-    ? list.filter(item => !item.dismissed && !item.clearedAt)
+    ? list.filter(item => !item.dismissed && !item.clearedAt && !isExpiredRecordNews(item))
     : [];
   if (!visibleList.length) {
     _latestNewsList = [];

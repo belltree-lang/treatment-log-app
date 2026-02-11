@@ -188,7 +188,10 @@
 
       <!-- 当月の施術記録 -->
       <div class="card">
-        <div class="section-title">当月の施術記録（この患者）</div>
+        <div class="section-title" id="treatmentListTitle">当月の施術記録（この患者）</div>
+        <div style="margin:6px 0 8px">
+          <a href="#" id="monthlyPrevLink" onclick="return onClickMonthlyPrev(event)">← 前月</a>
+        </div>
         <div id="list"></div>
       </div>
 
@@ -1436,6 +1439,7 @@ let _currentHeader = null;
 let _consentEditContext = null;
 let _consentModalCallback = null;
 let _latestNewsList = [];
+let _treatmentViewMonthOffset = 0;
 let _consentHandoutInFlight = false;
 let _consentDismissInFlight = false;
 let _consentVerificationInFlight = false;
@@ -3160,6 +3164,8 @@ function setStop(){ const p=pid(); if(!p) return; if(!confirm('中止にしま�
 
 function renderEmptyPatientState(){
   _currentHeader = null;
+  _treatmentViewMonthOffset = 0;
+  updateTreatmentListTitle();
   if (q('hdr')) q('hdr').innerHTML = '<div class="muted">患者IDを入力してください</div>';
   if (q('list')) q('list').innerHTML = '<div class="muted">患者IDを入力すると今月の記録が表示されます</div>';
   _icfReportHistoryState = { loading: false, rows: [], error: null };
@@ -3171,17 +3177,63 @@ function renderEmptyPatientState(){
 }
 
 function setPatientLoadingPlaceholders(){
+  updateTreatmentListTitle();
   if (q('hdr')) q('hdr').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('news')) q('news').innerHTML = '<div class="muted">読み込み中…</div>';
   if (q('list')) q('list').innerHTML = '<div class="muted">読み込み中…</div>';
 }
 
+function resolveTreatmentViewMonth(offset){
+  const normalizedOffset = Number.isFinite(offset) ? Math.round(offset) : 0;
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() + normalizedOffset, 1);
+}
+
+function formatTreatmentViewMonthLabel(date){
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}年${date.getMonth() + 1}月`;
+}
+
+function getTreatmentViewMonthPayload(){
+  const target = resolveTreatmentViewMonth(_treatmentViewMonthOffset);
+  return {
+    year: target.getFullYear(),
+    month: target.getMonth() + 1,
+    offset: _treatmentViewMonthOffset
+  };
+}
+
+function isTreatmentViewCurrentMonth(){
+  return _treatmentViewMonthOffset === 0;
+}
+
+function updateTreatmentListTitle(){
+  const titleEl = q('treatmentListTitle');
+  if (titleEl) {
+    const month = resolveTreatmentViewMonth(_treatmentViewMonthOffset);
+    titleEl.textContent = `当月の施術記録（この患者）${formatTreatmentViewMonthLabel(month)}`;
+  }
+  const prevLink = q('monthlyPrevLink');
+  if (prevLink) {
+    prevLink.style.display = isTreatmentViewCurrentMonth() ? '' : 'none';
+  }
+}
+
+function onClickMonthlyPrev(event){
+  if (event && typeof event.preventDefault === 'function') event.preventDefault();
+  if (!pid()) return false;
+  _treatmentViewMonthOffset -= 1;
+  refresh();
+  return false;
+}
+
 function fetchPatientBundle(patientId){
+  const month = getTreatmentViewMonthPayload();
   return new Promise((resolve, reject) => {
     google.script.run
       .withSuccessHandler(bundle => resolve(bundle || {}))
       .withFailureHandler(err => reject(err))
-      .getPatientBundle(patientId);
+      .getPatientBundle(patientId, month.year, month.month);
   });
 }
 
@@ -3285,6 +3337,10 @@ function loadPatientInfoWithRetry(patientId, options){
 function refresh(targetPatientId){
   console.log('[REFRESH] confirmedId=' + String(_confirmedPatientId || ''));
   const normalizedTarget = normalizePatientIdKey(targetPatientId != null ? targetPatientId : pid());
+  if (targetPatientId != null) {
+    _treatmentViewMonthOffset = 0;
+  }
+  updateTreatmentListTitle();
   _queuedPatientIdForLoad = normalizedTarget;
   if (_patientInfoLoadInFlight) {
     return;
@@ -3456,6 +3512,7 @@ function loadNews(patientId, next){
 function renderThisMonthList(rows, options){
   const el = q('list');
   const done = options && options.done;
+  const canEdit = isTreatmentViewCurrentMonth();
   if (!el){ if (done) done(); return; }
   if (options && options.error) {
     const message = options.errorMessage || '施術一覧の取得に失敗しました';
@@ -3464,7 +3521,8 @@ function renderThisMonthList(rows, options){
     return;
   }
   if(!rows || !rows.length){
-    el.innerHTML='<div class="muted">今月の記録はありません</div>';
+    const emptyMonth = formatTreatmentViewMonthLabel(resolveTreatmentViewMonth(_treatmentViewMonthOffset));
+    el.innerHTML=`<div class="muted">${emptyMonth}の記録はありません</div>`;
     if (done) done();
     return;
   }
@@ -3480,6 +3538,11 @@ function renderThisMonthList(rows, options){
     const emailHtml = r.email ? `<div class="treatment-meta">登録者：${escapeHtml(r.email)}</div>` : '';
     const noteForEdit = JSON.stringify(r.note || '').replace(/"/g,'&quot;');
     const treatmentIdAttr = escapeHtml(String(r.treatmentId || ''));
+    const actionButtons = canEdit
+      ? `<button class="btn ghost" type="button" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
+            <button class="btn ghost" type="button" data-action="edit-time" data-row="${r.row}" data-when="${escapeHtml(isoWhen)}">日時</button>
+            <button class="btn warn" type="button" data-treatment-id="${treatmentIdAttr}" onclick="delRow(this.dataset.treatmentId)">削除</button>`
+      : '<span class="muted">閲覧のみ</span>';
     return `
         <tr>
           <td>${whenHtml}</td>
@@ -3489,10 +3552,7 @@ function renderThisMonthList(rows, options){
             ${emailHtml}
           </td>
           <td class="actions">
-            <button class="btn ghost" type="button" onclick="editRow(${r.row}, ${noteForEdit})">編集</button>
-            <button class="btn ghost" type="button" data-action="edit-time" data-row="${r.row}" data-when="${escapeHtml(isoWhen)}">日時</button>
-            <button class="btn warn" type="button" data-treatment-id="${treatmentIdAttr}" onclick="delRow(this.dataset.treatmentId)">削除</button>
-
+            ${actionButtons}
           </td>
         </tr>`;
   }).join('');

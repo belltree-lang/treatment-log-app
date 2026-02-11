@@ -5,6 +5,12 @@ const assert = require('assert');
 
 const code = fs.readFileSync(path.join(__dirname, '../src/Code.js'), 'utf8');
 const sandbox = { console };
+
+function formatYearMonth(date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}${mm}`;
+}
 vm.createContext(sandbox);
 vm.runInContext(code, sandbox);
 
@@ -46,11 +52,15 @@ function createSheet(rows) {
 }
 
 function testDeleteUsesTreatmentId() {
+  const now = new Date();
+  const d1 = new Date(now.getFullYear(), now.getMonth(), 1, 9, 0, 0);
+  const d2 = new Date(now.getFullYear(), now.getMonth(), 2, 9, 0, 0);
+  const d3 = new Date(now.getFullYear(), now.getMonth(), 3, 9, 0, 0);
   const sheet = createSheet([
     ['TS', '患者ID', '所見', 'email', '', '', '施術ID'],
-    [new Date('2025-02-01T00:00:00Z'), '0001', 'first', 'a@example.com', '', '', 'tid-a'],
-    [new Date('2025-02-02T00:00:00Z'), '0001', 'second', '', '', '', 'tid-b'],
-    [new Date('2025-02-03T00:00:00Z'), '0001', 'third', '', '', '', 'tid-c']
+    [d1, '0001', 'first', 'a@example.com', '', '', 'tid-a'],
+    [d2, '0001', 'second', '', '', '', 'tid-b'],
+    [d3, '0001', 'third', '', '', '', 'tid-c']
   ]);
 
   const cleared = [];
@@ -62,6 +72,8 @@ function testDeleteUsesTreatmentId() {
   sandbox.invalidatePatientCaches_ = (pid, opts) => invalidated.push({ pid, opts });
   sandbox.listTreatmentsForCurrentMonth = pid => { fetched.push(pid); return [`list-${pid}`]; };
   sandbox.log_ = () => {};
+  sandbox.Session = { getScriptTimeZone: () => 'Asia/Tokyo' };
+  sandbox.Utilities = { formatDate: (date) => formatYearMonth(date) };
 
   const result = sandbox.deleteTreatmentRow('tid-b');
 
@@ -79,9 +91,11 @@ function testDeleteUsesTreatmentId() {
 }
 
 function testDeleteRequiresTreatmentId() {
+  const now = new Date();
+  const currentDate = new Date(now.getFullYear(), now.getMonth(), 1, 9, 0, 0);
   const sheet = createSheet([
     ['TS', '患者ID', '所見', 'email', '', '', '施術ID'],
-    [new Date('2025-02-01T00:00:00Z'), '0001', 'first', 'a@example.com', '', '', 'tid-a']
+    [currentDate, '0001', 'first', 'a@example.com', '', '', 'tid-a']
   ]);
 
   sandbox.sh = () => sheet;
@@ -89,11 +103,34 @@ function testDeleteRequiresTreatmentId() {
   sandbox.invalidatePatientCaches_ = () => {};
   sandbox.listTreatmentsForCurrentMonth = () => [];
   sandbox.log_ = () => {};
+  sandbox.Session = { getScriptTimeZone: () => 'Asia/Tokyo' };
+  sandbox.Utilities = { formatDate: (date) => formatYearMonth(date) };
 
   assert.throws(() => sandbox.deleteTreatmentRow(''), /施術ID/);
 }
 
+
+function testDeleteRejectsPreviousMonth() {
+  const now = new Date();
+  const previousMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 15, 9, 0, 0);
+  const sheet = createSheet([
+    ['TS', '患者ID', '所見', 'email', '', '', '施術ID'],
+    [previousMonthDate, '0001', 'first', 'a@example.com', '', '', 'tid-prev']
+  ]);
+
+  sandbox.sh = () => sheet;
+  sandbox.clearNewsByTreatment_ = () => {};
+  sandbox.invalidatePatientCaches_ = () => {};
+  sandbox.listTreatmentsForCurrentMonth = () => [];
+  sandbox.log_ = () => {};
+  sandbox.Session = { getScriptTimeZone: () => 'Asia/Tokyo' };
+  sandbox.Utilities = { formatDate: (date) => formatYearMonth(date) };
+
+  assert.throws(() => sandbox.deleteTreatmentRow('tid-prev'), /当月以外の施術記録は削除できません/);
+}
+
 testDeleteUsesTreatmentId();
 testDeleteRequiresTreatmentId();
+testDeleteRejectsPreviousMonth();
 
 console.log('deleteTreatmentRow tests passed');

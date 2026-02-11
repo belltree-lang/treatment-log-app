@@ -192,23 +192,28 @@ function getDashboardData(options) {
     meta.setupIncomplete = warningState.setupIncomplete;
     logContext('getDashboardData:setupIncomplete', `result=${meta.setupIncomplete} warnings=${warningState.warnings.length}`);
 
+    const overview = buildDashboardOverview_({
+      tasks: filteredTasks,
+      visits: filteredVisits,
+      patients,
+      patientInfo,
+      treatmentLogs,
+      invoices,
+      notes,
+      user: meta.user,
+      now: opts.now,
+      allowedPatientIds: displayTargets.patientIds
+    });
+    const invoiceUnconfirmed = overview && overview.invoiceUnconfirmed ? overview.invoiceUnconfirmed : { count: 0, items: [] };
+    logContext('getDashboardData:overviewInvoiceUnconfirmed', `count=${Number(invoiceUnconfirmed.count) || 0} items.length=${Array.isArray(invoiceUnconfirmed.items) ? invoiceUnconfirmed.items.length : 0}`);
+
     return {
       tasks: filteredTasks,
       todayVisits: filteredVisits,
       patients,
       unpaidAlerts: filteredAlerts,
       warnings: warningState.warnings,
-      overview: buildDashboardOverview_({
-        tasks: filteredTasks,
-        visits: filteredVisits,
-        patients,
-        patientInfo,
-        treatmentLogs,
-        invoices,
-        user: meta.user,
-        now: opts.now,
-        allowedPatientIds: displayTargets.patientIds
-      }),
+      overview,
       meta
     };
   } catch (err) {
@@ -330,6 +335,7 @@ function buildDashboardOverview_(params) {
   const user = payload.user || '';
   const allowedPatientIds = payload.allowedPatientIds instanceof Set ? payload.allowedPatientIds : null;
   const scope = { patientIds: allowedPatientIds, applyFilter: !!allowedPatientIds };
+  const invoiceScope = { patientIds: null, applyFilter: false };
 
   const patientNameMap = {};
   patients.forEach(entry => {
@@ -348,7 +354,7 @@ function buildDashboardOverview_(params) {
     invoices,
     treatmentLogs,
     payload.notes,
-    scope,
+    invoiceScope,
     patientNameMap,
     now,
     tz

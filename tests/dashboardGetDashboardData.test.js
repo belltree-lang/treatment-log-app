@@ -307,6 +307,52 @@ function testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment
   assert.strictEqual(result.overview.invoiceUnconfirmed.items[0].patientId, '001');
 }
 
+function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        const iso = new Date(date).toISOString();
+        if (fmt === 'yyyy-MM') return iso.slice(0, 7);
+        if (fmt === 'yyyy-MM-dd') return iso.slice(0, 10);
+        return iso;
+      }
+    }
+  });
+
+  const result = ctx.getDashboardData({
+    user: 'user@example.com',
+    now: new Date('2025-02-10T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '患者A', AS: true }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        {
+          patientId: '001',
+          timestamp: new Date('2025-01-10T00:00:00Z'),
+          dateKey: '2025-01-10',
+          searchText: '前月のみ施術',
+          createdByEmail: 'user@example.com',
+          staffKeys: { email: 'user@example.com', name: '', staffId: '' }
+        }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.strictEqual(result.overview.invoiceUnconfirmed.count, 0, '医療助成患者は請求未確認対象から除外する');
+}
+
 function testErrorIsCapturedInMeta() {
   const ctx = createContext({
     loadPatientInfo: () => { throw new Error('boom'); }
@@ -389,6 +435,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();
+  testInvoiceUnconfirmedExcludesMedicalAssistancePatient();
   testErrorIsCapturedInMeta();
   testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged();
   testWarningsAreDedupedAndSetupFlagged();

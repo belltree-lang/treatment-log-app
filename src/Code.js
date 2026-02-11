@@ -9526,12 +9526,10 @@ function doGet(e) {
   t.baseUrl = ScriptApp.getService().getUrl();
 
   // 患者ID（?patientId=XXXX / ?id=XXXX）をテンプレートに渡す
-  if (e.parameter && (e.parameter.patientId || e.parameter.id)) {
-    t.patientId = e.parameter.patientId || e.parameter.id;
-  } else {
-    t.patientId = "";
-  }
-  console.log('[init] t.patientId =', t.patientId, 'caller=doGet');
+  t.initialRecordPatientId = (e.parameter && (e.parameter.id || e.parameter.patientId))
+    ? (e.parameter.id || e.parameter.patientId)
+    : '';
+  console.log('[init] t.initialRecordPatientId =', t.initialRecordPatientId, 'caller=doGet');
   t.payrollPdfData = {};
 
   if(e.parameter && e.parameter.lead) t.lead = e.parameter.lead;

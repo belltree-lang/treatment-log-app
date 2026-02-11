@@ -1248,7 +1248,9 @@ function setConfirmedPatientId(id){
   _patientIdSelectionLocked = true;
 }
 
-function setCurrentPatientRecord_(record){
+function setCurrentPatientRecord_(record, source){
+  const sourceLabel = source || 'manual';
+  console.log('[SET-RECORD] record=' + String(record == null ? null : 'present'), 'patientId=' + String(record && record.id ? record.id : ''), 'source=' + sourceLabel);
   if (!record || !record.id) return false;
   setConfirmedPatientId(record.id);
   return true;
@@ -2691,6 +2693,9 @@ function loadPidList(){
         clearPatientDisplay({ keepInput: false, force: true });
       }
       if (opts.finalize){
+        const initialRecordViewUrlId = normalizePatientIdKey(_initialRecordViewUrlPatientId);
+        const hasInitialRecordViewUrlId = !!(initialRecordViewUrlId && _patientIdIndex[initialRecordViewUrlId]);
+        console.log('[PID-LIST] requested=' + String(_initialRecordViewUrlPatientId || ''), 'initialPatientIdRequested=' + String(_initialPatientIdRequested || ''), 'indexSize=' + Object.keys(_patientIdIndex).length, 'existsInIndex=' + hasInitialRecordViewUrlId);
         const autoConfirmed = maybeAutoConfirmDirectRecordViewPatientFromUrl_({ finalize: true });
         if (!autoConfirmed){
           runInitialRecordViewRefreshOnce_('finalize fallback after initial patient selection from request');
@@ -2805,7 +2810,10 @@ function resolveDirectRecordViewPatientIdFromUrl_(){
     } else if (params.has('id')){
       candidate = params.get('id') || '';
     }
-    return String(candidate);
+    const rawCandidate = String(candidate);
+    const normalizedCandidate = normalizePatientIdKey(rawCandidate);
+    console.log('[URL-RESOLVE] rawUrl=' + String(window.location.href || ''), 'id=' + rawCandidate, 'patientId=' + rawCandidate, 'normalized=' + normalizedCandidate);
+    return rawCandidate;
   } catch (err){
     console.warn('[resolveDirectRecordViewPatientIdFromUrl_] URL params read failed', err);
     return '';
@@ -2823,7 +2831,7 @@ function maybeAutoConfirmDirectRecordViewPatientFromUrl_(options){
   const record = _patientIdIndex[directRecordPatientId];
   if (!record) return false;
 
-  if (!setCurrentPatientRecord_(record)) return false;
+  if (!setCurrentPatientRecord_(record, 'URL')) return false;
 
   _initialRecordViewAutoConfirmed = true;
   _initialRecordViewRefreshCompleted = true;
@@ -2956,6 +2964,7 @@ function handlePatientIdConfirm(evt){
   const rawValue = inputEl && inputEl.value != null ? String(inputEl.value) : '';
   const trimmed = rawValue.trim();
   if (!trimmed){
+    console.log('[CONFIRM] input=' + trimmed, 'resolved=false', 'willRefresh=false');
     clearPatientDisplay({ keepInput: false, force: true });
     schedulePatientIdSearchUpdate(true);
     return;
@@ -2968,10 +2977,12 @@ function handlePatientIdConfirm(evt){
     if (_patientIdList.length){
       alert('⚠️ リストに存在しない患者は登録できません。');
     }
+    console.log('[CONFIRM] input=' + trimmed, 'resolved=false', 'willRefresh=false');
     clearPatientDisplay({ keepInput: !_patientIdList.length, force: true });
     schedulePatientIdSearchUpdate(true);
     return;
   }
+  console.log('[CONFIRM] input=' + trimmed, 'resolved=true', 'willRefresh=true');
   schedulePatientIdSearchUpdate(true);
   refresh();
 }
@@ -3408,6 +3419,8 @@ function loadPatientInfoWithRetry(patientId, options){
 
 /* 画面更新 */
 function refresh(targetPatientId){
+  const source = _initialRecordViewAutoConfirmed ? 'URL' : 'manual';
+  console.log('[REFRESH] confirmedId=' + String(_confirmedPatientId || ''), '_initialRecordViewAutoConfirmed=' + String(!!_initialRecordViewAutoConfirmed), 'source=' + source);
   const normalizedTarget = normalizePatientIdKey(targetPatientId != null ? targetPatientId : pid());
   _queuedPatientIdForLoad = normalizedTarget;
   if (_patientInfoLoadInFlight) {

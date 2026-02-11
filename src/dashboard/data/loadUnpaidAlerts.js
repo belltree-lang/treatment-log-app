@@ -61,7 +61,7 @@ function readUnpaidHistory_(options) {
     }
   };
 
-  const wb = dashboardGetSpreadsheet_();
+  const wb = opts.dashboardSpreadsheet || null;
   if (!wb) {
     warnings.push('スプレッドシートを取得できませんでした');
     setupIncomplete = true;

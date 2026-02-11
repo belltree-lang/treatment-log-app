@@ -10,7 +10,7 @@ function loadTreatmentLogs(options) {
 
 function loadTreatmentLogsUncached_(options) {
   const opts = options || {};
-  const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : null);
+  const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo({ dashboardSpreadsheet: opts.dashboardSpreadsheet }) : null);
   const nameToId = opts.nameToId || (patientInfo && patientInfo.nameToId) || {};
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];
   let setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
@@ -26,7 +26,7 @@ function loadTreatmentLogsUncached_(options) {
     }
   };
 
-  const wb = dashboardGetSpreadsheet_();
+  const wb = opts.dashboardSpreadsheet || null;
   if (!wb) {
     warnings.push('スプレッドシートを取得できませんでした');
     setupIncomplete = true;

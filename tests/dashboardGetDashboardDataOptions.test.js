@@ -33,6 +33,7 @@ function testOptionsArePropagated() {
   const now = new Date('2025-04-15T00:00:00Z');
   const seen = {};
   const patientInfo = { patients: {}, nameToId: {}, warnings: [] };
+  const workbook = { getSheetByName: () => null };
   const ctx = createContext({
     loadPatientInfo: () => patientInfo,
     loadNotes: () => ({ notes: {}, warnings: [] }),
@@ -45,9 +46,13 @@ function testOptionsArePropagated() {
     getTodayVisits: () => ({ visits: [], warnings: [] })
   });
 
+  ctx.dashboardGetSpreadsheet_ = () => workbook;
   ctx.getDashboardData({ now, cache: false });
 
   assert.strictEqual(seen.invoices.now, now, 'loadInvoices に now が伝搬する');
+  assert.strictEqual(seen.treatmentLogs.dashboardSpreadsheet, workbook, 'loadTreatmentLogs に spreadsheet が伝搬する');
+  assert.strictEqual(seen.responsible.dashboardSpreadsheet, workbook, 'assignResponsibleStaff に spreadsheet が伝搬する');
+  assert.strictEqual(seen.unpaidAlerts.dashboardSpreadsheet, workbook, 'loadUnpaidAlerts に spreadsheet が伝搬する');
   assert.strictEqual(seen.treatmentLogs.now, now, 'loadTreatmentLogs に now が伝搬する');
   assert.strictEqual(seen.responsible.now, now, 'assignResponsibleStaff に now が伝搬する');
   assert.strictEqual(seen.invoices.cache, false, 'cache:false が請求書読み込みに伝搬する');

@@ -241,6 +241,50 @@ function testErrorIsCapturedInMeta() {
   assert.ok(result.meta.error && result.meta.error.indexOf('boom') >= 0);
 }
 
+
+function testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged() {
+  const logs = [];
+  let openCount = 0;
+  const workbook = { getSheetByName: () => null };
+  const ctx = createContext({
+    Logger: { log: message => logs.push(String(message)) },
+    loadPatientInfo: opts => {
+      assert.strictEqual(opts.dashboardSpreadsheet, workbook, 'loadPatientInfo に spreadsheet が伝搬する');
+      return { patients: {}, nameToId: {}, warnings: [] };
+    },
+    loadNotes: opts => {
+      assert.strictEqual(opts.dashboardSpreadsheet, workbook, 'loadNotes に spreadsheet が伝搬する');
+      return { notes: {}, warnings: [] };
+    },
+    loadAIReports: opts => {
+      assert.strictEqual(opts.dashboardSpreadsheet, workbook, 'loadAIReports に spreadsheet が伝搬する');
+      return { reports: {}, warnings: [] };
+    },
+    loadInvoices: () => ({ invoices: {}, warnings: [] }),
+    loadTreatmentLogs: opts => {
+      assert.strictEqual(opts.dashboardSpreadsheet, workbook, 'loadTreatmentLogs に spreadsheet が伝搬する');
+      return { logs: [], warnings: [], lastStaffByPatient: {} };
+    },
+    assignResponsibleStaff: opts => {
+      assert.strictEqual(opts.dashboardSpreadsheet, workbook, 'assignResponsibleStaff に spreadsheet が伝搬する');
+      return { responsible: {}, warnings: [] };
+    },
+    loadUnpaidAlerts: opts => {
+      assert.strictEqual(opts.dashboardSpreadsheet, workbook, 'loadUnpaidAlerts に spreadsheet が伝搬する');
+      return { alerts: [], warnings: [] };
+    },
+    getTasks: () => ({ tasks: [], warnings: [] }),
+    getTodayVisits: () => ({ visits: [], warnings: [] })
+  });
+
+  ctx.dashboardGetSpreadsheet_ = () => { openCount += 1; return workbook; };
+
+  ctx.getDashboardData({ user: 'user@example.com' });
+
+  assert.strictEqual(openCount, 1, 'dashboardGetSpreadsheet_ は1回だけ呼ばれる');
+  assert.ok(logs.includes('[perf-check] spreadsheetOpenCount=1'), 'perf-check ログが出力される');
+}
+
 function testWarningsAreDedupedAndSetupFlagged() {
   const warning = '患者情報シートが見つかりません';
   const ctx = createContext();
@@ -266,6 +310,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testVisitSummaryUsesCountsForTodayAndRecentOneDay();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
   testErrorIsCapturedInMeta();
+  testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged();
   testWarningsAreDedupedAndSetupFlagged();
   console.log('dashboardGetDashboardData tests passed');
 })();

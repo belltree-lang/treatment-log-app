@@ -7,12 +7,12 @@
  */
 function assignResponsibleStaff(options) {
   const opts = options || {};
-  const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : null);
+  const patientInfo = opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo({ dashboardSpreadsheet: opts.dashboardSpreadsheet }) : null);
   const patients = patientInfo && patientInfo.patients ? patientInfo.patients : {};
   const warnings = patientInfo && Array.isArray(patientInfo.warnings) ? [].concat(patientInfo.warnings) : [];
   const setupIncomplete = !!(patientInfo && patientInfo.setupIncomplete);
 
-  const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs({ patientInfo, now: opts.now }) : null);
+  const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs({ patientInfo, now: opts.now, dashboardSpreadsheet: opts.dashboardSpreadsheet }) : null);
   const lastStaffByPatient = treatment && treatment.lastStaffByPatient ? treatment.lastStaffByPatient : {};
   if (treatment && Array.isArray(treatment.warnings)) {
     warnings.push.apply(warnings, treatment.warnings);

@@ -6,6 +6,7 @@
  */
 function getDashboardData(options) {
   const opts = options || {};
+  let spreadsheetOpenCount = 0;
   const perfStartedAt = Date.now();
   const perfSteps = [];
   const logContext = (label, details) => {
@@ -48,22 +49,24 @@ function getDashboardData(options) {
   logContext('getDashboardData:start', `user=${meta.user || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
-    measureStep('dashboardGetSpreadsheet', () => {
+    const dashboardSpreadsheet = measureStep('dashboardGetSpreadsheet', () => {
       if (opts.dashboardSpreadsheet) return opts.dashboardSpreadsheet;
-      return typeof dashboardGetSpreadsheet_ === 'function' ? dashboardGetSpreadsheet_() : null;
+      if (typeof dashboardGetSpreadsheet_ !== 'function') return null;
+      spreadsheetOpenCount += 1;
+      return dashboardGetSpreadsheet_();
     });
-    const patientInfo = measureStep('loadPatientInfo', () => (opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo() : { patients: {}, nameToId: {}, warnings: [] })));
+    const patientInfo = measureStep('loadPatientInfo', () => (opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo({ dashboardSpreadsheet }) : { patients: {}, nameToId: {}, warnings: [] })));
     logContext('getDashboardData:loadPatientInfo', `patients=${Object.keys(patientInfo && patientInfo.patients ? patientInfo.patients : {}).length} warnings=${(patientInfo && patientInfo.warnings ? patientInfo.warnings.length : 0)} setupIncomplete=${!!(patientInfo && patientInfo.setupIncomplete)}`);
-    const notes = measureStep('loadNotes', () => (opts.notes || (typeof loadNotes === 'function' ? loadNotes({ email: meta.user }) : { notes: {}, warnings: [] })));
+    const notes = measureStep('loadNotes', () => (opts.notes || (typeof loadNotes === 'function' ? loadNotes({ email: meta.user, dashboardSpreadsheet }) : { notes: {}, warnings: [] })));
     logContext('getDashboardData:loadNotes', `notes=${Object.keys(notes && notes.notes ? notes.notes : {}).length} warnings=${(notes && notes.warnings ? notes.warnings.length : 0)} setupIncomplete=${!!(notes && notes.setupIncomplete)}`);
-    const aiReports = measureStep('loadAIReports', () => (opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports() : { reports: {}, warnings: [] })));
+    const aiReports = measureStep('loadAIReports', () => (opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports({ dashboardSpreadsheet }) : { reports: {}, warnings: [] })));
     logContext('getDashboardData:loadAIReports', `reports=${Object.keys(aiReports && aiReports.reports ? aiReports.reports : {}).length} warnings=${(aiReports && aiReports.warnings ? aiReports.warnings.length : 0)} setupIncomplete=${!!(aiReports && aiReports.setupIncomplete)}`);
     const invoices = measureStep('loadInvoices', () => (opts.invoices || (typeof loadInvoices === 'function'
       ? loadInvoices({ patientInfo, now: opts.now, cache: opts.cache, includePreviousMonth: true })
       : { invoices: {}, warnings: [] })));
     logContext('getDashboardData:loadInvoices', `invoices=${Object.keys(invoices && invoices.invoices ? invoices.invoices : {}).length} warnings=${(invoices && invoices.warnings ? invoices.warnings.length : 0)} setupIncomplete=${!!(invoices && invoices.setupIncomplete)}`);
     const treatmentLogs = measureStep('loadTreatmentLogs', () => (opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
-      ? loadTreatmentLogs({ patientInfo, now: opts.now, cache: opts.cache })
+      ? loadTreatmentLogs({ patientInfo, now: opts.now, cache: opts.cache, dashboardSpreadsheet })
       : { logs: [], warnings: [] })));
     const totalTreatmentLogs = treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0;
     logContext('getDashboardData:loadTreatmentLogs', `logs=${totalTreatmentLogs} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
@@ -130,11 +133,11 @@ function getDashboardData(options) {
       `normalizedUser=${normalizedUser || 'unknown'} totalLogs=${totalTreatmentLogs} staffMatchedLogs=${staffMatchedLogs.length} matchedPatientIds=${matchedPatientIds.size} matchedPatientIdsInMaster=${matchedPatientIdsInMaster.length}`
     );
     const responsible = measureStep('assignResponsible', () => (opts.responsible || (typeof assignResponsibleStaff === 'function'
-      ? assignResponsibleStaff({ patientInfo, treatmentLogs, now: opts.now, cache: opts.cache })
+      ? assignResponsibleStaff({ patientInfo, treatmentLogs, now: opts.now, cache: opts.cache, dashboardSpreadsheet })
       : { responsible: {}, warnings: [] })));
     logContext('getDashboardData:assignResponsible', `responsible=${Object.keys(responsible && responsible.responsible ? responsible.responsible : {}).length} warnings=${(responsible && responsible.warnings ? responsible.warnings.length : 0)} setupIncomplete=${!!(responsible && responsible.setupIncomplete)}`);
     const unpaidAlertsResult = measureStep('loadUnpaidAlerts', () => (opts.unpaidAlerts || (typeof loadUnpaidAlerts === 'function'
-      ? loadUnpaidAlerts({ patientInfo, now: opts.now, cache: opts.cache })
+      ? loadUnpaidAlerts({ patientInfo, now: opts.now, cache: opts.cache, dashboardSpreadsheet })
       : { alerts: [], warnings: [] })));
     logContext('getDashboardData:loadUnpaidAlerts', `alerts=${(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts.length : 0)} warnings=${(unpaidAlertsResult && unpaidAlertsResult.warnings ? unpaidAlertsResult.warnings.length : 0)} setupIncomplete=${!!(unpaidAlertsResult && unpaidAlertsResult.setupIncomplete)}`);
 
@@ -262,6 +265,7 @@ function getDashboardData(options) {
     logPerf('  - データ欠損: 期間・列の絞り込みを誤ると過去必要データが取り込まれず、患者情報や請求情報が欠ける。');
     logPerf('  - 表示整合性: キャッシュや差分更新が古いと、タスク件数や未払いアラート件数が画面と実データで乖離する。');
     logPerf('  - 権限影響: ユーザー別フィルタを前段キャッシュへ寄せると、権限境界を跨いだデータ混入リスクが上がる。');
+    logPerf(`[perf-check] spreadsheetOpenCount=${spreadsheetOpenCount}`);
   }
 }
 

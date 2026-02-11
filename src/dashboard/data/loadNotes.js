@@ -31,7 +31,8 @@ function loadNotes(options) {
   return { notes, warnings, lastReadAt, setupIncomplete: !!base.setupIncomplete };
 }
 
-function loadNotesUncached_(_options) {
+function loadNotesUncached_(options) {
+  const opts = options || {};
   const warnings = [];
   const latestByPatient = {};
   let setupIncomplete = false;
@@ -44,7 +45,7 @@ function loadNotesUncached_(_options) {
     }
   };
 
-  const wb = dashboardGetSpreadsheet_();
+  const wb = opts.dashboardSpreadsheet || null;
   if (!wb) {
     const warning = 'スプレッドシートを取得できませんでした';
     warnings.push(warning);

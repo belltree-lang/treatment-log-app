@@ -3,10 +3,12 @@
  * @return {{reports: Object<string, string>, warnings: string[]}}
  */
 function loadAIReports(options) {
-  return loadAIReportsUncached_();
+  const opts = options || {};
+  return loadAIReportsUncached_(opts);
 }
 
-function loadAIReportsUncached_() {
+function loadAIReportsUncached_(options) {
+  const opts = options || {};
   const reports = {};
   const warnings = [];
   let setupIncomplete = false;
@@ -19,7 +21,7 @@ function loadAIReportsUncached_() {
     }
   };
 
-  const wb = dashboardGetSpreadsheet_();
+  const wb = opts.dashboardSpreadsheet || null;
   if (!wb || typeof wb.getSheetByName !== 'function') {
     warnings.push('スプレッドシートを取得できませんでした');
     setupIncomplete = true;

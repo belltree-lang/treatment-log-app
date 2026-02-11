@@ -6,7 +6,8 @@ function loadPatientInfo(options) {
   return loadPatientInfoUncached_(opts);
 }
 
-function loadPatientInfoUncached_(_options) {
+function loadPatientInfoUncached_(options) {
+  const opts = options || {};
   const patients = {};
   const nameToId = {};
   const warnings = [];
@@ -20,7 +21,7 @@ function loadPatientInfoUncached_(_options) {
     }
   };
 
-  const wb = dashboardGetSpreadsheet_();
+  const wb = opts.dashboardSpreadsheet || null;
   if (!wb) {
     const warning = 'スプレッドシートを取得できませんでした';
     warnings.push(warning);

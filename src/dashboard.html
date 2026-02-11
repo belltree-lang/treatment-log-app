@@ -115,7 +115,7 @@
 
   <div class="section">
     <div class="section-header">
-      <h2>今日・昨日の訪問</h2>
+      <h2>今日・直近1日の訪問</h2>
       <span class="small">タイムライン</span>
     </div>
     <div class="timeline" id="visitList"></div>
@@ -419,7 +419,7 @@ function renderVisits() {
       configurePatientLinkElement_(name, v.patientId);
       name.className = 'patient-link';
     }
-    name.textContent = v.patientName || v.patientId || '患者不明';
+    name.textContent = formatVisitPatientLabel_(v);
     name.style.fontWeight = '700';
     body.appendChild(name);
 
@@ -443,6 +443,16 @@ function renderVisits() {
 
     list.appendChild(row);
   });
+}
+
+
+function formatVisitPatientLabel_(visit) {
+  const patientName = String(visit && visit.patientName ? visit.patientName : '').trim();
+  const patientId = String(visit && visit.patientId ? visit.patientId : '').trim();
+  if (patientName && patientId) return `${patientName}（${patientId}）`;
+  if (patientName) return patientName;
+  if (patientId) return patientId;
+  return '患者不明';
 }
 
 function renderPatients() {

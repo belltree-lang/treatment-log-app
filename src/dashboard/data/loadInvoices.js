@@ -64,17 +64,38 @@ function loadInvoicesUncached_(options) {
   const targetMonths = buildInvoiceMonthTargets_(now, tz, includePreviousMonth);
   const currentMonthKey = dashboardFormatDate_(now, tz, 'yyyy-MM');
 
+  const folderEntries = [];
+  const folderNames = [];
   const folders = root.getFolders();
   while (folders && typeof folders.hasNext === 'function' && folders.hasNext()) {
     const folder = folders.next();
     const name = folder && typeof folder.getName === 'function' ? folder.getName() : '';
-    if (!isTargetInvoiceFolder_(name, targetMonths)) continue;
+    folderEntries.push({ folder, name });
+    folderNames.push(name);
+  }
+  invoiceDebugLog_('[invoice-debug] rootFolders=' + JSON.stringify(folderNames));
 
-    const files = folder.getFiles && folder.getFiles();
-    while (files && typeof files.hasNext === 'function' && files.hasNext()) {
-      const file = files.next();
+  for (let i = 0; i < folderEntries.length; i++) {
+    const entry = folderEntries[i];
+    const folder = entry.folder;
+    const name = entry.name;
+    const files = [];
+    const folderFiles = folder && folder.getFiles && folder.getFiles();
+    while (folderFiles && typeof folderFiles.hasNext === 'function' && folderFiles.hasNext()) {
+      files.push(folderFiles.next());
+    }
+    invoiceDebugLog_('[invoice-debug] folder=' + name + ' fileCount=' + files.length);
+
+    const isTargetFolder = isTargetInvoiceFolder_(name, targetMonths);
+    invoiceDebugLog_('[invoice-debug] folderMatch=' + name + ' result=' + isTargetFolder);
+    invoiceDebugLog_('[invoice-debug] monthMatch folder=' + name + ' currentMonthKey=' + currentMonthKey);
+    if (!isTargetFolder) continue;
+
+    for (let j = 0; j < files.length; j++) {
+      const file = files[j];
       debugFilesFound.count += 1;
       const fileName = file && typeof file.getName === 'function' ? file.getName() : '';
+      invoiceDebugLog_('[invoice-debug] fileName=' + fileName);
       const parsed = parseInvoiceFileName_(fileName, targetMonths);
       if (!parsed) continue;
 
@@ -119,6 +140,11 @@ function loadInvoicesUncached_(options) {
     linkedInvoices: invoices
   });
   return { invoices, invoiceMeta, warnings, setupIncomplete };
+}
+
+function invoiceDebugLog_(message) {
+  if (typeof Logger === 'undefined' || !Logger || typeof Logger.log !== 'function') return;
+  Logger.log(message);
 }
 
 function logInvoiceDebugSummary_(payload) {

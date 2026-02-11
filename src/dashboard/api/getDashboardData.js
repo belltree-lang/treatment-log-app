@@ -357,7 +357,8 @@ function buildDashboardOverview_(params) {
     invoiceScope,
     patientNameMap,
     now,
-    tz
+    tz,
+    patientInfo
   );
   const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz);
   const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz);
@@ -369,7 +370,7 @@ function buildDashboardOverview_(params) {
   };
 }
 
-function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, notes, scope, patientNameMap, now, tz) {
+function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, notes, scope, patientNameMap, now, tz, patientInfo) {
   const items = [];
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
@@ -425,6 +426,7 @@ function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, no
   logBillingDebug(`completedByText count=${confirmedPatients.size}`);
 
   prevMonthPatientIds.forEach(pid => {
+    if (isDashboardMedicalAssistancePatient_(patientInfo, pid)) return;
     if (confirmedPatients.has(pid)) return;
     items.push({
       patientId: pid,
@@ -439,6 +441,16 @@ function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, no
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   return { count: items.length, items };
+}
+
+function isDashboardMedicalAssistancePatient_(patientInfo, patientId) {
+  if (!patientInfo || !patientId) return false;
+  const info = patientInfo[patientId] || {};
+  if (info.AS === true) return true;
+  const raw = info.raw || {};
+  if (raw.AS === true) return true;
+  if (raw['医療助成'] === true) return true;
+  return false;
 }
 
 function resolveDashboardMonthKey_(entry, tz) {

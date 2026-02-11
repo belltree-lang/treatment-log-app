@@ -128,7 +128,7 @@
     <div class="row">
       <div>
         <label>患者ID（施術録番号）</label>
-        <input id="pid" list="pidlist" placeholder="例: 5702" value="<?= patientId ?>"
+        <input id="pid" list="pidlist" placeholder="例: 5702"
                onkeydown="handlePatientIdKeydown(event)" oninput="handlePatientIdInput(event)"
                onchange="handlePatientIdConfirm(event)" onblur="handlePatientIdBlur(event)"
                onfocus="handlePatientIdFocus()" />
@@ -546,11 +546,10 @@ let _patientIdInitialRenderBuffer = null;
 let _patientIdInitialRenderWaiters = [];
 let _patientIdInitialRenderNoticeShown = false;
 let _confirmedPatientId = '';
+const INITIAL_RECORD_PATIENT_ID = "<?= initialRecordPatientId ?>";
 let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
 let _initialPatientIdResolveFailureNotified = false;
-let _initialPatientIdRecordView = false;
-let _initialUrlApplied = false;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
@@ -641,33 +640,12 @@ function waitMs(ms){
 }
 
 function resolveInitialPatientIdRequest(){
-  let shouldAutoLoad = false;
-  if (typeof window !== 'undefined' && window.location){
-    try {
-      const params = new URLSearchParams(window.location.search || '');
-      const view = String(params.get('view') || '').trim().toLowerCase();
-      shouldAutoLoad = view === 'record';
-    } catch (err){
-      console.warn('[resolveInitialPatientIdRequest] failed to inspect view param', err);
-    }
-  }
-  _initialPatientIdRecordView = shouldAutoLoad;
-  tracePatientIdState_('init', '_initialPatientIdRecordView', _initialPatientIdRecordView, 'resolveInitialPatientIdRequest');
-  if (!shouldAutoLoad) return '';
-
-  let candidate = '';
-  try {
-    const templatePid = "<?= patientId ?>";
-    if (templatePid) candidate = String(templatePid).trim();
-  } catch (err){
-    console.warn('[resolveInitialPatientIdRequest] template read failed', err);
-  }
+  const candidate = INITIAL_RECORD_PATIENT_ID ? String(INITIAL_RECORD_PATIENT_ID).trim() : '';
   const normalized = normalizePatientIdKey(candidate);
   tracePatientIdState_('init', 'currentKey', normalized, 'resolveInitialPatientIdRequest');
   console.info('[resolveInitialPatientIdRequest]', {
     rawPatientId: candidate,
-    normalizedPatientId: normalized,
-    shouldAutoLoad
+    normalizedPatientId: normalized
   });
   return normalized;
 }
@@ -2687,14 +2665,6 @@ function loadPidList(){
       if (!result && _patientIdList.length){
         clearPatientDisplay({ keepInput: false, force: true });
       }
-      if (opts.finalize && !_initialUrlApplied) {
-        const urlId = getRecordViewPatientIdFromUrl_();
-        if (urlId) {
-          _initialUrlApplied = true;
-          setv('pid', urlId);
-          handlePatientIdConfirm();
-        }
-      }
       schedulePatientIdSearchUpdate(true);
     } catch (err){
       console.error('[loadPidList] ensurePatientIdDisplayFromInput failed', err);
@@ -2779,14 +2749,11 @@ function notifyInitialPatientIdResolveFailure_(reason){
   toast(`指定された患者ID（${_initialPatientIdRequested}）を初期表示で確定できませんでした。${detail}`);
 }
 
-function getRecordViewPatientIdFromUrl_() {
-  const params = new URLSearchParams(location.search);
-  if (params.get('view') !== 'record') return '';
-  return params.get('id') || params.get('patientId') || '';
-}
-
 function applyInitialPatientSelectionFromRequest_(options){
   const opts = Object.assign({ finalize: false }, options || {});
+  if (!opts.finalize){
+    return false;
+  }
   if (_initialPatientIdResolved){
     console.info('[applyInitialPatientSelectionFromRequest_] skip refresh', {
       reason: 'already resolved',
@@ -2801,68 +2768,21 @@ function applyInitialPatientSelectionFromRequest_(options){
     });
     return false;
   }
-  const record = _patientIdIndex[_initialPatientIdRequested];
-  if (record){
-    setConfirmedPatientId(record.id);
-    setv('pid', formatPatientIdDisplay(record.id, record.name, record.kana));
+  const inputEl = q('pid');
+  if (!inputEl){
     _initialPatientIdResolved = true;
-    console.info('[applyInitialPatientSelectionFromRequest_] refresh', {
-      reason: 'matched candidate list record',
-      finalize: opts.finalize,
-      patientId: record.id
-    });
-    refresh();
+    clearConfirmedPatientId();
+    hideGlobalLoading();
+    notifyInitialPatientIdResolveFailure_('patientId input element missing');
     return true;
   }
-  if (!opts.finalize){
-    console.info('[applyInitialPatientSelectionFromRequest_] skip refresh', {
-      reason: 'requested patientId not found yet and not finalized',
-      finalize: opts.finalize,
-      patientId: _initialPatientIdRequested
-    });
-    return false;
-  }
-  let failureReason = 'patientId not found in candidate list';
   _initialPatientIdResolved = true;
-  if (_initialPatientIdRecordView && _initialPatientIdRequested){
-    const inputEl = q('pid');
-    if (inputEl){
-      const currentKey = normalizePatientIdKey(splitPatientIdDisplay(String(inputEl.value || '')).id);
-      tracePatientIdState_(opts.finalize ? 'finalize' : 'applyInitial', 'currentKey', currentKey, 'applyInitialPatientSelectionFromRequest_');
-      if (currentKey === _initialPatientIdRequested){
-        const resolved = ensurePatientIdDisplayFromInput({
-          clearOnReject: false,
-          skipIfEditing: true
-        });
-        if (resolved && !resolved.skipped){
-          console.info('[applyInitialPatientSelectionFromRequest_] refresh', {
-            reason: 'record view URL fallback resolved by input value on finalize',
-            finalize: opts.finalize,
-            patientId: _initialPatientIdRequested
-          });
-          refresh();
-          return true;
-        }
-        if (resolved && resolved.skipped){
-          failureReason = 'patientId fallback skipped while editing';
-        } else {
-          failureReason = 'patientId fallback rejected while applying URL requested value';
-        }
-      } else {
-        failureReason = 'patientId input changed before URL fallback';
-      }
-    } else {
-      failureReason = 'patientId input element missing before URL fallback';
-    }
-  }
-  clearConfirmedPatientId();
-  hideGlobalLoading();
-  console.info('[applyInitialPatientSelectionFromRequest_] skip refresh', {
-    reason: failureReason,
+  inputEl.value = _initialPatientIdRequested;
+  console.info('[applyInitialPatientSelectionFromRequest_] confirm', {
     finalize: opts.finalize,
     patientId: _initialPatientIdRequested
   });
-  notifyInitialPatientIdResolveFailure_(failureReason);
+  handlePatientIdConfirm();
   return true;
 }
 
@@ -4377,11 +4297,6 @@ function saveHandoverUI(){
 (function init(){
   _initialPatientIdRequested = resolveInitialPatientIdRequest();
   tracePatientIdState_('init', '_initialPatientIdRequested', _initialPatientIdRequested, 'init');
-  if (_initialPatientIdRequested){
-    setv('pid', _initialPatientIdRequested);
-    const pidInput = q('pid');
-    tracePatientIdState_('init', 'input.value(patientId)', pidInput && pidInput.value != null ? String(pidInput.value) : '', 'init');
-  }
   loadPidList();
   loadPresets();
   setupIcfSummaryUI();

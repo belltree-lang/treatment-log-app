@@ -81,6 +81,8 @@ function loadTreatmentLogsUncached_(options) {
   const tz = dashboardResolveTimeZone_();
   const now = dashboardCoerceDate_(opts.now) || new Date();
   const monthStart = dashboardStartOfMonth_(tz, now);
+  const previousMonthStart = new Date(monthStart.getTime());
+  previousMonthStart.setMonth(previousMonthStart.getMonth() - 1);
   const monthEnd = new Date(monthStart.getTime());
   monthEnd.setMonth(monthEnd.getMonth() + 1);
   const prevMonthEnd = dashboardEndOfPreviousMonth_(monthStart);
@@ -111,7 +113,7 @@ function loadTreatmentLogsUncached_(options) {
   for (let i = 0; i < dateValues.length; i++) {
     const timestamp = dashboardParseTimestamp_(dateValues[i][0] || dateDisplayValues[i][0]);
     if (!timestamp) continue;
-    if (timestamp < monthStart || timestamp >= monthEnd) continue;
+    if (timestamp < previousMonthStart || timestamp >= monthEnd) continue;
     if (startDataIndex < 0) startDataIndex = i;
     endDataIndex = i;
   }
@@ -168,7 +170,7 @@ function loadTreatmentLogsUncached_(options) {
       warnings.push(`施術日時を解釈できません (row:${rowNumber})`);
       continue;
     }
-    if (timestamp < monthStart || timestamp >= monthEnd) {
+    if (timestamp < previousMonthStart || timestamp >= monthEnd) {
       continue;
     }
 

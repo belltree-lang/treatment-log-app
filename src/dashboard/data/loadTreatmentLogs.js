@@ -25,6 +25,16 @@ function loadTreatmentLogsUncached_(options) {
       dashboardWarn_(`[${label}]${payload}`);
     }
   };
+  const logPerf = message => {
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log(message);
+    } else if (typeof dashboardWarn_ === 'function') {
+      dashboardWarn_(message);
+    } else {
+      logContext('perf', message);
+    }
+  };
+  const perfBeforeStartedAt = Date.now();
 
   const wb = opts.dashboardSpreadsheet || null;
   if (!wb) {
@@ -53,8 +63,6 @@ function loadTreatmentLogsUncached_(options) {
 
   const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : sheet.getMaxColumns ? sheet.getMaxColumns() : 0;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
 
   const colTimestamp = dashboardResolveColumn_(headers, ['日時', '日付', 'timestamp', 'ts', 'タイムスタンプ'], 1);
   const colPatientId = dashboardResolveColumn_(headers, [
@@ -73,7 +81,12 @@ function loadTreatmentLogsUncached_(options) {
   const tz = dashboardResolveTimeZone_();
   const now = dashboardCoerceDate_(opts.now) || new Date();
   const monthStart = dashboardStartOfMonth_(tz, now);
+  const monthEnd = new Date(monthStart.getTime());
+  monthEnd.setMonth(monthEnd.getMonth() + 1);
   const prevMonthEnd = dashboardEndOfPreviousMonth_(monthStart);
+  const allowedPatientIds = opts.allowedPatientIds instanceof Set
+    ? new Set(Array.from(opts.allowedPatientIds).map(function(pid) { return dashboardNormalizePatientId_(pid); }).filter(function(pid) { return !!pid; }))
+    : null;
 
   const headerSnapshot = {
     createdBy: colCreatedBy ? headers[colCreatedBy - 1] : '',
@@ -83,32 +96,111 @@ function loadTreatmentLogsUncached_(options) {
   };
   logContext('loadTreatmentLogs:staffColumns', JSON.stringify(headerSnapshot));
 
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i] || [];
-    const rowDisplay = displayValues[i] || [];
-    const rowNumber = i + 2;
+  if (allowedPatientIds && allowedPatientIds.size === 0) {
+    logPerf('[perf] loadTreatmentLogsBefore=' + (Date.now() - perfBeforeStartedAt) + 'ms');
+    logPerf('[perf] loadTreatmentLogsAfter=0ms');
+    logPerf('[perf] rowsProcessed=0');
+    logContext('loadTreatmentLogs:done', `logs=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
+    return { logs, warnings, lastStaffByPatient, setupIncomplete };
+  }
 
-    const timestamp = dashboardParseTimestamp_(row[colTimestamp - 1] || rowDisplay[colTimestamp - 1]);
+  const dateValues = sheet.getRange(2, colTimestamp, lastRow - 1, 1).getValues();
+  const dateDisplayValues = sheet.getRange(2, colTimestamp, lastRow - 1, 1).getDisplayValues();
+  let startDataIndex = -1;
+  let endDataIndex = -1;
+  for (let i = 0; i < dateValues.length; i++) {
+    const timestamp = dashboardParseTimestamp_(dateValues[i][0] || dateDisplayValues[i][0]);
+    if (!timestamp) continue;
+    if (timestamp < monthStart || timestamp >= monthEnd) continue;
+    if (startDataIndex < 0) startDataIndex = i;
+    endDataIndex = i;
+  }
+
+  const perfBeforeDuration = Date.now() - perfBeforeStartedAt;
+  logPerf('[perf] loadTreatmentLogsBefore=' + perfBeforeDuration + 'ms');
+
+  if (startDataIndex < 0 || endDataIndex < startDataIndex) {
+    logPerf('[perf] loadTreatmentLogsAfter=0ms');
+    logPerf('[perf] rowsProcessed=0');
+    logContext('loadTreatmentLogs:done', `logs=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
+    return { logs, warnings, lastStaffByPatient, setupIncomplete };
+  }
+
+  const dataStartRow = startDataIndex + 2;
+  const dataRowCount = endDataIndex - startDataIndex + 1;
+  const requiredColumns = [
+    colTimestamp,
+    colPatientId,
+    colPatientName,
+    colCreatedBy,
+    colStaffName,
+    colStaffEmail,
+    colStaffId
+  ].concat(searchableColumns)
+    .filter(function(col, index, arr) { return !!col && arr.indexOf(col) === index; });
+
+  const rowDataByColumn = {};
+  for (let ci = 0; ci < requiredColumns.length; ci++) {
+    const col = requiredColumns[ci];
+    rowDataByColumn[col] = {
+      values: sheet.getRange(dataStartRow, col, dataRowCount, 1).getValues(),
+      displayValues: sheet.getRange(dataStartRow, col, dataRowCount, 1).getDisplayValues()
+    };
+  }
+
+  let rowsProcessed = 0;
+  const perfAfterStartedAt = Date.now();
+
+  for (let i = 0; i < dataRowCount; i++) {
+    rowsProcessed += 1;
+    const rowNumber = dataStartRow + i;
+    const readValue = function(col) {
+      if (!col || !rowDataByColumn[col]) return '';
+      return rowDataByColumn[col].values[i][0];
+    };
+    const readDisplay = function(col) {
+      if (!col || !rowDataByColumn[col]) return '';
+      return rowDataByColumn[col].displayValues[i][0];
+    };
+
+    const timestamp = dashboardParseTimestamp_(readValue(colTimestamp) || readDisplay(colTimestamp));
     if (!timestamp) {
       warnings.push(`施術日時を解釈できません (row:${rowNumber})`);
       continue;
     }
+    if (timestamp < monthStart || timestamp >= monthEnd) {
+      continue;
+    }
 
-    const patientIdCell = colPatientId ? row[colPatientId - 1] : '';
-    const patientIdDisplay = colPatientId ? rowDisplay[colPatientId - 1] : '';
+    const patientIdCell = readValue(colPatientId);
+    const patientIdDisplay = readDisplay(colPatientId);
     const patientIdRaw = colPatientId
       ? (dashboardNormalizePatientId_(patientIdCell) || dashboardNormalizePatientId_(patientIdDisplay))
       : '';
-    const patientName = String((colPatientName && (rowDisplay[colPatientName - 1] || row[colPatientName - 1])) || '').trim();
+    const patientName = String((colPatientName && (readDisplay(colPatientName) || readValue(colPatientName))) || '').trim();
     const mappedPatientId = patientIdRaw || dashboardResolvePatientIdFromName_(patientName, nameToId);
-    const createdByRaw = colCreatedBy ? String(rowDisplay[colCreatedBy - 1] || row[colCreatedBy - 1] || '').trim() : '';
-    const staffNameRaw = colStaffName ? String(rowDisplay[colStaffName - 1] || row[colStaffName - 1] || '').trim() : '';
-    const staffEmailRaw = colStaffEmail ? String(rowDisplay[colStaffEmail - 1] || row[colStaffEmail - 1] || '').trim() : '';
-    const staffIdRaw = colStaffId ? String(rowDisplay[colStaffId - 1] || row[colStaffId - 1] || '').trim() : '';
+
+    const normalizedPatientId = mappedPatientId ? dashboardNormalizePatientId_(mappedPatientId) : '';
+    if (!normalizedPatientId) {
+      logContext('loadTreatmentLogs:skipMissingPatientId', `row=${rowNumber}`);
+      continue;
+    }
+    if (allowedPatientIds && !allowedPatientIds.has(normalizedPatientId)) {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(patients, normalizedPatientId)) {
+      logContext('loadTreatmentLogs:skipUnknownPatientId', `row=${rowNumber} patientId=${normalizedPatientId}`);
+      continue;
+    }
+
+    const createdByRaw = colCreatedBy ? String(readDisplay(colCreatedBy) || readValue(colCreatedBy) || '').trim() : '';
+    const staffNameRaw = colStaffName ? String(readDisplay(colStaffName) || readValue(colStaffName) || '').trim() : '';
+    const staffEmailRaw = colStaffEmail ? String(readDisplay(colStaffEmail) || readValue(colStaffEmail) || '').trim() : '';
+    const staffIdRaw = colStaffId ? String(readDisplay(colStaffId) || readValue(colStaffId) || '').trim() : '';
     const dateKey = dashboardFormatDate_(timestamp, tz, 'yyyy-MM-dd');
     const searchText = searchableColumns
       .map(function(col) {
-        return String(rowDisplay[col - 1] || row[col - 1] || '').trim();
+        return String(readDisplay(col) || readValue(col) || '').trim();
       })
       .filter(function(text) { return !!text; })
       .join('\n');
@@ -121,16 +213,6 @@ function loadTreatmentLogsUncached_(options) {
         staffEmailRaw,
         staffIdRaw
       }));
-    }
-
-    const normalizedPatientId = mappedPatientId ? dashboardNormalizePatientId_(mappedPatientId) : '';
-    if (!normalizedPatientId) {
-      logContext('loadTreatmentLogs:skipMissingPatientId', `row=${rowNumber}`);
-      continue;
-    }
-    if (!Object.prototype.hasOwnProperty.call(patients, normalizedPatientId)) {
-      logContext('loadTreatmentLogs:skipUnknownPatientId', `row=${rowNumber} patientId=${normalizedPatientId}`);
-      continue;
     }
 
     const entry = {
@@ -164,6 +246,10 @@ function loadTreatmentLogsUncached_(options) {
     const entry = lastStaffByPatient[pid];
     lastStaffByPatient[pid] = entry ? entry.email || '' : '';
   });
+
+  const perfAfterDuration = Date.now() - perfAfterStartedAt;
+  logPerf('[perf] loadTreatmentLogsAfter=' + perfAfterDuration + 'ms');
+  logPerf('[perf] rowsProcessed=' + rowsProcessed);
 
   logContext('loadTreatmentLogs:done', `logs=${logs.length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { logs, warnings, lastStaffByPatient, setupIncomplete };

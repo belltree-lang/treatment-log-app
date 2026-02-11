@@ -550,7 +550,7 @@ let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
 let _initialPatientIdResolveFailureNotified = false;
 let _initialPatientIdRecordView = false;
-let _initialRecordViewUrlAutoRefreshDone = false;
+let _initialRecordViewAutoConfirmed = false;
 let _initialRecordViewRefreshCompleted = false;
 let _initialRecordViewUrlPatientId = '';
 let _patientIdSelectionLocked = false;
@@ -1246,6 +1246,12 @@ function splitPatientIdDisplay(text){
 function setConfirmedPatientId(id){
   _confirmedPatientId = normalizePatientIdKey(id);
   _patientIdSelectionLocked = true;
+}
+
+function setCurrentPatientRecord_(record){
+  if (!record || !record.id) return false;
+  setConfirmedPatientId(record.id);
+  return true;
 }
 
 function clearConfirmedPatientId(){
@@ -2659,7 +2665,7 @@ function loadPidList(){
           patientId: _initialPatientIdRequested
         });
         if (opts.finalize){
-          maybeAutoRefreshFromUrl_({ finalize: true });
+          maybeAutoConfirmDirectRecordViewPatientFromUrl_({ finalize: true });
         }
         schedulePatientIdSearchUpdate(true);
         return;
@@ -2685,8 +2691,10 @@ function loadPidList(){
         clearPatientDisplay({ keepInput: false, force: true });
       }
       if (opts.finalize){
-        maybeAutoRefreshFromUrl_({ finalize: true });
-        runInitialRecordViewRefreshOnce_('finalize fallback after initial patient selection from request');
+        const autoConfirmed = maybeAutoConfirmDirectRecordViewPatientFromUrl_({ finalize: true });
+        if (!autoConfirmed){
+          runInitialRecordViewRefreshOnce_('finalize fallback after initial patient selection from request');
+        }
       }
       schedulePatientIdSearchUpdate(true);
     } catch (err){
@@ -2804,18 +2812,24 @@ function resolveDirectRecordViewPatientIdFromUrl_(){
   }
 }
 
-function maybeAutoRefreshFromUrl_(options){
+function maybeAutoConfirmDirectRecordViewPatientFromUrl_(options){
   const opts = Object.assign({ finalize: false }, options || {});
-  if (_initialRecordViewUrlAutoRefreshDone) return;
-  if (!opts.finalize) return;
+  if (!opts.finalize) return false;
+  if (_initialRecordViewAutoConfirmed) return false;
+  if (!_initialPatientIdRecordView) return false;
 
-  const directRecordPatientId = _initialRecordViewUrlPatientId || resolveDirectRecordViewPatientIdFromUrl_();
-  if (!String(directRecordPatientId || '').trim()) return;
+  const directRecordPatientId = normalizePatientIdKey(_initialRecordViewUrlPatientId || resolveDirectRecordViewPatientIdFromUrl_());
+  if (!directRecordPatientId) return false;
+  const record = _patientIdIndex[directRecordPatientId];
+  if (!record) return false;
 
-  _initialRecordViewUrlAutoRefreshDone = true;
-  setv('pid', directRecordPatientId);
-  console.info('[record-view] confirm from URL', directRecordPatientId);
-  handlePatientIdConfirm();
+  if (!setCurrentPatientRecord_(record)) return false;
+
+  _initialRecordViewAutoConfirmed = true;
+  _initialRecordViewRefreshCompleted = true;
+  console.info('[record-view] auto confirmed from URL', directRecordPatientId);
+  refresh();
+  return true;
 }
 
 function applyInitialPatientSelectionFromRequest_(options){

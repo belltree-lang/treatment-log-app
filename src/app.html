@@ -43,6 +43,14 @@
   .news-item[data-status="handover-reminder"]{ background:#fef3c7; border-left-color:#f59e0b; }
   .news-item[data-status="consent-doctor-report"]{ background:#ede9fe; border-left-color:#7c3aed; }
   .section-title{ font-weight:700; margin:8px 0 }
+  .treatment-list-header{ margin-bottom:8px; }
+  .treatment-list-header-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .treatment-list-header-title{ font-weight:700; margin:0; }
+  .treatment-list-readonly-badge{ font-size:11px; padding:2px 8px; }
+  .treatment-list-month-row{ display:flex; align-items:center; justify-content:center; margin-top:4px; }
+  .treatment-list-month{ font-weight:700; font-size:1.05rem; letter-spacing:0.03em; }
+  .btn.outline{ background:transparent; border:1px solid #cbd5e1; color:#334155; padding:5px 10px; font-size:12px; transition:background-color .15s ease, border-color .15s ease, color .15s ease; }
+  .btn.outline:hover{ background:#f8fafc; border-color:#94a3b8; color:#0f172a; }
   .btnrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
   .save-button-group{ display:flex; flex-direction:column; gap:8px; }
   .save-button-row{ display:flex; flex-wrap:wrap; gap:8px; }
@@ -188,9 +196,17 @@
 
       <!-- 当月の施術記録 -->
       <div class="card">
-        <div class="section-title" id="treatmentListTitle">当月の施術記録（この患者）</div>
+        <div class="treatment-list-header">
+          <div class="treatment-list-header-top">
+            <p class="treatment-list-header-title">施術記録</p>
+            <span id="treatmentReadOnlyBadge" class="badge treatment-list-readonly-badge" style="display:none">閲覧専用</span>
+          </div>
+          <div class="treatment-list-month-row">
+            <div id="treatmentListTitle" class="treatment-list-month">＜ 0000年00月 ＞</div>
+          </div>
+        </div>
         <div style="margin:6px 0 8px">
-          <a href="#" id="monthlyPrevLink" onclick="return onClickMonthlyPrev(event)">← 前月</a>
+          <button id="monthlyToggleBtn" class="btn outline" type="button" onclick="onClickMonthlyToggle(event)">前月を見る</button>
         </div>
         <div id="list"></div>
       </div>
@@ -3209,20 +3225,25 @@ function isTreatmentViewCurrentMonth(){
 
 function updateTreatmentListTitle(){
   const titleEl = q('treatmentListTitle');
+  const isCurrentMonth = isTreatmentViewCurrentMonth();
   if (titleEl) {
     const month = resolveTreatmentViewMonth(_treatmentViewMonthOffset);
-    titleEl.textContent = `当月の施術記録（この患者）${formatTreatmentViewMonthLabel(month)}`;
+    titleEl.textContent = `＜ ${formatTreatmentViewMonthLabel(month)} ＞`;
   }
-  const prevLink = q('monthlyPrevLink');
-  if (prevLink) {
-    prevLink.style.display = isTreatmentViewCurrentMonth() ? '' : 'none';
+  const toggleBtn = q('monthlyToggleBtn');
+  if (toggleBtn) {
+    toggleBtn.textContent = isCurrentMonth ? '前月を見る' : '当月に戻る';
+  }
+  const readOnlyBadge = q('treatmentReadOnlyBadge');
+  if (readOnlyBadge) {
+    readOnlyBadge.style.display = isCurrentMonth ? 'none' : 'inline-block';
   }
 }
 
-function onClickMonthlyPrev(event){
+function onClickMonthlyToggle(event){
   if (event && typeof event.preventDefault === 'function') event.preventDefault();
   if (!pid()) return false;
-  _treatmentViewMonthOffset -= 1;
+  _treatmentViewMonthOffset = isTreatmentViewCurrentMonth() ? -1 : 0;
   refresh();
   return false;
 }

@@ -371,28 +371,35 @@ function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, no
   const previousMonthKey = dashboardFormatDate_(new Date(targetNow.getFullYear(), targetNow.getMonth() - 1, 1), tz, 'yyyy-MM');
   const currentMonthKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM');
   const confirmationPhrase = '請求書・領収書を受け渡し済み';
-  const invoiceMeta = invoices && invoices.invoiceMeta ? invoices.invoiceMeta : {};
+  const logBillingDebug = (message, details) => {
+    const payload = details ? ` ${details}` : '';
+    const line = `[billing-debug] ${message}${payload}`;
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_('billing-debug', `${message}${payload}`);
+    } else if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log(line);
+    } else if (typeof dashboardWarn_ === 'function') {
+      dashboardWarn_(line);
+    }
+  };
 
-  const billedPatients = {};
+  const prevMonthPatientIds = new Set();
   (treatmentLogs || []).forEach(entry => {
     const pid = dashboardNormalizePatientId_(entry && entry.patientId);
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const monthKey = resolveDashboardMonthKey_(entry, tz);
     if (monthKey !== previousMonthKey) return;
-    billedPatients[pid] = (billedPatients[pid] || 0) + 1;
+    prevMonthPatientIds.add(pid);
   });
-
-  Object.keys(invoiceMeta || {}).forEach(pid => {
-    if (!pid || billedPatients[pid] || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
-    const meta = invoiceMeta && invoiceMeta[pid] && invoiceMeta[pid].months ? invoiceMeta[pid].months : {};
-    if (meta && meta[previousMonthKey]) billedPatients[pid] = 1;
-  });
+  logBillingDebug(`prevMonthPatientIds count=${prevMonthPatientIds.size}`);
 
   const confirmedPatients = new Set();
+  const inBillingWindowPatients = new Set();
   (treatmentLogs || []).forEach(entry => {
     const pid = dashboardNormalizePatientId_(entry && entry.patientId);
-    if (!pid || !billedPatients[pid]) return;
+    if (!pid || !prevMonthPatientIds.has(pid)) return;
     if (!isDashboardInvoiceConfirmationInWindow_(entry, currentMonthKey, tz)) return;
+    inBillingWindowPatients.add(pid);
     const searchable = buildDashboardInvoiceSearchText_(entry);
     if (searchable.indexOf(confirmationPhrase) >= 0) confirmedPatients.add(pid);
   });
@@ -400,14 +407,18 @@ function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, no
   const noteEntries = notes && notes.notes ? notes.notes : {};
   Object.keys(noteEntries).forEach(pidRaw => {
     const pid = dashboardNormalizePatientId_(pidRaw);
-    if (!pid || !billedPatients[pid] || confirmedPatients.has(pid)) return;
+    if (!pid || !prevMonthPatientIds.has(pid) || confirmedPatients.has(pid)) return;
     const note = noteEntries[pidRaw] || {};
     if (!isDashboardInvoiceConfirmationInWindow_(note, currentMonthKey, tz)) return;
+    inBillingWindowPatients.add(pid);
     const searchable = buildDashboardInvoiceSearchText_(note);
     if (searchable.indexOf(confirmationPhrase) >= 0) confirmedPatients.add(pid);
   });
 
-  Object.keys(billedPatients).forEach(pid => {
+  logBillingDebug(`inBillingWindow count=${inBillingWindowPatients.size}`);
+  logBillingDebug(`completedByText count=${confirmedPatients.size}`);
+
+  prevMonthPatientIds.forEach(pid => {
     if (confirmedPatients.has(pid)) return;
     items.push({
       patientId: pid,
@@ -416,6 +427,9 @@ function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, no
       subText: `受渡未確認（対象月: ${previousMonthKey}）`
     });
   });
+
+  const pendingSample = items.slice(0, 10).map(item => item.patientId);
+  logBillingDebug(`pendingPatients count=${items.length}`, `sample=${JSON.stringify(pendingSample)}`);
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   return { count: items.length, items };

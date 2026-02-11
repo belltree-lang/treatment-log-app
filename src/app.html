@@ -553,6 +553,7 @@ let _initialPatientIdRecordView = false;
 let _initialRecordViewAutoConfirmed = false;
 let _initialRecordViewRefreshCompleted = false;
 let _initialRecordViewUrlPatientId = '';
+let _currentPatientRecord = null;
 let _patientIdSelectionLocked = false;
 let _patientIdInputEditing = false;
 let _patientInfoLoadInFlight = false;
@@ -1252,12 +1253,14 @@ function setCurrentPatientRecord_(record, source){
   const sourceLabel = source || 'manual';
   console.log('[SET-RECORD] record=' + String(record == null ? null : 'present'), 'patientId=' + String(record && record.id ? record.id : ''), 'source=' + sourceLabel);
   if (!record || !record.id) return false;
+  _currentPatientRecord = record;
   setConfirmedPatientId(record.id);
   return true;
 }
 
 function clearConfirmedPatientId(){
   _confirmedPatientId = '';
+  _currentPatientRecord = null;
   _patientIdSelectionLocked = false;
 }
 
@@ -2667,7 +2670,7 @@ function loadPidList(){
           patientId: _initialPatientIdRequested
         });
         if (opts.finalize){
-          maybeAutoConfirmDirectRecordViewPatientFromUrl_({ finalize: true });
+          autoConfirmFromUrlOnce_();
         }
         schedulePatientIdSearchUpdate(true);
         return;
@@ -2696,7 +2699,7 @@ function loadPidList(){
         const initialRecordViewUrlId = normalizePatientIdKey(_initialRecordViewUrlPatientId);
         const hasInitialRecordViewUrlId = !!(initialRecordViewUrlId && _patientIdIndex[initialRecordViewUrlId]);
         console.log('[PID-LIST] requested=' + String(_initialRecordViewUrlPatientId || ''), 'initialPatientIdRequested=' + String(_initialPatientIdRequested || ''), 'indexSize=' + Object.keys(_patientIdIndex).length, 'existsInIndex=' + hasInitialRecordViewUrlId);
-        const autoConfirmed = maybeAutoConfirmDirectRecordViewPatientFromUrl_({ finalize: true });
+        const autoConfirmed = autoConfirmFromUrlOnce_();
         if (!autoConfirmed){
           runInitialRecordViewRefreshOnce_('finalize fallback after initial patient selection from request');
         }
@@ -2820,22 +2823,23 @@ function resolveDirectRecordViewPatientIdFromUrl_(){
   }
 }
 
-function maybeAutoConfirmDirectRecordViewPatientFromUrl_(options){
-  const opts = Object.assign({ finalize: false }, options || {});
-  if (!opts.finalize) return false;
+function autoConfirmFromUrlOnce_() {
   if (_initialRecordViewAutoConfirmed) return false;
-  if (!_initialPatientIdRecordView) return false;
 
-  const directRecordPatientId = normalizePatientIdKey(_initialRecordViewUrlPatientId || resolveDirectRecordViewPatientIdFromUrl_());
-  if (!directRecordPatientId) return false;
-  const record = _patientIdIndex[directRecordPatientId];
-  if (!record) return false;
+  const params = new URLSearchParams(window.location.search);
+  const idFromUrl = normalizePatientIdKey(params.get('id') || params.get('patientId'));
 
-  if (!setCurrentPatientRecord_(record, 'URL')) return false;
+  if (!idFromUrl) return false;
+  if (!_patientIdIndex[idFromUrl]) return false;
+
+  _confirmedPatientId = idFromUrl;
+  _currentPatientRecord = _patientIdIndex[idFromUrl];
 
   _initialRecordViewAutoConfirmed = true;
   _initialRecordViewRefreshCompleted = true;
-  console.info('[record-view] auto confirmed from URL', directRecordPatientId);
+
+  console.log('[AUTO-CONFIRM-URL]', idFromUrl);
+
   refresh();
   return true;
 }

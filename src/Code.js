@@ -10718,7 +10718,7 @@ function submitTreatment(payload) {
       markTiming('idCheck');
     }
 
-    const recentDup = detectRecentDuplicateTreatment_(s, pid, merged, nowDate, tz, incomingTreatmentId);
+    const recentDup = detectRecentDuplicateTreatment_(s, pid, merged, nowDate, tz, incomingTreatmentId, monthKey);
     markTiming('duplicateScan');
     if (recentDup) {
       if (recentDup.reason === 'recentContent') {
@@ -10737,7 +10737,7 @@ function submitTreatment(payload) {
       };
     }
 
-    const existingToday = findExistingTreatmentOnDate_(s, pid, nowDate, tz, incomingTreatmentId);
+    const existingToday = findExistingTreatmentOnDate_(s, pid, nowDate, tz, incomingTreatmentId, monthKey);
     markTiming('sameDayScan');
     if (existingToday) {
       if (allowsSameDayUpdate) {
@@ -11029,22 +11029,37 @@ function normalizeTreatmentNoteForComparison_(value){
     .join('\n');
 }
 
-function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTreatmentId) {
+function getTreatmentRowMonthKey_(row, timestampIndex, monthKeyIndex) {
+  const explicitMonthKey = String(row[monthKeyIndex] || '').trim();
+  if (explicitMonthKey) return explicitMonthKey;
+  const ts = row[timestampIndex];
+  if (!(ts instanceof Date)) return '';
+  return buildMonthKeyFromDate_(ts);
+}
+
+function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTreatmentId, monthKey) {
   const lr = sheet.getLastRow();
   if (lr < 2) return null;
 
-  const rowsToScan = Math.min(lr - 1, 20);
+  const rowsToScan = Math.min(lr - 1, 100);
   const startRow = Math.max(2, lr - rowsToScan + 1);
-  console.log('[perf][submitTreatment] duplicateScan rows=' + rowsToScan + ' startRow=' + startRow + ' lastRow=' + lr);
-  const values = sheet.getRange(startRow, 1, rowsToScan, 7).getValues();
+  const width = 13;
+  console.log('[perf][submitTreatment] optimizedDuplicate rows=' + rowsToScan + ' startRow=' + startRow + ' lastRow=' + lr);
+  const values = sheet.getRange(startRow, 1, rowsToScan, width).getValues();
   const nowMs = nowDate.getTime();
   const windowMs = 60 * 1000; // 1分以内の重複をブロック
   const normalizedNote = normalizeTreatmentNoteForComparison_(note);
+  const normalizedPid = String(pid || '').trim();
+  const targetMonthKey = String(monthKey || '').trim();
 
   for (let i = values.length - 1; i >= 0; i--) {
     const row = values[i];
     const existingPid = String(row[1] || '').trim();
-    if (existingPid !== pid) continue;
+    if (existingPid !== normalizedPid) continue;
+
+    const rowMonthKey = getTreatmentRowMonthKey_(row, 0, 12);
+    if (targetMonthKey && rowMonthKey !== targetMonthKey) continue;
+
     const existingNote = normalizeTreatmentNoteForComparison_(row[2]);
     if (existingNote !== normalizedNote) continue;
     const existingTreatmentId = String(row[6] || '').trim();
@@ -11074,21 +11089,22 @@ function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTr
   return null;
 }
 
-function findExistingTreatmentOnDate_(sheet, pid, targetDate, tz, ignoreTreatmentId) {
+function findExistingTreatmentOnDate_(sheet, pid, targetDate, tz, ignoreTreatmentId, monthKey) {
   const normalizedPid = String(pid || '').trim();
   if (!normalizedPid) return null;
 
   const lr = sheet.getLastRow();
   if (lr < 2) return null;
 
-  const maxCols = sheet.getMaxColumns();
+  const maxCols = typeof sheet.getMaxColumns === 'function' ? sheet.getMaxColumns() : 13;
   const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
-  const rowsToScan = Math.min(lr - 1, 200);
+  const rowsToScan = Math.min(lr - 1, 100);
   const startRow = Math.max(2, lr - rowsToScan + 1);
   console.log('[perf][submitTreatment] sameDayScan rows=' + rowsToScan + ' startRow=' + startRow + ' lastRow=' + lr);
   const values = sheet.getRange(startRow, 1, rowsToScan, width).getValues();
 
   const targetDateStr = Utilities.formatDate(targetDate, tz, 'yyyy-MM-dd');
+  const targetMonthKey = String(monthKey || '').trim();
   const startOfDay = normalizeTreatmentTimestamp_(`${targetDateStr} 00:00:00`, tz);
   const startOfDayMs = startOfDay ? startOfDay.getTime() : null;
 
@@ -11096,6 +11112,9 @@ function findExistingTreatmentOnDate_(sheet, pid, targetDate, tz, ignoreTreatmen
     const row = values[i];
     const existingPid = String(row[1] || '').trim();
     if (existingPid !== normalizedPid) continue;
+
+    const rowMonthKey = getTreatmentRowMonthKey_(row, 0, 12);
+    if (targetMonthKey && rowMonthKey !== targetMonthKey) continue;
 
     const tsDate = normalizeTreatmentTimestamp_(row[0], tz);
     if (!tsDate) continue;

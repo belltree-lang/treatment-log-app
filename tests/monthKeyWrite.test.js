@@ -8,14 +8,32 @@ const sandbox = { console };
 vm.createContext(sandbox);
 vm.runInContext(code, sandbox);
 
+function makeSandboxDate(year, monthIndex, day, hour, minute, second) {
+  return vm.runInContext(`new Date(${year}, ${monthIndex}, ${day}, ${hour || 0}, ${minute || 0}, ${second || 0})`, sandbox);
+}
+
 function createSheet(rows) {
   return {
     rows: rows.map(r => r.slice()),
     getName() { return '施術録'; },
     getLastRow() { return this.rows.length; },
-    getRange(row, col) {
+    getRange(row, col, numRows, numCols) {
       const self = this;
       return {
+        getValues() {
+          const rowCount = Number(numRows) || 1;
+          const colCount = Number(numCols) || 1;
+          const out = [];
+          for (let r = 0; r < rowCount; r += 1) {
+            const rowVals = [];
+            const sourceRow = self.rows[row - 1 + r] || [];
+            for (let c = 0; c < colCount; c += 1) {
+              rowVals.push(sourceRow[col - 1 + c]);
+            }
+            out.push(rowVals);
+          }
+          return out;
+        },
         getValue() {
           const r = self.rows[row - 1] || [];
           return r[col - 1];
@@ -107,6 +125,38 @@ function setupCommonStubs(sheet) {
   const ok = sandbox.updateTreatmentTimestamp(2, '2025-02-01T10:30');
   assert.strictEqual(ok, true);
   assert.strictEqual(sheet.rows[1][12], '202502');
+})();
+
+(function testBackfillMonthKeyWithLimit() {
+  const sheet = createSheet([
+    ['ts', 'pid', 'note', 'user', '', '', 'tid', 'catLabel', 'c', 'n', 't', 'memo', 'monthKey'],
+    [makeSandboxDate(2025, 0, 31, 9, 0, 0), 'P001', '', '', '', '', '', '', '', '', '', '', ''],
+    [makeSandboxDate(2025, 1, 1, 10, 0, 0), 'P002', '', '', '', '', '', '', '', '', '', '', ''],
+    [makeSandboxDate(2025, 1, 2, 10, 0, 0), 'P003', '', '', '', '', '', '', '', '', '', '', '202502']
+  ]);
+  setupCommonStubs(sheet);
+
+  const result = sandbox.backfillMonthKey_(1);
+  assert.strictEqual(result.updated, 1);
+  assert.strictEqual(sheet.rows[1][12], '202501');
+  assert.strictEqual(sheet.rows[2][12], '');
+  assert.strictEqual(sheet.rows[3][12], '202502');
+})();
+
+(function testBackfillMonthKeyWithoutLimit() {
+  const sheet = createSheet([
+    ['ts', 'pid', 'note', 'user', '', '', 'tid', 'catLabel', 'c', 'n', 't', 'memo', 'monthKey'],
+    [makeSandboxDate(2025, 2, 1, 9, 0, 0), 'P001', '', '', '', '', '', '', '', '', '', '', ''],
+    ['not-date', 'P002', '', '', '', '', '', '', '', '', '', '', ''],
+    [makeSandboxDate(2025, 2, 2, 9, 0, 0), 'P003', '', '', '', '', '', '', '', '', '', '', '']
+  ]);
+  setupCommonStubs(sheet);
+
+  const result = sandbox.backfillMonthKey_();
+  assert.strictEqual(result.updated, 2);
+  assert.strictEqual(sheet.rows[1][12], '202503');
+  assert.strictEqual(sheet.rows[2][12], '');
+  assert.strictEqual(sheet.rows[3][12], '202503');
 })();
 
 console.log('month key write tests passed');

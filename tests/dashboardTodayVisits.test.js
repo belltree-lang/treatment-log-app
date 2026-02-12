@@ -95,14 +95,84 @@ function createUiContext() {
   return { context, elements };
 }
 
-function runVisits(context, now, logs, patientInfo) {
+function runVisits(context, now, logs, patientInfo, extraOptions) {
+  const options = extraOptions || {};
   return context.getTodayVisits({
     now: new Date(now),
     patientInfo: { patients: patientInfo || {} },
     treatmentLogs: { logs, warnings: [] },
-    notes: { notes: {}, warnings: [] }
+    notes: { notes: {}, warnings: [] },
+    isAdmin: options.isAdmin
   }).visits;
 }
+
+(function testAdminShowsAllVisitsWithoutFilter() {
+  const context = createApiContext();
+  const visits = runVisits(
+    context,
+    '2025-02-13T10:00:00Z',
+    [
+      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
+      { timestamp: new Date('2025-02-10T12:00:00Z'), dateKey: '2025-02-10', patientId: 'P002' }
+    ],
+    { P001: { name: '患者A' }, P002: { name: '患者B' } },
+    { isAdmin: true }
+  );
+
+  assert.strictEqual(visits.length, 2, '管理者はフィルタなしで表示する');
+})();
+
+(function testStaffShowsOnlyPatientsRecordedWithin50Days() {
+  const context = createApiContext();
+  const visits = runVisits(
+    context,
+    '2025-02-13T10:00:00Z',
+    [
+      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001', staffMatchStrategy: 'email' },
+      { timestamp: new Date('2025-02-13T10:00:00Z'), dateKey: '2025-02-13', patientId: 'P002' },
+      { timestamp: new Date('2025-02-10T12:00:00Z'), dateKey: '2025-02-10', patientId: 'P003' }
+    ],
+    { P001: { name: '患者A' }, P002: { name: '患者B' }, P003: { name: '患者C' } },
+    { isAdmin: false }
+  );
+
+  assert.strictEqual(visits.length, 1, 'スタッフは過去50日以内に自分が記録した患者のみ表示する');
+  assert.strictEqual(visits[0].patientId, 'P001');
+})();
+
+(function testStaffShowsNoVisitsWhenOnlyOlderThan50Days() {
+  const context = createApiContext();
+  const visits = runVisits(
+    context,
+    '2025-02-13T10:00:00Z',
+    [
+      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
+      { timestamp: new Date('2024-12-20T09:00:00Z'), dateKey: '2024-12-20', patientId: 'P001', staffMatchStrategy: 'email' }
+    ],
+    { P001: { name: '患者A' } },
+    { isAdmin: false }
+  );
+
+  assert.strictEqual(visits.length, 0, '50日より前の記録のみなら表示しない');
+})();
+
+(function testStaffFilterKeepsTodayAndLatestPastDayLogic() {
+  const context = createApiContext();
+  const visits = runVisits(
+    context,
+    '2025-02-13T10:00:00Z',
+    [
+      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001', staffMatchStrategy: 'email' },
+      { timestamp: new Date('2025-02-10T12:00:00Z'), dateKey: '2025-02-10', patientId: 'P001', staffMatchStrategy: 'email' },
+      { timestamp: new Date('2025-02-07T12:00:00Z'), dateKey: '2025-02-07', patientId: 'P001', staffMatchStrategy: 'email' }
+    ],
+    { P001: { name: '患者A' } },
+    { isAdmin: false }
+  );
+
+  const keys = JSON.parse(JSON.stringify(visits.map(v => v.dateKey)));
+  assert.deepStrictEqual(keys, ['2025-02-10', '2025-02-13'], 'スタッフフィルタ適用後も今日+最新過去1日のロジックを維持する');
+})();
 
 (function testWeekendGapShowsFridayOnMonday() {
   const context = createApiContext();

@@ -3465,6 +3465,11 @@ function renderNewsList(list, options){
   if (!el){ if (done) done(); return; }
   const hasGlobalFlag = options && Object.prototype.hasOwnProperty.call(options, 'isGlobalRequest');
   const isGlobalRequest = hasGlobalFlag ? !!options.isGlobalRequest : !(options && options.patientId);
+  const patientId = options && options.patientId;
+  const currentPid = pid();
+  if (!isGlobalRequest && patientId !== currentPid) {
+    return;
+  }
   if (options && options.error) {
     _latestNewsList = [];
     window._latestNewsList = _latestNewsList;
@@ -3493,7 +3498,6 @@ function loadNews(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
   const opts = (next && typeof next === 'object' && next !== null) ? next : null;
   const done = typeof next === 'function' ? next : (opts && typeof opts.done === 'function' ? opts.done : null);
-  const requestToken = opts && opts.requestToken;
   const el = q('news');
   if (!el){ if (done) done(); return Promise.resolve([]); }
 
@@ -3512,6 +3516,7 @@ function loadNews(patientId, next){
       resolve(value);
     };
     const timeoutId = setTimeout(() => {
+      renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
       resolveOnce([]);
     }, NEWS_RENDER_TIMEOUT_MS);
 
@@ -3519,18 +3524,14 @@ function loadNews(patientId, next){
       .withSuccessHandler(list => {
         clearTimeout(timeoutId);
         if (settled) return;
-        if (isActivePatientInfoRequest(requestToken)) {
-          renderNewsList(list, { patientId: targetPid, isGlobalRequest, done });
-        }
+        renderNewsList(list, { patientId: targetPid, isGlobalRequest, done });
         resolveOnce(list || []);
       })
       .withFailureHandler(err => {
         clearTimeout(timeoutId);
         if (settled) return;
         console.error('[loadNews] failed', err);
-        if (isActivePatientInfoRequest(requestToken)) {
-          renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
-        }
+        renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
         resolveOnce([]);
       })
       .getNews(targetPid);

@@ -6984,50 +6984,6 @@ function getPatientHeader(pid){
   }, PATIENT_CACHE_TTL_SECONDS);
 }
 
-function getPatientBundle(pid, year, month){
-  const perf = (label, start) => {
-    try {
-      console.log('[perf] ' + label + ': ' + (Date.now() - start) + 'ms');
-    } catch (err) {}
-  };
-  const bundleStart = Date.now();
-  const normalized = normId_(pid);
-  if (!normalized) {
-    perf('getPatientBundle total', bundleStart);
-    return { header: null, news: [], treatments: [] };
-  }
-
-  const resolvedMonth = resolveYearMonthOrCurrent_(year, month);
-  const headerStart = Date.now();
-  const header = getPatientHeader(normalized);
-  perf('getPatientHeader', headerStart);
-
-
-  const newsStart = Date.now();
-  const news = (getNews(normalized) || []).map(item => Object.assign({}, item, {
-    htmlMessage: convertPlainTextToSafeHtml_(item && item.message ? item.message : '')
-  }));
-  perf('news 取得', newsStart);
-
-  const treatmentsStart = Date.now();
-  const treatments = listTreatmentsForMonth(normalized, resolvedMonth.year, resolvedMonth.month);
-  perf('treatments 取得', treatmentsStart);
-
-  const reportsStart = Date.now();
-  let reports = [];
-  try {
-    reports = cacheFetch_(PATIENT_CACHE_KEYS.reports(normalized), () => fetchReportHistoryForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
-  } catch (err) {
-    console.warn('[getPatientBundle] reports fetch skipped', err);
-    reports = [];
-  }
-  perf('reports 取得', reportsStart);
-
-  perf('getPatientBundle total', bundleStart);
-
-  return { header, news, treatments, reports };
-}
-
 /***** ID候補 *****/
 function listPatientIds(){
   const s=sh('患者情報'); const lr=s.getLastRow(); if(lr<2) return [];

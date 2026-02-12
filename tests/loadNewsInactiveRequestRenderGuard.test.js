@@ -12,13 +12,15 @@ const script = `${loadNewsMatch[0]}\nthis.loadNews = loadNews;`;
 async function runInactiveRequestCase() {
   const newsEl = { innerHTML: '' };
   let renderCalls = 0;
+  let renderedList = null;
   const context = {
     NEWS_RENDER_TIMEOUT_MS: 100,
     q: id => (id === 'news' ? newsEl : null),
     pid: () => 'P001',
     isActivePatientInfoRequest: () => false,
-    renderNewsList: () => {
+    renderNewsList: (list) => {
       renderCalls += 1;
+      renderedList = list;
     },
     google: {
       script: {
@@ -48,11 +50,12 @@ async function runInactiveRequestCase() {
 
   await context.loadNews('P001', { requestToken: 'stale-token' });
 
-  assert.strictEqual(renderCalls, 0, 'inactive request should not render news list');
+  assert.strictEqual(renderCalls, 1, 'news should render even for stale tokens');
+  assert.deepStrictEqual(renderedList, [{ title: 'new' }], 'success payload should be rendered');
 }
 
 runInactiveRequestCase().then(() => {
-  console.log('loadNews inactive request render guard test passed');
+  console.log('loadNews inactive request always-render test passed');
 }).catch(err => {
   console.error(err);
   process.exit(1);

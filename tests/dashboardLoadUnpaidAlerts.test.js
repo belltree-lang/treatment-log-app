@@ -102,6 +102,26 @@ function testPatientIdIsResolvedFromName() {
   assert.strictEqual(result.alerts[0].patientName, '山田太郎');
 }
 
+
+function testVisiblePatientIdsFiltersAlerts() {
+  const sheet = createSheet([
+    ['001', '2024-01-10', 10000, '確認中', '', '2024-02-05T00:00:00Z'],
+    ['001', '2023/12/01', 20000, '', '', '2024-01-10T00:00:00Z'],
+    ['001', '2023-11-01', 30000, '', '', '2023-12-05T00:00:00Z'],
+    ['002', '2024-01-10', 7000, '', '', '2024-02-05T00:00:00Z'],
+    ['002', '2023/12/01', 8000, '', '', '2024-01-10T00:00:00Z'],
+    ['002', '2023-11-01', 9000, '', '', '2023-12-05T00:00:00Z']
+  ]);
+  const ctx = createContext(sheet);
+  const result = ctx.loadUnpaidAlerts({
+    visiblePatientIds: new Set(['001']),
+    patientInfo: { patients: { '001': { name: '山田太郎' }, '002': { name: '佐藤花子' } }, warnings: [] }
+  });
+
+  assert.strictEqual(result.alerts.length, 1);
+  assert.strictEqual(result.alerts[0].patientId, '001');
+}
+
 function testMissingSheetProducesWarning() {
   const workbook = { getSheetByName: () => null };
   const context = createContext(null);
@@ -115,6 +135,7 @@ function testMissingSheetProducesWarning() {
 
 (function run() {
   testConsecutiveUnpaidAlertsAreCollected();
+  testVisiblePatientIdsFiltersAlerts();
   testMissingSheetProducesWarning();
   testPatientIdIsResolvedFromName();
   console.log('dashboardLoadUnpaidAlerts tests passed');

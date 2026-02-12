@@ -45,8 +45,12 @@ function getDashboardData(options) {
     user: opts.user || dashboardResolveUser_(),
     setupIncomplete: false
   };
-  const normalizedUser = dashboardNormalizeEmail_(meta.user || '');
-  logContext('getDashboardData:start', `user=${meta.user || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} mock=${opts.mock ? 'true' : 'false'}`);
+  const user = opts.user && typeof opts.user === 'object' ? opts.user : null;
+  const userIdentity = user && user.email ? user.email : meta.user;
+  meta.user = userIdentity || '';
+  const normalizedUser = dashboardNormalizeEmail_(userIdentity || '');
+  const isAdmin = Boolean(user && user.role === 'admin');
+  logContext('getDashboardData:start', `user=${userIdentity || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} isAdmin=${isAdmin ? 'true' : 'false'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
     const dashboardSpreadsheet = measureStep('dashboardGetSpreadsheet', () => {
@@ -57,7 +61,7 @@ function getDashboardData(options) {
     });
     const patientInfo = measureStep('loadPatientInfo', () => (opts.patientInfo || (typeof loadPatientInfo === 'function' ? loadPatientInfo({ dashboardSpreadsheet }) : { patients: {}, nameToId: {}, warnings: [] })));
     logContext('getDashboardData:loadPatientInfo', `patients=${Object.keys(patientInfo && patientInfo.patients ? patientInfo.patients : {}).length} warnings=${(patientInfo && patientInfo.warnings ? patientInfo.warnings.length : 0)} setupIncomplete=${!!(patientInfo && patientInfo.setupIncomplete)}`);
-    const notes = measureStep('loadNotes', () => (opts.notes || (typeof loadNotes === 'function' ? loadNotes({ email: meta.user, dashboardSpreadsheet }) : { notes: {}, warnings: [] })));
+    const notes = measureStep('loadNotes', () => (opts.notes || (typeof loadNotes === 'function' ? loadNotes({ email: userIdentity, dashboardSpreadsheet }) : { notes: {}, warnings: [] })));
     logContext('getDashboardData:loadNotes', `notes=${Object.keys(notes && notes.notes ? notes.notes : {}).length} warnings=${(notes && notes.warnings ? notes.warnings.length : 0)} setupIncomplete=${!!(notes && notes.setupIncomplete)}`);
     const aiReports = measureStep('loadAIReports', () => (opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports({ dashboardSpreadsheet }) : { reports: {}, warnings: [] })));
     logContext('getDashboardData:loadAIReports', `reports=${Object.keys(aiReports && aiReports.reports ? aiReports.reports : {}).length} warnings=${(aiReports && aiReports.warnings ? aiReports.warnings.length : 0)} setupIncomplete=${!!(aiReports && aiReports.setupIncomplete)}`);
@@ -70,8 +74,8 @@ function getDashboardData(options) {
       : { logs: [], warnings: [] })));
     const totalTreatmentLogs = treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0;
     logContext('getDashboardData:loadTreatmentLogs', `logs=${totalTreatmentLogs} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
-    const normalizedUserName = dashboardNormalizeStaffKey_(meta.user || '');
-    const normalizedUserId = dashboardNormalizeStaffKey_(meta.user || '');
+    const normalizedUserName = dashboardNormalizeStaffKey_(userIdentity || '');
+    const normalizedUserId = dashboardNormalizeStaffKey_(userIdentity || '');
     const staffMatchResult = measureStep('staffMatch処理', () => {
       const staffMatchedLogs = [];
       const matchStats = { email: 0, name: 0, staffId: 0, none: 0 };
@@ -136,8 +140,22 @@ function getDashboardData(options) {
       ? assignResponsibleStaff({ patientInfo, treatmentLogs, now: opts.now, cache: opts.cache, dashboardSpreadsheet })
       : { responsible: {}, warnings: [] })));
     logContext('getDashboardData:assignResponsible', `responsible=${Object.keys(responsible && responsible.responsible ? responsible.responsible : {}).length} warnings=${(responsible && responsible.warnings ? responsible.warnings.length : 0)} setupIncomplete=${!!(responsible && responsible.setupIncomplete)}`);
+
+    const now = dashboardCoerceDate_(opts.now) || new Date();
+    const fiftyDaysAgo = new Date(now.getTime() - 50 * 24 * 60 * 60 * 1000);
+    const responsiblePatientIds = new Set();
+    staffMatchedLogs.forEach(entry => {
+      if (!entry || !entry.timestamp) return;
+      const timestamp = dashboardCoerceDate_(entry.timestamp);
+      if (!timestamp || timestamp.getTime() < fiftyDaysAgo.getTime()) return;
+      const patientId = dashboardNormalizePatientId_(entry.patientId);
+      if (!patientId) return;
+      responsiblePatientIds.add(patientId);
+    });
+    const visiblePatientIds = isAdmin ? null : responsiblePatientIds;
+
     const unpaidAlertsResult = measureStep('loadUnpaidAlerts', () => (opts.unpaidAlerts || (typeof loadUnpaidAlerts === 'function'
-      ? loadUnpaidAlerts({ patientInfo, now: opts.now, cache: opts.cache, dashboardSpreadsheet })
+      ? loadUnpaidAlerts({ patientInfo, now: opts.now, cache: opts.cache, dashboardSpreadsheet, visiblePatientIds })
       : { alerts: [], warnings: [] })));
     logContext('getDashboardData:loadUnpaidAlerts', `alerts=${(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts.length : 0)} warnings=${(unpaidAlertsResult && unpaidAlertsResult.warnings ? unpaidAlertsResult.warnings.length : 0)} setupIncomplete=${!!(unpaidAlertsResult && unpaidAlertsResult.setupIncomplete)}`);
 
@@ -146,6 +164,7 @@ function getDashboardData(options) {
       notes,
       aiReports,
       invoiceConfirmations: opts.invoiceConfirmations,
+      visiblePatientIds,
       now: opts.now
     }) : { tasks: [], warnings: [] })));
     logContext('getDashboardData:getTasks', `tasks=${(tasksResult && tasksResult.tasks ? tasksResult.tasks.length : 0)} warnings=${(tasksResult && tasksResult.warnings ? tasksResult.warnings.length : 0)} setupIncomplete=${!!(tasksResult && tasksResult.setupIncomplete)}`);
@@ -154,20 +173,10 @@ function getDashboardData(options) {
       treatmentLogs,
       patientInfo,
       notes,
+      visiblePatientIds,
       now: opts.now
     }) : { visits: [], warnings: [] })));
     logContext('getDashboardData:getTodayVisits', `visits=${(visitsResult && visitsResult.visits ? visitsResult.visits.length : 0)} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
-
-    const displayTargets = measureStep('resolveDashboardDisplayTargets', () => resolveDashboardDisplayTargets_({
-      patientInfo,
-      treatmentLogs,
-      now: opts.now
-    }));
-    logContext('getDashboardData:displayTargets', `allowedPatientIds=${displayTargets && displayTargets.patientIds ? displayTargets.patientIds.size : 0}`);
-    const filteredTasks = filterDashboardItemsByPatientId_(tasksResult && tasksResult.tasks ? tasksResult.tasks : [], displayTargets.patientIds);
-    const filteredVisits = filterDashboardItemsByPatientId_(visitsResult && visitsResult.visits ? visitsResult.visits : [], displayTargets.patientIds);
-    const filteredAlerts = filterDashboardItemsByPatientId_(unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [], displayTargets.patientIds);
-    const filteredTreatmentLogs = filterDashboardItemsByPatientId_(treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : [], displayTargets.patientIds);
 
     const patients = measureStep('buildPatients', () => buildDashboardPatients_(patientInfo, {
       notes,
@@ -175,7 +184,7 @@ function getDashboardData(options) {
       invoices,
       responsible,
       treatmentLogs
-    }, displayTargets.patientIds));
+    }, visiblePatientIds));
     logContext('getDashboardData:buildPatients', `patients=${patients.length}`);
 
     const warningState = collectDashboardWarnings_([
@@ -194,25 +203,24 @@ function getDashboardData(options) {
     logContext('getDashboardData:setupIncomplete', `result=${meta.setupIncomplete} warnings=${warningState.warnings.length}`);
 
     const overview = buildDashboardOverview_({
-      tasks: filteredTasks,
-      visits: filteredVisits,
+      tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
+      visits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
       patients,
       patientInfo,
       treatmentLogs,
       invoices,
       notes,
-      user: meta.user,
+      user: userIdentity,
       now: opts.now,
-      allowedPatientIds: displayTargets.patientIds
+      allowedPatientIds: visiblePatientIds
     });
     const invoiceUnconfirmed = overview && overview.invoiceUnconfirmed ? overview.invoiceUnconfirmed : { count: 0, items: [] };
     logContext('getDashboardData:overviewInvoiceUnconfirmed', `count=${Number(invoiceUnconfirmed.count) || 0} items.length=${Array.isArray(invoiceUnconfirmed.items) ? invoiceUnconfirmed.items.length : 0}`);
-
     return {
-      tasks: filteredTasks,
-      todayVisits: filteredVisits,
+      tasks: tasksResult && tasksResult.tasks ? tasksResult.tasks : [],
+      todayVisits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
       patients,
-      unpaidAlerts: filteredAlerts,
+      unpaidAlerts: unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [],
       warnings: warningState.warnings,
       overview,
       meta
@@ -237,7 +245,6 @@ function getDashboardData(options) {
       'loadUnpaidAlerts',
       'getTasks',
       'getTodayVisits',
-      'resolveDashboardDisplayTargets',
       'buildPatients'
     ];
     const perfMap = {};
@@ -334,7 +341,7 @@ function buildDashboardOverview_(params) {
   const now = dashboardCoerceDate_(payload.now) || new Date();
   const tz = dashboardResolveTimeZone_();
   const user = payload.user || '';
-  const allowedPatientIds = payload.allowedPatientIds instanceof Set ? payload.allowedPatientIds : null;
+  const allowedPatientIds = payload.allowedPatientIds && typeof payload.allowedPatientIds.has === 'function' ? payload.allowedPatientIds : null;
   const scope = { patientIds: allowedPatientIds, applyFilter: !!allowedPatientIds };
   const invoiceScope = { patientIds: null, applyFilter: false };
 
@@ -702,7 +709,7 @@ function resolveDashboardDisplayTargets_(params) {
 
 function filterDashboardItemsByPatientId_(items, allowedPatientIds) {
   if (!Array.isArray(items)) return [];
-  if (!allowedPatientIds || !(allowedPatientIds instanceof Set)) return items.slice();
+  if (!allowedPatientIds || typeof allowedPatientIds.has !== 'function') return items.slice();
   return items.filter(item => {
     const pid = dashboardNormalizePatientId_(item && item.patientId);
     return pid && allowedPatientIds.has(pid);

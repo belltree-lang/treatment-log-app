@@ -353,6 +353,125 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
   assert.strictEqual(result.overview.invoiceUnconfirmed.count, 0, '医療助成患者は請求未確認対象から除外する');
 }
 
+
+function testVisibleScopeForAdminShowsAllPatients() {
+  const ctx = createContext({
+    getTasks: opts => ({
+      tasks: ['001', '002']
+        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
+        .map(pid => ({ patientId: pid, type: 'consentWarning' })),
+      warnings: []
+    }),
+    getTodayVisits: opts => ({
+      visits: ['001', '002']
+        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
+        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' })),
+      warnings: []
+    }),
+    loadUnpaidAlerts: opts => ({
+      alerts: ['001', '002']
+        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
+        .map(pid => ({ patientId: pid, patientName: `患者${pid}` })),
+      warnings: []
+    })
+  });
+
+  const result = ctx.getDashboardData({
+    user: { email: 'staff@example.com', role: 'admin' },
+    now: new Date('2025-02-13T00:00:00Z'),
+    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-02-10T00:00:00Z'), createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] }
+  });
+
+  assert.strictEqual(result.patients.length, 2, '管理者は全患者表示する');
+  assert.strictEqual(result.tasks.length, 2, '管理者はタスク全件表示する');
+  assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
+  assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
+}
+
+function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
+  const ctx = createContext({
+    getTasks: opts => ({
+      tasks: ['001', '002']
+        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
+        .map(pid => ({ patientId: pid, type: 'consentWarning' })),
+      warnings: []
+    }),
+    getTodayVisits: opts => ({
+      visits: ['001', '002']
+        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
+        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' })),
+      warnings: []
+    }),
+    loadUnpaidAlerts: opts => ({
+      alerts: ['001', '002']
+        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
+        .map(pid => ({ patientId: pid, patientName: `患者${pid}` })),
+      warnings: []
+    })
+  });
+
+  const result = ctx.getDashboardData({
+    user: { email: 'staff@example.com', role: 'staff' },
+    now: new Date('2025-02-13T00:00:00Z'),
+    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-02-10T00:00:00Z'), createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-02-10T00:00:00Z'), createdByEmail: 'other@example.com', staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] }
+  });
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは50日以内に記録した患者のみ表示する');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), ['001']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
+}
+
+function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {
+  const ctx = createContext({
+    getTasks: opts => ({ tasks: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001' }] : [], warnings: [] }),
+    getTodayVisits: opts => ({ visits: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001', dateKey: '2025-02-10', time: '09:00' }] : [], warnings: [] }),
+    loadUnpaidAlerts: opts => ({ alerts: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001', patientName: '患者A' }] : [], warnings: [] })
+  });
+
+  const result = ctx.getDashboardData({
+    user: { email: 'staff@example.com', role: 'staff' },
+    now: new Date('2025-02-13T00:00:00Z'),
+    patientInfo: { patients: { '001': { name: '患者A' } }, warnings: [] },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2024-11-20T00:00:00Z'), createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] }
+  });
+
+  assert.strictEqual(result.patients.length, 0, '50日より前のみなら患者表示0件');
+  assert.strictEqual(result.tasks.length, 0);
+  assert.strictEqual(result.todayVisits.length, 0);
+  assert.strictEqual(result.unpaidAlerts.length, 0);
+}
+
 function testErrorIsCapturedInMeta() {
   const ctx = createContext({
     loadPatientInfo: () => { throw new Error('boom'); }
@@ -436,6 +555,9 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();
   testInvoiceUnconfirmedExcludesMedicalAssistancePatient();
+  testVisibleScopeForAdminShowsAllPatients();
+  testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly();
+  testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients();
   testErrorIsCapturedInMeta();
   testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged();
   testWarningsAreDedupedAndSetupFlagged();

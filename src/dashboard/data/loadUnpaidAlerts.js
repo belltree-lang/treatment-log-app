@@ -4,6 +4,7 @@
  * @param {Object} [options.patientInfo]
  * @param {number} [options.consecutiveMonths]
  * @param {Date} [options.now]
+ * @param {Set<string>} [options.visiblePatientIds]
  * @return {{alerts: Object[], warnings: string[], setupIncomplete: boolean}}
  */
 function loadUnpaidAlerts(options) {
@@ -37,7 +38,7 @@ function loadUnpaidAlertsUncached_(options) {
   if (patientInfo && Array.isArray(patientInfo.warnings)) warnings.push.apply(warnings, patientInfo.warnings);
   if (history && Array.isArray(history.warnings)) warnings.push.apply(warnings, history.warnings);
 
-  const alerts = buildUnpaidAlerts_(history.entries, patients, threshold, tz);
+  const alerts = buildUnpaidAlerts_(history.entries, patients, threshold, tz, opts.visiblePatientIds);
 
   logContext('loadUnpaidAlerts:done', `alerts=${alerts.length} warnings=${warnings.length} setupIncomplete=${!!(patientInfo && patientInfo.setupIncomplete) || !!(history && history.setupIncomplete)} threshold=${threshold}`);
   return {
@@ -130,11 +131,12 @@ function readUnpaidHistory_(options) {
   return { entries, warnings, setupIncomplete };
 }
 
-function buildUnpaidAlerts_(entries, patients, threshold, tz) {
+function buildUnpaidAlerts_(entries, patients, threshold, tz, visiblePatientIds) {
   const grouped = {};
   (entries || []).forEach(entry => {
     const pid = dashboardNormalizePatientId_(entry && entry.patientId);
     if (!pid || !entry || !entry.monthKey) return;
+    if (visiblePatientIds && !visiblePatientIds.has(pid)) return;
     if (!grouped[pid]) {
       grouped[pid] = { totals: {}, records: {} };
     }

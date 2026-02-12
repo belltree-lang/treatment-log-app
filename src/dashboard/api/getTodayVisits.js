@@ -11,6 +11,8 @@ function getTodayVisits(options) {
   const opts = options || {};
   const tz = dashboardResolveTimeZone_();
   const now = dashboardCoerceDate_(opts.now) || new Date();
+  const fiftyDaysAgo = new Date(now.getTime() - 50 * 24 * 60 * 60 * 1000);
+  const isAdmin = opts.isAdmin !== false;
   const todayKey = dashboardFormatDate_(now, tz, 'yyyy-MM-dd');
 
   const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs() : null);
@@ -31,6 +33,7 @@ function getTodayVisits(options) {
   }
 
   const normalizedVisits = [];
+  const responsiblePatientIds = new Set();
   logs.forEach(entry => {
     if (!entry || !entry.timestamp) return;
     const ts = dashboardCoerceDate_(entry.timestamp);
@@ -45,6 +48,10 @@ function getTodayVisits(options) {
     const time = dashboardFormatDate_(ts, tz, 'HH:mm');
     const noteStatus = resolveHandoverStatus_(dateKey, patientId, notes, tz);
 
+    if (ts.getTime() >= fiftyDaysAgo.getTime() && entry.staffMatchStrategy && entry.staffMatchStrategy !== 'none' && patientId) {
+      responsiblePatientIds.add(patientId);
+    }
+
     normalizedVisits.push({ patientId, patientName, time, dateKey, noteStatus });
   });
 
@@ -53,7 +60,11 @@ function getTodayVisits(options) {
     .map(visit => visit.dateKey)
     .sort((a, b) => b.localeCompare(a))[0] || '';
 
-  const visits = normalizedVisits.filter(visit => visit.dateKey === todayKey || (latestPastDate && visit.dateKey === latestPastDate));
+  let visits = normalizedVisits.filter(visit => visit.dateKey === todayKey || (latestPastDate && visit.dateKey === latestPastDate));
+
+  if (!isAdmin) {
+    visits = visits.filter(v => responsiblePatientIds.has(v.patientId));
+  }
 
   visits.sort((a, b) => {
     if (a.dateKey === b.dateKey) return a.time.localeCompare(b.time);

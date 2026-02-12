@@ -10465,6 +10465,8 @@ function updateTreatmentTimestamp(row, newLocal){
 
   // 書き換え
   s.getRange(row, 1).setValue(d);
+  const newMonthKey = buildMonthKeyFromDate_(d);
+  s.getRange(row, 13).setValue(newMonthKey);
 
   // 監査ログ
   const toDisp = (v)=> v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd HH:mm') : String(v||'');
@@ -10480,6 +10482,13 @@ function updateTreatmentTimestamp(row, newLocal){
   invalidateTreatmentsCacheForDate_(pid, d);
   return true;
 }
+
+function buildMonthKeyFromDate_(date){
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  return date.getFullYear() +
+    String(date.getMonth() + 1).padStart(2, '0');
+}
+
 /** 文字列→Date（datetime-localや各種区切りに耐性） */
 function parseDateTimeFlexible_(input, tz){
   if (input instanceof Date && !isNaN(input.getTime())) return input;
@@ -10621,6 +10630,7 @@ function submitTreatment(payload) {
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
     const nowDate = new Date();
     const now = Utilities.formatDate(nowDate, tz, 'yyyy-MM-dd HH:mm:ss');
+    const monthKey = buildMonthKeyFromDate_(nowDate);
     markTiming('context');
 
     const note = String(payload?.notesParts?.note || '').trim();
@@ -10786,6 +10796,8 @@ function submitTreatment(payload) {
       ''
     ];
     s.appendRow(row);
+    const appendedRowNumber = s.getLastRow();
+    s.getRange(appendedRowNumber, 13).setValue(monthKey);
     markTiming('appendRow');
 
     const job = { treatmentId, treatmentTimestamp: now };

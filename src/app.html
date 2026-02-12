@@ -3035,6 +3035,32 @@ function scheduleRefresh(delayMs){
   }, ms);
 }
 
+function refreshTreatmentListOnly(patientId, options){
+  const opts = options || {};
+  const done = typeof opts.done === 'function' ? opts.done : null;
+  const targetPid = patientId || pid();
+  if (!targetPid){
+    if (done) done();
+    return;
+  }
+  const month = getTreatmentViewMonthPayload();
+  google.script.run
+    .withSuccessHandler(rows => {
+      renderThisMonthList(rows, { patientId: targetPid, done });
+    })
+    .withFailureHandler(err => {
+      console.error('[refreshTreatmentListOnly] failed', err);
+      const msg = err && err.message ? err.message : String(err || '不明なエラー');
+      renderThisMonthList([], {
+        patientId: targetPid,
+        error: true,
+        errorMessage: `施術一覧の取得に失敗しました：${escapeHtml(msg)}`,
+        done
+      });
+    })
+    .listTreatmentsForMonth(targetPid, month.year, month.month);
+}
+
 function save(ev){
   let endTiming = () => {};
   const finalizeSave = () => {
@@ -3147,8 +3173,7 @@ function save(ev){
             resetFlags();
             setv('obs','');
             q('preset').selectedIndex = 0;
-            refresh();
-            scheduleRefresh(700);
+            refreshTreatmentListOnly(p);
           }
         } finally {
           finalizeSave();

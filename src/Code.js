@@ -10489,6 +10489,33 @@ function buildMonthKeyFromDate_(date){
     String(date.getMonth() + 1).padStart(2, '0');
 }
 
+function backfillMonthKey_(limit){
+  const s = sh('施術録');
+  const lastRow = s.getLastRow();
+  if (lastRow <= 1) return { updated: 0 };
+
+  const values = s.getRange(2, 1, lastRow - 1, 13).getValues();
+  let updated = 0;
+  const maxUpdates = Number(limit);
+  const hasLimit = Number.isFinite(maxUpdates) && maxUpdates > 0;
+
+  for (let i = 0; i < values.length; i++) {
+    const timestamp = values[i][0];
+    const monthKey = values[i][12];
+
+    if (!monthKey && timestamp instanceof Date) {
+      const mk = buildMonthKeyFromDate_(timestamp);
+      if (!mk) continue;
+
+      s.getRange(i + 2, 13).setValue(mk);
+      updated++;
+      if (hasLimit && updated >= maxUpdates) break;
+    }
+  }
+
+  return { updated };
+}
+
 /** 文字列→Date（datetime-localや各種区切りに耐性） */
 function parseDateTimeFlexible_(input, tz){
   if (input instanceof Date && !isNaN(input.getTime())) return input;

@@ -142,6 +142,7 @@ const PATIENT_CACHE_KEYS = {
   treatments: pid => 'patient:treatments:' + normId_(pid),
   reports: pid => 'patient:reports:' + normId_(pid),
   latestTreatmentRow: pid => 'patient:latestTreatRow:' + normId_(pid),
+  treatmentStats: pid => 'patient:treatmentStats:' + normId_(pid),
 };
 const GLOBAL_NEWS_CACHE_KEY = 'patient:news:__global__';
 const DOCTOR_REPORT_HANDOVER_WINDOW_DAYS = 30;
@@ -660,6 +661,7 @@ function collectPatientCacheKeys_(pid, scope){
   if (applyAll || scope.treatments) keys.push(PATIENT_CACHE_KEYS.treatments(normalized));
   if (applyAll || scope.reports) keys.push(PATIENT_CACHE_KEYS.reports(normalized));
   if (applyAll || scope.latestTreatmentRow) keys.push(PATIENT_CACHE_KEYS.latestTreatmentRow(normalized));
+  if (applyAll || scope.header || scope.treatments || scope.latestTreatmentRow) keys.push(PATIENT_CACHE_KEYS.treatmentStats(normalized));
   return keys;
 }
 
@@ -6815,46 +6817,69 @@ function calcConsentExpiry_(consentVal) {
 
 /***** 月次・直近 *****/
 function getMonthlySummary_(pid) {
-  const s = sh('施術録'); const lr = s.getLastRow();
-  if (lr < 2) return { current:{count:0,est:0}, previous:{count:0,est:0} };
-  const vals = s.getRange(2,1,lr-1,6).getValues();
+  const stats = getTreatmentPatientStats_(pid);
   const now = new Date();
   const first=(y,m)=>new Date(y,m,1);
   const last=(y,m)=>new Date(y,m+1,0,23,59,59);
   const y=now.getFullYear(), m=now.getMonth();
   const curS=first(y,m), curE=last(y,m);
   const prevS=first(y,m-1), prevE=last(y,m-1);
-  let c=0,p=0;
-  vals.forEach(r=>{
-    const ts=r[0], id=String(r[1]);
-    if (id!==String(pid)) return;
-    const d = ts instanceof Date ? ts : new Date(ts);
-    if (isNaN(d.getTime())) return;
-    if (d>=curS && d<=curE) c++; else if (d>=prevS && d<=prevE) p++;
+
+  const tCurrent = Date.now();
+  let c=0;
+  stats.treatments.forEach(d=>{
+    if (d>=curS && d<=curE) c++;
   });
+  console.log('[perf] monthly.current 集計: ' + (Date.now() - tCurrent) + 'ms');
+
+  const tPrevious = Date.now();
+  let p=0;
+  stats.treatments.forEach(d=>{
+    if (d>=prevS && d<=prevE) p++;
+  });
+  console.log('[perf] monthly.previous 集計: ' + (Date.now() - tPrevious) + 'ms');
+
   const unit = APP.BASE_FEE_YEN || 4170;
   return { current:{count:c, est: Math.round(c*unit*0.1)}, previous:{count:p, est: Math.round(p*unit*0.1)} };
 }
-function getRecentActivity_(pid) {
-  const s=sh('施術録'); const lr=s.getLastRow();
+function getRecentActivity_(pid, options) {
+  const opts = options || {};
+  const stats = getTreatmentPatientStats_(pid);
   let lastTreat='';
-  if (lr>=2) {
-    const v=s.getRange(2,1,lr-1,6).getValues().filter(r=> String(r[1])===String(pid));
-    if (v.length) {
-      const d=v[v.length-1][0];
-      const dd = d instanceof Date ? d : new Date(d);
-      if (!isNaN(dd.getTime())) lastTreat = Utilities.formatDate(dd, Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
-    }
+  if (stats.lastTreatDate) {
+    lastTreat = Utilities.formatDate(stats.lastTreatDate, Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
   }
-  const sp=sh('患者情報'); const lc=sp.getLastColumn();
-  const head=sp.getRange(1,1,1,lc).getDisplayValues()[0];
-  const cRec = getColFlexible_(head, LABELS.recNo,  PATIENT_COLS_FIXED.recNo,  '施術録番号');
-  const cCons= getColFlexible_(head, LABELS.consent,PATIENT_COLS_FIXED.consent,'同意年月日');
-  let lastConsent='';
-  const vals=sp.getRange(2,1,sp.getLastRow()-1,lc).getDisplayValues();
-  const row=vals.find(r=> String(r[cRec-1])===String(pid));
-  lastConsent = row ? (row[cCons-1]||'') : '';
+  const lastConsent = opts.lastConsent || '';
   return { lastTreat, lastConsent, lastStaff: '' };
+}
+
+function getTreatmentPatientStats_(pid){
+  const normalized = normId_(pid);
+  if (!normalized) return { treatments: [], lastTreatDate: null };
+  const cacheKey = PATIENT_CACHE_KEYS.treatmentStats(normalized);
+  return cacheFetch_(cacheKey, () => {
+    const s = sh('施術録');
+    const lr = s.getLastRow();
+    if (lr < 2) return { treatments: [], lastTreatDate: null };
+    const vals = s.getRange(2,1,lr-1,2).getValues();
+    const treatments = [];
+    let lastTreatTs = -Infinity;
+    vals.forEach(r => {
+      const id = normId_(r[1]);
+      if (id !== normalized) return;
+      const d = r[0] instanceof Date ? r[0] : new Date(r[0]);
+      const ts = d instanceof Date ? d.getTime() : NaN;
+      if (!Number.isFinite(ts)) return;
+      treatments.push(d);
+      if (ts > lastTreatTs) {
+        lastTreatTs = ts;
+      }
+    });
+    return {
+      treatments,
+      lastTreatDate: Number.isFinite(lastTreatTs) ? new Date(lastTreatTs) : null
+    };
+  }, PATIENT_CACHE_TTL_SECONDS);
 }
 
 /***** 患者ヘッダ（画面表示用） *****/
@@ -6905,7 +6930,9 @@ function getPatientHeader(pid){
     const shareDisp = shareNorm ? toBurdenDisp_(shareNorm) : shareRaw;
 
     const monthly = getMonthlySummary_(pid);
-    const recent  = getRecentActivity_(pid);
+    const tRecent = Date.now();
+    const recent  = getRecentActivity_(pid, { lastConsent: consent || '' });
+    console.log('[perf] recent 計算: ' + (Date.now() - tRecent) + 'ms');
     const stat    = getStatus_(pid);
 
     const header = {
@@ -6938,19 +6965,47 @@ function getPatientHeader(pid){
 }
 
 function getPatientBundle(pid, year, month){
+  const perf = (label, start) => {
+    try {
+      console.log('[perf] ' + label + ': ' + (Date.now() - start) + 'ms');
+    } catch (err) {}
+  };
+  const bundleStart = Date.now();
   const normalized = normId_(pid);
   if (!normalized) {
+    perf('getPatientBundle total', bundleStart);
     return { header: null, news: [], treatments: [] };
   }
 
   const resolvedMonth = resolveYearMonthOrCurrent_(year, month);
+  const headerStart = Date.now();
   const header = getPatientHeader(normalized);
+  perf('getPatientHeader', headerStart);
+
+
+  const newsStart = Date.now();
   const news = (getNews(normalized) || []).map(item => Object.assign({}, item, {
     htmlMessage: convertPlainTextToSafeHtml_(item && item.message ? item.message : '')
   }));
-  const treatments = listTreatmentsForMonth(normalized, resolvedMonth.year, resolvedMonth.month);
+  perf('news 取得', newsStart);
 
-  return { header, news, treatments };
+  const treatmentsStart = Date.now();
+  const treatments = listTreatmentsForMonth(normalized, resolvedMonth.year, resolvedMonth.month);
+  perf('treatments 取得', treatmentsStart);
+
+  const reportsStart = Date.now();
+  let reports = [];
+  try {
+    reports = cacheFetch_(PATIENT_CACHE_KEYS.reports(normalized), () => fetchReportHistoryForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
+  } catch (err) {
+    console.warn('[getPatientBundle] reports fetch skipped', err);
+    reports = [];
+  }
+  perf('reports 取得', reportsStart);
+
+  perf('getPatientBundle total', bundleStart);
+
+  return { header, news, treatments, reports };
 }
 
 /***** ID候補 *****/

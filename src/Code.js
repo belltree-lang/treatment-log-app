@@ -6830,23 +6830,6 @@ function calcConsentExpiry_(consentVal) {
 }
 
 /***** 月次・直近 *****/
-function getMonthlySummary_(pid) {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth() + 1;
-
-  const tCurrent = Date.now();
-  const c = listTreatmentsForMonth(pid, y, m).length;
-  console.log('[perf] monthly.current 集計: ' + (Date.now() - tCurrent) + 'ms');
-
-  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const tPrevious = Date.now();
-  const p = listTreatmentsForMonth(pid, prevDate.getFullYear(), prevDate.getMonth() + 1).length;
-  console.log('[perf] monthly.previous 集計: ' + (Date.now() - tPrevious) + 'ms');
-
-  const unit = APP.BASE_FEE_YEN || 4170;
-  return { current:{count:c, est: Math.round(c*unit*0.1)}, previous:{count:p, est: Math.round(p*unit*0.1)} };
-}
 function getRecentActivity_(pid, options) {
   const opts = options || {};
   let lastTreat='';
@@ -6941,8 +6924,29 @@ function getPatientHeader(pid){
     const shareNorm = normalizeBurdenRatio_(shareRaw);
     const shareDisp = shareNorm ? toBurdenDisp_(shareNorm) : shareRaw;
 
+    const monthContext = resolveYearMonthOrCurrent_();
+    const previousMonthContext = resolveYearMonthOrCurrent_(monthContext.year, monthContext.month - 1);
+    const unit = APP.BASE_FEE_YEN || 4170;
+
+    const tCurrent = Date.now();
+    const currentTreatments = listTreatmentsForMonth(normalized, monthContext.year, monthContext.month);
+    console.log('[perf] monthly.current 集計: ' + (Date.now() - tCurrent) + 'ms');
+
+    const tPrevious = Date.now();
+    const previousTreatments = listTreatmentsForMonth(normalized, previousMonthContext.year, previousMonthContext.month);
+    console.log('[perf] monthly.previous 集計: ' + (Date.now() - tPrevious) + 'ms');
+
     const monthlyStart = Date.now();
-    const monthly = getMonthlySummary_(pid);
+    const monthly = {
+      current: {
+        count: currentTreatments.length,
+        est: Math.round(currentTreatments.length * unit * 0.1)
+      },
+      previous: {
+        count: previousTreatments.length,
+        est: Math.round(previousTreatments.length * unit * 0.1)
+      }
+    };
     console.log('[perf][getPatientHeader] monthly summary: ' + (Date.now() - monthlyStart) + 'ms');
     const tRecent = Date.now();
     const recent  = getRecentActivity_(pid, { lastConsent: consent || '' });

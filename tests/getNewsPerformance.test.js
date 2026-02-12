@@ -115,7 +115,7 @@ function createNewsSheet(rows) {
   assert.ok(sheet.calls.slice(1).every(call => call.col === 1 && call.numCols === 7), '一致行は必要列のみ取得する');
 
   assert.ok(logs.some(line => line.includes('[perf][getNews] pid=P001 totalRows=270 matchedRows=230')));
-  assert.ok(cacheWrites.some(write => write.key === 'patient:news:P001' && write.ttl === 60), 'patientキーでTTL60秒キャッシュする');
+  assert.ok(cacheWrites.some(write => write.key === 'patient:news:P001' && write.ttl === 180), 'patientキーでTTL180秒キャッシュする');
 })();
 
 console.log('getNews performance tests passed');

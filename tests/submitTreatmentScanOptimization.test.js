@@ -67,15 +67,15 @@ function createSheet(rows) {
       '202603'
     ]);
   }
-  rows[31] = [new Date('2026-03-15T11:59:30+09:00'), 'P001', '重複ノート', '', '', '', 'tid-target', '', '', '', '', '', '202603'];
+  rows[111] = [new Date('2026-03-15T11:59:30+09:00'), 'P001', '重複ノート', '', '', '', 'tid-target', '', '', '', '', '', '202603'];
 
   const sheet = createSheet(rows);
   const result = sandbox.detectRecentDuplicateTreatment_(sheet, 'P001', '重複ノート', base, 'Asia/Tokyo', '', '202603');
 
   assert.ok(result);
   assert.strictEqual(result.reason, 'recentContent');
-  assert.strictEqual(sheet.calls[0].numRows, 100);
-  assert.ok(logs.some(line => line.includes('[perf][submitTreatment] optimizedDuplicate rows=100')));
+  assert.strictEqual(sheet.calls[0].numRows, 30);
+  assert.ok(logs.some(line => line.includes('[perf][submitTreatment] optimizedDuplicate rows=30')));
 })();
 
 (function testFindExistingTreatmentOnDateUsesMonthKeyFilter() {
@@ -93,14 +93,15 @@ function createSheet(rows) {
     ]);
   }
   rows[80] = [new Date('2026-03-20T09:30:00+09:00'), 'P001', '他月', '', '', '', 'tid-wrong-month', '', '', '', '', '', '202602'];
-  rows[90] = [new Date('2026-03-20T10:30:00+09:00'), 'P001', '同日', '', '', '', 'tid-right', '', '', '', '', '', '202603'];
+  rows[130] = [new Date('2026-03-20T10:30:00+09:00'), 'P001', '同日', '', '', '', 'tid-right', '', '', '', '', '', '202603'];
 
   const sheet = createSheet(rows);
   const result = sandbox.findExistingTreatmentOnDate_(sheet, 'P001', base, 'Asia/Tokyo', '', '202603');
 
   assert.ok(result);
   assert.strictEqual(result.treatmentId, 'tid-right');
-  assert.strictEqual(sheet.calls[0].numRows, 100);
+  assert.strictEqual(sheet.calls[0].numRows, 30);
+  assert.ok(logs.some(line => line.includes('[perf][submitTreatment] optimizedDuplicate rows=30')));
 })();
 
 console.log('submit treatment scan optimization tests passed');

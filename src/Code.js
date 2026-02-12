@@ -11105,7 +11105,7 @@ function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTr
   const lr = sheet.getLastRow();
   if (lr < 2) return null;
 
-  const rowsToScan = Math.min(lr - 1, 100);
+  const rowsToScan = Math.min(lr - 1, 30);
   const startRow = Math.max(2, lr - rowsToScan + 1);
   const width = 13;
   console.log('[perf][submitTreatment] optimizedDuplicate rows=' + rowsToScan + ' startRow=' + startRow + ' lastRow=' + lr);
@@ -11162,9 +11162,9 @@ function findExistingTreatmentOnDate_(sheet, pid, targetDate, tz, ignoreTreatmen
 
   const maxCols = typeof sheet.getMaxColumns === 'function' ? sheet.getMaxColumns() : 13;
   const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
-  const rowsToScan = Math.min(lr - 1, 100);
+  const rowsToScan = Math.min(lr - 1, 30);
   const startRow = Math.max(2, lr - rowsToScan + 1);
-  console.log('[perf][submitTreatment] sameDayScan rows=' + rowsToScan + ' startRow=' + startRow + ' lastRow=' + lr);
+  console.log('[perf][submitTreatment] optimizedDuplicate rows=' + rowsToScan + ' scan=sameDay startRow=' + startRow + ' lastRow=' + lr);
   const values = sheet.getRange(startRow, 1, rowsToScan, width).getValues();
 
   const targetDateStr = Utilities.formatDate(targetDate, tz, 'yyyy-MM-dd');

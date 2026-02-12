@@ -6936,9 +6936,6 @@ function getRecentActivity_(pid, options) {
   if (Array.isArray(opts.currentTreatments)) {
     treatmentRows.push.apply(treatmentRows, opts.currentTreatments);
   }
-  if (Array.isArray(opts.previousTreatments)) {
-    treatmentRows.push.apply(treatmentRows, opts.previousTreatments);
-  }
 
   let latestTimestamp = -Infinity;
   treatmentRows.forEach(row => {
@@ -7038,16 +7035,11 @@ function getPatientHeader(pid){
     const shareDisp = shareNorm ? toBurdenDisp_(shareNorm) : shareRaw;
 
     const monthContext = resolveYearMonthOrCurrent_();
-    const previousMonthContext = resolveYearMonthOrCurrent_(monthContext.year, monthContext.month - 1);
     const unit = APP.BASE_FEE_YEN || 4170;
 
     const tCurrent = Date.now();
     const currentTreatments = listTreatmentsForMonth(normalized, monthContext.year, monthContext.month);
     console.log('[perf] monthly.current 集計: ' + (Date.now() - tCurrent) + 'ms');
-
-    const tPrevious = Date.now();
-    const previousTreatments = listTreatmentsForMonth(normalized, previousMonthContext.year, previousMonthContext.month);
-    console.log('[perf] monthly.previous 集計: ' + (Date.now() - tPrevious) + 'ms');
 
     const monthlyStart = Date.now();
     const monthly = {
@@ -7056,16 +7048,15 @@ function getPatientHeader(pid){
         est: Math.round(currentTreatments.length * unit * 0.1)
       },
       previous: {
-        count: previousTreatments.length,
-        est: Math.round(previousTreatments.length * unit * 0.1)
+        count: null,
+        est: null
       }
     };
     console.log('[perf][getPatientHeader] monthly summary: ' + (Date.now() - monthlyStart) + 'ms');
     const tRecent = Date.now();
     const recent  = getRecentActivity_(pid, {
       lastConsent: consent || '',
-      currentTreatments,
-      previousTreatments
+      currentTreatments
     });
     console.log('[perf][getPatientHeader] recent optimized: ' + (Date.now() - tRecent) + 'ms');
     const statusStart = Date.now();

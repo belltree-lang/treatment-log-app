@@ -47,19 +47,17 @@ const monthlyCalls = [];
 sandbox.listTreatmentsForMonth = (pid, year, month) => {
   monthlyCalls.push({ pid, year, month });
   if (year === 2025 && month === 3) return [{}, {}, {}];
-  if (year === 2025 && month === 2) return [{}];
   return [];
 };
 
 const header = sandbox.getPatientHeader('P001');
 
 assert.strictEqual(header.monthly.current.count, 3);
-assert.strictEqual(header.monthly.previous.count, 1);
+assert.strictEqual(header.monthly.previous.count, null);
 assert.strictEqual(header.monthly.current.est, Math.round(3 * 4170 * 0.1));
-assert.strictEqual(header.monthly.previous.est, Math.round(1 * 4170 * 0.1));
+assert.strictEqual(header.monthly.previous.est, null);
 assert.deepStrictEqual(monthlyCalls, [
-  { pid: 'P001', year: 2025, month: 3 },
-  { pid: 'P001', year: 2025, month: 2 }
+  { pid: 'P001', year: 2025, month: 3 }
 ]);
 
 console.log('getPatientHeader monthly summary tests passed');

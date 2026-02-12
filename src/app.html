@@ -3517,20 +3517,15 @@ function loadNews(patientId, next){
       finalized = true;
       const safeList = Array.isArray(list) ? list : [];
       const activeRequest = isActivePatientInfoRequest(requestToken);
+      if (!activeRequest) {
+        return;
+      }
       if (kind === 'success') {
-        if (activeRequest) {
-          renderNewsList(safeList, { patientId: targetPid, isGlobalRequest, done });
-        } else {
-          renderNewsList([], { patientId: targetPid, isGlobalRequest, done });
-        }
+        renderNewsList(safeList, { patientId: targetPid, isGlobalRequest, done });
         return;
       }
       if (kind === 'failure') {
-        if (activeRequest) {
-          renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
-        } else {
-          renderNewsList([], { patientId: targetPid, isGlobalRequest, done });
-        }
+        renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
         return;
       }
       renderNewsList([], { patientId: targetPid, isGlobalRequest, done });

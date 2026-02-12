@@ -10820,11 +10820,10 @@ function submitTreatment(payload) {
       attendanceMetrics.convertedCount,
       attendanceMetrics.newPatientCount,
       attendanceMetrics.totalCount,
-      ''
+      '',
+      monthKey
     ];
     s.appendRow(row);
-    const appendedRowNumber = s.getLastRow();
-    s.getRange(appendedRowNumber, 13).setValue(monthKey);
     markTiming('appendRow');
 
     const job = { treatmentId, treatmentTimestamp: now };

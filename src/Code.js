@@ -6932,10 +6932,24 @@ function calcConsentExpiry_(consentVal) {
 function getRecentActivity_(pid, options) {
   const opts = options || {};
   let lastTreat='';
-  const latest = findLatestTreatmentRow_(pid);
-  const rawDate = latest && latest.rawValues ? latest.rawValues[0] : '';
-  if (rawDate) {
-    lastTreat = safeFormatDate_(rawDate, 'yyyy-MM-dd');
+  const treatmentRows = [];
+  if (Array.isArray(opts.currentTreatments)) {
+    treatmentRows.push.apply(treatmentRows, opts.currentTreatments);
+  }
+  if (Array.isArray(opts.previousTreatments)) {
+    treatmentRows.push.apply(treatmentRows, opts.previousTreatments);
+  }
+
+  let latestTimestamp = -Infinity;
+  treatmentRows.forEach(row => {
+    const ts = Number(row && row.timestamp);
+    if (!Number.isFinite(ts)) return;
+    if (ts > latestTimestamp) {
+      latestTimestamp = ts;
+    }
+  });
+  if (Number.isFinite(latestTimestamp)) {
+    lastTreat = safeFormatDate_(new Date(latestTimestamp), 'yyyy-MM-dd');
   }
   const lastConsent = opts.lastConsent || '';
   return { lastTreat, lastConsent, lastStaff: '' };
@@ -7048,8 +7062,12 @@ function getPatientHeader(pid){
     };
     console.log('[perf][getPatientHeader] monthly summary: ' + (Date.now() - monthlyStart) + 'ms');
     const tRecent = Date.now();
-    const recent  = getRecentActivity_(pid, { lastConsent: consent || '' });
-    console.log('[perf] recent 計算: ' + (Date.now() - tRecent) + 'ms');
+    const recent  = getRecentActivity_(pid, {
+      lastConsent: consent || '',
+      currentTreatments,
+      previousTreatments
+    });
+    console.log('[perf][getPatientHeader] recent optimized: ' + (Date.now() - tRecent) + 'ms');
     const statusStart = Date.now();
     const stat    = getStatus_(pid);
     console.log('[perf][getPatientHeader] status lookup: ' + (Date.now() - statusStart) + 'ms');

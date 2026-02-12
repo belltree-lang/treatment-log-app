@@ -549,6 +549,7 @@ const PATIENT_ID_SEARCH_DEBOUNCE_MS = 300;
 const PATIENT_INFO_MAX_ATTEMPTS = 3;
 const PATIENT_INFO_RETRY_DELAY_MIN_MS = 150;
 const PATIENT_INFO_RETRY_DELAY_MAX_MS = 250;
+const NEWS_RENDER_TIMEOUT_MS = 3000;
 let _patientIdIndex = {};
 let _patientIdList = [];
 let _patientIdKanaIndex = {};
@@ -3214,9 +3215,10 @@ function renderEmptyPatientState(){
   _icfReportHistoryState = { loading: false, rows: [], error: null };
   renderIcfReportHistory();
   resetHandoverDisplay('');
-  loadNews('', () => {
-    hideGlobalLoading();
-  });
+  hideGlobalLoading();
+  setTimeout(() => {
+    loadNews('');
+  }, 0);
 }
 
 function setPatientLoadingPlaceholders(){
@@ -3310,14 +3312,17 @@ function loadPatientInfoWithRetry(patientId, options){
   const jobs = [
     loadTreatments(targetPatientId, { requestToken }),
     loadHeader(targetPatientId, { requestToken }),
-    loadReports(targetPatientId, { requestToken }),
-    loadNews(targetPatientId, { requestToken })
+    loadReports(targetPatientId, { requestToken })
   ];
 
   return Promise.allSettled(jobs).finally(() => {
-    if (isActivePatientInfoRequest(requestToken)) {
-      hideGlobalLoading();
+    if (!isActivePatientInfoRequest(requestToken)) {
+      return;
     }
+    hideGlobalLoading();
+    setTimeout(() => {
+      loadNews(targetPatientId, { requestToken });
+    }, 0);
   });
 }
 
@@ -3500,19 +3505,33 @@ function loadNews(patientId, next){
   el.innerHTML = '<div class="muted">読み込み中…</div>';
 
   return new Promise(resolve => {
+    let settled = false;
+    const resolveOnce = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timeoutId = setTimeout(() => {
+      resolveOnce([]);
+    }, NEWS_RENDER_TIMEOUT_MS);
+
     google.script.run
       .withSuccessHandler(list => {
+        clearTimeout(timeoutId);
+        if (settled) return;
         if (isActivePatientInfoRequest(requestToken)) {
           renderNewsList(list, { patientId: targetPid, isGlobalRequest, done });
         }
-        resolve(list || []);
+        resolveOnce(list || []);
       })
       .withFailureHandler(err => {
+        clearTimeout(timeoutId);
+        if (settled) return;
         console.error('[loadNews] failed', err);
         if (isActivePatientInfoRequest(requestToken)) {
           renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
         }
-        resolve([]);
+        resolveOnce([]);
       })
       .getNews(targetPid);
   });

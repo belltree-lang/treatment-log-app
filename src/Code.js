@@ -7277,60 +7277,85 @@ function listTreatmentsForMonth(pid, year, month){
     if (lr < 2) return [];
     const rows = lr - 1;
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
-    const start = new Date(resolved.year, resolved.month - 1, 1, 0, 0, 0);
-    const end   = new Date(resolved.year, resolved.month, 0, 23, 59, 59);
-    const monthWindow = findTreatmentRowsForMonth_(s, start, end);
-    const monthRows = monthWindow ? monthWindow.rowCount : 0;
-    console.log('[perf][listTreatmentsForMonth] pid=' + normalized + ' month=' + monthKey + ' totalRows=' + rows + ' monthRows=' + monthRows);
-    if (!monthWindow || monthWindow.rowCount <= 0) return [];
-    const startRow = monthWindow.startRow;
-    const timestamps = s.getRange(startRow, 1, monthRows, 1).getValues();
-    const ids = s.getRange(startRow, 2, monthRows, 1).getDisplayValues();
-    const notes = s.getRange(startRow, 3, monthRows, 1).getValues();
-    const emails = s.getRange(startRow, 4, monthRows, 1).getValues();
-    const treatmentIdRange = s.getRange(startRow, 7, monthRows, 1);
-    const treatmentIds = treatmentIdRange.getValues();
-    const categories = s.getRange(startRow, 8, monthRows, 1).getValues();
+    const monthKeyRows = s.getRange(2, 13, rows, 1).getDisplayValues();
+    const matchedRowNumbers = [];
+    for (let i = 0; i < rows; i++) {
+      const rowMonthKey = String((monthKeyRows[i] && monthKeyRows[i][0]) || '').trim();
+      if (rowMonthKey === monthKey) {
+        matchedRowNumbers.push(i + 2);
+      }
+    }
+    const matchedRows = matchedRowNumbers.length;
+    console.log('[perf][listTreatmentsForMonth] pid=' + normalized + ' month=' + monthKey + ' totalRows=' + rows + ' matchedRows=' + matchedRows);
+    if (!matchedRows) return [];
+
+    const rangeGroups = [];
+    let groupStart = matchedRowNumbers[0];
+    let prevRow = matchedRowNumbers[0];
+    for (let i = 1; i < matchedRowNumbers.length; i++) {
+      const row = matchedRowNumbers[i];
+      if (row === prevRow + 1) {
+        prevRow = row;
+        continue;
+      }
+      rangeGroups.push({ startRow: groupStart, rowCount: prevRow - groupStart + 1 });
+      groupStart = row;
+      prevRow = row;
+    }
+    rangeGroups.push({ startRow: groupStart, rowCount: prevRow - groupStart + 1 });
+
     const missingTreatmentIds = [];
+    const records = [];
 
-    const out = [];
-    for (let i = 0; i < monthRows; i++) {
-      const pidCell = normId_(ids[i][0]);
-      if (pidCell !== normalized) continue;
-      const ts = timestamps[i][0];
-      const d = ts instanceof Date ? ts : new Date(ts);
-      const timestamp = d instanceof Date ? d.getTime() : NaN;
-      if (!Number.isFinite(timestamp)) continue;
-      if (d < start || d > end) continue;
-      let treatmentId = String((treatmentIds[i] && treatmentIds[i][0]) || '').trim();
-      if (!treatmentId) {
-        treatmentId = Utilities.getUuid();
-        treatmentIds[i][0] = treatmentId;
-        missingTreatmentIds.push(i);
+    rangeGroups.forEach(group => {
+      const startRow = group.startRow;
+      const rowCount = group.rowCount;
+      const timestamps = s.getRange(startRow, 1, rowCount, 1).getValues();
+      const ids = s.getRange(startRow, 2, rowCount, 1).getDisplayValues();
+      const notes = s.getRange(startRow, 3, rowCount, 1).getValues();
+      const emails = s.getRange(startRow, 4, rowCount, 1).getValues();
+      const treatmentIdRange = s.getRange(startRow, 7, rowCount, 1);
+      const treatmentIds = treatmentIdRange.getValues();
+      const categories = s.getRange(startRow, 8, rowCount, 1).getValues();
+
+      for (let i = 0; i < rowCount; i++) {
+        const pidCell = normId_(ids[i][0]);
+        if (pidCell !== normalized) continue;
+        const ts = timestamps[i][0];
+        const d = ts instanceof Date ? ts : new Date(ts);
+        const timestamp = d instanceof Date ? d.getTime() : NaN;
+        if (!Number.isFinite(timestamp)) continue;
+        let treatmentId = String((treatmentIds[i] && treatmentIds[i][0]) || '').trim();
+        if (!treatmentId) {
+          treatmentId = Utilities.getUuid();
+          treatmentIds[i][0] = treatmentId;
+          missingTreatmentIds.push(i);
+        }
+        const categoryLabel = String((categories[i] && categories[i][0]) || '');
+        const categoryKey = mapTreatmentCategoryCellToKey_(categoryLabel);
+        records.push({
+          row: startRow + i,
+          when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
+          note: String((notes[i] && notes[i][0]) || ''),
+          email: String((emails[i] && emails[i][0]) || ''),
+          treatmentId,
+          category: categoryLabel,
+          categoryKey,
+          timestamp
+        });
       }
-      const categoryLabel = String((categories[i] && categories[i][0]) || '');
-      const categoryKey = mapTreatmentCategoryCellToKey_(categoryLabel);
-      out.push({
-        row: startRow + i,
-        when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
-        note: String((notes[i] && notes[i][0]) || ''),
-        email: String((emails[i] && emails[i][0]) || ''),
-        treatmentId,
-        category: categoryLabel,
-        categoryKey,
-        timestamp
-      });
-    }
 
-    if (missingTreatmentIds.length) {
-      try {
-        treatmentIdRange.setValues(treatmentIds);
-      } catch (err) {
-        Logger.log('[listTreatmentsForCurrentMonth] failed to backfill treatmentId: ' + (err && err.message ? err.message : err));
+      if (missingTreatmentIds.length) {
+        try {
+          treatmentIdRange.setValues(treatmentIds);
+        } catch (err) {
+          Logger.log('[listTreatmentsForCurrentMonth] failed to backfill treatmentId: ' + (err && err.message ? err.message : err));
+        }
       }
-    }
+      missingTreatmentIds.length = 0;
+    });
 
-    return out
+    return records
       .sort((a, b) => {
         const aTs = Number.isFinite(a.timestamp) ? a.timestamp : 0;
         const bTs = Number.isFinite(b.timestamp) ? b.timestamp : 0;

@@ -7,37 +7,43 @@ const code = fs.readFileSync(path.join(__dirname, '../src/Code.js'), 'utf8');
 
 const now = new Date();
 const makeDate = day => new Date(now.getFullYear(), now.getMonth(), day, 12, 0, 0);
+const monthKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
 
 const treatmentRows = [
-  { ts: makeDate(3), pid: 'P001', note: 'with id', email: 'with@example.com', treatmentId: 'T-1', category: '30分施術（保険）' },
-  { ts: makeDate(4), pid: 'P001', note: 'missing id', email: 'missing@example.com', treatmentId: '', category: '30分施術（保険）' },
+  { ts: makeDate(3), pid: 'P001', note: 'with id', email: 'with@example.com', treatmentId: 'T-1', category: '30分施術（保険）', monthKey },
+  { ts: makeDate(4), pid: 'P001', note: 'missing id', email: 'missing@example.com', treatmentId: '', category: '30分施術（保険）', monthKey },
 ];
-
-const columnData = {
-  1: treatmentRows.map(r => r.ts),
-  2: treatmentRows.map(r => r.pid),
-  3: treatmentRows.map(r => r.note),
-  4: treatmentRows.map(r => r.email),
-  7: treatmentRows.map(r => r.treatmentId),
-  8: treatmentRows.map(r => r.category),
-};
 
 let lastWrittenTreatmentIds = null;
 
 const sheet = {
   getLastRow: () => treatmentRows.length + 1,
   getRange: (row, col, numRows) => {
-    const source = columnData[col] || [];
     const slice = [];
     for (let i = 0; i < numRows; i++) {
-      slice.push([source[i]]);
+      const record = treatmentRows[(row - 2) + i];
+      let value = '';
+      switch (col) {
+        case 1: value = record.ts; break;
+        case 2: value = record.pid; break;
+        case 3: value = record.note; break;
+        case 4: value = record.email; break;
+        case 7: value = record.treatmentId; break;
+        case 8: value = record.category; break;
+        case 13: value = record.monthKey; break;
+        default: value = '';
+      }
+      slice.push([value]);
     }
     return {
       getValues: () => slice.map(r => r.slice()),
       getDisplayValues: () => slice.map(r => r.map(val => (val == null ? '' : String(val)))),
       setValues: values => {
+        if (col !== 7) return;
         lastWrittenTreatmentIds = values.map(rowVals => rowVals[0]);
-        columnData[col] = lastWrittenTreatmentIds.slice();
+        for (let i = 0; i < values.length; i++) {
+          treatmentRows[(row - 2) + i].treatmentId = values[i][0];
+        }
       },
     };
   }

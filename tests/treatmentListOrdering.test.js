@@ -7,38 +7,38 @@ const code = fs.readFileSync(path.join(__dirname, '../src/Code.js'), 'utf8');
 
 const now = new Date();
 const makeDate = day => new Date(now.getFullYear(), now.getMonth(), day, 12, 0, 0);
+const monthKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
 
 const treatmentRows = [
-  { ts: makeDate(5), pid: 'P001', note: 'newest', email: 'latest@example.com', treatmentId: 'T2', category: '30分施術（保険）' },
-  { ts: makeDate(2), pid: 'P001', note: 'older', email: 'older@example.com', treatmentId: 'T1', category: '60分施術（混合）' },
-  { ts: makeDate(1), pid: 'P002', note: 'other patient', email: 'other@example.com', treatmentId: 'X1', category: '30分施術（保険）' }
+  { ts: makeDate(5), pid: 'P001', note: 'newest', email: 'latest@example.com', treatmentId: 'T2', category: '30分施術（保険）', monthKey },
+  { ts: makeDate(2), pid: 'P001', note: 'older', email: 'older@example.com', treatmentId: 'T1', category: '60分施術（混合）', monthKey },
+  { ts: makeDate(1), pid: 'P002', note: 'other patient', email: 'other@example.com', treatmentId: 'X1', category: '30分施術（保険）', monthKey }
 ];
 
 const sheet = {
   getLastRow: () => treatmentRows.length + 1,
-  getRange: (row, col, numRows, numCols) => {
-    const accessor = idx => {
-      const record = treatmentRows[idx];
-      switch (col) {
-        case 1: return record.ts;
-        case 2: return record.pid;
-        case 3: return record.note;
-        case 4: return record.email;
-        case 7: return record.treatmentId;
-        case 8: return record.category;
-        default: return '';
-      }
-    };
-
-    const slice = [];
+  getRange: (row, col, numRows) => {
+    const values = [];
     for (let i = 0; i < numRows; i++) {
-      slice.push([accessor(i)]);
+      const record = treatmentRows[(row - 2) + i];
+      let value = '';
+      switch (col) {
+        case 1: value = record.ts; break;
+        case 2: value = record.pid; break;
+        case 3: value = record.note; break;
+        case 4: value = record.email; break;
+        case 7: value = record.treatmentId; break;
+        case 8: value = record.category; break;
+        case 13: value = record.monthKey; break;
+        default: value = '';
+      }
+      values.push([value]);
     }
-    const values = slice;
 
     return {
       getValues: () => values,
-      getDisplayValues: () => values.map(rowVals => rowVals.map(val => (val == null ? '' : String(val))))
+      getDisplayValues: () => values.map(rowVals => rowVals.map(val => (val == null ? '' : String(val)))),
+      setValues: () => {}
     };
   }
 };

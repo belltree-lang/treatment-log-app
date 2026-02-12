@@ -191,6 +191,18 @@ function loadTreatmentLogsUncached_(options) {
       continue;
     }
     if (!Object.prototype.hasOwnProperty.call(patients, normalizedPatientId)) {
+      const samplePatientIds = Object.keys(patients).slice(0, 10);
+      const rawType = patientIdCell === null ? 'null' : typeof patientIdCell;
+      const rawValue = String(patientIdCell === undefined ? '' : patientIdCell);
+      logContext('loadTreatmentLogs:unknownPatientDebug', JSON.stringify({
+        row: rowNumber,
+        patientMapSampleKeys: samplePatientIds,
+        rawPatientId: {
+          type: rawType,
+          value: rawValue
+        },
+        normalizedPatientId
+      }));
       logContext('loadTreatmentLogs:skipUnknownPatientId', `row=${rowNumber} patientId=${normalizedPatientId}`);
       continue;
     }

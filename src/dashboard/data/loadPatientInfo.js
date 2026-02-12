@@ -31,6 +31,7 @@ function loadPatientInfoUncached_(options) {
     return { patients, nameToId, warnings, setupIncomplete };
   }
   const sheetName = typeof DASHBOARD_SHEET_PATIENTS !== 'undefined' ? DASHBOARD_SHEET_PATIENTS : '患者情報';
+  logContext('loadPatientInfo:openSheet', `sheetName=${sheetName}`);
   const sheet = wb && wb.getSheetByName ? wb.getSheetByName(sheetName) : null;
   if (!sheet) {
     const warning = `${sheetName}シートが見つかりません`;
@@ -42,19 +43,23 @@ function loadPatientInfoUncached_(options) {
   }
 
   const lastRow = sheet.getLastRow ? sheet.getLastRow() : 0;
+  logContext('loadPatientInfo:rowCount', `sheetName=${sheetName} rowCount=${lastRow}`);
   if (lastRow < 2) {
-    logContext('loadPatientInfo:done', `patients=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete} lastRow=${lastRow}`);
-    return { patients, nameToId, warnings, setupIncomplete };
+    throw new Error(`Patient master empty. SheetName=${sheetName}, RowCount=${lastRow}, Header=[]`);
   }
 
   const lastCol = sheet.getLastColumn ? sheet.getLastColumn() : sheet.getMaxColumns ? sheet.getMaxColumns() : 0;
   const headers = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0] || [];
-  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  logContext('loadPatientInfo:header', `sheetName=${sheetName} header=${JSON.stringify(headers)}`);
 
   const colPid = dashboardResolveColumn_(headers, ['患者ID', 'patientId', 'ID', 'id', '施術録番号'], 1);
+  logContext('loadPatientInfo:patientIdColumn', `index=${colPid}`);
   const colName = dashboardResolveColumn_(headers, ['氏名', '名前', '患者名'], 2);
   const colConsent = dashboardResolveColumn_(headers, ['同意期限', '同意書期限', '同意有効期限', '同意期限日'], 0);
+
+  const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const patientIdSamples = [];
 
   for (let i = 0; i < values.length; i++) {
     const row = values[i] || [];
@@ -62,6 +67,9 @@ function loadPatientInfoUncached_(options) {
     const rowNumber = i + 2;
 
     const patientId = dashboardNormalizePatientId_(rowDisplay[colPid - 1] || row[colPid - 1]);
+    if (patientIdSamples.length < 5) {
+      patientIdSamples.push(patientId);
+    }
     const name = String(rowDisplay[colName - 1] || row[colName - 1] || '').trim();
     const consentExpiry = colConsent
       ? String(rowDisplay[colConsent - 1] || row[colConsent - 1] || '').trim()
@@ -97,6 +105,13 @@ function loadPatientInfoUncached_(options) {
     };
   }
 
-  logContext('loadPatientInfo:done', `patients=${Object.keys(patients).length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
+  logContext('loadPatientInfo:patientIdSamples', JSON.stringify(patientIdSamples));
+  const patientMapSize = Object.keys(patients).length;
+  logContext('loadPatientInfo:patientMapSize', `size=${patientMapSize}`);
+  if (patientMapSize === 0) {
+    throw new Error(`Patient master empty. SheetName=${sheetName}, RowCount=${lastRow}, Header=${JSON.stringify(headers)}`);
+  }
+
+  logContext('loadPatientInfo:done', `patients=${patientMapSize} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { patients, nameToId, warnings, setupIncomplete };
 }

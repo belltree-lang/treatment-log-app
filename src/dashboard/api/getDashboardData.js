@@ -74,6 +74,15 @@ function getDashboardData(options) {
       : { logs: [], warnings: [] })));
     const totalTreatmentLogs = treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0;
     logContext('getDashboardData:loadTreatmentLogs', `logs=${totalTreatmentLogs} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log(JSON.stringify({
+        patientCount: Object.keys(patientInfo && patientInfo.patients ? patientInfo.patients : {}).length,
+        noteCount: Object.keys(notes && notes.notes ? notes.notes : {}).length,
+        reportCount: Object.keys(aiReports && aiReports.reports ? aiReports.reports : {}).length,
+        invoiceCount: Object.keys(invoices && invoices.invoices ? invoices.invoices : {}).length,
+        treatmentLogCount: totalTreatmentLogs
+      }));
+    }
     const normalizedUserName = dashboardNormalizeStaffKey_(userIdentity || '');
     const normalizedUserId = dashboardNormalizeStaffKey_(userIdentity || '');
     const staffMatchResult = measureStep('staffMatch処理', () => {

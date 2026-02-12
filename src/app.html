@@ -3173,7 +3173,7 @@ function save(ev){
             resetFlags();
             setv('obs','');
             q('preset').selectedIndex = 0;
-            refreshTreatmentListOnly(p);
+            loadTreatments(p);
           }
         } finally {
           finalizeSave();
@@ -3274,38 +3274,6 @@ function onClickMonthlyToggle(event){
   return false;
 }
 
-function fetchPatientBundle(patientId){
-  const month = getTreatmentViewMonthPayload();
-  return new Promise((resolve, reject) => {
-    google.script.run
-      .withSuccessHandler(bundle => resolve(bundle || {}))
-      .withFailureHandler(err => reject(err))
-      .getPatientBundle(patientId, month.year, month.month);
-  });
-}
-
-function renderPatientBundleResponse(bundle, patientId, options){
-  const opts = options || {};
-  if (!isActivePatientInfoRequest(opts.requestToken)) return;
-  if (opts.error) {
-    renderHeaderContent(null, { error: true });
-    renderNewsList([], { patientId, error: true });
-    renderThisMonthList([], { patientId, error: true });
-    return;
-  }
-  const safeBundle = bundle || {};
-  const header = safeBundle.header || null;
-  if (!header || !header.patientId) {
-    renderHeaderContent(null, { error: true });
-    renderNewsList([], { patientId, error: true });
-    renderThisMonthList([], { patientId, error: true });
-    return;
-  }
-  renderHeaderContent(header);
-  renderNewsList(safeBundle.news || [], { patientId });
-  renderThisMonthList(safeBundle.treatments || [], { patientId });
-}
-
 function processQueuedPatientInfoLoad(){
   if (_patientInfoLoadInFlight) return;
   const nextId = _queuedPatientIdForLoad;
@@ -3338,46 +3306,18 @@ function loadPatientInfoWithRetry(patientId, options){
   resetHandoverDisplay(targetPatientId);
   setPatientLoadingPlaceholders();
 
-  let bundleDone = false;
-  let reportHistoryDone = false;
-  const tryFinish = () => {
-    if (bundleDone && reportHistoryDone) {
+  const jobs = [
+    loadTreatments(targetPatientId, { requestToken }),
+    loadHeader(targetPatientId, { requestToken }),
+    loadReports(targetPatientId, { requestToken }),
+    loadNews(targetPatientId, { requestToken })
+  ];
+
+  return Promise.allSettled(jobs).finally(() => {
+    if (isActivePatientInfoRequest(requestToken)) {
       hideGlobalLoading();
     }
-  };
-
-  refreshReportHistory({ patientId: targetPatientId, setStatus: true, requestToken })
-    .finally(() => {
-      reportHistoryDone = true;
-      tryFinish();
-    });
-
-  let attempt = 0;
-  const attemptFetch = () => {
-    attempt++;
-    return fetchPatientBundle(targetPatientId)
-      .then(bundle => {
-        const hasHeader = bundle && bundle.header && bundle.header.patientId;
-        if (hasHeader || attempt >= PATIENT_INFO_MAX_ATTEMPTS) {
-          bundleDone = true;
-          renderPatientBundleResponse(bundle, targetPatientId, { requestToken, error: !hasHeader && attempt >= PATIENT_INFO_MAX_ATTEMPTS });
-          tryFinish();
-          return bundle;
-        }
-        return waitMs(patientInfoRetryDelay()).then(attemptFetch);
-      })
-      .catch(err => {
-        if (attempt < PATIENT_INFO_MAX_ATTEMPTS) {
-          return waitMs(patientInfoRetryDelay()).then(attemptFetch);
-        }
-        bundleDone = true;
-        renderPatientBundleResponse(null, targetPatientId, { requestToken, error: true });
-        tryFinish();
-        throw err;
-      });
-  };
-
-  return attemptFetch();
+  });
 }
 
 /* 画面更新 */
@@ -3438,20 +3378,30 @@ function renderHeaderContent(header, options){
 }
 function loadHeader(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
+  const opts = (next && typeof next === 'object' && next !== null) ? next : null;
+  const done = typeof next === 'function' ? next : (opts && typeof opts.done === 'function' ? opts.done : null);
+  const requestToken = opts && opts.requestToken;
   const targetPid = patientId || pid();
-  const done = typeof next === 'function' ? next : null;
-  if(!targetPid){ if (done) done(); return; }
-  google.script.run
-    .withSuccessHandler(h=>{
-      renderHeaderContent(h || null);
-      if (done) done();
-    })
-    .withFailureHandler(err=>{
-      console.error('[loadHeader] failed', err);
-      renderHeaderContent(null, { error: true });
-      if (done) done();
-    })
-    .getPatientHeader(targetPid);
+  if(!targetPid){ if (done) done(); return Promise.resolve(null); }
+  return new Promise(resolve => {
+    google.script.run
+      .withSuccessHandler(h=>{
+        if (isActivePatientInfoRequest(requestToken)) {
+          renderHeaderContent(h || null);
+        }
+        if (done) done();
+        resolve(h || null);
+      })
+      .withFailureHandler(err=>{
+        console.error('[loadHeader] failed', err);
+        if (isActivePatientInfoRequest(requestToken)) {
+          renderHeaderContent(null, { error: true });
+        }
+        if (done) done();
+        resolve(null);
+      })
+      .getPatientHeader(targetPid);
+  });
 }
 function buildNewsItemHtml(news, idx){
   const messageText = getNewsMessageForDisplay(news);
@@ -3535,9 +3485,11 @@ function renderNewsList(list, options){
 }
 function loadNews(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
-  const done = typeof next === 'function' ? next : null;
+  const opts = (next && typeof next === 'object' && next !== null) ? next : null;
+  const done = typeof next === 'function' ? next : (opts && typeof opts.done === 'function' ? opts.done : null);
+  const requestToken = opts && opts.requestToken;
   const el = q('news');
-  if (!el){ if (done) done(); return; }
+  if (!el){ if (done) done(); return Promise.resolve([]); }
 
   const explicitPidProvided = typeof patientId !== 'undefined';
   const candidatePid = explicitPidProvided ? patientId : pid();
@@ -3546,15 +3498,23 @@ function loadNews(patientId, next){
 
   el.innerHTML = '<div class="muted">読み込み中…</div>';
 
-  google.script.run
-    .withSuccessHandler(list => {
-      renderNewsList(list, { patientId: targetPid, isGlobalRequest, done });
-    })
-    .withFailureHandler(err => {
-      console.error('[loadNews] failed', err);
-      renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
-    })
-    .getNews(targetPid);
+  return new Promise(resolve => {
+    google.script.run
+      .withSuccessHandler(list => {
+        if (isActivePatientInfoRequest(requestToken)) {
+          renderNewsList(list, { patientId: targetPid, isGlobalRequest, done });
+        }
+        resolve(list || []);
+      })
+      .withFailureHandler(err => {
+        console.error('[loadNews] failed', err);
+        if (isActivePatientInfoRequest(requestToken)) {
+          renderNewsList([], { patientId: targetPid, isGlobalRequest, error: true, done });
+        }
+        resolve([]);
+      })
+      .getNews(targetPid);
+  });
 }
 function renderThisMonthList(rows, options){
   const el = q('list');
@@ -3631,17 +3591,39 @@ function setupTreatmentListActions(){
   });
 }
 function loadThisMonth(patientId, next){
+  return loadTreatments(patientId, next);
+}
+
+function loadTreatments(patientId, next){
   if (typeof patientId === 'function'){ next = patientId; patientId = undefined; }
   const targetPid = patientId || pid();
-  const done = typeof next === 'function' ? next : null;
-  if(!targetPid){ if (done) done(); return; }
-  google.script.run.withSuccessHandler(rows=>{
-    renderThisMonthList(rows, { patientId: targetPid, done });
-  }).withFailureHandler(err=>{
-    console.error('[loadThisMonth] failed', err);
-    const msg = err && err.message ? err.message : String(err || '不明なエラー');
-    renderThisMonthList([], { patientId: targetPid, error: true, errorMessage: `施術一覧の取得に失敗しました：${escapeHtml(msg)}` , done });
-  }).listTreatmentsForCurrentMonth(targetPid);
+  const opts = (next && typeof next === 'object' && next !== null) ? next : null;
+  const done = typeof next === 'function' ? next : (opts && typeof opts.done === 'function' ? opts.done : null);
+  const requestToken = opts && opts.requestToken;
+  if(!targetPid){ if (done) done(); return Promise.resolve([]); }
+  const month = getTreatmentViewMonthPayload();
+  return new Promise(resolve => {
+    google.script.run.withSuccessHandler(rows=>{
+      if (isActivePatientInfoRequest(requestToken)) {
+        renderThisMonthList(rows, { patientId: targetPid, done });
+      }
+      resolve(rows || []);
+    }).withFailureHandler(err=>{
+      console.error('[loadTreatments] failed', err);
+      const msg = err && err.message ? err.message : String(err || '不明なエラー');
+      if (isActivePatientInfoRequest(requestToken)) {
+        renderThisMonthList([], { patientId: targetPid, error: true, errorMessage: `施術一覧の取得に失敗しました：${escapeHtml(msg)}` , done });
+      }
+      resolve([]);
+    }).listTreatmentsForMonth(targetPid, month.year, month.month);
+  });
+}
+
+function loadReports(patientId, options){
+  const targetPid = patientId || pid();
+  if(!targetPid) return Promise.resolve();
+  const opts = options && typeof options === 'object' ? options : {};
+  return refreshReportHistory({ patientId: targetPid, setStatus: true, requestToken: opts.requestToken });
 }
 function editRow(row, note){
   const v = prompt('所見を編集', note||'');

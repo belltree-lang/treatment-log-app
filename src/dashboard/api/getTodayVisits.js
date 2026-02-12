@@ -5,20 +5,14 @@
  * @param {Object} [options.patientInfo] - loadPatientInfo() の戻り値を差し替える際に利用。
  * @param {Object} [options.notes] - loadNotes() の戻り値を差し替える際に利用。
  * @param {Date} [options.now] - テスト用に現在日時を差し替え。
+ * @param {Set<string>} [options.visiblePatientIds] - 表示対象患者ID。null の場合は全件。
  * @return {{visits: Object[], warnings: string[]}}
  */
 function getTodayVisits(options) {
   const opts = options || {};
   const tz = dashboardResolveTimeZone_();
   const now = dashboardCoerceDate_(opts.now) || new Date();
-  const fiftyDaysAgo = new Date(now.getTime() - 50 * 24 * 60 * 60 * 1000);
-  const isAdmin = opts.isAdmin !== false;
-  const debugLog = function () {
-    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      Logger.log.apply(Logger, arguments);
-    }
-  };
-  debugLog('[staff-filter-debug] isAdmin=', isAdmin);
+  const visiblePatientIds = opts.visiblePatientIds && typeof opts.visiblePatientIds.has === 'function' ? opts.visiblePatientIds : null;
   const todayKey = dashboardFormatDate_(now, tz, 'yyyy-MM-dd');
 
   const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs() : null);
@@ -39,13 +33,10 @@ function getTodayVisits(options) {
   }
 
   const normalizedVisits = [];
-  const responsiblePatientIds = new Set();
   logs.forEach(entry => {
     if (!entry || !entry.timestamp) return;
     const ts = dashboardCoerceDate_(entry.timestamp);
     if (!ts) return;
-    debugLog('[staff-filter-debug] sampleLogTimestamp=', entry.timestamp);
-    debugLog('[staff-filter-debug] diffDays=', Math.floor((now.getTime() - ts.getTime()) / (1000 * 60 * 60 * 24)));
     const dateKey = entry.dateKey || dashboardFormatDate_(ts, tz, 'yyyy-MM-dd');
 
     const patientId = dashboardNormalizePatientId_(entry.patientId);
@@ -56,9 +47,8 @@ function getTodayVisits(options) {
     const time = dashboardFormatDate_(ts, tz, 'HH:mm');
     const noteStatus = resolveHandoverStatus_(dateKey, patientId, notes, tz);
 
-    if (ts.getTime() >= fiftyDaysAgo.getTime() && entry.staffMatchStrategy && entry.staffMatchStrategy !== 'none' && patientId) {
-      responsiblePatientIds.add(patientId);
-    }
+    if (!patientId) return;
+    if (visiblePatientIds && !visiblePatientIds.has(patientId)) return;
 
     normalizedVisits.push({ patientId, patientName, time, dateKey, noteStatus });
   });
@@ -68,15 +58,7 @@ function getTodayVisits(options) {
     .map(visit => visit.dateKey)
     .sort((a, b) => b.localeCompare(a))[0] || '';
 
-  let visits = normalizedVisits.filter(visit => visit.dateKey === todayKey || (latestPastDate && visit.dateKey === latestPastDate));
-  debugLog('[staff-filter-debug] responsiblePatientIds=', Array.from(responsiblePatientIds));
-  debugLog('[staff-filter-debug] responsiblePatientIdsCount=', responsiblePatientIds.size);
-  debugLog('[staff-filter-debug] beforeFilterCount=', visits.length);
-
-  if (!isAdmin) {
-    visits = visits.filter(v => responsiblePatientIds.has(v.patientId));
-  }
-  debugLog('[staff-filter-debug] afterFilterCount=', visits.length);
+  const visits = normalizedVisits.filter(visit => visit.dateKey === todayKey || (latestPastDate && visit.dateKey === latestPastDate));
 
   visits.sort((a, b) => {
     if (a.dateKey === b.dateKey) return a.time.localeCompare(b.time);

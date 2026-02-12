@@ -61,6 +61,8 @@ function testOptionsArePropagated() {
   assert.strictEqual(seen.unpaidAlerts.patientInfo, patientInfo, '未回収アラートに患者情報が伝搬する');
   assert.strictEqual(seen.unpaidAlerts.now, now, '未回収アラートに now が伝搬する');
   assert.strictEqual(seen.unpaidAlerts.cache, false, '未回収アラート読み込みも cache:false を受け取る');
+  assert.ok(seen.unpaidAlerts.visiblePatientIds instanceof Set, '未回収アラートに visiblePatientIds(Set) が伝搬する');
+  assert.strictEqual(seen.unpaidAlerts.visiblePatientIds.size, 0, '一致ログがないスタッフは visiblePatientIds が空集合になる');
 }
 
 (function run() {

@@ -6,6 +6,7 @@
  * @param {Object} [options.aiReports] - loadAIReports() の戻り値を差し替える際に利用。
  * @param {Object<string, boolean>} [options.invoiceConfirmations] - 請求書確認フラグを患者ID単位で差し込む。
  * @param {Date} [options.now] - テスト用に現在日時を差し替え。
+ * @param {Set<string>} [options.visiblePatientIds] - 表示対象患者ID。null の場合は全件。
  * @return {{tasks: Object[], warnings: string[]}}
  */
 function getTasks(options) {
@@ -18,6 +19,7 @@ function getTasks(options) {
   const notesResult = opts.notes || (typeof loadNotes === 'function' ? loadNotes() : null);
   const aiReports = opts.aiReports || (typeof loadAIReports === 'function' ? loadAIReports() : null);
   const invoiceConfirmations = opts.invoiceConfirmations || {};
+  const visiblePatientIds = opts.visiblePatientIds && typeof opts.visiblePatientIds.has === 'function' ? opts.visiblePatientIds : null;
 
   const warnings = [];
   if (patientInfo && Array.isArray(patientInfo.warnings)) warnings.push.apply(warnings, patientInfo.warnings);
@@ -40,6 +42,7 @@ function getTasks(options) {
     const patient = patients[pid] || {};
     const normalized = dashboardNormalizePatientId_(pid);
     if (!normalized) return;
+    if (visiblePatientIds && !visiblePatientIds.has(normalized)) return;
     const name = patient.name || patient.patientName || '';
 
     // 同意書期限

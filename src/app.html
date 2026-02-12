@@ -3147,6 +3147,7 @@ function save(ev){
             resetFlags();
             setv('obs','');
             q('preset').selectedIndex = 0;
+            refresh();
             scheduleRefresh(700);
           }
         } finally {

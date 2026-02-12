@@ -561,7 +561,12 @@ function getScriptCache_(){
   try {
     return CacheService.getScriptCache();
   } catch (e) {
-    Logger.log('[cache] CacheService unavailable: ' + (e && e.message ? e.message : e));
+    const message = '[cache] CacheService unavailable: ' + (e && e.message ? e.message : e);
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log(message);
+    } else if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn(message);
+    }
     return null;
   }
 }
@@ -578,7 +583,9 @@ function cacheFetch_(key, fetchFn, ttlSeconds){
       return JSON.parse(hit);
     }
   } catch (err) {
-    Logger.log('[cache] read miss (' + key + '): ' + (err && err.message ? err.message : err));
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[cache] read miss (' + key + '): ' + (err && err.message ? err.message : err));
+    }
   }
 
   const fresh = fetchFn();
@@ -587,7 +594,9 @@ function cacheFetch_(key, fetchFn, ttlSeconds){
   try {
     cache.put(key, JSON.stringify(fresh), Math.max(5, ttlSeconds || PATIENT_CACHE_TTL_SECONDS));
   } catch (err) {
-    Logger.log('[cache] write fail (' + key + '): ' + (err && err.message ? err.message : err));
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[cache] write fail (' + key + '): ' + (err && err.message ? err.message : err));
+    }
   }
   return fresh;
 }
@@ -601,7 +610,9 @@ function invalidateCacheKeys_(keys){
   try {
     cache.removeAll(filtered);
   } catch (err) {
-    Logger.log('[cache] remove fail: ' + (err && err.message ? err.message : err));
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[cache] remove fail: ' + (err && err.message ? err.message : err));
+    }
   }
 }
 
@@ -617,6 +628,26 @@ function invalidatePatientCaches_(pidOrList, scope){
   }
   const keys = collectPatientCacheKeys_(pidOrList, scope);
   invalidateCacheKeys_(keys);
+}
+
+function buildTreatmentsCacheKeyForMonth_(pid, year, month){
+  const normalized = normId_(pid);
+  if (!normalized) return '';
+  const resolved = resolveYearMonthOrCurrent_(year, month);
+  const monthKey = String(resolved.year) + String(resolved.month).padStart(2, '0');
+  return PATIENT_CACHE_KEYS.treatments(normalized) + ':' + monthKey;
+}
+
+function invalidateTreatmentsCacheForMonth_(pid, year, month){
+  const cacheKey = buildTreatmentsCacheKeyForMonth_(pid, year, month);
+  if (!cacheKey) return;
+  invalidateCacheKeys_([cacheKey]);
+}
+
+function invalidateTreatmentsCacheForDate_(pid, dateValue){
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return;
+  invalidateTreatmentsCacheForMonth_(pid, date.getFullYear(), date.getMonth() + 1);
 }
 
 function collectPatientCacheKeys_(pid, scope){
@@ -7248,6 +7279,7 @@ function updateTreatmentRow(row, note) {
 
   if (pid) {
     invalidatePatientCaches_(pid, { header: true, treatments: true, latestTreatmentRow: true });
+    invalidateTreatmentsCacheForDate_(pid, timestamp);
   }
 
   return { ok: true, updatedRow: row, newNote };
@@ -7273,6 +7305,7 @@ function deleteTreatmentRow(treatmentId){
   log_('施術削除', `(row:${targetRow})`, '');
   if (pid) {
     invalidatePatientCaches_(pid, { header: true, treatments: true, latestTreatmentRow: true });
+    invalidateTreatmentsCacheForDate_(pid, rowVals[0]);
   }
   try {
     const normalizedPid = normId_(pid);
@@ -10340,6 +10373,8 @@ function updateTreatmentTimestamp(row, newLocal){
   DashboardIndex_updatePatients([pid]);
 
   invalidatePatientCaches_(pid, { header: true, treatments: true, latestTreatmentRow: true });
+  invalidateTreatmentsCacheForDate_(pid, oldTs);
+  invalidateTreatmentsCacheForDate_(pid, d);
   return true;
 }
 /** 文字列→Date（datetime-localや各種区切りに耐性） */
@@ -10700,6 +10735,7 @@ function submitTreatment(payload) {
 
     if (pid) {
       invalidatePatientCaches_(pid, { header: true, treatments: true, latestTreatmentRow: true });
+      invalidateTreatmentsCacheForDate_(pid, now);
     }
     return { ok: true, wroteTo: s.getName(), row, treatmentId };
   } finally {

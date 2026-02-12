@@ -136,6 +136,8 @@ const AI_REPORT_SHEET_HEADER = ['TS','患者ID','範囲','対象','対象キー'
 const AUX_SHEETS_INIT_KEY = 'AUX_SHEETS_INIT_V202503';
 const CONSENT_NEWS_META_STANDARDIZED_KEY = 'CONSENT_NEWS_META_STANDARDIZED_V1';
 const PATIENT_CACHE_TTL_SECONDS = 90;
+const NEWS_CACHE_TTL_SECONDS = 60;
+const NEWS_MAX_RESULTS = 200;
 const PATIENT_CACHE_KEYS = {
   header: pid => 'patient:header:' + normId_(pid),
   news: pid => 'patient:news:' + normId_(pid),
@@ -6138,6 +6140,102 @@ function fetchNewsRowsForPid_(normalized){
     }));
 }
 
+function fetchNewsRowsForPidOptimized_(normalized){
+  if (!normalized) return [];
+  const sheet = sh('News');
+  const lastRow = sheet.getLastRow();
+  const totalRows = Math.max(0, lastRow - 1);
+  if (totalRows <= 0) {
+    Logger.log('[perf][getNews] pid=' + normalized + ' totalRows=0 matchedRows=0');
+    return [];
+  }
+
+  const pidColumn = sheet.getRange(2, 2, totalRows, 1).getDisplayValues();
+  const matchingRows = [];
+  let matchedRows = 0;
+  for (let i = 0; i < pidColumn.length; i++) {
+    const rowNumber = 2 + i;
+    const rowPid = normId_(pidColumn[i] && pidColumn[i][0]);
+    if (rowPid === normalized) {
+      matchedRows++;
+      matchingRows.push({ rowNumber, pid: rowPid });
+      continue;
+    }
+    if (!rowPid) {
+      matchingRows.push({ rowNumber, pid: '' });
+    }
+  }
+
+  Logger.log('[perf][getNews] pid=' + normalized + ' totalRows=' + totalRows + ' matchedRows=' + matchedRows);
+  if (!matchingRows.length) return [];
+
+  const width = Math.min(7, Math.max(1, sheet.getLastColumn()));
+  const timezone = Session.getScriptTimeZone() || 'Asia/Tokyo';
+  const rows = [];
+  let idx = 0;
+  while (idx < matchingRows.length) {
+    const start = matchingRows[idx];
+    const startRow = start.rowNumber;
+    let end = start;
+    idx++;
+    while (idx < matchingRows.length && matchingRows[idx].rowNumber === end.rowNumber + 1) {
+      end = matchingRows[idx];
+      idx++;
+    }
+    const endRow = end.rowNumber;
+    const count = endRow - startRow + 1;
+    const range = sheet.getRange(startRow, 1, count, width);
+    const values = range.getValues();
+    const displayValues = range.getDisplayValues();
+
+    for (let i = 0; i < values.length; i++) {
+      const raw = values[i];
+      const disp = displayValues[i];
+      const rawDate = raw[0];
+      let whenText = String(disp[0] || '').trim();
+      if (!whenText && rawDate instanceof Date) {
+        whenText = Utilities.formatDate(rawDate, timezone, 'yyyy-MM-dd HH:mm');
+      }
+      if (!whenText && rawDate != null && rawDate !== '') {
+        whenText = String(rawDate);
+      }
+      const tsCandidate = rawDate instanceof Date
+        ? rawDate.getTime()
+        : (whenText ? new Date(whenText).getTime() : NaN);
+      const typeText = String(disp[2] != null ? disp[2] : raw[2] || '');
+      const messageText = String(disp[3] != null ? disp[3] : raw[3] || '');
+      const metaRaw = width >= 6 ? raw[5] : '';
+      let meta = parseNewsMetaValue_(metaRaw);
+      if (typeText === '同意') {
+        const normalizedMeta = normalizeConsentNewsMeta_(meta, messageText);
+        meta = normalizedMeta.meta;
+      }
+      const clearedAtValue = width >= 5 ? raw[4] : '';
+      const clearedAtText = String(disp[4] != null ? disp[4] : clearedAtValue || '').trim();
+      let clearedAt = clearedAtText;
+      if (!clearedAt && clearedAtValue instanceof Date) {
+        clearedAt = Utilities.formatDate(clearedAtValue, timezone, 'yyyy-MM-dd HH:mm');
+      }
+      const dismissedRaw = width >= 7 ? raw[6] : '';
+      const dismissed = toBooleanFromCell_(dismissedRaw);
+      if (clearedAt || dismissed) continue;
+      const pidRaw = disp[1] != null && disp[1] !== '' ? disp[1] : raw[1];
+      rows.push({
+        ts: Number.isFinite(tsCandidate) ? tsCandidate : 0,
+        when: whenText,
+        type: typeText,
+        message: messageText,
+        meta,
+        clearedAt,
+        dismissed: !!dismissed,
+        rowNumber: startRow + i,
+        pid: normId_(pidRaw)
+      });
+    }
+  }
+  return rows;
+}
+
 function fetchGlobalNewsRows_(){
   return readNewsRows_()
     .filter(row => !row.cleared && !row.dismissed && !row.pid)
@@ -6159,6 +6257,7 @@ function formatNewsOutput_(rows){
   return rows
     .slice()
     .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      .slice(0, NEWS_MAX_RESULTS)
       .map(row => ({
         ts: row.ts,
         when: row.when,
@@ -6216,12 +6315,12 @@ function appendRowsToSheet_(sheetName, rows){
 function getNews(pid){
   standardizeConsentNewsMeta_();
   const normalized = normId_(pid);
-  const globalNews = cacheFetch_(GLOBAL_NEWS_CACHE_KEY, fetchGlobalNewsRows_, PATIENT_CACHE_TTL_SECONDS) || [];
   if (!normalized) {
+    const globalNews = cacheFetch_(GLOBAL_NEWS_CACHE_KEY, fetchGlobalNewsRows_, PATIENT_CACHE_TTL_SECONDS) || [];
     return formatNewsOutput_(globalNews);
   }
-  const patientNews = cacheFetch_(PATIENT_CACHE_KEYS.news(normalized), () => fetchNewsRowsForPid_(normalized), PATIENT_CACHE_TTL_SECONDS) || [];
-  return formatNewsOutput_(globalNews.concat(patientNews));
+  const newsRows = cacheFetch_(PATIENT_CACHE_KEYS.news(normalized), () => fetchNewsRowsForPidOptimized_(normalized), NEWS_CACHE_TTL_SECONDS) || [];
+  return formatNewsOutput_(newsRows);
 }
   function clearConsentRelatedNews_(pid){
     const s=sh('News'); const lr=s.getLastRow(); if(lr<2) return;

@@ -1437,6 +1437,7 @@ let _saveInFlight = false;
 let _pendingSaveRequestId = null;
 let _pendingRefreshTimer = null;
 let _deleteInFlight = false;
+let _editTimeInFlight = false;
 
 function generateSaveRequestId(){
   if (window.crypto && typeof window.crypto.randomUUID === 'function'){
@@ -4241,6 +4242,10 @@ function applyConsentEdit(evt){
 
 /* 当月記録の日時編集 */
 function editRowTime(row, whenT){
+  if (_editTimeInFlight) {
+    toast('日時更新処理中です。完了までお待ちください');
+    return;
+  }
   const v = prompt('新しい日時を入力（例: 2025-09-04T14:30）', whenT || '');
   if (v == null) return;
   const curMonth = (new Date()).toISOString().slice(0,7);
@@ -4248,9 +4253,40 @@ function editRowTime(row, whenT){
   if (newMonth && newMonth !== curMonth) {
     if (!confirm('当月以外の日付に変更すると、この一覧からは見えなくなることがあります。続行しますか？')) return;
   }
+  const targetPatientId = pid();
+  const requestToken = _patientInfoRequestToken;
+  const editTimeButtons = Array.from(document.querySelectorAll('button[data-action="edit-time"]'));
+  const restoreButtons = () => {
+    editTimeButtons.forEach(btn => {
+      if (!btn || !btn.isConnected) return;
+      btn.disabled = false;
+      btn.textContent = btn.dataset.originalLabel || '日時';
+      delete btn.dataset.originalLabel;
+    });
+  };
+  editTimeButtons.forEach(btn => {
+    btn.disabled = true;
+    btn.dataset.originalLabel = btn.textContent || '日時';
+    btn.textContent = '更新中…';
+  });
+  _editTimeInFlight = true;
+  showGlobalLoading('日時を更新中です…');
   google.script.run
-    .withSuccessHandler(()=>{ refresh(); })
-    .withFailureHandler(e=> alert(e.message||e))
+    .withSuccessHandler(()=>{
+      toast('日時を更新しました');
+      loadTreatments(targetPatientId, { requestToken })
+        .finally(() => {
+          _editTimeInFlight = false;
+          hideGlobalLoading();
+          restoreButtons();
+        });
+    })
+    .withFailureHandler(e=>{
+      _editTimeInFlight = false;
+      hideGlobalLoading();
+      restoreButtons();
+      alert(e && e.message ? e.message : e);
+    })
     .updateTreatmentTimestamp(row, v);
 }
 /* === 申し送り：UI側実装（Drive保存はGAS側） === */

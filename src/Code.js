@@ -602,6 +602,18 @@ function cacheFetch_(key, fetchFn, ttlSeconds){
   return fresh;
 }
 
+function cacheHit_(key){
+  if (!key) return false;
+  const cache = getScriptCache_();
+  if (!cache) return false;
+  try {
+    const hit = cache.get(key);
+    return hit != null && hit !== '';
+  } catch (err) {
+    return false;
+  }
+}
+
 function invalidateCacheKeys_(keys){
   if (!Array.isArray(keys) || !keys.length) return;
   const filtered = keys.filter(Boolean);
@@ -6614,11 +6626,13 @@ function buildPatientStatusMap_(){
 }
 
 function getStatus_(pid){
-  const s=sh('フラグ'); const lr=s.getLastRow(); if (lr<2) return {status:'active', pauseUntil:''};
-  const vals=s.getRange(2,1,lr-1,3).getDisplayValues();
-  const row=vals.reverse().find(r=> String(r[0])===String(pid));
+  const map = cacheFetch_('status:map:v1', () => buildPatientStatusMap_(), PATIENT_CACHE_TTL_SECONDS) || {};
+  const row = map[String(normId_(pid))];
   if (!row) return {status:'active', pauseUntil:''};
-  return { status: row[1]||'active', pauseUntil: row[2]||'' };
+  return {
+    status: row.status || 'active',
+    pauseUntil: row.pauseUntil || ''
+  };
 }
 function markSuspend(pid){
   ensureAuxSheets_();
@@ -6817,26 +6831,17 @@ function calcConsentExpiry_(consentVal) {
 
 /***** 月次・直近 *****/
 function getMonthlySummary_(pid) {
-  const stats = getTreatmentPatientStats_(pid);
   const now = new Date();
-  const first=(y,m)=>new Date(y,m,1);
-  const last=(y,m)=>new Date(y,m+1,0,23,59,59);
-  const y=now.getFullYear(), m=now.getMonth();
-  const curS=first(y,m), curE=last(y,m);
-  const prevS=first(y,m-1), prevE=last(y,m-1);
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
 
   const tCurrent = Date.now();
-  let c=0;
-  stats.treatments.forEach(d=>{
-    if (d>=curS && d<=curE) c++;
-  });
+  const c = listTreatmentsForMonth(pid, y, m).length;
   console.log('[perf] monthly.current 集計: ' + (Date.now() - tCurrent) + 'ms');
 
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const tPrevious = Date.now();
-  let p=0;
-  stats.treatments.forEach(d=>{
-    if (d>=prevS && d<=prevE) p++;
-  });
+  const p = listTreatmentsForMonth(pid, prevDate.getFullYear(), prevDate.getMonth() + 1).length;
   console.log('[perf] monthly.previous 集計: ' + (Date.now() - tPrevious) + 'ms');
 
   const unit = APP.BASE_FEE_YEN || 4170;
@@ -6844,10 +6849,11 @@ function getMonthlySummary_(pid) {
 }
 function getRecentActivity_(pid, options) {
   const opts = options || {};
-  const stats = getTreatmentPatientStats_(pid);
   let lastTreat='';
-  if (stats.lastTreatDate) {
-    lastTreat = safeFormatDate_(stats.lastTreatDate, 'yyyy-MM-dd');
+  const latest = findLatestTreatmentRow_(pid);
+  const rawDate = latest && latest.rawValues ? latest.rawValues[0] : '';
+  if (rawDate) {
+    lastTreat = safeFormatDate_(rawDate, 'yyyy-MM-dd');
   }
   const lastConsent = opts.lastConsent || '';
   return { lastTreat, lastConsent, lastStaff: '' };
@@ -6897,12 +6903,8 @@ function getPatientHeader(pid){
   const normalized = normId_(pid);
   if (!normalized) return null;
   const cacheKey = PATIENT_CACHE_KEYS.header(normalized);
-  try {
-    SpreadsheetApp.flush();
-    Utilities.sleep(60);
-  } catch (err) {
-    console.warn('[getPatientHeader] cache bypass failed', err);
-  }
+  const headerCacheHit = cacheHit_(cacheKey);
+  console.log('[perf][getPatientHeader] cacheFetch_ ' + (headerCacheHit ? 'hit' : 'miss') + ' key=' + cacheKey);
   return cacheFetch_(cacheKey, () => {
     ensureAuxSheets_();
     const hit = findPatientRow_(pid);
@@ -6939,11 +6941,15 @@ function getPatientHeader(pid){
     const shareNorm = normalizeBurdenRatio_(shareRaw);
     const shareDisp = shareNorm ? toBurdenDisp_(shareNorm) : shareRaw;
 
+    const monthlyStart = Date.now();
     const monthly = getMonthlySummary_(pid);
+    console.log('[perf][getPatientHeader] monthly summary: ' + (Date.now() - monthlyStart) + 'ms');
     const tRecent = Date.now();
     const recent  = getRecentActivity_(pid, { lastConsent: consent || '' });
     console.log('[perf] recent 計算: ' + (Date.now() - tRecent) + 'ms');
+    const statusStart = Date.now();
     const stat    = getStatus_(pid);
+    console.log('[perf][getPatientHeader] status lookup: ' + (Date.now() - statusStart) + 'ms');
 
     const header = {
       patientId:String(normId_(pid)),
@@ -7232,6 +7238,33 @@ function listTreatmentsForCurrentMonth(pid){
   return listTreatmentsForMonth(pid, now.getFullYear(), now.getMonth() + 1);
 }
 
+function findTreatmentRowsForMonth_(sheet, startDate, endDate){
+  const lr = sheet.getLastRow();
+  if (lr < 2) return null;
+  const rows = lr - 1;
+  const timestamps = sheet.getRange(2, 1, rows, 1).getValues();
+  let startOffset = -1;
+  let endOffset = -1;
+  for (let i = 0; i < rows; i++) {
+    const raw = timestamps[i] ? timestamps[i][0] : null;
+    const d = raw instanceof Date ? raw : new Date(raw);
+    const ts = d instanceof Date ? d.getTime() : NaN;
+    if (!Number.isFinite(ts)) continue;
+    if (d < startDate) continue;
+    if (d > endDate) {
+      if (startOffset >= 0) break;
+      continue;
+    }
+    if (startOffset < 0) startOffset = i;
+    endOffset = i;
+  }
+  if (startOffset < 0 || endOffset < 0) return null;
+  return {
+    startRow: 2 + startOffset,
+    rowCount: endOffset - startOffset + 1
+  };
+}
+
 function listTreatmentsForMonth(pid, year, month){
   const normalized = normId_(pid);
   if (!normalized) return [];
@@ -7246,17 +7279,22 @@ function listTreatmentsForMonth(pid, year, month){
     const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
     const start = new Date(resolved.year, resolved.month - 1, 1, 0, 0, 0);
     const end   = new Date(resolved.year, resolved.month, 0, 23, 59, 59);
-    const timestamps = s.getRange(2, 1, rows, 1).getValues();
-    const ids = s.getRange(2, 2, rows, 1).getDisplayValues();
-    const notes = s.getRange(2, 3, rows, 1).getValues();
-    const emails = s.getRange(2, 4, rows, 1).getValues();
-    const treatmentIdRange = s.getRange(2, 7, rows, 1);
+    const monthWindow = findTreatmentRowsForMonth_(s, start, end);
+    const monthRows = monthWindow ? monthWindow.rowCount : 0;
+    console.log('[perf][listTreatmentsForMonth] pid=' + normalized + ' month=' + monthKey + ' totalRows=' + rows + ' monthRows=' + monthRows);
+    if (!monthWindow || monthWindow.rowCount <= 0) return [];
+    const startRow = monthWindow.startRow;
+    const timestamps = s.getRange(startRow, 1, monthRows, 1).getValues();
+    const ids = s.getRange(startRow, 2, monthRows, 1).getDisplayValues();
+    const notes = s.getRange(startRow, 3, monthRows, 1).getValues();
+    const emails = s.getRange(startRow, 4, monthRows, 1).getValues();
+    const treatmentIdRange = s.getRange(startRow, 7, monthRows, 1);
     const treatmentIds = treatmentIdRange.getValues();
-    const categories = s.getRange(2, 8, rows, 1).getValues();
+    const categories = s.getRange(startRow, 8, monthRows, 1).getValues();
     const missingTreatmentIds = [];
 
     const out = [];
-    for (let i = 0; i < rows; i++) {
+    for (let i = 0; i < monthRows; i++) {
       const pidCell = normId_(ids[i][0]);
       if (pidCell !== normalized) continue;
       const ts = timestamps[i][0];
@@ -7273,7 +7311,7 @@ function listTreatmentsForMonth(pid, year, month){
       const categoryLabel = String((categories[i] && categories[i][0]) || '');
       const categoryKey = mapTreatmentCategoryCellToKey_(categoryLabel);
       out.push({
-        row: 2 + i,
+        row: startRow + i,
         when: Utilities.formatDate(d, tz, 'yyyy-MM-dd HH:mm'),
         note: String((notes[i] && notes[i][0]) || ''),
         email: String((emails[i] && emails[i][0]) || ''),
@@ -10930,6 +10968,7 @@ function detectRecentDuplicateTreatment_(sheet, pid, note, nowDate, tz, ignoreTr
 
   const rowsToScan = Math.min(lr - 1, 20);
   const startRow = Math.max(2, lr - rowsToScan + 1);
+  console.log('[perf][submitTreatment] duplicateScan rows=' + rowsToScan + ' startRow=' + startRow + ' lastRow=' + lr);
   const values = sheet.getRange(startRow, 1, rowsToScan, 7).getValues();
   const nowMs = nowDate.getTime();
   const windowMs = 60 * 1000; // 1分以内の重複をブロック
@@ -10979,7 +11018,8 @@ function findExistingTreatmentOnDate_(sheet, pid, targetDate, tz, ignoreTreatmen
   const width = Math.min(TREATMENT_SHEET_HEADER.length, maxCols);
   const rowsToScan = Math.min(lr - 1, 200);
   const startRow = Math.max(2, lr - rowsToScan + 1);
-  const values = sheet.getRange(startRow, 1, lr - startRow + 1, width).getValues();
+  console.log('[perf][submitTreatment] sameDayScan rows=' + rowsToScan + ' startRow=' + startRow + ' lastRow=' + lr);
+  const values = sheet.getRange(startRow, 1, rowsToScan, width).getValues();
 
   const targetDateStr = Utilities.formatDate(targetDate, tz, 'yyyy-MM-dd');
   const startOfDay = normalizeTreatmentTimestamp_(`${targetDateStr} 00:00:00`, tz);

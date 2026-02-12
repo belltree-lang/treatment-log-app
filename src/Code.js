@@ -6847,10 +6847,20 @@ function getRecentActivity_(pid, options) {
   const stats = getTreatmentPatientStats_(pid);
   let lastTreat='';
   if (stats.lastTreatDate) {
-    lastTreat = Utilities.formatDate(stats.lastTreatDate, Session.getScriptTimeZone()||'Asia/Tokyo','yyyy-MM-dd');
+    lastTreat = safeFormatDate_(stats.lastTreatDate, 'yyyy-MM-dd');
   }
   const lastConsent = opts.lastConsent || '';
   return { lastTreat, lastConsent, lastStaff: '' };
+}
+
+function safeFormatDate_(value, format) {
+  if (value === null || typeof value === 'undefined' || value === '') return '';
+  const dateValue = value instanceof Date
+    ? value
+    : (typeof value === 'string' || typeof value === 'number' ? new Date(value) : null);
+  if (!(dateValue instanceof Date)) return '';
+  if (isNaN(dateValue.getTime())) return '';
+  return Utilities.formatDate(dateValue, Session.getScriptTimeZone() || 'Asia/Tokyo', format);
 }
 
 function getTreatmentPatientStats_(pid){

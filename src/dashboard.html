@@ -104,6 +104,7 @@
 
   <div class="section">
     <div class="grid" id="overviewGrid">
+      <div class="card summary-card" id="patientStatusSummary"></div>
       <div class="card summary-card" id="invoiceSummary"></div>
       <div class="card summary-card" id="consentSummary"></div>
       <div class="card summary-card" id="visitSummary"></div>
@@ -256,9 +257,56 @@ function renderError() {
 }
 
 function renderOverview() {
+  renderPatientStatusSummary();
   renderInvoiceSummary();
   renderConsentSummary();
   renderVisitSummary();
+}
+
+function renderPatientStatusSummary() {
+  const container = document.getElementById('patientStatusSummary');
+  if (!container) return;
+  container.innerHTML = '';
+  const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
+  const data = overview && overview.patientStatusSummary
+    ? overview.patientStatusSummary
+    : { consentExpiredCount: 0, reportDelayedCount: 0 };
+
+  const header = document.createElement('div');
+  header.className = 'summary-header';
+  const title = document.createElement('h3');
+  title.textContent = '優先度集計';
+  header.appendChild(title);
+  container.appendChild(header);
+
+  const metrics = document.createElement('div');
+  metrics.className = 'overview-metrics';
+
+  const consentRow = document.createElement('div');
+  consentRow.className = 'overview-metric';
+  const consentLabel = document.createElement('span');
+  consentLabel.className = 'overview-metric-label';
+  consentLabel.textContent = '同意期限超過件数';
+  const consentValue = document.createElement('span');
+  consentValue.className = 'overview-metric-value';
+  consentValue.textContent = `${data.consentExpiredCount || 0}件`;
+  consentRow.appendChild(consentLabel);
+  consentRow.appendChild(consentValue);
+  metrics.appendChild(consentRow);
+
+  const reportRow = document.createElement('div');
+  reportRow.className = 'overview-metric';
+  const reportLabel = document.createElement('span');
+  reportLabel.className = 'overview-metric-label';
+  reportLabel.textContent = '報告書遅延件数';
+  const reportValue = document.createElement('span');
+  reportValue.className = 'overview-metric-value';
+  reportValue.textContent = `${data.reportDelayedCount || 0}件`;
+  reportRow.appendChild(reportLabel);
+  reportRow.appendChild(reportValue);
+  metrics.appendChild(reportRow);
+
+  container.appendChild(metrics);
 }
 
 function renderInvoiceSummary() {
@@ -467,7 +515,12 @@ function renderPatients() {
   list.innerHTML = '';
 
   const patients = dashboardState.data && Array.isArray(dashboardState.data.patients)
-    ? dashboardState.data.patients.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))
+    ? dashboardState.data.patients.slice().sort((a, b) => {
+      const aPriority = getPatientPriority_(a);
+      const bPriority = getPatientPriority_(b);
+      if (bPriority !== aPriority) return bPriority - aPriority;
+      return (a.name || '').localeCompare(b.name || '', 'ja');
+    })
     : [];
 
   if (count) count.textContent = patients.length ? `${patients.length}名` : '患者データなし';
@@ -496,7 +549,11 @@ function renderPatients() {
     if (Array.isArray(p.statusTags) && p.statusTags.length > 0) {
       const statusTags = document.createElement('div');
       statusTags.className = 'status-tags';
-      p.statusTags.forEach(tag => {
+      p.statusTags.slice().sort((a, b) => {
+        const diff = (Number(b && b.priority) || 0) - (Number(a && a.priority) || 0);
+        if (diff !== 0) return diff;
+        return String(a && a.label ? a.label : '').localeCompare(String(b && b.label ? b.label : ''), 'ja');
+      }).forEach(tag => {
         if (!tag || !tag.label || !tag.type) return;
         const statusTag = document.createElement('span');
         statusTag.className = `status-tag tag-${tag.type}`;
@@ -583,6 +640,16 @@ function renderPatients() {
 
     list.appendChild(details);
   });
+}
+
+function getPatientPriority_(patient) {
+  const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
+  let max = 0;
+  tags.forEach(tag => {
+    const priority = Number(tag && tag.priority) || 0;
+    if (priority > max) max = priority;
+  });
+  return max;
 }
 
 function markNoteAsRead(patient) {

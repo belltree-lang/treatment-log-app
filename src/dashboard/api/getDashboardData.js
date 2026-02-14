@@ -318,7 +318,12 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
       invoiceUrl: Object.prototype.hasOwnProperty.call(invoices, patientId) ? invoices[patientId] : null,
       aiReportAt: Object.prototype.hasOwnProperty.call(aiReports, patientId) ? aiReports[patientId] : null,
       note: normalizeDashboardNote_(notes[patientId], patientId),
-      statusTags: buildDashboardPatientStatusTags_(base, Object.prototype.hasOwnProperty.call(aiReports, patientId) ? aiReports[patientId] : null, now)
+      statusTags: buildDashboardPatientStatusTags_(base, {
+        aiReportAt: Object.prototype.hasOwnProperty.call(aiReports, patientId) ? aiReports[patientId] : null,
+        note: normalizeDashboardNote_(notes[patientId], patientId),
+        responsible: Object.prototype.hasOwnProperty.call(responsible, patientId) ? responsible[patientId] : null,
+        now
+      })
     };
     patients.push(entry);
   };
@@ -328,9 +333,13 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
   return patients;
 }
 
-function buildDashboardPatientStatusTags_(patient, aiReportAt, now) {
+function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   const tags = [];
-  const targetNow = dashboardCoerceDate_(now) || new Date();
+  const options = params && typeof params === 'object' && !(params instanceof Date)
+    ? params
+    : { aiReportAt: params, now: maybeNow };
+  const targetNow = dashboardCoerceDate_(options.now) || new Date();
+  const aiReportAt = options.aiReportAt;
   const consentExpiry = patient && (patient.consentExpiry || (patient.raw && (patient.raw['同意期限'] || patient.raw['同意有効期限'])));
   const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
   if (consentExpiryDate) {
@@ -339,7 +348,8 @@ function buildDashboardPatientStatusTags_(patient, aiReportAt, now) {
       tags.push({
         type: 'consent-expiry',
         level: daysUntil <= 0 ? 'danger' : 'warning',
-        label: daysUntil <= 0 ? '期限超過' : `残${daysUntil}日`
+        label: daysUntil <= 0 ? '期限超過' : `残${daysUntil}日`,
+        priority: daysUntil <= 0 ? 3 : 2
       });
     }
   }
@@ -348,9 +358,9 @@ function buildDashboardPatientStatusTags_(patient, aiReportAt, now) {
   const consentAcquired = resolvePatientRawValue_(raw, ['同意書取得確認']);
   if (!consentAcquired) {
     if (resolvePatientRawValue_(raw, ['同意書受渡'])) {
-      tags.push({ type: 'consent', level: 'warning', label: '同意書受渡' });
+      tags.push({ type: 'consent', level: 'warning', label: '同意書受渡', priority: 1 });
     } else if (resolvePatientRawValue_(raw, ['通院日未定'])) {
-      tags.push({ type: 'consent', level: 'warning', label: '通院日未定' });
+      tags.push({ type: 'consent', level: 'warning', label: '通院日未定', priority: 1 });
     }
   }
 
@@ -359,9 +369,26 @@ function buildDashboardPatientStatusTags_(patient, aiReportAt, now) {
     tags.push({
       type: 'report',
       level: 'warning',
-      label: reportDate ? '報告書遅延' : '報告書未発行'
+      label: reportDate ? '報告書遅延' : '報告書未発行',
+      priority: reportDate ? 3 : 2
     });
   }
+
+  if (aiReportAt) {
+    tags.push({ type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 });
+  }
+  if (options.responsible) {
+    tags.push({ type: 'responsible', level: 'info', label: '担当者', priority: 1 });
+  }
+  if (options.note && options.note.unread) {
+    tags.push({ type: 'unread-note', level: 'info', label: '未読ヒント', priority: 1 });
+  }
+
+  tags.sort((a, b) => {
+    const diff = (Number(b && b.priority) || 0) - (Number(a && a.priority) || 0);
+    if (diff !== 0) return diff;
+    return String(a && a.label ? a.label : '').localeCompare(String(b && b.label ? b.label : ''), 'ja');
+  });
 
   return tags;
 }
@@ -430,12 +457,28 @@ function buildDashboardOverview_(params) {
   );
   const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz);
   const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz);
+  const patientStatusSummary = buildOverviewFromPatientStatusTags_(patients);
 
   return {
     invoiceUnconfirmed,
     consentRelated,
-    visitSummary
+    visitSummary,
+    patientStatusSummary
   };
+}
+
+function buildOverviewFromPatientStatusTags_(patients) {
+  const summary = { consentExpiredCount: 0, reportDelayedCount: 0 };
+  (patients || []).forEach(patient => {
+    const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
+    if (tags.some(tag => tag && tag.type === 'consent-expiry' && tag.label === '期限超過')) {
+      summary.consentExpiredCount += 1;
+    }
+    if (tags.some(tag => tag && tag.type === 'report' && tag.label === '報告書遅延')) {
+      summary.reportDelayedCount += 1;
+    }
+  });
+  return summary;
 }
 
 function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, notes, scope, patientNameMap, now, tz, patientInfo) {

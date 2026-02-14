@@ -50,6 +50,11 @@
   details.patient summary::-webkit-details-marker{ display:none; }
   .patient-header{ display:flex; justify-content:space-between; gap:10px; align-items:center; }
   .patient-name{ font-weight:700; letter-spacing:0.01em; }
+  .status-tags{ display:flex; gap:6px; flex-wrap:wrap; }
+  .status-tag{ display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:0.8rem; border:1px solid var(--border); color:var(--muted); background:rgba(255,255,255,0.04); }
+  .status-tag.tag-consent-expiry{ color:#fbbf24; background:rgba(245,158,11,0.14); border-color:rgba(245,158,11,0.32); }
+  .status-tag.tag-consent{ color:#fdba74; background:rgba(249,115,22,0.14); border-color:rgba(249,115,22,0.32); }
+  .status-tag.tag-report{ color:#fca5a5; background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.32); }
   .patient-body{ border-top:1px solid var(--border); padding:12px 14px 14px; display:flex; flex-direction:column; gap:8px; background:rgba(255,255,255,0.02); }
   .meta-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:0.9rem; }
   .note-preview{ background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.22); border-radius:12px; padding:10px 12px; font-size:0.95rem; color:#e0f2fe; }
@@ -488,10 +493,21 @@ function renderPatients() {
     name.textContent = p.name || '氏名未登録';
     header.appendChild(name);
 
+    const statusTags = document.createElement('div');
+    statusTags.className = 'status-tags';
+    if (Array.isArray(p.statusTags)) {
+      p.statusTags.forEach(tag => {
+        if (!tag || !tag.label || !tag.type) return;
+        const statusTag = document.createElement('span');
+        statusTag.className = `status-tag tag-${tag.type}`;
+        statusTag.textContent = tag.label;
+        statusTags.appendChild(statusTag);
+      });
+    }
+    header.appendChild(statusTags);
+
     const tags = document.createElement('div');
-    tags.style.display = 'flex';
-    tags.style.gap = '6px';
-    tags.style.flexWrap = 'wrap';
+    tags.className = 'status-tags';
 
     if (p.note && p.note.unread) {
       const unread = document.createElement('span');

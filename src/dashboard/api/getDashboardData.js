@@ -192,7 +192,8 @@ function getDashboardData(options) {
       aiReports,
       invoices,
       responsible,
-      treatmentLogs
+      treatmentLogs,
+      now: opts.now
     }, visiblePatientIds));
     logContext('getDashboardData:buildPatients', `patients=${patients.length}`);
 
@@ -298,6 +299,7 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
   const aiReports = sources && sources.aiReports && sources.aiReports.reports ? sources.aiReports.reports : {};
   const invoices = sources && sources.invoices && sources.invoices.invoices ? sources.invoices.invoices : {};
   const responsible = sources && sources.responsible && sources.responsible.responsible ? sources.responsible.responsible : {};
+  const now = dashboardCoerceDate_(sources && sources.now) || new Date();
 
   const seen = new Set();
   const addPatient = (pid, payload) => {
@@ -315,7 +317,8 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
       responsible: Object.prototype.hasOwnProperty.call(responsible, patientId) ? responsible[patientId] : null,
       invoiceUrl: Object.prototype.hasOwnProperty.call(invoices, patientId) ? invoices[patientId] : null,
       aiReportAt: Object.prototype.hasOwnProperty.call(aiReports, patientId) ? aiReports[patientId] : null,
-      note: normalizeDashboardNote_(notes[patientId], patientId)
+      note: normalizeDashboardNote_(notes[patientId], patientId),
+      statusTags: buildDashboardPatientStatusTags_(base, Object.prototype.hasOwnProperty.call(aiReports, patientId) ? aiReports[patientId] : null, now)
     };
     patients.push(entry);
   };
@@ -323,6 +326,54 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
   Object.keys(basePatients).forEach(pid => addPatient(pid, basePatients[pid]));
 
   return patients;
+}
+
+function buildDashboardPatientStatusTags_(patient, aiReportAt, now) {
+  const tags = [];
+  const targetNow = dashboardCoerceDate_(now) || new Date();
+  const consentExpiry = patient && (patient.consentExpiry || (patient.raw && (patient.raw['同意期限'] || patient.raw['同意有効期限'])));
+  const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
+  if (consentExpiryDate) {
+    const daysUntil = dashboardDaysBetween_(targetNow, consentExpiryDate, true);
+    if (daysUntil <= 30) {
+      tags.push({
+        type: 'consent-expiry',
+        level: daysUntil <= 0 ? 'danger' : 'warning',
+        label: daysUntil <= 0 ? '期限超過' : `残${daysUntil}日`
+      });
+    }
+  }
+
+  const raw = patient && patient.raw ? patient.raw : null;
+  const consentAcquired = resolvePatientRawValue_(raw, ['同意書取得確認']);
+  if (!consentAcquired) {
+    if (resolvePatientRawValue_(raw, ['同意書受渡'])) {
+      tags.push({ type: 'consent', level: 'warning', label: '同意書受渡' });
+    } else if (resolvePatientRawValue_(raw, ['通院日未定'])) {
+      tags.push({ type: 'consent', level: 'warning', label: '通院日未定' });
+    }
+  }
+
+  const reportDate = dashboardParseTimestamp_(aiReportAt);
+  if (!reportDate || dashboardDaysBetween_(reportDate, targetNow) >= 180) {
+    tags.push({
+      type: 'report',
+      level: 'warning',
+      label: reportDate ? '報告書遅延' : '報告書未発行'
+    });
+  }
+
+  return tags;
+}
+
+
+function dashboardDaysBetween_(from, to, futurePositive) {
+  const start = dashboardCoerceDate_(from);
+  const end = dashboardCoerceDate_(to);
+  if (!start || !end) return Number.POSITIVE_INFINITY;
+  const diff = end.getTime() - start.getTime();
+  const days = Math.floor(diff / (24 * 60 * 60 * 1000));
+  return futurePositive ? days : Math.abs(days);
 }
 
 function normalizeDashboardNote_(note, patientId) {

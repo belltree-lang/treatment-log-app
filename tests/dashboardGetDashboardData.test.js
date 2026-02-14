@@ -57,7 +57,7 @@ function testAggregatesDashboardData() {
 
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: 'user@example.com',
+    user: { email: 'user@example.com', role: 'admin' },
     now: new Date('2025-02-01T12:00:00Z'),
     patientInfo,
     notes,
@@ -91,7 +91,10 @@ function testAggregatesDashboardData() {
       lastReadAt: '2025-01-01T00:00:00Z',
       authorEmail: 'note@example.com',
       row: 5
-    }
+    },
+    statusTags: [
+      { type: 'consent-expiry', level: 'danger', label: '期限超過' }
+    ]
   });
   assert.strictEqual(result.unpaidAlerts.length, 1, '未回収アラートが伝搬する');
   assert.strictEqual(result.unpaidAlerts[0].patientId, '001');
@@ -99,6 +102,66 @@ function testAggregatesDashboardData() {
   assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'u1', 'visit'].sort());
 }
 
+
+
+function testPatientStatusTagsGeneration() {
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'user@example.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '期限超過', consentExpiry: '2025-01-20', raw: { '同意書受渡': '済' } },
+        '002': { name: '期限間近', consentExpiry: '2025-02-20', raw: { '通院日未定': 'はい' } },
+        '003': { name: '取得確認済', consentExpiry: '2025-03-20', raw: { '同意書取得確認': '済', '同意書受渡': '済', '通院日未定': 'はい' } },
+        '004': { name: '報告書遅延', consentExpiry: '', raw: {} },
+        '005': { name: '報告書なし', consentExpiry: '', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: {
+      reports: {
+        '001': '2025-01-30',
+        '002': '2025-01-30',
+        '003': '2025-01-30',
+        '004': '2024-07-01'
+      },
+      warnings: []
+    },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  const patientsById = {};
+  result.patients.forEach(entry => {
+    patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
+  });
+
+  assert.deepStrictEqual(patientsById['001'], [
+    { type: 'consent-expiry', level: 'danger', label: '期限超過' },
+    { type: 'consent', level: 'warning', label: '同意書受渡' }
+  ], '期限超過と同意書受渡タグを付与する');
+
+  assert.deepStrictEqual(patientsById['002'], [
+    { type: 'consent-expiry', level: 'warning', label: '残19日' },
+    { type: 'consent', level: 'warning', label: '通院日未定' }
+  ], '期限間近と通院日未定タグを付与する');
+
+  assert.deepStrictEqual(patientsById['003'], [], '同意書取得確認がある場合は同意タグを付与しない');
+
+  assert.deepStrictEqual(patientsById['004'], [
+    { type: 'report', level: 'warning', label: '報告書遅延' }
+  ], '180日以上前の報告書は遅延タグを付与する');
+
+  assert.deepStrictEqual(patientsById['005'], [
+    { type: 'report', level: 'warning', label: '報告書未発行' }
+  ], '報告書がない場合は未発行タグを付与する');
+}
 
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
   const logEntries = [];
@@ -568,6 +631,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
 
 (function run() {
   testAggregatesDashboardData();
+  testPatientStatusTagsGeneration();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
   testVisitSummaryUsesCountsForTodayAndRecentOneDay();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();

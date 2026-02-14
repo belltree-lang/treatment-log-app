@@ -71,7 +71,7 @@ function createContext() {
   const { context, patientList } = createContext();
   vm.runInContext(`dashboardState.data = {
     patients: [
-      { patientId: '1', name: 'あり', statusTags: [{ type: 'todo', label: '要対応' }] },
+      { patientId: '1', name: 'あり', statusTags: [{ type: 'consent', label: '遅延' }] },
       { patientId: '2', name: 'なし', statusTags: [] },
       { patientId: '3', name: '未定義' }
     ]
@@ -89,11 +89,11 @@ function createContext() {
   const withoutTagContainers = headerWithoutTag.children.filter((child) => child.className === 'status-tags');
   const withoutTagUndefinedContainers = headerWithoutTagUndefined.children.filter((child) => child.className === 'status-tags');
 
-  assert.strictEqual(withTagContainers.length, 2, 'patient with status tag has status-tag container and info tags container');
+  assert.strictEqual(withTagContainers.length, 1, 'patient with status tag has one status-tags container');
   assert.strictEqual(withTagContainers[0].children.length, 1, 'status tag container has one child');
 
-  assert.strictEqual(withoutTagContainers.length, 1, 'patient with empty statusTags only has info tags container');
-  assert.strictEqual(withoutTagUndefinedContainers.length, 1, 'patient without statusTags only has info tags container');
+  assert.strictEqual(withoutTagContainers.length, 0, 'patient with empty statusTags has no status-tags container');
+  assert.strictEqual(withoutTagUndefinedContainers.length, 0, 'patient without statusTags has no status-tags container');
 })();
 
 console.log('dashboard patient status tags rendering tests passed');

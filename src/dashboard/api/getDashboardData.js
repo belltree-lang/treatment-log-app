@@ -342,53 +342,22 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   const aiReportAt = options.aiReportAt;
   const consentExpiry = patient && (patient.consentExpiry || (patient.raw && (patient.raw['同意期限'] || patient.raw['同意有効期限'])));
   const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
-  if (consentExpiryDate) {
-    const daysUntil = dashboardDaysBetween_(targetNow, consentExpiryDate, true);
-    if (daysUntil <= 30) {
-      tags.push({
-        type: 'consent-expiry',
-        level: daysUntil <= 0 ? 'danger' : 'warning',
-        label: daysUntil <= 0 ? '期限超過' : `残${daysUntil}日`,
-        priority: daysUntil <= 0 ? 3 : 2
-      });
-    }
-  }
-
   const raw = patient && patient.raw ? patient.raw : null;
   const consentAcquired = resolvePatientRawValue_(raw, ['同意書取得確認']);
-  if (!consentAcquired) {
-    if (resolvePatientRawValue_(raw, ['同意書受渡'])) {
-      tags.push({ type: 'consent', level: 'warning', label: '同意書受渡', priority: 1 });
-    } else if (resolvePatientRawValue_(raw, ['通院日未定'])) {
-      tags.push({ type: 'consent', level: 'warning', label: '通院日未定', priority: 1 });
-    }
+  const consentPending = !consentAcquired
+    && (resolvePatientRawValue_(raw, ['同意書受渡']) || resolvePatientRawValue_(raw, ['通院日未定']));
+  const consentExpired = consentExpiryDate && dashboardDaysBetween_(targetNow, consentExpiryDate, true) <= 0;
+
+  if (consentExpired) {
+    tags.push({ type: 'consent', label: '期限超過' });
+  } else if (consentPending) {
+    tags.push({ type: 'consent', label: '遅延' });
   }
 
   const reportDate = dashboardParseTimestamp_(aiReportAt);
-  if (!reportDate || dashboardDaysBetween_(reportDate, targetNow) >= 180) {
-    tags.push({
-      type: 'report',
-      level: 'warning',
-      label: reportDate ? '報告書遅延' : '報告書未発行',
-      priority: reportDate ? 3 : 2
-    });
+  if (!consentAcquired && !reportDate) {
+    tags.push({ type: 'report', label: '未作成' });
   }
-
-  if (aiReportAt) {
-    tags.push({ type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 });
-  }
-  if (options.responsible) {
-    tags.push({ type: 'responsible', level: 'info', label: '担当者', priority: 1 });
-  }
-  if (options.note && options.note.unread) {
-    tags.push({ type: 'unread-note', level: 'info', label: '未読ヒント', priority: 1 });
-  }
-
-  tags.sort((a, b) => {
-    const diff = (Number(b && b.priority) || 0) - (Number(a && a.priority) || 0);
-    if (diff !== 0) return diff;
-    return String(a && a.label ? a.label : '').localeCompare(String(b && b.label ? b.label : ''), 'ja');
-  });
 
   return tags;
 }
@@ -474,11 +443,11 @@ function buildOverviewCriticalPatients_(patients) {
   (patients || []).forEach(patient => {
     const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
     const reasons = [];
-    if (tags.some(tag => tag && tag.type === 'consent-expiry' && tag.level === 'danger' && Number(tag.priority) === 3)) {
+    if (tags.some(tag => tag && tag.type === 'consent' && tag.label === '期限超過')) {
       reasons.push('同意期限超過');
     }
-    if (tags.some(tag => tag && tag.type === 'report' && Number(tag.priority) === 3)) {
-      reasons.push('報告書遅延');
+    if (tags.some(tag => tag && tag.type === 'report')) {
+      reasons.push('報告書未作成');
     }
     if (!reasons.length) return;
     items.push({
@@ -496,10 +465,10 @@ function buildOverviewFromPatientStatusTags_(patients) {
   const summary = { consentExpiredCount: 0, reportDelayedCount: 0 };
   (patients || []).forEach(patient => {
     const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
-    if (tags.some(tag => tag && tag.type === 'consent-expiry' && tag.label === '期限超過')) {
+    if (tags.some(tag => tag && tag.type === 'consent' && tag.label === '期限超過')) {
       summary.consentExpiredCount += 1;
     }
-    if (tags.some(tag => tag && tag.type === 'report' && tag.label === '報告書遅延')) {
+    if (tags.some(tag => tag && tag.type === 'report')) {
       summary.reportDelayedCount += 1;
     }
   });

@@ -52,7 +52,6 @@
   .patient-name{ font-weight:700; letter-spacing:0.01em; }
   .status-tags{ display:flex; gap:6px; flex-wrap:wrap; }
   .status-tag{ display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:0.8rem; border:1px solid var(--border); color:var(--muted); background:rgba(255,255,255,0.04); }
-  .status-tag.tag-consent-expiry{ color:#fbbf24; background:rgba(245,158,11,0.14); border-color:rgba(245,158,11,0.32); }
   .status-tag.tag-consent{ color:#fdba74; background:rgba(249,115,22,0.14); border-color:rgba(249,115,22,0.32); }
   .status-tag.tag-report{ color:#fca5a5; background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.32); }
   .patient-body{ border-top:1px solid var(--border); padding:12px 14px 14px; display:flex; flex-direction:column; gap:8px; background:rgba(255,255,255,0.02); }
@@ -312,7 +311,7 @@ function renderPatientStatusSummary() {
   reportRow.className = 'overview-metric';
   const reportLabel = document.createElement('span');
   reportLabel.className = 'overview-metric-label';
-  reportLabel.textContent = '報告書遅延件数';
+  reportLabel.textContent = '報告書未作成件数';
   const reportValue = document.createElement('span');
   reportValue.className = 'overview-metric-value';
   reportValue.textContent = `${data.reportDelayedCount || 0}件`;
@@ -568,12 +567,7 @@ function renderPatients() {
   list.innerHTML = '';
 
   const patients = dashboardState.data && Array.isArray(dashboardState.data.patients)
-    ? dashboardState.data.patients.slice().sort((a, b) => {
-      const aPriority = getPatientPriority_(a);
-      const bPriority = getPatientPriority_(b);
-      if (bPriority !== aPriority) return bPriority - aPriority;
-      return (a.name || '').localeCompare(b.name || '', 'ja');
-    })
+    ? dashboardState.data.patients.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))
     : [];
 
   if (count) count.textContent = patients.length ? `${patients.length}名` : '患者データなし';
@@ -602,12 +596,9 @@ function renderPatients() {
     if (Array.isArray(p.statusTags) && p.statusTags.length > 0) {
       const statusTags = document.createElement('div');
       statusTags.className = 'status-tags';
-      p.statusTags.slice().sort((a, b) => {
-        const diff = (Number(b && b.priority) || 0) - (Number(a && a.priority) || 0);
-        if (diff !== 0) return diff;
-        return String(a && a.label ? a.label : '').localeCompare(String(b && b.label ? b.label : ''), 'ja');
-      }).forEach(tag => {
+      p.statusTags.forEach(tag => {
         if (!tag || !tag.label || !tag.type) return;
+        if (tag.type !== 'consent' && tag.type !== 'report') return;
         const statusTag = document.createElement('span');
         statusTag.className = `status-tag tag-${tag.type}`;
         statusTag.textContent = tag.label;
@@ -618,28 +609,11 @@ function renderPatients() {
       }
     }
 
-    const tags = document.createElement('div');
-    tags.className = 'status-tags';
-
-    if (p.note && p.note.unread) {
-      const unread = document.createElement('span');
-      unread.className = 'tag';
-      unread.textContent = '未読報告書作成ヒント';
-      tags.appendChild(unread);
-    }
-    if (p.responsible) {
-      const resp = document.createElement('span');
-      resp.className = 'tag';
-      resp.textContent = p.responsible;
-      tags.appendChild(resp);
-    }
-    header.appendChild(tags);
     summary.appendChild(header);
 
     const meta = document.createElement('div');
     meta.className = 'meta-row';
     if (p.consentExpiry) meta.appendChild(makeBadge('同意期限: ' + p.consentExpiry));
-    if (p.aiReportAt) meta.appendChild(makeBadge('AI報告: ' + p.aiReportAt));
     if (p.invoiceUrl) meta.appendChild(makeBadge('請求書リンクあり'));
     summary.appendChild(meta);
 
@@ -693,16 +667,6 @@ function renderPatients() {
 
     list.appendChild(details);
   });
-}
-
-function getPatientPriority_(patient) {
-  const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
-  let max = 0;
-  tags.forEach(tag => {
-    const priority = Number(tag && tag.priority) || 0;
-    if (priority > max) max = priority;
-  });
-  return max;
 }
 
 function markNoteAsRead(patient) {

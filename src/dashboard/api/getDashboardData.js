@@ -352,7 +352,7 @@ function buildDashboardOverview_(params) {
   const user = payload.user || '';
   const allowedPatientIds = payload.allowedPatientIds && typeof payload.allowedPatientIds.has === 'function' ? payload.allowedPatientIds : null;
   const scope = { patientIds: allowedPatientIds, applyFilter: !!allowedPatientIds };
-  const invoiceScope = { patientIds: null, applyFilter: false };
+  const invoiceScope = scope;
 
   const patientNameMap = {};
   patients.forEach(entry => {
@@ -408,13 +408,19 @@ function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, no
   };
 
   const prevMonthPatientIds = new Set();
+  let filteredCount = 0;
   (treatmentLogs || []).forEach(entry => {
     const pid = dashboardNormalizePatientId_(entry && entry.patientId);
-    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
+    if (!pid) return;
+    if (allowedPatientIds && !allowedPatientIds.has(pid)) {
+      filteredCount += 1;
+      return;
+    }
     const monthKey = resolveDashboardMonthKey_(entry, tz);
     if (monthKey !== previousMonthKey) return;
     prevMonthPatientIds.add(pid);
   });
+  logBillingDebug(`[billing-scope] visiblePatientIds size=${allowedPatientIds ? allowedPatientIds.size : 'all'} filteredCount=${filteredCount}`);
   logBillingDebug(`prevMonthPatientIds count=${prevMonthPatientIds.size}`);
 
   const confirmedPatients = new Set();

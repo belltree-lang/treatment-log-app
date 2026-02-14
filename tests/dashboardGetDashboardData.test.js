@@ -93,10 +93,7 @@ function testAggregatesDashboardData() {
       row: 5
     },
     statusTags: [
-      { type: 'consent-expiry', level: 'danger', label: '期限超過', priority: 3 },
-      { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 },
-      { type: 'responsible', level: 'info', label: '担当者', priority: 1 },
-      { type: 'unread-note', level: 'info', label: '未読ヒント', priority: 1 }
+      { type: 'consent', label: '期限超過' }
     ]
   });
   assert.strictEqual(result.unpaidAlerts.length, 1, '未回収アラートが伝搬する');
@@ -123,10 +120,10 @@ function testPatientStatusTagsGeneration() {
     patientInfo: {
       patients: {
         '001': { name: '期限超過', consentExpiry: '2025-01-20', raw: { '同意書受渡': '済' } },
-        '002': { name: '期限間近', consentExpiry: '2025-02-20', raw: { '通院日未定': 'はい' } },
+        '002': { name: '遅延', consentExpiry: '2025-02-20', raw: { '通院日未定': 'はい' } },
         '003': { name: '取得確認済', consentExpiry: '2025-03-20', raw: { '同意書取得確認': '済', '同意書受渡': '済', '通院日未定': 'はい' } },
-        '004': { name: '報告書遅延', consentExpiry: '', raw: {} },
-        '005': { name: '報告書なし', consentExpiry: '', raw: {} }
+        '004': { name: '報告書未作成', consentExpiry: '', raw: {} },
+        '005': { name: '報告書未作成-同意更新', consentExpiry: '2025-12-20', raw: { '同意書取得確認': '済' } }
       },
       warnings: []
     },
@@ -135,8 +132,7 @@ function testPatientStatusTagsGeneration() {
       reports: {
         '001': '2025-01-30',
         '002': '2025-01-30',
-        '003': '2025-01-30',
-        '004': '2024-07-01'
+        '003': '2025-01-30'
       },
       warnings: []
     },
@@ -154,29 +150,20 @@ function testPatientStatusTagsGeneration() {
   });
 
   assert.deepStrictEqual(patientsById['001'], [
-    { type: 'consent-expiry', level: 'danger', label: '期限超過', priority: 3 },
-    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 },
-    { type: 'consent', level: 'warning', label: '同意書受渡', priority: 1 }
-  ], '期限超過と同意書受渡タグを付与する');
+    { type: 'consent', label: '期限超過' }
+  ], '期限超過は同意タグのみ付与する');
 
   assert.deepStrictEqual(patientsById['002'], [
-    { type: 'consent-expiry', level: 'warning', label: '残19日', priority: 2 },
-    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 },
-    { type: 'consent', level: 'warning', label: '通院日未定', priority: 1 }
-  ], '期限間近と通院日未定タグを付与する');
+    { type: 'consent', label: '遅延' }
+  ], '期限超過前の提出未処理状態は遅延タグを付与する');
 
-  assert.deepStrictEqual(patientsById['003'], [
-    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 }
-  ], '同意書取得確認がある場合は同意タグを付与せず、情報タグのみ付与する');
+  assert.deepStrictEqual(patientsById['003'], [], '同意書取得確認がある場合は同意/報告タグを付与しない');
 
   assert.deepStrictEqual(patientsById['004'], [
-    { type: 'report', level: 'warning', label: '報告書遅延', priority: 3 },
-    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 }
-  ], '180日以上前の報告書は遅延タグを付与する');
+    { type: 'report', label: '未作成' }
+  ], '報告書が未作成の場合は報告タグを付与する');
 
-  assert.deepStrictEqual(patientsById['005'], [
-    { type: 'report', level: 'warning', label: '報告書未発行', priority: 2 }
-  ], '報告書がない場合は未発行タグを付与する');
+  assert.deepStrictEqual(patientsById['005'], [], '同意更新後は報告タグを表示しない');
 }
 
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
@@ -468,7 +455,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
     now: new Date('2025-02-13T00:00:00Z'),
     patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
-    aiReports: { reports: { '001': '2024-07-01', '002': '2024-07-01' }, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
     treatmentLogs: {
       logs: [
@@ -523,7 +510,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
     now: new Date('2025-02-13T00:00:00Z'),
     patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
-    aiReports: { reports: { '001': '2024-07-01', '002': '2024-07-01' }, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
     treatmentLogs: {
       logs: [

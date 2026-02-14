@@ -458,13 +458,38 @@ function buildDashboardOverview_(params) {
   const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz);
   const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz);
   const patientStatusSummary = buildOverviewFromPatientStatusTags_(patients);
+  const criticalPatients = buildOverviewCriticalPatients_(patients);
 
   return {
     invoiceUnconfirmed,
     consentRelated,
     visitSummary,
-    patientStatusSummary
+    patientStatusSummary,
+    criticalPatients
   };
+}
+
+function buildOverviewCriticalPatients_(patients) {
+  const items = [];
+  (patients || []).forEach(patient => {
+    const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
+    const reasons = [];
+    if (tags.some(tag => tag && tag.type === 'consent-expiry' && tag.level === 'danger' && Number(tag.priority) === 3)) {
+      reasons.push('同意期限超過');
+    }
+    if (tags.some(tag => tag && tag.type === 'report' && Number(tag.priority) === 3)) {
+      reasons.push('報告書遅延');
+    }
+    if (!reasons.length) return;
+    items.push({
+      patientId: patient && patient.patientId ? patient.patientId : '',
+      name: patient && patient.name ? patient.name : '',
+      reason: reasons.join(' / ')
+    });
+  });
+
+  items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  return { count: items.length, items };
 }
 
 function buildOverviewFromPatientStatusTags_(patients) {

@@ -107,6 +107,10 @@ function testAggregatesDashboardData() {
     consentExpiredCount: 1,
     reportDelayedCount: 0
   }, '優先度集計をoverviewへ含める');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.criticalPatients)), {
+    count: 1,
+    items: [{ patientId: '001', name: '山田太郎', reason: '同意期限超過' }]
+  }, 'Critical対象患者をoverviewへ含める');
 }
 
 
@@ -464,7 +468,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
     now: new Date('2025-02-13T00:00:00Z'),
     patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
-    aiReports: { reports: {}, warnings: [] },
+    aiReports: { reports: { '001': '2024-07-01', '002': '2024-07-01' }, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
     treatmentLogs: {
       logs: [
@@ -481,6 +485,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
   assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.count, 2, '管理者は請求未確認を全患者分表示する');
+  assert.strictEqual(result.overview.criticalPatients.count, 2, '管理者はCritical対象患者も全件表示する');
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
@@ -518,7 +523,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
     now: new Date('2025-02-13T00:00:00Z'),
     patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
-    aiReports: { reports: {}, warnings: [] },
+    aiReports: { reports: { '001': '2024-07-01', '002': '2024-07-01' }, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
     treatmentLogs: {
       logs: [
@@ -535,6 +540,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.criticalPatients.items.map(item => item.patientId))), ['001'], 'スタッフはCritical対象患者も担当患者のみ表示する');
 }
 
 function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {

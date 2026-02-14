@@ -69,6 +69,9 @@
   .alert-amount{ font-size:1.1rem; font-weight:800; color:#fbbf24; }
   .alert-months{ display:flex; gap:6px; flex-wrap:wrap; font-size:0.9rem; color:var(--muted); }
   .summary-card{ display:flex; flex-direction:column; gap:10px; }
+  .critical-list{ display:flex; flex-direction:column; gap:8px; }
+  .critical-item{ display:flex; justify-content:space-between; align-items:center; gap:10px; border:1px solid rgba(239,68,68,0.35); background:rgba(239,68,68,0.12); border-radius:10px; padding:10px 12px; }
+  .critical-reason{ color:#fecaca; font-size:0.9rem; }
   .summary-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .summary-header h3{ margin:0; font-size:1rem; }
   .summary-count{ font-weight:700; font-size:1.1rem; color:#fff; }
@@ -108,6 +111,16 @@
       <div class="card summary-card" id="invoiceSummary"></div>
       <div class="card summary-card" id="consentSummary"></div>
       <div class="card summary-card" id="visitSummary"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h2>要対応患者</h2>
+      <span class="small" id="criticalPatientCount"></span>
+    </div>
+    <div class="card">
+      <div class="critical-list" id="criticalPatientList"></div>
     </div>
   </div>
 
@@ -221,6 +234,7 @@ function setLoading(flag) {
 function renderAll() {
   renderMeta();
   renderOverview();
+  renderCriticalPatients();
   renderUnpaidAlerts();
   renderVisits();
   renderPatients();
@@ -437,6 +451,45 @@ function renderUnpaidAlerts() {
     }
 
     list.appendChild(card);
+  });
+}
+
+function renderCriticalPatients() {
+  const list = document.getElementById('criticalPatientList');
+  const count = document.getElementById('criticalPatientCount');
+  if (!list) return;
+  list.innerHTML = '';
+
+  const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
+  const criticalPatients = overview && overview.criticalPatients && Array.isArray(overview.criticalPatients.items)
+    ? overview.criticalPatients.items
+    : [];
+  if (count) count.textContent = criticalPatients.length ? `${criticalPatients.length}名` : '該当なし';
+
+  if (!criticalPatients.length) {
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = '緊急対応が必要な患者はいません';
+    list.appendChild(empty);
+    return;
+  }
+
+  criticalPatients.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'critical-item';
+
+    const name = document.createElement(item.patientId ? 'a' : 'span');
+    name.className = item.patientId ? 'patient-name patient-link' : 'patient-name';
+    name.textContent = item.name || item.patientId || '氏名未登録';
+    if (item.patientId) configurePatientLinkElement_(name, item.patientId);
+    row.appendChild(name);
+
+    const reason = document.createElement('span');
+    reason.className = 'critical-reason';
+    reason.textContent = item.reason || '要確認';
+    row.appendChild(reason);
+
+    list.appendChild(row);
   });
 }
 

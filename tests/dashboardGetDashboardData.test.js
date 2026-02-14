@@ -93,13 +93,20 @@ function testAggregatesDashboardData() {
       row: 5
     },
     statusTags: [
-      { type: 'consent-expiry', level: 'danger', label: '期限超過' }
+      { type: 'consent-expiry', level: 'danger', label: '期限超過', priority: 3 },
+      { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 },
+      { type: 'responsible', level: 'info', label: '担当者', priority: 1 },
+      { type: 'unread-note', level: 'info', label: '未読ヒント', priority: 1 }
     ]
   });
   assert.strictEqual(result.unpaidAlerts.length, 1, '未回収アラートが伝搬する');
   assert.strictEqual(result.unpaidAlerts[0].patientId, '001');
   const warnings = JSON.parse(JSON.stringify(result.warnings)).sort();
   assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'u1', 'visit'].sort());
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.patientStatusSummary)), {
+    consentExpiredCount: 1,
+    reportDelayedCount: 0
+  }, '優先度集計をoverviewへ含める');
 }
 
 
@@ -143,23 +150,28 @@ function testPatientStatusTagsGeneration() {
   });
 
   assert.deepStrictEqual(patientsById['001'], [
-    { type: 'consent-expiry', level: 'danger', label: '期限超過' },
-    { type: 'consent', level: 'warning', label: '同意書受渡' }
+    { type: 'consent-expiry', level: 'danger', label: '期限超過', priority: 3 },
+    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 },
+    { type: 'consent', level: 'warning', label: '同意書受渡', priority: 1 }
   ], '期限超過と同意書受渡タグを付与する');
 
   assert.deepStrictEqual(patientsById['002'], [
-    { type: 'consent-expiry', level: 'warning', label: '残19日' },
-    { type: 'consent', level: 'warning', label: '通院日未定' }
+    { type: 'consent-expiry', level: 'warning', label: '残19日', priority: 2 },
+    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 },
+    { type: 'consent', level: 'warning', label: '通院日未定', priority: 1 }
   ], '期限間近と通院日未定タグを付与する');
 
-  assert.deepStrictEqual(patientsById['003'], [], '同意書取得確認がある場合は同意タグを付与しない');
+  assert.deepStrictEqual(patientsById['003'], [
+    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 }
+  ], '同意書取得確認がある場合は同意タグを付与せず、情報タグのみ付与する');
 
   assert.deepStrictEqual(patientsById['004'], [
-    { type: 'report', level: 'warning', label: '報告書遅延' }
+    { type: 'report', level: 'warning', label: '報告書遅延', priority: 3 },
+    { type: 'ai-report-at', level: 'info', label: 'AI報告日時', priority: 1 }
   ], '180日以上前の報告書は遅延タグを付与する');
 
   assert.deepStrictEqual(patientsById['005'], [
-    { type: 'report', level: 'warning', label: '報告書未発行' }
+    { type: 'report', level: 'warning', label: '報告書未発行', priority: 2 }
   ], '報告書がない場合は未発行タグを付与する');
 }
 

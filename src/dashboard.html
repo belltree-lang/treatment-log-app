@@ -493,9 +493,9 @@ function renderPatients() {
     name.textContent = p.name || '氏名未登録';
     header.appendChild(name);
 
-    const statusTags = document.createElement('div');
-    statusTags.className = 'status-tags';
-    if (Array.isArray(p.statusTags)) {
+    if (Array.isArray(p.statusTags) && p.statusTags.length > 0) {
+      const statusTags = document.createElement('div');
+      statusTags.className = 'status-tags';
       p.statusTags.forEach(tag => {
         if (!tag || !tag.label || !tag.type) return;
         const statusTag = document.createElement('span');
@@ -503,8 +503,10 @@ function renderPatients() {
         statusTag.textContent = tag.label;
         statusTags.appendChild(statusTag);
       });
+      if (statusTags.childElementCount > 0) {
+        header.appendChild(statusTags);
+      }
     }
-    header.appendChild(statusTags);
 
     const tags = document.createElement('div');
     tags.className = 'status-tags';

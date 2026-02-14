@@ -356,6 +356,14 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
 
 function testVisibleScopeForAdminShowsAllPatients() {
   const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        const iso = new Date(date).toISOString();
+        if (fmt === 'yyyy-MM') return iso.slice(0, 7);
+        if (fmt === 'yyyy-MM-dd') return iso.slice(0, 10);
+        return iso;
+      }
+    },
     getTasks: opts => ({
       tasks: ['001', '002']
         .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
@@ -385,7 +393,8 @@ function testVisibleScopeForAdminShowsAllPatients() {
     invoices: { invoices: {}, warnings: [] },
     treatmentLogs: {
       logs: [
-        { patientId: '001', timestamp: new Date('2025-02-10T00:00:00Z'), createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } }
+        { patientId: '001', timestamp: new Date('2025-01-10T00:00:00Z'), dateKey: '2025-01-10', createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-01-11T00:00:00Z'), dateKey: '2025-01-11', createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } }
       ],
       warnings: []
     },
@@ -396,10 +405,19 @@ function testVisibleScopeForAdminShowsAllPatients() {
   assert.strictEqual(result.tasks.length, 2, '管理者はタスク全件表示する');
   assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
+  assert.strictEqual(result.overview.invoiceUnconfirmed.count, 2, '管理者は請求未確認を全患者分表示する');
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        const iso = new Date(date).toISOString();
+        if (fmt === 'yyyy-MM') return iso.slice(0, 7);
+        if (fmt === 'yyyy-MM-dd') return iso.slice(0, 10);
+        return iso;
+      }
+    },
     getTasks: opts => ({
       tasks: ['001', '002']
         .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
@@ -429,8 +447,8 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
     invoices: { invoices: {}, warnings: [] },
     treatmentLogs: {
       logs: [
-        { patientId: '001', timestamp: new Date('2025-02-10T00:00:00Z'), createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
-        { patientId: '002', timestamp: new Date('2025-02-10T00:00:00Z'), createdByEmail: 'other@example.com', staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
+        { patientId: '001', timestamp: new Date('2025-01-10T00:00:00Z'), dateKey: '2025-01-10', createdByEmail: 'staff@example.com', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-01-10T00:00:00Z'), dateKey: '2025-01-10', createdByEmail: 'other@example.com', staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
       ],
       warnings: []
     },
@@ -441,6 +459,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
 }
 
 function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {

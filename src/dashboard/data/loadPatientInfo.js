@@ -55,7 +55,14 @@ function loadPatientInfoUncached_(options) {
   const colPid = dashboardResolveColumn_(headers, ['患者ID', 'patientId', 'ID', 'id', '施術録番号'], 1);
   logContext('loadPatientInfo:patientIdColumn', `index=${colPid}`);
   const colName = dashboardResolveColumn_(headers, ['氏名', '名前', '患者名'], 2);
-  const colConsent = dashboardResolveColumn_(headers, ['同意期限', '同意書期限', '同意有効期限', '同意期限日'], 0);
+  const consentExpiryColumnIndex = dashboardResolveColumn_(headers, ['同意期限', '同意書期限', '同意有効期限', '同意期限日'], 0);
+  if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log('[consent-header-debug] ' + JSON.stringify(headers));
+    Logger.log('[consent-column-index] ' + consentExpiryColumnIndex);
+  }
+  if (consentExpiryColumnIndex === 0) {
+    throw new Error('同意期限列が検出できません。ヘッダ不一致の可能性があります。');
+  }
 
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
@@ -74,8 +81,8 @@ function loadPatientInfoUncached_(options) {
       patientIdSamples.push(patientId);
     }
     const name = String(rowDisplay[colName - 1] || row[colName - 1] || '').trim();
-    const consentExpiry = colConsent
-      ? String(rowDisplay[colConsent - 1] || row[colConsent - 1] || '').trim()
+    const consentExpiry = consentExpiryColumnIndex
+      ? String(rowDisplay[consentExpiryColumnIndex - 1] || row[consentExpiryColumnIndex - 1] || '').trim()
       : '';
 
     if (!patientId) {

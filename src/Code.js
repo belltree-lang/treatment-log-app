@@ -6942,13 +6942,17 @@ function rebuildAllConsentExpiry_() {
     throw new Error('必要な列が見つかりません');
   }
 
+  let updatedCount = 0;
   for (let i = 1; i < values.length; i++) {
     const consentDateRaw = values[i][colConsentDate];
     if (!consentDateRaw) continue;
 
     const expiry = calculateConsentExpiry_(consentDateRaw);
     sheet.getRange(i + 1, colExpiry + 1).setValue(expiry);
+    updatedCount += 1;
   }
+
+  Logger.log('[consent-rebuild] updatedCount=' + updatedCount);
 }
 
 function calcConsentExpiry_(consentVal) {

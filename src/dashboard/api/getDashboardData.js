@@ -184,21 +184,50 @@ function getDashboardData(options) {
       const patientMasterIds = Object.keys(patientMaster || {});
       let consentEligiblePatients = 0;
       let consentEligibleButOutOfScope = 0;
+      let parseFailedCount = 0;
+      let consentAcquiredExcludedCount = 0;
+      let scopeExcludedCount = 0;
 
       patientMasterIds.forEach(pid => {
         const info = patientMaster[pid] || {};
-        const consentExpiryDate = parseConsentDate_(resolveConsentExpiry_(info).value);
+        const consentExpiryResolved = resolveConsentExpiry_(info);
+        const consentExpiryDate = parseConsentDate_(consentExpiryResolved.value);
+        const consentAcquired = dashboardIsConsentAcquired_(info.raw);
+        const inVisibleScope = visiblePatientIds.has(pid);
+        const hasConsentExpiry = consentExpiryResolved.value != null && String(consentExpiryResolved.value).trim() !== '';
+
+        if (hasConsentExpiry && !consentExpiryDate) parseFailedCount += 1;
+        if (consentAcquired) consentAcquiredExcludedCount += 1;
+        if (!inVisibleScope) scopeExcludedCount += 1;
+
+        logContext('getDashboardData:consentEligibilityPatient', JSON.stringify({
+          pid,
+          hasConsentExpiry,
+          parsedConsentExpiry: consentExpiryDate ? consentExpiryDate.toISOString() : null,
+          consentAcquired,
+          inVisibleScope
+        }));
+
         if (!consentExpiryDate) return;
-        if (dashboardIsConsentAcquired_(info.raw)) return;
+        if (consentAcquired) return;
         consentEligiblePatients += 1;
-        if (!visiblePatientIds.has(pid)) consentEligibleButOutOfScope += 1;
+        if (!inVisibleScope) consentEligibleButOutOfScope += 1;
       });
 
+      logContext('getDashboardData:consentEligibleFormula', 'consentEligiblePatients = count(pid where parseConsentDate_(resolveConsentExpiry_(patient).value) != null && dashboardIsConsentAcquired_(patient.raw) === false)');
       logContext('getDashboardData:consentScopeMetrics', JSON.stringify({
         totalPatients: patientMasterIds.length,
         consentEligiblePatients,
         visiblePatientIdsSize: visiblePatientIds.size,
-        consentEligibleButOutOfScope
+        consentEligibleButOutOfScope,
+        parseFailedCount,
+        consentAcquiredExcludedCount,
+        scopeExcludedCount
+      }));
+      logContext('getDashboardData:visibleVsEligible', JSON.stringify({
+        visiblePatientIdsSize: visiblePatientIds.size,
+        consentEligiblePatients,
+        diff: visiblePatientIds.size - consentEligiblePatients
       }));
       logContext(
         'getDashboardData:consentMissingByRecentLog',
@@ -741,36 +770,82 @@ function resolveConsentExpiry_(patient) {
     const entry = candidates[i];
     if (entry.value == null) continue;
     if (typeof entry.value === 'string' && !entry.value.trim()) continue;
+    if (typeof dashboardLogContext_ === 'function') {
+      dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
+        source: entry.source,
+        resolvedValue: entry.value
+      }));
+    }
     return { value: entry.value, source: entry.source };
+  }
+
+  if (typeof dashboardLogContext_ === 'function') {
+    dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
+      source: '',
+      resolvedValue: null
+    }));
   }
 
   return { value: null, source: '' };
 }
 
 function parseConsentDate_(value) {
+  const logParseResult = result => {
+    if (typeof dashboardLogContext_ !== 'function') return;
+    dashboardLogContext_('parseConsentDate_:result', JSON.stringify({
+      input: value,
+      result: result ? result.toISOString() : null
+    }));
+  };
+
   if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
+    const parsedDate = Number.isNaN(value.getTime()) ? null : value;
+    logParseResult(parsedDate);
+    return parsedDate;
   }
-  if (value == null) return null;
+  if (value == null) {
+    logParseResult(null);
+    return null;
+  }
 
   const str = String(value).trim();
-  if (!str) return null;
+  if (!str) {
+    logParseResult(null);
+    return null;
+  }
 
   const ymdHyphen = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (ymdHyphen) return createDateFromYmd_(ymdHyphen[1], ymdHyphen[2], ymdHyphen[3]);
+  if (ymdHyphen) {
+    const parsedDate = createDateFromYmd_(ymdHyphen[1], ymdHyphen[2], ymdHyphen[3]);
+    logParseResult(parsedDate);
+    return parsedDate;
+  }
 
   const ymdSlash = str.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
-  if (ymdSlash) return createDateFromYmd_(ymdSlash[1], ymdSlash[2], ymdSlash[3]);
+  if (ymdSlash) {
+    const parsedDate = createDateFromYmd_(ymdSlash[1], ymdSlash[2], ymdSlash[3]);
+    logParseResult(parsedDate);
+    return parsedDate;
+  }
 
   const ymdJapanese = str.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
-  if (ymdJapanese) return createDateFromYmd_(ymdJapanese[1], ymdJapanese[2], ymdJapanese[3]);
+  if (ymdJapanese) {
+    const parsedDate = createDateFromYmd_(ymdJapanese[1], ymdJapanese[2], ymdJapanese[3]);
+    logParseResult(parsedDate);
+    return parsedDate;
+  }
 
   const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/;
   if (isoPattern.test(str)) {
     const timestamp = Date.parse(str);
-    if (Number.isFinite(timestamp)) return new Date(timestamp);
+    if (Number.isFinite(timestamp)) {
+      const parsedDate = new Date(timestamp);
+      logParseResult(parsedDate);
+      return parsedDate;
+    }
   }
 
+  logParseResult(null);
   return null;
 }
 

@@ -596,7 +596,13 @@ function renderPatients() {
     if (Array.isArray(p.statusTags) && p.statusTags.length > 0) {
       const statusTags = document.createElement('div');
       statusTags.className = 'status-tags';
-      p.statusTags.forEach(tag => {
+      const orderedTags = p.statusTags.slice().sort((a, b) => {
+        const order = { consent: 0, report: 1 };
+        const aOrder = Object.prototype.hasOwnProperty.call(order, a && a.type) ? order[a.type] : 99;
+        const bOrder = Object.prototype.hasOwnProperty.call(order, b && b.type) ? order[b.type] : 99;
+        return aOrder - bOrder;
+      });
+      orderedTags.forEach(tag => {
         if (!tag || !tag.label || !tag.type) return;
         if (tag.type !== 'consent' && tag.type !== 'report') return;
         const statusTag = document.createElement('span');

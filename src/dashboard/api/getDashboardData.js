@@ -520,7 +520,7 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   const consentExpiryDate = parseConsentDate_(consentExpiryResolved.value);
   const raw = patient && patient.raw ? patient.raw : null;
   const consentAcquired = dashboardIsConsentAcquired_(raw);
-  const consentExpired = consentExpiryDate && dashboardDaysBetween_(targetNow, consentExpiryDate, true) <= 0;
+  const daysRemaining = consentExpiryDate ? dashboardDaysBetween_(targetNow, consentExpiryDate, true) : null;
 
   if (shouldDebugConsent_() && consentExpiryResolved.value != null && !consentExpiryDate) {
     dashboardLogContext_('consent-date-parse-failed', JSON.stringify({
@@ -532,7 +532,16 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   }
 
   if (!consentAcquired && consentExpiryDate) {
-    tags.push({ type: 'consent', label: consentExpired ? '期限超過' : '要対応' });
+    let label = '要対応';
+    let priority = 'low';
+    if (daysRemaining < 0) {
+      label = '期限超過';
+      priority = 'high';
+    } else if (daysRemaining <= 14) {
+      label = '期限迫る';
+      priority = 'medium';
+    }
+    tags.push({ type: 'consent', label, priority });
   }
 
   const reportDate = dashboardParseTimestamp_(aiReportAt);
@@ -768,9 +777,12 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
     const todayStart = new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
     const expiryStart = new Date(consentExpiryDate.getFullYear(), consentExpiryDate.getMonth(), consentExpiryDate.getDate());
     const diffDays = Math.floor((expiryStart.getTime() - todayStart.getTime()) / (24 * 60 * 60 * 1000));
-    const label = diffDays >= 0
-      ? `要対応（残${diffDays}日）`
-      : `期限超過（${Math.abs(diffDays)}日超過）`;
+    let label = `同意期限（残${diffDays}日）`;
+    if (diffDays < 0) {
+      label = `⚠ 同意期限超過（${Math.abs(diffDays)}日超過）`;
+    } else if (diffDays <= 14) {
+      label = `⏳ 同意期限迫る（残${diffDays}日）`;
+    }
     const name = info.name || patientNameMap[pid] || '';
     items.push({
       patientId: pid,

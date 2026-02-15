@@ -93,7 +93,7 @@ function testAggregatesDashboardData() {
       row: 5
     },
     statusTags: [
-      { type: 'consent', label: '期限超過' },
+      { type: 'consent', label: '期限超過', priority: 'high' },
       { type: 'report', label: '作成済' }
     ]
   });
@@ -116,7 +116,8 @@ function testPatientStatusTagsGeneration() {
         '002': { name: '期限超過未取得', consentExpiry: '2025-01-20', raw: {} },
         '003': { name: '報告書作成済', consentExpiry: '2025-02-20', raw: {} },
         '004': { name: '同意取得確認済', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
-        '005': { name: '同意日更新後', consentExpiry: '2025-03-20', raw: {} }
+        '005': { name: '同意日更新後', consentExpiry: '2025-03-20', raw: {} },
+        '006': { name: '期限迫る未取得', consentExpiry: '2025-02-10', raw: {} }
       },
       warnings: []
     },
@@ -141,26 +142,31 @@ function testPatientStatusTagsGeneration() {
   });
 
   assert.deepStrictEqual(patientsById['001'], [
-    { type: 'consent', label: '要対応' },
+    { type: 'consent', label: '要対応', priority: 'low' },
     { type: 'report', label: '未作成' }
   ], '1. 期限内未取得は要対応＋未作成を表示する');
 
   assert.deepStrictEqual(patientsById['002'], [
-    { type: 'consent', label: '期限超過' },
+    { type: 'consent', label: '期限超過', priority: 'high' },
     { type: 'report', label: '未作成' }
   ], '2. 期限超過未取得は期限超過＋未作成を表示する');
 
   assert.deepStrictEqual(patientsById['003'], [
-    { type: 'consent', label: '要対応' },
+    { type: 'consent', label: '要対応', priority: 'low' },
     { type: 'report', label: '作成済' }
   ], '3. 報告書作成済は要対応＋作成済を表示する');
 
   assert.deepStrictEqual(patientsById['004'], [], '4. 同意取得確認ありは両タグを非表示にする');
 
   assert.deepStrictEqual(patientsById['005'], [
-    { type: 'consent', label: '要対応' },
+    { type: 'consent', label: '要対応', priority: 'low' },
     { type: 'report', label: '未作成' }
   ], '5. 同意日更新後は新期限で要対応を再表示する');
+
+  assert.deepStrictEqual(patientsById['006'], [
+    { type: 'consent', label: '期限迫る', priority: 'medium' },
+    { type: 'report', label: '未作成' }
+  ], '6. 14日以内は期限迫るを表示する');
 }
 
 function testConsentOverviewMatchesPatientStatusTags() {
@@ -173,7 +179,8 @@ function testConsentOverviewMatchesPatientStatusTags() {
         '001': { name: '期限内未取得', consentExpiry: '2025-02-20', raw: {} },
         '002': { name: '期限超過未取得', consentExpiry: '2025-01-20', raw: {} },
         '003': { name: '同意取得確認済', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
-        '004': { name: '期限未登録', raw: {} }
+        '004': { name: '期限未登録', raw: {} },
+        '005': { name: '期限迫る未取得', consentExpiry: '2025-02-10', raw: {} }
       },
       warnings: []
     },
@@ -195,8 +202,9 @@ function testConsentOverviewMatchesPatientStatusTags() {
 
   const overviewItems = JSON.parse(JSON.stringify(result.overview.consentRelated.items));
   assert.deepStrictEqual(overviewItems, [
-    { patientId: '002', name: '期限超過未取得', subText: '期限超過（12日超過）' },
-    { patientId: '001', name: '期限内未取得', subText: '要対応（残19日）' }
+    { patientId: '002', name: '期限超過未取得', subText: '⚠ 同意期限超過（12日超過）' },
+    { patientId: '001', name: '期限内未取得', subText: '同意期限（残19日）' },
+    { patientId: '005', name: '期限迫る未取得', subText: '⏳ 同意期限迫る（残9日）' }
   ], '上段同意ブロックは consentExpiry + 同意書取得確認の判定だけで表示する');
 
   const patientsById = {};
@@ -204,10 +212,11 @@ function testConsentOverviewMatchesPatientStatusTags() {
     patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
   });
 
-  assert.deepStrictEqual(patientsById['001'].filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応' }], 'Case1: 期限内・未取得');
-  assert.deepStrictEqual(patientsById['002'].filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '期限超過' }], 'Case2: 期限超過・未取得');
+  assert.deepStrictEqual(patientsById['001'].filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応', priority: 'low' }], 'Case1: 期限内・未取得');
+  assert.deepStrictEqual(patientsById['002'].filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '期限超過', priority: 'high' }], 'Case2: 期限超過・未取得');
   assert.deepStrictEqual((patientsById['003'] || []).filter(tag => tag.type === 'consent'), [], 'Case3: 同意取得確認済');
   assert.deepStrictEqual((patientsById['004'] || []).filter(tag => tag.type === 'consent'), [], 'Case4: 期限未登録');
+  assert.deepStrictEqual((patientsById['005'] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '期限迫る', priority: 'medium' }], 'Case5: 期限迫る・未取得');
 }
 
 function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
@@ -246,7 +255,7 @@ function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
   ['001', '002', '003'].forEach(patientId => {
     assert.deepStrictEqual(
       (patientsById[patientId] || []).filter(tag => tag.type === 'consent'),
-      [{ type: 'consent', label: '要対応' }],
+      [{ type: 'consent', label: '要対応', priority: 'low' }],
       `下段同意タグにも表示される: ${patientId}`
     );
   });
@@ -327,7 +336,7 @@ function testConsentDateParsingFormatsAndResolverPriority() {
     patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
   });
   ['001', '002', '003', '004', '005', '007', '008', '009'].forEach(patientId => {
-    assert.deepStrictEqual((patientsById[patientId] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応' }], `同意タグが表示される: ${patientId}`);
+    assert.deepStrictEqual((patientsById[patientId] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応', priority: 'low' }], `同意タグが表示される: ${patientId}`);
   });
   assert.deepStrictEqual((patientsById['006'] || []).filter(tag => tag.type === 'consent'), [], '不正文字列は同意タグの表示対象外');
   assert.deepStrictEqual((patientsById['010'] || []).filter(tag => tag.type === 'consent'), [], '取得済み判定は従来通り同意タグ非表示');

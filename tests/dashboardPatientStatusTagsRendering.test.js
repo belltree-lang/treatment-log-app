@@ -128,4 +128,13 @@ function createContext() {
   assert.ok(doneTag.className.includes('tag-report-done'), '作成済 should use done class');
 })();
 
+(function testOverviewSectionDoesNotContainPrioritySummary() {
+  assert.strictEqual(dashboardHtml.includes('優先度集計'), false, 'dashboard.html に「優先度集計」の文言を含めない');
+  assert.strictEqual(dashboardHtml.includes('patientStatusSummary'), false, 'patientStatusSummary の参照を含めない');
+  assert.strictEqual(dashboardHtml.includes('criticalPatients'), false, 'criticalPatients の参照を含めない');
+
+  const summaryCardIds = Array.from(dashboardHtml.matchAll(/class="card summary-card" id="([^"]+)"/g)).map(match => match[1]);
+  assert.deepStrictEqual(summaryCardIds, ['invoiceSummary', 'consentSummary', 'visitSummary'], 'overview 直下カードは①請求/②同意/③施術実績のみ');
+})();
+
 console.log('dashboard patient status tags rendering tests passed');

@@ -629,6 +629,29 @@ function testWarningsAreDedupedAndSetupFlagged() {
   assert.strictEqual(result.meta.setupIncomplete, true, 'セットアップ未完了フラグが伝搬する');
 }
 
+function testOverviewContainsOnlyThreeCardsPayload() {
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'user@example.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: { patients: { '001': { name: '患者A' } }, warnings: [] },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  const overview = result && result.overview ? JSON.parse(JSON.stringify(result.overview)) : {};
+  const keys = Object.keys(overview).sort();
+  assert.deepStrictEqual(keys, ['consentRelated', 'invoiceUnconfirmed', 'visitSummary'], 'overview は ①請求/②同意/③施術実績 の3項目のみ返す');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(overview, 'patientStatusSummary'), false, 'patientStatusSummary は返さない');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(overview, 'criticalPatients'), false, 'criticalPatients は返さない');
+}
+
 (function run() {
   testAggregatesDashboardData();
   testPatientStatusTagsGeneration();
@@ -644,5 +667,6 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testErrorIsCapturedInMeta();
   testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged();
   testWarningsAreDedupedAndSetupFlagged();
+  testOverviewContainsOnlyThreeCardsPayload();
   console.log('dashboardGetDashboardData tests passed');
 })();

@@ -367,8 +367,9 @@ function dashboardGetTreatmentLogsFromCache_(cacheKey, monthKey, loader, logCach
   const cacheTtlSeconds = 300;
 
   if (canUseCacheService) {
+    let cache = null;
     try {
-      const cache = CacheService.getScriptCache();
+      cache = CacheService.getScriptCache();
       const cachedRaw = cache.get(cacheKey);
       if (cachedRaw) {
         const parsed = JSON.parse(cachedRaw);
@@ -378,17 +379,29 @@ function dashboardGetTreatmentLogsFromCache_(cacheKey, monthKey, loader, logCach
         }
       }
       emit('cacheMiss', 'source=CacheService');
-      const loaded = loader();
-      const payload = JSON.stringify({
-        monthKey,
-        payload: sanitizeTreatmentLogsCachePayload_(loaded)
-      });
-      cache.put(cacheKey, payload, cacheTtlSeconds);
-      return loaded;
     } catch (err) {
       emit('cacheMiss', `reason=cacheError error=${err && err.message ? err.message : err}`);
-      return loader();
     }
+
+    const loaded = loader();
+
+    if (cache) {
+      try {
+        const payload = JSON.stringify({
+          monthKey,
+          payload: sanitizeTreatmentLogsCachePayload_(loaded)
+        });
+        if (payload.length > 90000) {
+          emit('cacheSkip', `reason=tooLarge size=${payload.length}`);
+          return loaded;
+        }
+        cache.put(cacheKey, payload, cacheTtlSeconds);
+      } catch (err) {
+        emit('cacheSkip', `reason=cacheError error=${err && err.message ? err.message : err}`);
+      }
+    }
+
+    return loaded;
   }
 
   emit('cacheMiss', 'reason=cacheUnavailable');

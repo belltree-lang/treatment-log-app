@@ -32,6 +32,7 @@ function createElement(tagName) {
     },
     addEventListener() {},
     setAttribute() {},
+    classList: { add() {}, remove() {}, toggle() {} },
     get childElementCount() {
       return this.children.length;
     }
@@ -126,6 +127,18 @@ function createContext() {
 
   assert.ok(pendingTag.className.includes('tag-report-pending'), '未作成 should use pending class');
   assert.ok(doneTag.className.includes('tag-report-done'), '作成済 should use done class');
+})();
+
+(function testOverviewListDoesNotRenderCountText() {
+  const { context } = createContext();
+  const list = context.renderOverviewList_([
+    { patientId: '1', name: '患者A', count: 3, subText: '補足' }
+  ], '対象なし');
+
+  const title = list.children[0].children[0];
+  const titleTexts = title.children.map((child) => child.textContent);
+
+  assert.deepStrictEqual(titleTexts, ['患者A'], '患者名のみ表示し件数は表示しない');
 })();
 
 console.log('dashboard patient status tags rendering tests passed');

@@ -77,7 +77,7 @@ function createContext() {
         name: 'あり',
         statusTags: [
           { type: 'report', label: '作成済' },
-          { type: 'consent', label: '要対応' },
+          { type: 'consent', label: '📄 要対応', priority: 'low' },
           { type: 'other', label: '不要' }
         ]
       },
@@ -100,7 +100,7 @@ function createContext() {
 
   assert.strictEqual(withTagContainers.length, 1, 'patient with status tag has one status-tags container');
   assert.strictEqual(withTagContainers[0].children.length, 2, 'only consent/report tags are rendered');
-  assert.strictEqual(withTagContainers[0].children[0].textContent, '要対応', 'consent is displayed before report');
+  assert.strictEqual(withTagContainers[0].children[0].textContent, '📄 要対応', 'consent is displayed before report');
   assert.strictEqual(withTagContainers[0].children[1].textContent, '作成済', 'report is displayed after consent');
 
   assert.strictEqual(withoutTagContainers.length, 0, 'patient with empty statusTags has no status-tags container');
@@ -127,6 +127,33 @@ function createContext() {
 
   assert.ok(pendingTag.className.includes('tag-report-pending'), '未作成 should use pending class');
   assert.ok(doneTag.className.includes('tag-report-done'), '作成済 should use done class');
+})();
+
+
+(function testConsentPriorityUsesExpectedClassNames() {
+  const { context, patientList } = createContext();
+  vm.runInContext(`dashboardState.data = {
+    patients: [
+      { patientId: '1', name: '高', statusTags: [{ type: 'consent', label: '⚠ 期限超過', priority: 'high' }] },
+      { patientId: '2', name: '中', statusTags: [{ type: 'consent', label: '⏳ 期限迫る', priority: 'medium' }] },
+      { patientId: '3', name: '低', statusTags: [{ type: 'consent', label: '📄 要対応', priority: 'low' }] }
+    ]
+  };`, context);
+
+  context.renderPatients();
+
+  const tags = patientList.children.map((row) => {
+    const header = row.children[0].children[0];
+    return header.children.find((child) => child.className === 'status-tags').children[0];
+  });
+
+  const highTag = tags.find((tag) => tag.textContent === '⚠ 期限超過');
+  const mediumTag = tags.find((tag) => tag.textContent === '⏳ 期限迫る');
+  const lowTag = tags.find((tag) => tag.textContent === '📄 要対応');
+
+  assert.ok(highTag.className.includes('status-consent-expired'), 'high priority should map to status-consent-expired');
+  assert.ok(mediumTag.className.includes('status-consent-warning'), 'medium priority should map to status-consent-warning');
+  assert.ok(lowTag.className.includes('status-consent-normal'), 'low priority should map to status-consent-normal');
 })();
 
 (function testOverviewListDoesNotRenderCountText() {

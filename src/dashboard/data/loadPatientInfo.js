@@ -60,6 +60,9 @@ function loadPatientInfoUncached_(options) {
   const values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   const displayValues = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
   const patientIdSamples = [];
+  const consentExpirySamples = [];
+  const rawConsentDateSamples = [];
+  let consentExpiryCount = 0;
 
   for (let i = 0; i < values.length; i++) {
     const row = values[i] || [];
@@ -97,6 +100,17 @@ function loadPatientInfoUncached_(options) {
       raw[key] = row[idx];
     });
 
+    if (consentExpiry) {
+      consentExpiryCount += 1;
+      if (consentExpirySamples.length < 3) {
+        consentExpirySamples.push({ patientId, consentExpiry });
+      }
+    }
+    const rawConsentDate = raw['同意年月日'];
+    if (rawConsentDate != null && String(rawConsentDate).trim() && rawConsentDateSamples.length < 3) {
+      rawConsentDateSamples.push({ patientId, rawConsentDate });
+    }
+
     patients[patientId] = {
       patientId,
       name,
@@ -106,6 +120,9 @@ function loadPatientInfoUncached_(options) {
   }
 
   logContext('loadPatientInfo:patientIdSamples', JSON.stringify(patientIdSamples));
+  logContext('loadPatientInfo:consentExpiryCount', String(consentExpiryCount));
+  logContext('loadPatientInfo:consentExpirySamples', JSON.stringify(consentExpirySamples));
+  logContext('loadPatientInfo:rawConsentDateSamples', JSON.stringify(rawConsentDateSamples));
   const patientMapSize = Object.keys(patients).length;
   logContext('loadPatientInfo:patientMapSize', `size=${patientMapSize}`);
   if (patientMapSize === 0) {

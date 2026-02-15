@@ -6916,6 +6916,41 @@ function parseDateFlexible_(v) {
   const d = new Date(raw);
   return isNaN(d.getTime()) ? null : d;
 }
+
+function calculateConsentExpiry_(dateRaw) {
+  const d = new Date(dateRaw);
+  if (isNaN(d)) return '';
+
+  const day = d.getDate();
+  const monthsToAdd = day <= 15 ? 5 : 6;
+
+  const target = new Date(d);
+  target.setMonth(target.getMonth() + monthsToAdd + 1, 0);
+
+  return Utilities.formatDate(target, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function rebuildAllConsentExpiry_() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName('患者情報');
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+
+  const colConsentDate = headers.indexOf('同意年月日');
+  const colExpiry = headers.indexOf('同意期限');
+
+  if (colConsentDate === -1 || colExpiry === -1) {
+    throw new Error('必要な列が見つかりません');
+  }
+
+  for (let i = 1; i < values.length; i++) {
+    const consentDateRaw = values[i][colConsentDate];
+    if (!consentDateRaw) continue;
+
+    const expiry = calculateConsentExpiry_(consentDateRaw);
+    sheet.getRange(i + 1, colExpiry + 1).setValue(expiry);
+  }
+}
+
 function calcConsentExpiry_(consentVal) {
   const d = parseDateFlexible_(consentVal);
   if (!d) return '';

@@ -288,45 +288,13 @@ function renderConsentSummary() {
 function renderVisitSummary() {
   const container = document.getElementById('visitSummary');
   if (!container) return;
-  container.innerHTML = '';
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
-  const data = overview && overview.visitSummary ? overview.visitSummary : { todayCount: 0, recentOneDayCount: 0 };
-
-  const header = document.createElement('div');
-  header.className = 'summary-header';
-  const title = document.createElement('h3');
-  title.textContent = '③施術実績';
-  header.appendChild(title);
-  container.appendChild(header);
-
-  const metrics = document.createElement('div');
-  metrics.className = 'overview-metrics';
-
-  const todayRow = document.createElement('div');
-  todayRow.className = 'overview-metric';
-  const todayLabel = document.createElement('span');
-  todayLabel.className = 'overview-metric-label';
-  todayLabel.textContent = '今日';
-  const todayValue = document.createElement('span');
-  todayValue.className = 'overview-metric-value';
-  todayValue.textContent = `${data.todayCount || 0}件`;
-  todayRow.appendChild(todayLabel);
-  todayRow.appendChild(todayValue);
-  metrics.appendChild(todayRow);
-
-  const lastRow = document.createElement('div');
-  lastRow.className = 'overview-metric';
-  const lastLabel = document.createElement('span');
-  lastLabel.className = 'overview-metric-label';
-  lastLabel.textContent = '直近1日施術';
-  const lastValue = document.createElement('span');
-  lastValue.className = 'overview-metric-value';
-  lastValue.textContent = `${data.recentOneDayCount || 0}件`;
-  lastRow.appendChild(lastLabel);
-  lastRow.appendChild(lastValue);
-  metrics.appendChild(lastRow);
-
-  container.appendChild(metrics);
+  const data = overview && overview.visitSummary ? overview.visitSummary : { items: [] };
+  renderOverviewCard_(container, {
+    title: '③実績',
+    items: data.items || [],
+    emptyText: '対象者なし'
+  });
 }
 
 function renderUnpaidAlerts() {
@@ -790,19 +758,6 @@ function showNavigationError_(message) {
   if (!message) return;
   dashboardState.error = message;
   renderError();
-}
-function formatTaskLabel(type) {
-  switch(type) {
-    case 'consentExpired': return '同意書期限切れ';
-    case 'consentWarning': return '同意書期限間近';
-    case 'handoverDelayed':
-      // 一時対応: Issue #1449
-      // 表示上は非表示にするが、タスクデータ自体は保持して将来の再有効化に備える。
-      return DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI ? '' : '報告書作成ヒント未入力';
-    case 'aiReportDelayed': return '医師報告書遅延';
-    case 'invoiceUnconfirmed': return '請求書確認待ち';
-    default: return 'タスク';
-  }
 }
 function formatCurrency(amount) {
   const num = Number(amount) || 0;

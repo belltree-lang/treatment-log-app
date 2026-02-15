@@ -378,10 +378,11 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
     seen.add(patientId);
 
     const base = payload || {};
+    const consentExpiryResolved = resolveConsentExpiry_(base);
     const entry = {
       patientId,
       name: base.name || base.patientName || '',
-      consentExpiry: base.consentExpiry || (base.raw && (base.raw['同意期限'] || base.raw['同意有効期限'])) || '',
+      consentExpiry: consentExpiryResolved.value == null ? '' : consentExpiryResolved.value,
       responsible: Object.prototype.hasOwnProperty.call(responsible, patientId) ? responsible[patientId] : null,
       invoiceUrl: Object.prototype.hasOwnProperty.call(invoices, patientId) ? invoices[patientId] : null,
       aiReportAt: Object.prototype.hasOwnProperty.call(aiReports, patientId) ? aiReports[patientId] : null,
@@ -408,11 +409,20 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
     : { aiReportAt: params, now: maybeNow };
   const targetNow = dashboardCoerceDate_(options.now) || new Date();
   const aiReportAt = options.aiReportAt;
-  const consentExpiry = patient && (patient.consentExpiry || (patient.raw && (patient.raw['同意期限'] || patient.raw['同意有効期限'])));
-  const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
+  const consentExpiryResolved = resolveConsentExpiry_(patient);
+  const consentExpiryDate = parseConsentDate_(consentExpiryResolved.value);
   const raw = patient && patient.raw ? patient.raw : null;
   const consentAcquired = dashboardIsConsentAcquired_(raw);
   const consentExpired = consentExpiryDate && dashboardDaysBetween_(targetNow, consentExpiryDate, true) <= 0;
+
+  if (shouldDebugConsent_() && consentExpiryResolved.value != null && !consentExpiryDate) {
+    dashboardLogContext_('consent-date-parse-failed', JSON.stringify({
+      phase: 'tag',
+      patientId: patient && patient.patientId ? patient.patientId : '',
+      source: consentExpiryResolved.source,
+      raw: consentExpiryResolved.value
+    }));
+  }
 
   if (!consentAcquired && consentExpiryDate) {
     tags.push({ type: 'consent', label: consentExpired ? '期限超過' : '要対応' });
@@ -630,9 +640,17 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
   Object.keys(patientInfo || {}).forEach(pid => {
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const info = patientInfo[pid] || {};
-    const consentExpiry = info.consentExpiry || (info.raw && (info.raw['同意期限'] || info.raw['同意有効期限']));
-    const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
+    const consentExpiryResolved = resolveConsentExpiry_(info);
+    const consentExpiryDate = parseConsentDate_(consentExpiryResolved.value);
     const consentAcquired = dashboardIsConsentAcquired_(info.raw);
+    if (shouldDebugConsent_() && consentExpiryResolved.value != null && !consentExpiryDate) {
+      dashboardLogContext_('consent-date-parse-failed', JSON.stringify({
+        phase: 'overview',
+        patientId: pid,
+        source: consentExpiryResolved.source,
+        raw: consentExpiryResolved.value
+      }));
+    }
     if (consentAcquired || !consentExpiryDate) return;
 
     const todayStart = new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
@@ -651,6 +669,71 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
   return { items };
+}
+
+function resolveConsentExpiry_(patient) {
+  const info = patient && typeof patient === 'object' ? patient : {};
+  const raw = info.raw && typeof info.raw === 'object' ? info.raw : null;
+  const candidates = [
+    { source: 'info.consentExpiry', value: info.consentExpiry },
+    { source: "raw['同意期限']", value: raw ? raw['同意期限'] : null },
+    { source: "raw['同意有効期限']", value: raw ? raw['同意有効期限'] : null },
+    { source: "raw['同意期限日']", value: raw ? raw['同意期限日'] : null }
+  ];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const entry = candidates[i];
+    if (entry.value == null) continue;
+    if (typeof entry.value === 'string' && !entry.value.trim()) continue;
+    return { value: entry.value, source: entry.source };
+  }
+
+  return { value: null, source: '' };
+}
+
+function parseConsentDate_(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (value == null) return null;
+
+  const str = String(value).trim();
+  if (!str) return null;
+
+  const ymdHyphen = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (ymdHyphen) return createDateFromYmd_(ymdHyphen[1], ymdHyphen[2], ymdHyphen[3]);
+
+  const ymdSlash = str.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (ymdSlash) return createDateFromYmd_(ymdSlash[1], ymdSlash[2], ymdSlash[3]);
+
+  const ymdJapanese = str.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
+  if (ymdJapanese) return createDateFromYmd_(ymdJapanese[1], ymdJapanese[2], ymdJapanese[3]);
+
+  const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/;
+  if (isoPattern.test(str)) {
+    const timestamp = Date.parse(str);
+    if (Number.isFinite(timestamp)) return new Date(timestamp);
+  }
+
+  return null;
+}
+
+function createDateFromYmd_(yearRaw, monthRaw, dayRaw) {
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return date;
+}
+
+function shouldDebugConsent_() {
+  if (typeof DASHBOARD_DEBUG_CONSENT !== 'undefined') return !!DASHBOARD_DEBUG_CONSENT;
+  if (typeof DEBUG_MODE !== 'undefined') return !!DEBUG_MODE;
+  return false;
 }
 
 function resolvePatientRawValue_(raw, candidates) {

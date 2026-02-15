@@ -261,6 +261,97 @@ function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
   });
 }
 
+
+function testConsentDateParsingFormatsAndResolverPriority() {
+  const ctx = createContext();
+  const now = new Date('2025-02-01T00:00:00Z');
+
+  const resolved = ctx.resolveConsentExpiry_({
+    consentExpiry: '   ',
+    raw: {
+      '同意期限': '2025-03-01',
+      '同意有効期限': '2025-03-02',
+      '同意期限日': '2025-03-03'
+    }
+  });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(resolved)), {
+    value: '2025-03-01',
+    source: "raw['同意期限']"
+  }, '空文字の consentExpiry は無視して raw[同意期限] を優先する');
+
+  const result = ctx.getDashboardData({
+    user: { email: 'user@example.com', role: 'admin' },
+    now,
+    patientInfo: {
+      patients: {
+        '001': { name: 'A-hyphen', consentExpiry: '2025-02-20', raw: {} },
+        '002': { name: 'B-slash', consentExpiry: '2025/02/21', raw: {} },
+        '003': { name: 'C-japanese', consentExpiry: '2025年2月22日', raw: {} },
+        '004': { name: 'D-iso', consentExpiry: '2025-02-23T00:00:00Z', raw: {} },
+        '005': { name: 'E-date', consentExpiry: new Date('2025-02-24T00:00:00Z'), raw: {} },
+        '006': { name: 'F-invalid', consentExpiry: '2025-99-99', raw: {} },
+        '007': { name: 'G-raw-consent', consentExpiry: '   ', raw: { '同意期限': '2025-02-25' } },
+        '008': { name: 'H-raw-valid', consentExpiry: '', raw: { '同意有効期限': '2025/02/26' } },
+        '009': { name: 'I-raw-date', raw: { '同意期限日': '2025年2月27日' } },
+        '010': { name: 'J-acquired', raw: { '同意期限': '2025-02-28', '同意書取得確認': '済' } }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  const overviewIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
+  assert.deepStrictEqual(overviewIds, ['001', '002', '003', '004', '005', '007', '008', '009'], '対応フォーマット + raw列解決のみ表示され、不正値と取得済みは除外される');
+
+  const patientsById = {};
+  result.patients.forEach(entry => {
+    patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
+  });
+  ['001', '002', '003', '004', '005', '007', '008', '009'].forEach(patientId => {
+    assert.deepStrictEqual((patientsById[patientId] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応' }], `同意タグが表示される: ${patientId}`);
+  });
+  assert.deepStrictEqual((patientsById['006'] || []).filter(tag => tag.type === 'consent'), [], '不正文字列は同意タグの表示対象外');
+  assert.deepStrictEqual((patientsById['010'] || []).filter(tag => tag.type === 'consent'), [], '取得済み判定は従来通り同意タグ非表示');
+}
+
+function testConsentDateParseFailureCanBeDebugLogged() {
+  const logs = [];
+  const ctx = createContext({ DASHBOARD_DEBUG_CONSENT: true });
+  ctx.dashboardLogContext_ = (label, details) => {
+    logs.push({ label, details: String(details || '') });
+  };
+
+  ctx.getDashboardData({
+    user: { email: 'user@example.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: 'invalid-overview', consentExpiry: 'invalid-date', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  const parseFailureLogs = logs.filter(entry => entry.label === 'consent-date-parse-failed');
+  assert.ok(parseFailureLogs.length >= 1, 'debug flag 有効時に parse 失敗ログを出力する');
+  assert.ok(parseFailureLogs.some(entry => entry.details.indexOf('invalid-date') >= 0), '失敗した元値をログに含む');
+}
+
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
   const logEntries = [];
   const ctx = createContext();
@@ -767,6 +858,8 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testPatientStatusTagsGeneration();
   testConsentOverviewMatchesPatientStatusTags();
   testConsentAcquiredJudgmentHandlesFalseyStringsConsistently();
+  testConsentDateParsingFormatsAndResolverPriority();
+  testConsentDateParseFailureCanBeDebugLogged();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
   testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount();
   testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth();

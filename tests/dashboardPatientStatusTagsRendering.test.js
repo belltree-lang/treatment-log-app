@@ -71,7 +71,15 @@ function createContext() {
   const { context, patientList } = createContext();
   vm.runInContext(`dashboardState.data = {
     patients: [
-      { patientId: '1', name: 'あり', statusTags: [{ type: 'consent', label: '遅延' }] },
+      {
+        patientId: '1',
+        name: 'あり',
+        statusTags: [
+          { type: 'report', label: '作成済' },
+          { type: 'consent', label: '要対応' },
+          { type: 'other', label: '不要' }
+        ]
+      },
       { patientId: '2', name: 'なし', statusTags: [] },
       { patientId: '3', name: '未定義' }
     ]
@@ -90,10 +98,34 @@ function createContext() {
   const withoutTagUndefinedContainers = headerWithoutTagUndefined.children.filter((child) => child.className === 'status-tags');
 
   assert.strictEqual(withTagContainers.length, 1, 'patient with status tag has one status-tags container');
-  assert.strictEqual(withTagContainers[0].children.length, 1, 'status tag container has one child');
+  assert.strictEqual(withTagContainers[0].children.length, 2, 'only consent/report tags are rendered');
+  assert.strictEqual(withTagContainers[0].children[0].textContent, '要対応', 'consent is displayed before report');
+  assert.strictEqual(withTagContainers[0].children[1].textContent, '作成済', 'report is displayed after consent');
 
   assert.strictEqual(withoutTagContainers.length, 0, 'patient with empty statusTags has no status-tags container');
   assert.strictEqual(withoutTagUndefinedContainers.length, 0, 'patient without statusTags has no status-tags container');
+})();
+
+(function testReportTagUsesPendingDoneClass() {
+  const { context, patientList } = createContext();
+  vm.runInContext(`dashboardState.data = {
+    patients: [
+      { patientId: '1', name: '未作成', statusTags: [{ type: 'report', label: '未作成' }] },
+      { patientId: '2', name: '作成済', statusTags: [{ type: 'report', label: '作成済' }] }
+    ]
+  };`, context);
+
+  context.renderPatients();
+
+  const allTags = patientList.children.map((row) => {
+    const header = row.children[0].children[0];
+    return header.children.find((child) => child.className === 'status-tags').children[0];
+  });
+  const pendingTag = allTags.find((tag) => tag.textContent === '未作成');
+  const doneTag = allTags.find((tag) => tag.textContent === '作成済');
+
+  assert.ok(pendingTag.className.includes('tag-report-pending'), '未作成 should use pending class');
+  assert.ok(doneTag.className.includes('tag-report-done'), '作成済 should use done class');
 })();
 
 console.log('dashboard patient status tags rendering tests passed');

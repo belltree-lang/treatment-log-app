@@ -53,7 +53,8 @@
   .status-tags{ display:flex; gap:6px; flex-wrap:wrap; }
   .status-tag{ display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; font-size:0.8rem; border:1px solid var(--border); color:var(--muted); background:rgba(255,255,255,0.04); }
   .status-tag.tag-consent{ color:#fdba74; background:rgba(249,115,22,0.14); border-color:rgba(249,115,22,0.32); }
-  .status-tag.tag-report{ color:#fca5a5; background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.32); }
+  .status-tag.tag-report-pending{ color:#fca5a5; background:rgba(239,68,68,0.14); border-color:rgba(239,68,68,0.32); }
+  .status-tag.tag-report-done{ color:#6ee7b7; background:rgba(16,185,129,0.14); border-color:rgba(16,185,129,0.32); }
   .patient-body{ border-top:1px solid var(--border); padding:12px 14px 14px; display:flex; flex-direction:column; gap:8px; background:rgba(255,255,255,0.02); }
   .meta-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:0.9rem; }
   .note-preview{ background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.22); border-radius:12px; padding:10px 12px; font-size:0.95rem; color:#e0f2fe; }
@@ -68,9 +69,6 @@
   .alert-amount{ font-size:1.1rem; font-weight:800; color:#fbbf24; }
   .alert-months{ display:flex; gap:6px; flex-wrap:wrap; font-size:0.9rem; color:var(--muted); }
   .summary-card{ display:flex; flex-direction:column; gap:10px; }
-  .critical-list{ display:flex; flex-direction:column; gap:8px; }
-  .critical-item{ display:flex; justify-content:space-between; align-items:center; gap:10px; border:1px solid rgba(239,68,68,0.35); background:rgba(239,68,68,0.12); border-radius:10px; padding:10px 12px; }
-  .critical-reason{ color:#fecaca; font-size:0.9rem; }
   .summary-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .summary-header h3{ margin:0; font-size:1rem; }
   .summary-count{ font-weight:700; font-size:1.1rem; color:#fff; }
@@ -106,20 +104,9 @@
 
   <div class="section">
     <div class="grid" id="overviewGrid">
-      <div class="card summary-card" id="patientStatusSummary"></div>
       <div class="card summary-card" id="invoiceSummary"></div>
       <div class="card summary-card" id="consentSummary"></div>
       <div class="card summary-card" id="visitSummary"></div>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-header">
-      <h2>要対応患者</h2>
-      <span class="small" id="criticalPatientCount"></span>
-    </div>
-    <div class="card">
-      <div class="critical-list" id="criticalPatientList"></div>
     </div>
   </div>
 
@@ -233,7 +220,6 @@ function setLoading(flag) {
 function renderAll() {
   renderMeta();
   renderOverview();
-  renderCriticalPatients();
   renderUnpaidAlerts();
   renderVisits();
   renderPatients();
@@ -270,56 +256,9 @@ function renderError() {
 }
 
 function renderOverview() {
-  renderPatientStatusSummary();
   renderInvoiceSummary();
   renderConsentSummary();
   renderVisitSummary();
-}
-
-function renderPatientStatusSummary() {
-  const container = document.getElementById('patientStatusSummary');
-  if (!container) return;
-  container.innerHTML = '';
-  const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
-  const data = overview && overview.patientStatusSummary
-    ? overview.patientStatusSummary
-    : { consentExpiredCount: 0, reportDelayedCount: 0 };
-
-  const header = document.createElement('div');
-  header.className = 'summary-header';
-  const title = document.createElement('h3');
-  title.textContent = '優先度集計';
-  header.appendChild(title);
-  container.appendChild(header);
-
-  const metrics = document.createElement('div');
-  metrics.className = 'overview-metrics';
-
-  const consentRow = document.createElement('div');
-  consentRow.className = 'overview-metric';
-  const consentLabel = document.createElement('span');
-  consentLabel.className = 'overview-metric-label';
-  consentLabel.textContent = '同意期限超過件数';
-  const consentValue = document.createElement('span');
-  consentValue.className = 'overview-metric-value';
-  consentValue.textContent = `${data.consentExpiredCount || 0}件`;
-  consentRow.appendChild(consentLabel);
-  consentRow.appendChild(consentValue);
-  metrics.appendChild(consentRow);
-
-  const reportRow = document.createElement('div');
-  reportRow.className = 'overview-metric';
-  const reportLabel = document.createElement('span');
-  reportLabel.className = 'overview-metric-label';
-  reportLabel.textContent = '報告書未作成件数';
-  const reportValue = document.createElement('span');
-  reportValue.className = 'overview-metric-value';
-  reportValue.textContent = `${data.reportDelayedCount || 0}件`;
-  reportRow.appendChild(reportLabel);
-  reportRow.appendChild(reportValue);
-  metrics.appendChild(reportRow);
-
-  container.appendChild(metrics);
 }
 
 function renderInvoiceSummary() {
@@ -453,45 +392,6 @@ function renderUnpaidAlerts() {
   });
 }
 
-function renderCriticalPatients() {
-  const list = document.getElementById('criticalPatientList');
-  const count = document.getElementById('criticalPatientCount');
-  if (!list) return;
-  list.innerHTML = '';
-
-  const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
-  const criticalPatients = overview && overview.criticalPatients && Array.isArray(overview.criticalPatients.items)
-    ? overview.criticalPatients.items
-    : [];
-  if (count) count.textContent = criticalPatients.length ? `${criticalPatients.length}名` : '該当なし';
-
-  if (!criticalPatients.length) {
-    const empty = document.createElement('div');
-    empty.className = 'muted';
-    empty.textContent = '緊急対応が必要な患者はいません';
-    list.appendChild(empty);
-    return;
-  }
-
-  criticalPatients.forEach(item => {
-    const row = document.createElement('div');
-    row.className = 'critical-item';
-
-    const name = document.createElement(item.patientId ? 'a' : 'span');
-    name.className = item.patientId ? 'patient-name patient-link' : 'patient-name';
-    name.textContent = item.name || item.patientId || '氏名未登録';
-    if (item.patientId) configurePatientLinkElement_(name, item.patientId);
-    row.appendChild(name);
-
-    const reason = document.createElement('span');
-    reason.className = 'critical-reason';
-    reason.textContent = item.reason || '要確認';
-    row.appendChild(reason);
-
-    list.appendChild(row);
-  });
-}
-
 function renderVisits() {
   const list = document.getElementById('visitList');
   if (!list) return;
@@ -606,7 +506,10 @@ function renderPatients() {
         if (!tag || !tag.label || !tag.type) return;
         if (tag.type !== 'consent' && tag.type !== 'report') return;
         const statusTag = document.createElement('span');
-        statusTag.className = `status-tag tag-${tag.type}`;
+        const reportClass = tag.type === 'report'
+          ? (tag.label === '作成済' ? ' tag-report-done' : ' tag-report-pending')
+          : '';
+        statusTag.className = `status-tag tag-${tag.type}${reportClass}`;
         statusTag.textContent = tag.label;
         statusTags.appendChild(statusTag);
       });

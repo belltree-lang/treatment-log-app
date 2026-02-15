@@ -101,14 +101,6 @@ function testAggregatesDashboardData() {
   assert.strictEqual(result.unpaidAlerts[0].patientId, '001');
   const warnings = JSON.parse(JSON.stringify(result.warnings)).sort();
   assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'u1', 'visit'].sort());
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.patientStatusSummary)), {
-    consentExpiredCount: 1,
-    reportDelayedCount: 1
-  }, '優先度集計をoverviewへ含める');
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.criticalPatients)), {
-    count: 1,
-    items: [{ patientId: '001', name: '山田太郎', reason: '同意期限超過' }]
-  }, 'Critical対象患者をoverviewへ含める');
 }
 
 
@@ -477,7 +469,6 @@ function testVisibleScopeForAdminShowsAllPatients() {
   assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.count, 2, '管理者は請求未確認を全患者分表示する');
-  assert.strictEqual(result.overview.criticalPatients.count, 0, '同意期限超過がない場合はCritical対象に含めない');
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
@@ -532,7 +523,6 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.criticalPatients.items.map(item => item.patientId))), [], '同意期限超過がない場合はスタッフでもCritical対象がない');
 }
 
 function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {

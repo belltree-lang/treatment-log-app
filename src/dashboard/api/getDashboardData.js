@@ -180,6 +180,36 @@ function getDashboardData(options) {
     });
     const visiblePatientIds = isAdmin ? null : responsiblePatientIds;
 
+    if (!isAdmin) {
+      const patientMasterIds = Object.keys(patientMaster || {});
+      let consentEligiblePatients = 0;
+      let consentEligibleButOutOfScope = 0;
+
+      patientMasterIds.forEach(pid => {
+        const info = patientMaster[pid] || {};
+        const consentExpiryDate = parseConsentDate_(resolveConsentExpiry_(info).value);
+        if (!consentExpiryDate) return;
+        if (dashboardIsConsentAcquired_(info.raw)) return;
+        consentEligiblePatients += 1;
+        if (!visiblePatientIds.has(pid)) consentEligibleButOutOfScope += 1;
+      });
+
+      logContext('getDashboardData:consentScopeMetrics', JSON.stringify({
+        totalPatients: patientMasterIds.length,
+        consentEligiblePatients,
+        visiblePatientIdsSize: visiblePatientIds.size,
+        consentEligibleButOutOfScope
+      }));
+      logContext(
+        'getDashboardData:consentMissingByRecentLog',
+        `staffOnly consent期限あり&同意取得確認なし&直近50日ログなし=${consentEligibleButOutOfScope}`
+      );
+      logContext(
+        'getDashboardData:visibleScopeRoutes',
+        'overview.consentRelated=buildDashboardOverview_ -> buildOverviewFromConsent_(allowedPatientIds=visiblePatientIds), patients/statusTags=buildDashboardPatients_(allowedPatientIds=visiblePatientIds) -> buildDashboardPatientStatusTags_'
+      );
+    }
+
     const unpaidAlertsResult = measureStep('loadUnpaidAlerts', () => (opts.unpaidAlerts || (typeof loadUnpaidAlerts === 'function'
       ? loadUnpaidAlerts({ patientInfo, now: opts.now, cache: opts.cache, dashboardSpreadsheet, visiblePatientIds })
       : { alerts: [], warnings: [] })));
@@ -370,10 +400,14 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
   const now = dashboardCoerceDate_(sources && sources.now) || new Date();
 
   const seen = new Set();
+  let filteredByScope = 0;
   const addPatient = (pid, payload) => {
     const patientId = dashboardNormalizePatientId_(pid);
     if (!patientId || seen.has(patientId)) return;
-    if (allowedPatientIds && !allowedPatientIds.has(patientId)) return;
+    if (allowedPatientIds && !allowedPatientIds.has(patientId)) {
+      filteredByScope += 1;
+      return;
+    }
     if (!Object.prototype.hasOwnProperty.call(basePatients, patientId)) return;
     seen.add(patientId);
 
@@ -398,6 +432,15 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
   };
 
   Object.keys(basePatients).forEach(pid => addPatient(pid, basePatients[pid]));
+
+  if (typeof dashboardLogContext_ === 'function') {
+    dashboardLogContext_('buildDashboardPatients_:scope', JSON.stringify({
+      applyFilter: !!allowedPatientIds,
+      basePatients: Object.keys(basePatients).length,
+      filteredByScope,
+      resultPatients: patients.length
+    }));
+  }
 
   return patients;
 }
@@ -636,9 +679,14 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
   const targetNow = dashboardCoerceDate_(now) || new Date();
+  let filteredByScope = 0;
 
   Object.keys(patientInfo || {}).forEach(pid => {
-    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
+    if (!pid) return;
+    if (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid)) {
+      filteredByScope += 1;
+      return;
+    }
     const info = patientInfo[pid] || {};
     const consentExpiryResolved = resolveConsentExpiry_(info);
     const consentExpiryDate = parseConsentDate_(consentExpiryResolved.value);
@@ -668,6 +716,14 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
   });
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  if (typeof dashboardLogContext_ === 'function') {
+    dashboardLogContext_('buildOverviewFromConsent_:scope', JSON.stringify({
+      applyFilter,
+      totalPatients: Object.keys(patientInfo || {}).length,
+      filteredByScope,
+      resultItems: items.length
+    }));
+  }
   return { items };
 }
 

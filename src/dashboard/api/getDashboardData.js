@@ -794,7 +794,6 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
 function resolveConsentExpiry_(patient) {
   const info = patient && typeof patient === 'object' ? patient : {};
   const raw = info.raw && typeof info.raw === 'object' ? info.raw : null;
-  const rawConsentDate = resolvePatientRawValue_(raw, ['同意年月日', '同意日', '同意開始日', '同意開始']);
   const candidates = [
     { source: 'info.consentExpiry', value: info.consentExpiry },
     { source: "raw['同意期限']", value: raw ? raw['同意期限'] : null },
@@ -815,33 +814,10 @@ function resolveConsentExpiry_(patient) {
     return { value: entry.value, source: entry.source };
   }
 
-  if (rawConsentDate != null && String(rawConsentDate).trim()) {
-    const parsedConsentDate = parseConsentDate_(rawConsentDate);
-    const calculatedExpiryDate = parsedConsentDate ? addYearsToDate_(parsedConsentDate, 1) : null;
-    const daysRemaining = calculatedExpiryDate
-      ? dashboardDaysBetween_(dashboardTodayAtTimeZone_(new Date(), 'Asia/Tokyo'), calculatedExpiryDate, true)
-      : null;
-    if (typeof dashboardLogContext_ === 'function') {
-      dashboardLogContext_('resolveConsentExpiry_:consentDateFallback', JSON.stringify({
-        rawConsentDate,
-        parsedConsentDate: parsedConsentDate ? parsedConsentDate.toISOString() : null,
-        calculatedExpiryDate: calculatedExpiryDate ? calculatedExpiryDate.toISOString() : null,
-        daysRemaining
-      }));
-    }
-    if (calculatedExpiryDate) {
-      return {
-        value: dashboardFormatDate_(calculatedExpiryDate, 'Asia/Tokyo', 'yyyy-MM-dd') || calculatedExpiryDate,
-        source: "raw['同意年月日']+1year"
-      };
-    }
-  }
-
   if (typeof dashboardLogContext_ === 'function') {
     dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
       source: '',
-      resolvedValue: null,
-      rawConsentDate: rawConsentDate || null
+      resolvedValue: null
     }));
   }
 
@@ -894,20 +870,6 @@ function parseConsentDate_(value) {
     return parsedDate;
   }
 
-  const eraJapanese = str.match(/^(令和|平成)\s*(元|\d{1,2})年\s*(\d{1,2})月\s*(\d{1,2})日$/);
-  if (eraJapanese) {
-    const eraName = eraJapanese[1];
-    const eraYearRaw = eraJapanese[2];
-    const monthRaw = eraJapanese[3];
-    const dayRaw = eraJapanese[4];
-    const eraYear = eraYearRaw === '元' ? 1 : Number(eraYearRaw);
-    const eraBase = eraName === '令和' ? 2018 : 1988;
-    const year = Number.isFinite(eraYear) ? eraBase + eraYear : NaN;
-    const parsedDate = createDateFromYmd_(year, monthRaw, dayRaw);
-    logParseResult(parsedDate);
-    return parsedDate;
-  }
-
   const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/;
   if (isoPattern.test(str)) {
     const timestamp = Date.parse(str);
@@ -920,24 +882,6 @@ function parseConsentDate_(value) {
 
   logParseResult(null);
   return null;
-}
-
-function addYearsToDate_(date, years) {
-  const base = dashboardCoerceDate_(date);
-  const count = Number(years);
-  if (!base || !Number.isFinite(count)) return null;
-  const next = new Date(base.getFullYear() + count, base.getMonth(), base.getDate());
-  if (Number.isNaN(next.getTime())) return null;
-  return next;
-}
-
-function dashboardTodayAtTimeZone_(now, tz) {
-  const targetNow = dashboardCoerceDate_(now) || new Date();
-  const dayKey = dashboardFormatDate_(targetNow, tz || 'Asia/Tokyo', 'yyyy-MM-dd');
-  if (typeof dayKey !== 'string') return new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
-  const m = dayKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
-  return createDateFromYmd_(m[1], m[2], m[3]) || new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
 }
 
 function createDateFromYmd_(yearRaw, monthRaw, dayRaw) {

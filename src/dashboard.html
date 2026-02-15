@@ -657,12 +657,7 @@ function renderOverviewList_(items, emptyText) {
       title.className = 'overview-row-title';
       const name = document.createElement('span');
       name.textContent = item.name || item.patientId;
-      const count = document.createElement('span');
-      count.className = 'overview-count';
-      const displayCount = Math.max(1, Number(item.count) || 1);
-      count.textContent = `［${displayCount}件］`;
       title.appendChild(name);
-      title.appendChild(count);
       row.appendChild(title);
 
       const sub = document.createElement('div');

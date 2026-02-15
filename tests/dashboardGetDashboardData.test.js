@@ -269,7 +269,7 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
 }
 
 
-function testVisitSummaryUsesPerPatientRows() {
+function testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount() {
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -279,28 +279,66 @@ function testVisitSummaryUsesPerPatientRows() {
     }
   });
 
-  const logs = [
-    { patientId: '001', dateKey: '2025-02-01', createdByEmail: 'user@example.com' },
-    { patientId: '001', dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
-    { patientId: '002', dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
-    { patientId: '002', dateKey: '2025-01-30', createdByEmail: 'other@example.com' }
-  ];
-
   const result = ctx.buildOverviewFromTreatmentProgress_(
-    logs,
-    'user@example.com',
+    [
+      { patientId: '001', dateKey: '2025-01-31', time: '09:00' }
+    ],
     new Date('2025-02-01T00:00:00Z'),
-    'Asia/Tokyo',
-    { '001': '患者A', '002': '患者B', '003': '患者C' },
-    { patientIds: new Set(['001', '002', '003']), applyFilter: true },
-    { '001': { name: '患者A' }, '002': { name: '患者B' }, '003': { name: '患者C' } }
+    'Asia/Tokyo'
   );
 
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.items)), [
-    { patientId: '001', name: '患者A', subText: '今日施術あり / 直近本人施術日: 2025-02-01' },
-    { patientId: '002', name: '患者B', subText: '今日施術なし / 直近本人施術日: 2025-01-31' },
-    { patientId: '003', name: '患者C', subText: '今日施術なし / 直近本人施術日: --' }
-  ]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
+    todayCount: 0,
+    latestDayCount: 1
+  });
+}
+
+function testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth() {
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        if (fmt === 'yyyy-MM-dd') return new Date(date).toISOString().slice(0, 10);
+        return new Date(date).toISOString();
+      }
+    }
+  });
+
+  const result = ctx.buildOverviewFromTreatmentProgress_(
+    [
+      { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
+      { patientId: '002', dateKey: '2025-02-01', time: '10:00' },
+      { patientId: '003', dateKey: '2025-01-31', time: '11:00' }
+    ],
+    new Date('2025-02-01T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
+    todayCount: 2,
+    latestDayCount: 2
+  });
+}
+
+function testVisitSummaryWhenNoDataReturnsZeroCounts() {
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        if (fmt === 'yyyy-MM-dd') return new Date(date).toISOString().slice(0, 10);
+        return new Date(date).toISOString();
+      }
+    }
+  });
+
+  const result = ctx.buildOverviewFromTreatmentProgress_(
+    [],
+    new Date('2025-02-01T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
+    todayCount: 0,
+    latestDayCount: 0
+  });
 }
 
 
@@ -678,7 +716,9 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testPatientStatusTagsGeneration();
   testConsentOverviewMatchesPatientStatusTags();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
-  testVisitSummaryUsesPerPatientRows();
+  testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount();
+  testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth();
+  testVisitSummaryWhenNoDataReturnsZeroCounts();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();

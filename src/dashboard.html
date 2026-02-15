@@ -289,12 +289,26 @@ function renderVisitSummary() {
   const container = document.getElementById('visitSummary');
   if (!container) return;
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
-  const data = overview && overview.visitSummary ? overview.visitSummary : { items: [] };
-  renderOverviewCard_(container, {
-    title: '③実績',
-    items: data.items || [],
-    emptyText: '対象者なし'
-  });
+  const data = overview && overview.visitSummary ? overview.visitSummary : { todayCount: 0, latestDayCount: 0 };
+  const todayCount = Number(data.todayCount || 0);
+  const latestDayCount = Number(data.latestDayCount || 0);
+
+  container.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'summary-header';
+  const title = document.createElement('h3');
+  title.textContent = '③実績';
+  header.appendChild(title);
+  container.appendChild(header);
+
+  const metrics = document.createElement('div');
+  metrics.className = 'overview-metrics';
+
+  metrics.appendChild(renderOverviewMetric_('今日', `${todayCount}件`));
+  metrics.appendChild(renderOverviewMetric_('直近1日施術', `${latestDayCount}件`));
+
+  container.appendChild(metrics);
 }
 
 function renderUnpaidAlerts() {
@@ -602,6 +616,23 @@ function renderOverviewCard_(container, options) {
 
   const items = Array.isArray(opts.items) ? opts.items : [];
   container.appendChild(renderOverviewList_(items, opts.emptyText || '対象はありません'));
+}
+
+function renderOverviewMetric_(label, value) {
+  const row = document.createElement('div');
+  row.className = 'overview-metric';
+
+  const labelEl = document.createElement('div');
+  labelEl.className = 'overview-metric-label';
+  labelEl.textContent = label || '';
+  row.appendChild(labelEl);
+
+  const valueEl = document.createElement('div');
+  valueEl.className = 'overview-metric-value';
+  valueEl.textContent = value || '0件';
+  row.appendChild(valueEl);
+
+  return row;
 }
 
 function renderOverviewList_(items, emptyText) {

@@ -488,7 +488,7 @@ function buildDashboardOverview_(params) {
     patientInfo
   );
   const consentRelated = buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now);
-  const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz, patientNameMap, scope, patientInfo);
+  const visitSummary = buildOverviewFromTreatmentProgress_(payload.visits, now, tz);
   return {
     invoiceUnconfirmed,
     consentRelated,
@@ -667,64 +667,28 @@ function resolvePatientRawValue_(raw, candidates) {
   return '';
 }
 
-function buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz, patientNameMap, scope, patientInfo) {
+function buildOverviewFromTreatmentProgress_(visits, now, tz) {
   const targetNow = dashboardCoerceDate_(now) || new Date();
   const todayKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM-dd');
-  const normalizedUser = dashboardNormalizeEmail_(user || '');
-  const allowedPatientIds = scope && scope.patientIds ? scope.patientIds : null;
-  const applyFilter = !!(scope && scope.applyFilter);
-  const patientStates = {};
+  const normalizedVisits = Array.isArray(visits) ? visits : [];
+  const countByDate = {};
 
-  Object.keys(patientInfo || {}).forEach(pid => {
-    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
-    patientStates[pid] = {
-      patientId: pid,
-      name: patientNameMap && patientNameMap[pid] ? patientNameMap[pid] : ((patientInfo[pid] && patientInfo[pid].name) || ''),
-      hasTodayTreatment: false,
-      lastOwnTreatmentDate: ''
-    };
+  normalizedVisits.forEach(visit => {
+    const dateKey = visit && visit.dateKey ? String(visit.dateKey).trim() : '';
+    if (!dateKey) return;
+    countByDate[dateKey] = (countByDate[dateKey] || 0) + 1;
   });
 
-  const filtered = (treatmentLogs || []).filter(entry => {
-    if (!normalizedUser) return true;
-    const entryEmail = dashboardNormalizeEmail_(entry && entry.createdByEmail ? entry.createdByEmail : '');
-    return entryEmail && entryEmail === normalizedUser;
-  });
+  const todayCount = countByDate[todayKey] || 0;
+  const latestPastDate = Object.keys(countByDate)
+    .filter(dateKey => dateKey < todayKey)
+    .sort((a, b) => b.localeCompare(a))[0] || '';
+  const latestDayCount = todayCount > 0 ? todayCount : (latestPastDate ? countByDate[latestPastDate] || 0 : 0);
 
-  filtered.forEach(entry => {
-    const pid = dashboardNormalizePatientId_(entry && entry.patientId);
-    if (!pid) return;
-    if (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid)) return;
-    const key = entry && entry.dateKey ? String(entry.dateKey).trim() : '';
-    if (!key) return;
-    if (!patientStates[pid]) {
-      patientStates[pid] = {
-        patientId: pid,
-        name: patientNameMap && patientNameMap[pid] ? patientNameMap[pid] : '',
-        hasTodayTreatment: false,
-        lastOwnTreatmentDate: ''
-      };
-    }
-    if (key === todayKey) patientStates[pid].hasTodayTreatment = true;
-    if (!patientStates[pid].lastOwnTreatmentDate || key > patientStates[pid].lastOwnTreatmentDate) {
-      patientStates[pid].lastOwnTreatmentDate = key;
-    }
-  });
-
-  const items = Object.keys(patientStates)
-    .map(pid => {
-      const state = patientStates[pid];
-      const todayText = state.hasTodayTreatment ? '今日施術あり' : '今日施術なし';
-      const lastDate = state.lastOwnTreatmentDate || '--';
-      return {
-        patientId: state.patientId,
-        name: state.name || state.patientId,
-        subText: `${todayText} / 直近本人施術日: ${lastDate}`
-      };
-    })
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
-
-  return { items };
+  return {
+    todayCount,
+    latestDayCount
+  };
 }
 
 function collectDashboardWarnings_(results) {

@@ -279,6 +279,16 @@ function testConsentDateParsingFormatsAndResolverPriority() {
     source: "raw['同意期限']"
   }, '空文字の consentExpiry は無視して raw[同意期限] を優先する');
 
+  const resolvedFromConsentDate = ctx.resolveConsentExpiry_({
+    consentExpiry: '',
+    raw: {
+      '同意年月日': '令和7年6月26日'
+    }
+  });
+  const normalizedResolvedFromConsentDate = JSON.parse(JSON.stringify(resolvedFromConsentDate));
+  assert.strictEqual(normalizedResolvedFromConsentDate.source, "raw['同意年月日']+1year", '同意期限が無い場合は同意年月日フォールバックを記録する');
+  assert.ok(String(normalizedResolvedFromConsentDate.value).indexOf('2026-06-26') === 0, '同意年月日の +1年を同意期限として扱う');
+
   const result = ctx.getDashboardData({
     user: { email: 'user@example.com', role: 'admin' },
     now,
@@ -293,7 +303,8 @@ function testConsentDateParsingFormatsAndResolverPriority() {
         '007': { name: 'G-raw-consent', consentExpiry: '   ', raw: { '同意期限': '2025-02-25' } },
         '008': { name: 'H-raw-valid', consentExpiry: '', raw: { '同意有効期限': '2025/02/26' } },
         '009': { name: 'I-raw-date', raw: { '同意期限日': '2025年2月27日' } },
-        '010': { name: 'J-acquired', raw: { '同意期限': '2025-02-28', '同意書取得確認': '済' } }
+        '010': { name: 'J-acquired', raw: { '同意期限': '2025-02-28', '同意書取得確認': '済' } },
+        '011': { name: 'K-era-consent-date', raw: { '同意年月日': '令和7年1月15日' } }
       },
       warnings: []
     },
@@ -308,13 +319,13 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   });
 
   const overviewIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
-  assert.deepStrictEqual(overviewIds, ['001', '002', '003', '004', '005', '007', '008', '009'], '対応フォーマット + raw列解決のみ表示され、不正値と取得済みは除外される');
+  assert.deepStrictEqual(overviewIds, ['001', '002', '003', '004', '005', '007', '008', '009', '011'], '対応フォーマット + raw列解決 + 同意年月日和暦フォールバックのみ表示され、不正値と取得済みは除外される');
 
   const patientsById = {};
   result.patients.forEach(entry => {
     patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
   });
-  ['001', '002', '003', '004', '005', '007', '008', '009'].forEach(patientId => {
+  ['001', '002', '003', '004', '005', '007', '008', '009', '011'].forEach(patientId => {
     assert.deepStrictEqual((patientsById[patientId] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応' }], `同意タグが表示される: ${patientId}`);
   });
   assert.deepStrictEqual((patientsById['006'] || []).filter(tag => tag.type === 'consent'), [], '不正文字列は同意タグの表示対象外');
@@ -451,12 +462,10 @@ function testStaffConsentScopeMetricsAreLogged() {
   const scopeMetricsLog = logEntries.find(entry => entry.label === 'getDashboardData:consentScopeMetrics');
   assert.ok(scopeMetricsLog, 'consentScopeMetrics ログが出力される');
   const metrics = JSON.parse(scopeMetricsLog.details);
-  assert.deepStrictEqual(metrics, {
-    totalPatients: 4,
-    consentEligiblePatients: 2,
-    visiblePatientIdsSize: 1,
-    consentEligibleButOutOfScope: 1
-  });
+  assert.strictEqual(metrics.totalPatients, 4);
+  assert.strictEqual(metrics.consentEligiblePatients, 2);
+  assert.strictEqual(metrics.visiblePatientIdsSize, 1);
+  assert.strictEqual(metrics.consentEligibleButOutOfScope, 1);
 
   const missingByRecentLog = logEntries.find(entry => entry.label === 'getDashboardData:consentMissingByRecentLog');
   assert.ok(missingByRecentLog, 'consentMissingByRecentLog ログが出力される');

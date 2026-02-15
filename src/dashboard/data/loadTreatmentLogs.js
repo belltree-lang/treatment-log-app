@@ -106,20 +106,85 @@ function loadTreatmentLogsUncached_(options) {
     return { logs, warnings, lastStaffByPatient, setupIncomplete };
   }
 
-  const dateValues = sheet.getRange(2, colTimestamp, lastRow - 1, 1).getValues();
-  const dateDisplayValues = sheet.getRange(2, colTimestamp, lastRow - 1, 1).getDisplayValues();
+  const totalDataRows = lastRow - 1;
   let startDataIndex = -1;
   let endDataIndex = -1;
-  for (let i = 0; i < dateValues.length; i++) {
-    const timestamp = dashboardParseTimestamp_(dateValues[i][0] || dateDisplayValues[i][0]);
-    if (!timestamp) continue;
-    if (timestamp < previousMonthStart || timestamp >= monthEnd) continue;
-    if (startDataIndex < 0) startDataIndex = i;
-    endDataIndex = i;
+  let scannedRowsForRange = 0;
+  const rangeSearchStartedAt = Date.now();
+
+  const scanRange = function(startIndex, rowCount) {
+    if (rowCount <= 0) return;
+    const rowStart = startIndex + 2;
+    const values = sheet.getRange(rowStart, colTimestamp, rowCount, 1).getValues();
+    const displays = sheet.getRange(rowStart, colTimestamp, rowCount, 1).getDisplayValues();
+    scannedRowsForRange += rowCount;
+    for (let i = 0; i < rowCount; i++) {
+      const timestamp = dashboardParseTimestamp_(values[i][0] || displays[i][0]);
+      if (!timestamp) continue;
+      if (timestamp < previousMonthStart || timestamp >= monthEnd) continue;
+      const index = startIndex + i;
+      if (startDataIndex < 0 || index < startDataIndex) startDataIndex = index;
+      if (endDataIndex < 0 || index > endDataIndex) endDataIndex = index;
+    }
+  };
+
+  const largeSheetThreshold = 4000;
+  const chunkSize = 500;
+  if (totalDataRows > largeSheetThreshold) {
+    let unsortedDetected = false;
+    let sawTargetWindow = false;
+    let previousTimestamp = null;
+    for (let cursor = totalDataRows - 1; cursor >= 0; cursor -= chunkSize) {
+      const startIndex = Math.max(0, cursor - chunkSize + 1);
+      const rowCount = cursor - startIndex + 1;
+      const rowStart = startIndex + 2;
+      const values = sheet.getRange(rowStart, colTimestamp, rowCount, 1).getValues();
+      const displays = sheet.getRange(rowStart, colTimestamp, rowCount, 1).getDisplayValues();
+      scannedRowsForRange += rowCount;
+
+      let canStopEarly = false;
+      for (let i = rowCount - 1; i >= 0; i--) {
+        const timestamp = dashboardParseTimestamp_(values[i][0] || displays[i][0]);
+        if (!timestamp) continue;
+
+        if (previousTimestamp && timestamp > previousTimestamp) {
+          unsortedDetected = true;
+          break;
+        }
+        previousTimestamp = timestamp;
+
+        const index = startIndex + i;
+        if (timestamp >= previousMonthStart && timestamp < monthEnd) {
+          sawTargetWindow = true;
+          if (startDataIndex < 0 || index < startDataIndex) startDataIndex = index;
+          if (endDataIndex < 0 || index > endDataIndex) endDataIndex = index;
+        }
+
+        if (sawTargetWindow && timestamp < previousMonthStart) {
+          canStopEarly = true;
+          break;
+        }
+      }
+
+      if (unsortedDetected) break;
+      if (canStopEarly) break;
+    }
+
+    if (unsortedDetected) {
+      startDataIndex = -1;
+      endDataIndex = -1;
+      scannedRowsForRange = 0;
+      scanRange(0, totalDataRows);
+    }
+  } else {
+    scanRange(0, totalDataRows);
   }
+
+  const rangeSearchDuration = Date.now() - rangeSearchStartedAt;
 
   const perfBeforeDuration = Date.now() - perfBeforeStartedAt;
   logPerf('[perf] loadTreatmentLogsBefore=' + perfBeforeDuration + 'ms');
+  logPerf('[perf] loadTreatmentLogsFilterScan=' + rangeSearchDuration + 'ms rows=' + scannedRowsForRange + '/' + totalDataRows);
 
   if (startDataIndex < 0 || endDataIndex < startDataIndex) {
     logPerf('[perf] loadTreatmentLogsAfter=0ms');
@@ -140,6 +205,8 @@ function loadTreatmentLogsUncached_(options) {
     colStaffId
   ].concat(searchableColumns)
     .filter(function(col, index, arr) { return !!col && arr.indexOf(col) === index; });
+
+  logPerf('[perf] loadTreatmentLogsFilterRows=' + dataRowCount);
 
   const rowDataByColumn = {};
   for (let ci = 0; ci < requiredColumns.length; ci++) {

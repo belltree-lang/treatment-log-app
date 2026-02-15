@@ -15,6 +15,32 @@ function dashboardLogContext_(label, details) {
   dashboardWarn_(`[${label}]${payload}`);
 }
 
+const DASHBOARD_RUNTIME_CACHE_ = {};
+
+function dashboardPerfCacheLog_(key, status, details) {
+  const suffix = details ? ` ${details}` : '';
+  const message = `[perf] ${status} key=${key}${suffix}`;
+  if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log(message);
+    return;
+  }
+  dashboardWarn_(message);
+}
+
+function dashboardRuntimeCacheGet_(key) {
+  return Object.prototype.hasOwnProperty.call(DASHBOARD_RUNTIME_CACHE_, key)
+    ? DASHBOARD_RUNTIME_CACHE_[key]
+    : null;
+}
+
+function dashboardRuntimeCachePut_(key, value) {
+  DASHBOARD_RUNTIME_CACHE_[key] = value;
+}
+
+function dashboardRuntimeCacheRemove_(key) {
+  delete DASHBOARD_RUNTIME_CACHE_[key];
+}
+
 function dashboardResolveActiveUserEmail_() {
   if (typeof Session !== 'undefined' && Session && typeof Session.getActiveUser === 'function') {
     try {
@@ -27,13 +53,26 @@ function dashboardResolveActiveUserEmail_() {
 
 function dashboardGetSpreadsheet_() {
   const activeUser = dashboardResolveActiveUserEmail_();
+  const cacheKey = 'dashboard:spreadsheet';
   dashboardLogContext_('dashboardGetSpreadsheet', `start user=${activeUser || 'unknown'}`);
   if (typeof DASHBOARD_SPREADSHEET_ID !== 'undefined' && DASHBOARD_SPREADSHEET_ID) {
+    const cached = dashboardRuntimeCacheGet_(cacheKey);
+    if (cached && cached.id === DASHBOARD_SPREADSHEET_ID && cached.spreadsheet) {
+      dashboardPerfCacheLog_(cacheKey, 'cacheHit');
+      dashboardLogContext_('dashboardGetSpreadsheet', `cache hit (${DASHBOARD_SPREADSHEET_ID}) user=${activeUser || 'unknown'}`);
+      return cached.spreadsheet;
+    }
+    if (cached && cached.id !== DASHBOARD_SPREADSHEET_ID) {
+      dashboardRuntimeCacheRemove_(cacheKey);
+      dashboardPerfCacheLog_(cacheKey, 'cacheMiss', `reason=spreadsheetIdChanged from=${cached.id} to=${DASHBOARD_SPREADSHEET_ID}`);
+    }
     try {
       if (typeof SpreadsheetApp !== 'undefined'
         && SpreadsheetApp
         && typeof SpreadsheetApp.openById === 'function') {
         const spreadsheet = SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+        dashboardRuntimeCachePut_(cacheKey, { id: DASHBOARD_SPREADSHEET_ID, spreadsheet });
+        dashboardPerfCacheLog_(cacheKey, 'cacheMiss', 'reason=populate');
         dashboardLogContext_('dashboardGetSpreadsheet', `opened by ID (${DASHBOARD_SPREADSHEET_ID}) user=${activeUser || 'unknown'}`);
         return spreadsheet;
       }
@@ -65,11 +104,26 @@ function dashboardGetSpreadsheet_() {
 
 function dashboardGetInvoiceRootFolder_() {
   const activeUser = dashboardResolveActiveUserEmail_();
+  const cacheKey = 'dashboard:invoiceRootFolder';
+  const folderId = (typeof DASHBOARD_INVOICE_FOLDER_ID !== 'undefined' && DASHBOARD_INVOICE_FOLDER_ID)
+    ? DASHBOARD_INVOICE_FOLDER_ID
+    : ((typeof INVOICE_PARENT_FOLDER_ID !== 'undefined' && INVOICE_PARENT_FOLDER_ID) ? INVOICE_PARENT_FOLDER_ID : '');
+  const cached = dashboardRuntimeCacheGet_(cacheKey);
+  if (cached && cached.id === folderId && cached.folder) {
+    dashboardPerfCacheLog_(cacheKey, 'cacheHit');
+    return cached.folder;
+  }
+  if (cached && cached.id !== folderId) {
+    dashboardRuntimeCacheRemove_(cacheKey);
+    dashboardPerfCacheLog_(cacheKey, 'cacheMiss', `reason=folderIdChanged from=${cached.id} to=${folderId}`);
+  }
   dashboardLogContext_('dashboardGetInvoiceRootFolder', `start user=${activeUser || 'unknown'}`);
   if (typeof DASHBOARD_INVOICE_FOLDER_ID !== 'undefined' && DASHBOARD_INVOICE_FOLDER_ID) {
     try {
       if (typeof DriveApp !== 'undefined' && DriveApp && typeof DriveApp.getFolderById === 'function') {
         const folder = DriveApp.getFolderById(DASHBOARD_INVOICE_FOLDER_ID);
+        dashboardRuntimeCachePut_(cacheKey, { id: DASHBOARD_INVOICE_FOLDER_ID, folder });
+        dashboardPerfCacheLog_(cacheKey, 'cacheMiss', 'reason=populate');
         dashboardLogContext_('dashboardGetInvoiceRootFolder', `opened by DASHBOARD_INVOICE_FOLDER_ID (${DASHBOARD_INVOICE_FOLDER_ID}) user=${activeUser || 'unknown'}`);
         return folder;
       }
@@ -85,6 +139,8 @@ function dashboardGetInvoiceRootFolder_() {
     try {
       if (typeof DriveApp !== 'undefined' && DriveApp && typeof DriveApp.getFolderById === 'function') {
         const folder = DriveApp.getFolderById(INVOICE_PARENT_FOLDER_ID);
+        dashboardRuntimeCachePut_(cacheKey, { id: INVOICE_PARENT_FOLDER_ID, folder });
+        dashboardPerfCacheLog_(cacheKey, 'cacheMiss', 'reason=populate');
         dashboardLogContext_('dashboardGetInvoiceRootFolder', `opened by INVOICE_PARENT_FOLDER_ID (${INVOICE_PARENT_FOLDER_ID}) user=${activeUser || 'unknown'}`);
         return folder;
       }

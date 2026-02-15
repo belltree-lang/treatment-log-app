@@ -532,6 +532,9 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   }
 
   if (!consentAcquired && consentExpiryDate) {
+    if (daysRemaining > 30) {
+      return tags;
+    }
     let label = '要対応';
     let priority = 'low';
     if (daysRemaining < 0) {
@@ -540,6 +543,9 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
     } else if (daysRemaining <= 14) {
       label = '期限迫る';
       priority = 'medium';
+    } else if (daysRemaining <= 30) {
+      label = '要対応';
+      priority = 'low';
     }
     tags.push({ type: 'consent', label, priority });
   }
@@ -777,11 +783,14 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
     const todayStart = new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
     const expiryStart = new Date(consentExpiryDate.getFullYear(), consentExpiryDate.getMonth(), consentExpiryDate.getDate());
     const diffDays = Math.floor((expiryStart.getTime() - todayStart.getTime()) / (24 * 60 * 60 * 1000));
+    if (diffDays > 30) return;
     let label = `同意期限（残${diffDays}日）`;
     if (diffDays < 0) {
       label = `⚠ 同意期限超過（${Math.abs(diffDays)}日超過）`;
     } else if (diffDays <= 14) {
       label = `⏳ 同意期限迫る（残${diffDays}日）`;
+    } else if (diffDays <= 30) {
+      label = `同意期限（残${diffDays}日）`;
     }
     const name = info.name || patientNameMap[pid] || '';
     items.push({

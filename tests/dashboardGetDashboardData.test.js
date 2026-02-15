@@ -158,10 +158,7 @@ function testPatientStatusTagsGeneration() {
 
   assert.deepStrictEqual(patientsById['004'], [], '4. 同意取得確認ありは両タグを非表示にする');
 
-  assert.deepStrictEqual(patientsById['005'], [
-    { type: 'consent', label: '要対応', priority: 'low' },
-    { type: 'report', label: '未作成' }
-  ], '5. 同意日更新後は新期限で要対応を再表示する');
+  assert.deepStrictEqual(patientsById['005'], [], '5. 同意期限30日超はタグを表示しない');
 
   assert.deepStrictEqual(patientsById['006'], [
     { type: 'consent', label: '期限迫る', priority: 'medium' },

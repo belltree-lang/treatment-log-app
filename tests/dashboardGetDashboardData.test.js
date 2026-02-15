@@ -52,7 +52,7 @@ function testAggregatesDashboardData() {
   const treatmentLogs = { logs: [{ patientId: '001', timestamp: new Date('2025-02-01T09:00:00Z'), dateKey: '2025-02-01', createdByEmail: 'user@example.com', staffKeys: { email: 'user@example.com', name: '', staffId: '' } }], warnings: ['t1'] };
   const responsible = { responsible: { '001': 'staff@example.com' }, warnings: ['r1'] };
   const tasksResult = { tasks: [{ type: 'consentWarning', patientId: '001' }], warnings: ['task'] };
-  const visitsResult = { visits: [{ patientId: '001', time: '10:00' }], warnings: ['visit'] };
+  const visitsResult = { visits: [{ patientId: '001', dateKey: '2025-02-01', time: '10:00' }], warnings: ['visit'] };
   const unpaidAlerts = { alerts: [{ patientId: '001', patientName: '山田太郎', consecutiveMonths: 3, totalAmount: 15000, months: [], followUp: { phone: false, visit: false } }], warnings: ['u1'] };
 
   const ctx = createContext();

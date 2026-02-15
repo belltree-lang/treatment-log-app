@@ -37,7 +37,7 @@ function getTodayVisits(options) {
     if (!entry || !entry.timestamp) return;
     const ts = dashboardCoerceDate_(entry.timestamp);
     if (!ts) return;
-    const dateKey = entry.dateKey || dashboardFormatDate_(ts, tz, 'yyyy-MM-dd');
+    const dateKey = String(entry.dateKey || '').trim() || dashboardFormatDate_(ts, tz, 'yyyy-MM-dd');
 
     const patientId = dashboardNormalizePatientId_(entry.patientId);
     const master = patientId && Object.prototype.hasOwnProperty.call(patientInfo, patientId)
@@ -53,12 +53,12 @@ function getTodayVisits(options) {
     normalizedVisits.push({ patientId, patientName, time, dateKey, noteStatus });
   });
 
-  const latestPastDate = normalizedVisits
+  const latestPastDayKey = normalizedVisits
     .filter(visit => visit.dateKey < todayKey)
     .map(visit => visit.dateKey)
     .sort((a, b) => b.localeCompare(a))[0] || '';
 
-  const visits = normalizedVisits.filter(visit => visit.dateKey === todayKey || (latestPastDate && visit.dateKey === latestPastDate));
+  const visits = normalizedVisits.filter(visit => visit.dateKey === todayKey || (latestPastDayKey && visit.dateKey === latestPastDayKey));
 
   visits.sort((a, b) => {
     if (a.dateKey === b.dateKey) return a.time.localeCompare(b.time);
@@ -67,6 +67,7 @@ function getTodayVisits(options) {
 
   return { visits, warnings, setupIncomplete };
 }
+
 
 function resolveHandoverStatus_(dateKey, patientId, notes, tz) {
   const note = notes && patientId ? notes[patientId] : null;

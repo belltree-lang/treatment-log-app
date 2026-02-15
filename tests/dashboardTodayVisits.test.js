@@ -208,6 +208,24 @@ function runVisits(context, now, logs, patientInfo, extraOptions) {
   assert.deepStrictEqual(keys, ['2025-02-10', '2025-02-13'], '有給明けでも過去は最新1日だけ');
 })();
 
+
+(function testMissingDateKeyIsDerivedFromTimestamp() {
+  const context = createApiContext();
+  const visits = runVisits(
+    context,
+    '2025-02-01T10:00:00Z',
+    [
+      { timestamp: new Date('2025-02-01T09:30:00Z'), patientId: 'P001' },
+      { timestamp: new Date('2025-01-31T23:00:00Z'), patientId: 'P002' }
+    ],
+    { P001: { name: '田中 花子' }, P002: { name: '山田 太郎' } }
+  );
+
+  assert.strictEqual(visits.length, 2, 'dateKey未設定でもtimestampから補完して2日分を返す');
+  const keys = JSON.parse(JSON.stringify(visits.map(v => v.dateKey)));
+  assert.deepStrictEqual(keys, ['2025-01-31', '2025-02-01']);
+})();
+
 (function testTodayOnly() {
   const context = createApiContext();
   const visits = runVisits(

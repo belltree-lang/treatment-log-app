@@ -195,7 +195,6 @@ function getDashboardData(options) {
       now: opts.now
     }) : { visits: [], warnings: [] })));
     logContext('getDashboardData:getTodayVisits', `visits=${(visitsResult && visitsResult.visits ? visitsResult.visits.length : 0)} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
-
     const patients = measureStep('buildPatients', () => buildDashboardPatients_(patientInfo, {
       notes,
       aiReports,
@@ -678,6 +677,7 @@ function buildOverviewFromTreatmentProgress_(visits, now, tz) {
     if (!dateKey) return;
     countByDate[dateKey] = (countByDate[dateKey] || 0) + 1;
   });
+
 
   const todayCount = countByDate[todayKey] || 0;
   const latestPastDate = Object.keys(countByDate)

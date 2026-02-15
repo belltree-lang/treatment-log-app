@@ -93,7 +93,8 @@ function testAggregatesDashboardData() {
       row: 5
     },
     statusTags: [
-      { type: 'consent', label: '期限超過' }
+      { type: 'consent', label: '期限超過' },
+      { type: 'report', label: '作成済' }
     ]
   });
   assert.strictEqual(result.unpaidAlerts.length, 1, '未回収アラートが伝搬する');
@@ -102,7 +103,7 @@ function testAggregatesDashboardData() {
   assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'u1', 'visit'].sort());
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.patientStatusSummary)), {
     consentExpiredCount: 1,
-    reportDelayedCount: 0
+    reportDelayedCount: 1
   }, '優先度集計をoverviewへ含める');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.criticalPatients)), {
     count: 1,
@@ -119,19 +120,17 @@ function testPatientStatusTagsGeneration() {
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '期限超過', consentExpiry: '2025-01-20', raw: { '同意書受渡': '済' } },
-        '002': { name: '遅延', consentExpiry: '2025-02-20', raw: { '通院日未定': 'はい' } },
-        '003': { name: '取得確認済', consentExpiry: '2025-03-20', raw: { '同意書取得確認': '済', '同意書受渡': '済', '通院日未定': 'はい' } },
-        '004': { name: '報告書未作成', consentExpiry: '', raw: {} },
-        '005': { name: '報告書未作成-同意更新', consentExpiry: '2025-12-20', raw: { '同意書取得確認': '済' } }
+        '001': { name: '期限内未取得', consentExpiry: '2025-02-20', raw: {} },
+        '002': { name: '期限超過未取得', consentExpiry: '2025-01-20', raw: {} },
+        '003': { name: '報告書作成済', consentExpiry: '2025-02-20', raw: {} },
+        '004': { name: '同意取得確認済', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
+        '005': { name: '同意日更新後', consentExpiry: '2025-03-20', raw: {} }
       },
       warnings: []
     },
     notes: { notes: {}, warnings: [] },
     aiReports: {
       reports: {
-        '001': '2025-01-30',
-        '002': '2025-01-30',
         '003': '2025-01-30'
       },
       warnings: []
@@ -150,20 +149,26 @@ function testPatientStatusTagsGeneration() {
   });
 
   assert.deepStrictEqual(patientsById['001'], [
-    { type: 'consent', label: '期限超過' }
-  ], '期限超過は同意タグのみ付与する');
+    { type: 'consent', label: '要対応' },
+    { type: 'report', label: '未作成' }
+  ], '1. 期限内未取得は要対応＋未作成を表示する');
 
   assert.deepStrictEqual(patientsById['002'], [
-    { type: 'consent', label: '遅延' }
-  ], '期限超過前の提出未処理状態は遅延タグを付与する');
-
-  assert.deepStrictEqual(patientsById['003'], [], '同意書取得確認がある場合は同意/報告タグを付与しない');
-
-  assert.deepStrictEqual(patientsById['004'], [
+    { type: 'consent', label: '期限超過' },
     { type: 'report', label: '未作成' }
-  ], '報告書が未作成の場合は報告タグを付与する');
+  ], '2. 期限超過未取得は期限超過＋未作成を表示する');
 
-  assert.deepStrictEqual(patientsById['005'], [], '同意更新後は報告タグを表示しない');
+  assert.deepStrictEqual(patientsById['003'], [
+    { type: 'consent', label: '要対応' },
+    { type: 'report', label: '作成済' }
+  ], '3. 報告書作成済は要対応＋作成済を表示する');
+
+  assert.deepStrictEqual(patientsById['004'], [], '4. 同意取得確認ありは両タグを非表示にする');
+
+  assert.deepStrictEqual(patientsById['005'], [
+    { type: 'consent', label: '要対応' },
+    { type: 'report', label: '未作成' }
+  ], '5. 同意日更新後は新期限で要対応を再表示する');
 }
 
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
@@ -472,7 +477,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
   assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.count, 2, '管理者は請求未確認を全患者分表示する');
-  assert.strictEqual(result.overview.criticalPatients.count, 2, '管理者はCritical対象患者も全件表示する');
+  assert.strictEqual(result.overview.criticalPatients.count, 0, '同意期限超過がない場合はCritical対象に含めない');
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
@@ -527,7 +532,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.criticalPatients.items.map(item => item.patientId))), ['001'], 'スタッフはCritical対象患者も担当患者のみ表示する');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.criticalPatients.items.map(item => item.patientId))), [], '同意期限超過がない場合はスタッフでもCritical対象がない');
 }
 
 function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {

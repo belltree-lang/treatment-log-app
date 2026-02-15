@@ -344,19 +344,15 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
   const raw = patient && patient.raw ? patient.raw : null;
   const consentAcquired = resolvePatientRawValue_(raw, ['同意書取得確認']);
-  const consentPending = !consentAcquired
-    && (resolvePatientRawValue_(raw, ['同意書受渡']) || resolvePatientRawValue_(raw, ['通院日未定']));
   const consentExpired = consentExpiryDate && dashboardDaysBetween_(targetNow, consentExpiryDate, true) <= 0;
 
-  if (consentExpired) {
-    tags.push({ type: 'consent', label: '期限超過' });
-  } else if (consentPending) {
-    tags.push({ type: 'consent', label: '遅延' });
+  if (!consentAcquired && consentExpiryDate) {
+    tags.push({ type: 'consent', label: consentExpired ? '期限超過' : '要対応' });
   }
 
   const reportDate = dashboardParseTimestamp_(aiReportAt);
-  if (!consentAcquired && !reportDate) {
-    tags.push({ type: 'report', label: '未作成' });
+  if (!consentAcquired) {
+    tags.push({ type: 'report', label: reportDate ? '作成済' : '未作成' });
   }
 
   return tags;
@@ -442,19 +438,13 @@ function buildOverviewCriticalPatients_(patients) {
   const items = [];
   (patients || []).forEach(patient => {
     const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
-    const reasons = [];
     if (tags.some(tag => tag && tag.type === 'consent' && tag.label === '期限超過')) {
-      reasons.push('同意期限超過');
+      items.push({
+        patientId: patient && patient.patientId ? patient.patientId : '',
+        name: patient && patient.name ? patient.name : '',
+        reason: '同意期限超過'
+      });
     }
-    if (tags.some(tag => tag && tag.type === 'report')) {
-      reasons.push('報告書未作成');
-    }
-    if (!reasons.length) return;
-    items.push({
-      patientId: patient && patient.patientId ? patient.patientId : '',
-      name: patient && patient.name ? patient.name : '',
-      reason: reasons.join(' / ')
-    });
   });
 
   items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));

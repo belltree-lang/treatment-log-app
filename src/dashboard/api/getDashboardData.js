@@ -411,7 +411,7 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   const consentExpiry = patient && (patient.consentExpiry || (patient.raw && (patient.raw['同意期限'] || patient.raw['同意有効期限'])));
   const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
   const raw = patient && patient.raw ? patient.raw : null;
-  const consentAcquired = resolvePatientRawValue_(raw, ['同意書取得確認']);
+  const consentAcquired = dashboardIsConsentAcquired_(raw);
   const consentExpired = consentExpiryDate && dashboardDaysBetween_(targetNow, consentExpiryDate, true) <= 0;
 
   if (!consentAcquired && consentExpiryDate) {
@@ -632,7 +632,7 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
     const info = patientInfo[pid] || {};
     const consentExpiry = info.consentExpiry || (info.raw && (info.raw['同意期限'] || info.raw['同意有効期限']));
     const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
-    const consentAcquired = resolvePatientRawValue_(info.raw, ['同意書取得確認']);
+    const consentAcquired = dashboardIsConsentAcquired_(info.raw);
     if (consentAcquired || !consentExpiryDate) return;
 
     const todayStart = new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
@@ -664,6 +664,24 @@ function resolvePatientRawValue_(raw, candidates) {
     }
   }
   return '';
+}
+
+function dashboardIsConsentAcquired_(raw) {
+  const value = resolvePatientRawValue_(raw, ['同意書取得確認']);
+  if (value === true) return true;
+  if (value == null) return false;
+  if (typeof value === 'boolean') return false;
+  if (typeof value === 'number') return value === 1;
+
+  const normalized = String(value).trim();
+  if (!normalized) return false;
+
+  const trueValues = new Set(['済', '取得済', '完了', 'true', 'TRUE', '1', 'yes']);
+  const falseValues = new Set(['未', '未取得', 'false', 'FALSE', '0', 'no']);
+
+  if (trueValues.has(normalized)) return true;
+  if (falseValues.has(normalized)) return false;
+  return false;
 }
 
 function buildOverviewFromTreatmentProgress_(visits, now, tz) {

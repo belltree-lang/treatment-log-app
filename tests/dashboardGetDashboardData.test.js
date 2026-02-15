@@ -411,6 +411,62 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
 }
 
 
+
+function testStaffConsentScopeMetricsAreLogged() {
+  const logEntries = [];
+  const ctx = createContext();
+  ctx.dashboardLogContext_ = (label, details) => {
+    logEntries.push({ label, details: String(details || '') });
+  };
+
+  const result = ctx.getDashboardData({
+    user: 'staff@example.com',
+    now: new Date('2025-02-20T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '患者A', consentExpiry: '2025-03-01', raw: {} },
+        '002': { name: '患者B', consentExpiry: '2025-03-05', raw: {} },
+        '003': { name: '患者C', consentExpiry: '2025-03-08', raw: { '同意書取得確認': '済' } },
+        '004': { name: '患者D', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-02-10T09:00:00Z'), staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2024-12-01T09:00:00Z'), staffKeys: { email: 'staff@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.strictEqual(result.meta.error, undefined);
+
+  const scopeMetricsLog = logEntries.find(entry => entry.label === 'getDashboardData:consentScopeMetrics');
+  assert.ok(scopeMetricsLog, 'consentScopeMetrics ログが出力される');
+  const metrics = JSON.parse(scopeMetricsLog.details);
+  assert.deepStrictEqual(metrics, {
+    totalPatients: 4,
+    consentEligiblePatients: 2,
+    visiblePatientIdsSize: 1,
+    consentEligibleButOutOfScope: 1
+  });
+
+  const missingByRecentLog = logEntries.find(entry => entry.label === 'getDashboardData:consentMissingByRecentLog');
+  assert.ok(missingByRecentLog, 'consentMissingByRecentLog ログが出力される');
+  assert.ok(missingByRecentLog.details.indexOf('=1') >= 0, '直近50日ログなし件数がログに含まれる');
+
+  assert.ok(logEntries.some(entry => entry.label === 'getDashboardData:visibleScopeRoutes'), 'visibleScopeRoutes ログが出力される');
+  assert.ok(logEntries.some(entry => entry.label === 'buildDashboardPatients_:scope'), 'buildDashboardPatients_:scope ログが出力される');
+  assert.ok(logEntries.some(entry => entry.label === 'buildOverviewFromConsent_:scope'), 'buildOverviewFromConsent_:scope ログが出力される');
+}
+
 function testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount() {
   const ctx = createContext({
     Utilities: {
@@ -861,6 +917,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testConsentDateParsingFormatsAndResolverPriority();
   testConsentDateParseFailureCanBeDebugLogged();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
+  testStaffConsentScopeMetricsAreLogged();
   testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount();
   testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth();
   testVisitSummaryWhenNoDataReturnsZeroCounts();

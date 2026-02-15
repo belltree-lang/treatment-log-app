@@ -422,47 +422,11 @@ function buildDashboardOverview_(params) {
   );
   const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz);
   const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz);
-  const patientStatusSummary = buildOverviewFromPatientStatusTags_(patients);
-  const criticalPatients = buildOverviewCriticalPatients_(patients);
-
   return {
     invoiceUnconfirmed,
     consentRelated,
-    visitSummary,
-    patientStatusSummary,
-    criticalPatients
+    visitSummary
   };
-}
-
-function buildOverviewCriticalPatients_(patients) {
-  const items = [];
-  (patients || []).forEach(patient => {
-    const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
-    if (tags.some(tag => tag && tag.type === 'consent' && tag.label === '期限超過')) {
-      items.push({
-        patientId: patient && patient.patientId ? patient.patientId : '',
-        name: patient && patient.name ? patient.name : '',
-        reason: '同意期限超過'
-      });
-    }
-  });
-
-  items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
-  return { count: items.length, items };
-}
-
-function buildOverviewFromPatientStatusTags_(patients) {
-  const summary = { consentExpiredCount: 0, reportDelayedCount: 0 };
-  (patients || []).forEach(patient => {
-    const tags = Array.isArray(patient && patient.statusTags) ? patient.statusTags : [];
-    if (tags.some(tag => tag && tag.type === 'consent' && tag.label === '期限超過')) {
-      summary.consentExpiredCount += 1;
-    }
-    if (tags.some(tag => tag && tag.type === 'report')) {
-      summary.reportDelayedCount += 1;
-    }
-  });
-  return summary;
 }
 
 function buildOverviewFromInvoiceUnconfirmed_(tasks, invoices, treatmentLogs, notes, scope, patientNameMap, now, tz, patientInfo) {

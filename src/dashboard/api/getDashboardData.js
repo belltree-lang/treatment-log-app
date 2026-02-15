@@ -208,6 +208,28 @@ function getDashboardData(options) {
           inVisibleScope
         }));
 
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const parsedConsentExpiry = consentExpiryDate
+          ? new Date(consentExpiryDate.getFullYear(), consentExpiryDate.getMonth(), consentExpiryDate.getDate())
+          : null;
+        const diffMs = parsedConsentExpiry ? parsedConsentExpiry.getTime() - today.getTime() : null;
+        const diffDays = diffMs == null ? null : Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        const threshold = null;
+        const finalCondition = Boolean(consentExpiryDate) && !consentAcquired;
+        Logger.log('[consent-eligible-debug] ' + JSON.stringify({
+          pid,
+          hasConsentExpiry,
+          parsedConsentExpiry: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
+          consentAcquired,
+          inVisibleScope,
+          todayISO: today.toISOString(),
+          expiryISO: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
+          diffMs,
+          diffDays,
+          threshold,
+          finalCondition
+        }));
+
         if (!consentExpiryDate) return;
         if (consentAcquired) return;
         consentEligiblePatients += 1;

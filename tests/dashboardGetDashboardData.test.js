@@ -285,9 +285,10 @@ function testConsentDateParsingFormatsAndResolverPriority() {
       '同意年月日': '令和7年6月26日'
     }
   });
-  const normalizedResolvedFromConsentDate = JSON.parse(JSON.stringify(resolvedFromConsentDate));
-  assert.strictEqual(normalizedResolvedFromConsentDate.source, "raw['同意年月日']+1year", '同意期限が無い場合は同意年月日フォールバックを記録する');
-  assert.ok(String(normalizedResolvedFromConsentDate.value).indexOf('2026-06-26') === 0, '同意年月日の +1年を同意期限として扱う');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(resolvedFromConsentDate)), {
+    value: null,
+    source: ''
+  }, '同意年月日のみでは同意期限を再計算しない');
 
   const result = ctx.getDashboardData({
     user: { email: 'user@example.com', role: 'admin' },
@@ -304,7 +305,7 @@ function testConsentDateParsingFormatsAndResolverPriority() {
         '008': { name: 'H-raw-valid', consentExpiry: '', raw: { '同意有効期限': '2025/02/26' } },
         '009': { name: 'I-raw-date', raw: { '同意期限日': '2025年2月27日' } },
         '010': { name: 'J-acquired', raw: { '同意期限': '2025-02-28', '同意書取得確認': '済' } },
-        '011': { name: 'K-era-consent-date', raw: { '同意年月日': '令和7年1月15日' } }
+        '011': { name: 'K-consent-date-only', raw: { '同意年月日': '令和7年1月15日' } }
       },
       warnings: []
     },
@@ -319,17 +320,18 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   });
 
   const overviewIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
-  assert.deepStrictEqual(overviewIds, ['001', '002', '003', '004', '005', '007', '008', '009', '011'], '対応フォーマット + raw列解決 + 同意年月日和暦フォールバックのみ表示され、不正値と取得済みは除外される');
+  assert.deepStrictEqual(overviewIds, ['001', '002', '003', '004', '005', '007', '008', '009'], '同意期限がある患者のみ表示され、同意年月日のみでは表示しない');
 
   const patientsById = {};
   result.patients.forEach(entry => {
     patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
   });
-  ['001', '002', '003', '004', '005', '007', '008', '009', '011'].forEach(patientId => {
+  ['001', '002', '003', '004', '005', '007', '008', '009'].forEach(patientId => {
     assert.deepStrictEqual((patientsById[patientId] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応' }], `同意タグが表示される: ${patientId}`);
   });
   assert.deepStrictEqual((patientsById['006'] || []).filter(tag => tag.type === 'consent'), [], '不正文字列は同意タグの表示対象外');
   assert.deepStrictEqual((patientsById['010'] || []).filter(tag => tag.type === 'consent'), [], '取得済み判定は従来通り同意タグ非表示');
+  assert.deepStrictEqual((patientsById['011'] || []).filter(tag => tag.type === 'consent'), [], '同意年月日のみでは同意タグを表示しない');
 }
 
 function testConsentDateParseFailureCanBeDebugLogged() {

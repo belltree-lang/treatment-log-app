@@ -163,6 +163,53 @@ function testPatientStatusTagsGeneration() {
   ], '5. 同意日更新後は新期限で要対応を再表示する');
 }
 
+function testConsentOverviewMatchesPatientStatusTags() {
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'user@example.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '期限内未取得', consentExpiry: '2025-02-20', raw: {} },
+        '002': { name: '期限超過未取得', consentExpiry: '2025-01-20', raw: {} },
+        '003': { name: '同意取得確認済', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
+        '004': { name: '期限未登録', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: {
+      tasks: [
+        { patientId: '003', type: 'consentExpired', detail: 'legacy' },
+        { patientId: '004', type: 'consentWarning', detail: 'legacy' }
+      ],
+      warnings: []
+    },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  const overviewItems = JSON.parse(JSON.stringify(result.overview.consentRelated.items));
+  assert.deepStrictEqual(overviewItems, [
+    { patientId: '002', name: '期限超過未取得', count: 1, subText: '期限超過' },
+    { patientId: '001', name: '期限内未取得', count: 1, subText: '要対応' }
+  ], '上段同意ブロックは consentExpiry + 同意書取得確認の判定だけで表示する');
+
+  const patientsById = {};
+  result.patients.forEach(entry => {
+    patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
+  });
+
+  assert.deepStrictEqual(patientsById['001'].filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '要対応' }], 'Case1: 期限内・未取得');
+  assert.deepStrictEqual(patientsById['002'].filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '期限超過' }], 'Case2: 期限超過・未取得');
+  assert.deepStrictEqual((patientsById['003'] || []).filter(tag => tag.type === 'consent'), [], 'Case3: 同意取得確認済');
+  assert.deepStrictEqual((patientsById['004'] || []).filter(tag => tag.type === 'consent'), [], 'Case4: 期限未登録');
+}
+
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
   const logEntries = [];
   const ctx = createContext();
@@ -632,6 +679,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
 (function run() {
   testAggregatesDashboardData();
   testPatientStatusTagsGeneration();
+  testConsentOverviewMatchesPatientStatusTags();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
   testVisitSummaryUsesCountsForTodayAndRecentOneDay();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();

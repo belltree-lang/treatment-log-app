@@ -500,7 +500,7 @@ function buildDashboardOverview_(params) {
     tz,
     patientInfo
   );
-  const consentRelated = buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz);
+  const consentRelated = buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now);
   const visitSummary = buildOverviewFromTreatmentProgress_(treatmentLogs, user, now, tz);
   return {
     invoiceUnconfirmed,
@@ -636,58 +636,28 @@ function buildDashboardInvoiceSearchText_(entry) {
     .join('\n');
 }
 
-function buildOverviewFromConsent_(tasks, patientInfo, scope, patientNameMap, now, tz) {
+function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
   const items = [];
-  const issuesByPatient = {};
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
-
-  (tasks || []).forEach(task => {
-    const pid = task && task.patientId ? String(task.patientId).trim() : '';
-    if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
-    const type = task && task.type ? String(task.type) : '';
-    if (type !== 'consentExpired' && type !== 'consentWarning') return;
-    const detail = task.detail ? String(task.detail) : '';
-    const label = type === 'consentExpired' ? '期限切れ' : '期限間近';
-    const message = detail ? `${label}: ${detail}` : label;
-    if (!issuesByPatient[pid]) issuesByPatient[pid] = [];
-    issuesByPatient[pid].push(message);
-  });
+  const targetNow = dashboardCoerceDate_(now) || new Date();
 
   Object.keys(patientInfo || {}).forEach(pid => {
     if (!pid || (applyFilter && allowedPatientIds && !allowedPatientIds.has(pid))) return;
     const info = patientInfo[pid] || {};
-    const consentHandout = resolvePatientRawValue_(info.raw, [
-      '配布', '配布欄', '配布状況', '配布日', '配布（同意書）', '同意書受渡', '同意書受け渡し', '同意書受渡日'
-    ]);
-    const consentDate = resolvePatientRawValue_(info.raw, [
-      '同意年月日', '同意日', '同意開始日', '同意開始'
-    ]);
-    const visitPlanDate = resolvePatientRawValue_(info.raw, [
-      '通院予定日', '通院日', '来院日', '通院予定', '来院予定'
-    ]);
+    const consentExpiry = info.consentExpiry || (info.raw && (info.raw['同意期限'] || info.raw['同意有効期限']));
+    const consentExpiryDate = dashboardParseTimestamp_(consentExpiry);
+    const consentAcquired = resolvePatientRawValue_(info.raw, ['同意書取得確認']);
+    if (consentAcquired || !consentExpiryDate) return;
 
-    if (consentHandout && !consentDate) {
-      if (!issuesByPatient[pid]) issuesByPatient[pid] = [];
-      issuesByPatient[pid].push('同意未取得');
-    }
-    if (consentHandout && !visitPlanDate) {
-      if (!issuesByPatient[pid]) issuesByPatient[pid] = [];
-      issuesByPatient[pid].push('通院日未定');
-    }
-  });
-
-  Object.keys(issuesByPatient).forEach(pid => {
-    const reasons = issuesByPatient[pid] || [];
-    if (!reasons.length) return;
-    const info = patientInfo[pid] || {};
+    const daysUntil = dashboardDaysBetween_(targetNow, consentExpiryDate, true);
+    const label = daysUntil <= 0 ? '期限超過' : '要対応';
     const name = info.name || patientNameMap[pid] || '';
-    const subText = reasons.join(' / ');
     items.push({
       patientId: pid,
       name,
-      count: Math.max(1, reasons.length),
-      subText
+      count: 1,
+      subText: label
     });
   });
 

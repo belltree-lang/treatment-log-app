@@ -210,6 +210,57 @@ function testConsentOverviewMatchesPatientStatusTags() {
   assert.deepStrictEqual((patientsById['004'] || []).filter(tag => tag.type === 'consent'), [], 'Case4: 期限未登録');
 }
 
+function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'user@example.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '未取得', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '未取得' } },
+        '002': { name: 'FALSE文字列', consentExpiry: '2025-02-20', raw: { '同意書取得確認': 'FALSE' } },
+        '003': { name: 'ゼロ文字列', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '0' } },
+        '004': { name: '取得済み', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
+        '005': { name: 'boolean true', consentExpiry: '2025-02-20', raw: { '同意書取得確認': true } }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  const overviewPatientIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
+  assert.deepStrictEqual(overviewPatientIds, ['002', '003', '001'], '未取得/FALSE/0 は上段同意に表示する');
+
+  const patientsById = {};
+  result.patients.forEach(entry => {
+    patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
+  });
+
+  ['001', '002', '003'].forEach(patientId => {
+    assert.deepStrictEqual(
+      (patientsById[patientId] || []).filter(tag => tag.type === 'consent'),
+      [{ type: 'consent', label: '要対応' }],
+      `下段同意タグにも表示される: ${patientId}`
+    );
+  });
+
+  ['004', '005'].forEach(patientId => {
+    assert.deepStrictEqual(
+      (patientsById[patientId] || []).filter(tag => tag.type === 'consent'),
+      [],
+      `済/true は下段同意タグを表示しない: ${patientId}`
+    );
+    assert.strictEqual(overviewPatientIds.includes(patientId), false, `済/true は上段同意に表示しない: ${patientId}`);
+  });
+}
+
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
   const logEntries = [];
   const ctx = createContext();
@@ -715,6 +766,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testAggregatesDashboardData();
   testPatientStatusTagsGeneration();
   testConsentOverviewMatchesPatientStatusTags();
+  testConsentAcquiredJudgmentHandlesFalseyStringsConsistently();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
   testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount();
   testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth();

@@ -72,7 +72,7 @@ function testAggregatesDashboardData() {
 
   assert.strictEqual(result.meta.user, 'user@example.com');
   assert.ok(result.meta.generatedAt, 'generatedAt should be present');
-  assert.deepStrictEqual(result.tasks, tasksResult.tasks);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks)), []);
   assert.deepStrictEqual(result.todayVisits, visitsResult.visits);
   assert.strictEqual(result.patients.length, 1);
   const normalizedPatient = JSON.parse(JSON.stringify(result.patients[0]));
@@ -100,7 +100,7 @@ function testAggregatesDashboardData() {
   assert.strictEqual(result.unpaidAlerts.length, 1, '未回収アラートが伝搬する');
   assert.strictEqual(result.unpaidAlerts[0].patientId, '001');
   const warnings = JSON.parse(JSON.stringify(result.warnings)).sort();
-  assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'task', 'u1', 'visit'].sort());
+  assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'u1', 'visit'].sort());
 }
 
 
@@ -195,8 +195,8 @@ function testConsentOverviewMatchesPatientStatusTags() {
 
   const overviewItems = JSON.parse(JSON.stringify(result.overview.consentRelated.items));
   assert.deepStrictEqual(overviewItems, [
-    { patientId: '002', name: '期限超過未取得', count: 1, subText: '期限超過' },
-    { patientId: '001', name: '期限内未取得', count: 1, subText: '要対応' }
+    { patientId: '002', name: '期限超過未取得', subText: '期限超過（12日超過）' },
+    { patientId: '001', name: '期限内未取得', subText: '要対応（残19日）' }
   ], '上段同意ブロックは consentExpiry + 同意書取得確認の判定だけで表示する');
 
   const patientsById = {};
@@ -269,7 +269,7 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
 }
 
 
-function testVisitSummaryUsesCountsForTodayAndRecentOneDay() {
+function testVisitSummaryUsesPerPatientRows() {
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -280,29 +280,27 @@ function testVisitSummaryUsesCountsForTodayAndRecentOneDay() {
   });
 
   const logs = [
-    { dateKey: '2025-02-01', createdByEmail: 'user@example.com' },
-    { dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
-    { dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
-    { dateKey: '2025-01-30', createdByEmail: 'other@example.com' }
+    { patientId: '001', dateKey: '2025-02-01', createdByEmail: 'user@example.com' },
+    { patientId: '001', dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
+    { patientId: '002', dateKey: '2025-01-31', createdByEmail: 'user@example.com' },
+    { patientId: '002', dateKey: '2025-01-30', createdByEmail: 'other@example.com' }
   ];
 
-  const resultToday = ctx.buildOverviewFromTreatmentProgress_(
+  const result = ctx.buildOverviewFromTreatmentProgress_(
     logs,
     'user@example.com',
     new Date('2025-02-01T00:00:00Z'),
-    'Asia/Tokyo'
+    'Asia/Tokyo',
+    { '001': '患者A', '002': '患者B', '003': '患者C' },
+    { patientIds: new Set(['001', '002', '003']), applyFilter: true },
+    { '001': { name: '患者A' }, '002': { name: '患者B' }, '003': { name: '患者C' } }
   );
-  assert.strictEqual(resultToday.todayCount, 1, '今日の件数を返す');
-  assert.strictEqual(resultToday.recentOneDayCount, 1, '直近1日施術は最新日の件数を返す');
 
-  const resultNoToday = ctx.buildOverviewFromTreatmentProgress_(
-    logs,
-    'user@example.com',
-    new Date('2025-02-02T00:00:00Z'),
-    'Asia/Tokyo'
-  );
-  assert.strictEqual(resultNoToday.todayCount, 0, '今日が0件の場合は0件を返す');
-  assert.strictEqual(resultNoToday.recentOneDayCount, 1, '今日0件の場合は過去で最も新しい施術日の件数を返す');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.items)), [
+    { patientId: '001', name: '患者A', subText: '今日施術あり / 直近本人施術日: 2025-02-01' },
+    { patientId: '002', name: '患者B', subText: '今日施術なし / 直近本人施術日: 2025-01-31' },
+    { patientId: '003', name: '患者C', subText: '今日施術なし / 直近本人施術日: --' }
+  ]);
 }
 
 
@@ -319,7 +317,6 @@ function testInvoiceUnconfirmedUsesPositiveConfirmationEvidence() {
   });
 
   const result = ctx.buildOverviewFromInvoiceUnconfirmed_(
-    [],
     {},
     [
       { patientId: '001', dateKey: '2025-01-10', searchText: '前月施術あり' },
@@ -335,7 +332,7 @@ function testInvoiceUnconfirmedUsesPositiveConfirmationEvidence() {
     'Asia/Tokyo'
   );
 
-  assert.strictEqual(result.count, 1, '前月施術があり証跡がない患者のみ未対応になる');
+  assert.strictEqual(result.items.length, 1, '前月施術があり証跡がない患者のみ未対応になる');
   assert.strictEqual(result.items[0].patientId, '002');
 }
 
@@ -370,7 +367,7 @@ function testInvoiceUnconfirmedIgnoresDisplayTargetFilter() {
     visitsResult: { visits: [], warnings: [] }
   });
 
-  assert.strictEqual(result.overview.invoiceUnconfirmed.count, 1, 'displayTarget が空でも①請求の対象を保持する');
+  assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 1, 'displayTarget が空でも①請求の対象を保持する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.items[0].patientId, '001');
 }
 
@@ -413,7 +410,7 @@ function testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment
     visitsResult: { visits: [], warnings: [] }
   });
 
-  assert.strictEqual(result.overview.invoiceUnconfirmed.count, 1, '前月のみ施術ログがある患者を未確認として検出する');
+  assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 1, '前月のみ施術ログがある患者を未確認として検出する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.items[0].patientId, '001');
 }
 
@@ -460,7 +457,7 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
     visitsResult: { visits: [], warnings: [] }
   });
 
-  assert.strictEqual(result.overview.invoiceUnconfirmed.count, 0, '医療助成患者は請求未確認対象から除外する');
+  assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 0, '医療助成患者は請求未確認対象から除外する');
 }
 
 
@@ -512,10 +509,10 @@ function testVisibleScopeForAdminShowsAllPatients() {
   });
 
   assert.strictEqual(result.patients.length, 2, '管理者は全患者表示する');
-  assert.strictEqual(result.tasks.length, 2, '管理者はタスク全件表示する');
+  assert.strictEqual(result.tasks.length, 0, '上段3ブロックは tasks 非依存とする');
   assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
-  assert.strictEqual(result.overview.invoiceUnconfirmed.count, 2, '管理者は請求未確認を全患者分表示する');
+  assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 2, '管理者は請求未確認を全患者分表示する');
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
@@ -566,7 +563,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   });
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは50日以内に記録した患者のみ表示する');
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), ['001']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), []);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
@@ -681,7 +678,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testPatientStatusTagsGeneration();
   testConsentOverviewMatchesPatientStatusTags();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
-  testVisitSummaryUsesCountsForTodayAndRecentOneDay();
+  testVisitSummaryUsesPerPatientRows();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();

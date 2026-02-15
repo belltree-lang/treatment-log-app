@@ -273,12 +273,18 @@ function dashboardResolvePatientIdFromName_(name, nameToId) {
 }
 
 function dashboardResolveColumn_(headers, candidates, fallbackIndex) {
+  const normalize = s => String(s)
+    .trim()
+    .toLowerCase()
+    .replace(/\s/g, '')
+    .replace(/[　]/g, '');
+
   if (Array.isArray(candidates)) {
-    const normalizedHeaders = (headers || []).map(h => String(h || '').trim().toLowerCase());
+    const normalizedHeaders = (headers || []).map(h => normalize(h || ''));
     for (let i = 0; i < normalizedHeaders.length; i++) {
       const header = normalizedHeaders[i];
       if (!header) continue;
-      if (candidates.some(c => header === String(c || '').trim().toLowerCase())) {
+      if (candidates.some(c => header === normalize(c || ''))) {
         return i + 1;
       }
     }

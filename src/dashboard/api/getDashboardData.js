@@ -535,16 +535,16 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
     if (daysRemaining > 30) {
       return tags;
     }
-    let label = '要対応';
+    let label = '📄 要対応';
     let priority = 'low';
     if (daysRemaining < 0) {
-      label = '期限超過';
+      label = '⚠ 期限超過';
       priority = 'high';
     } else if (daysRemaining <= 14) {
-      label = '期限迫る';
+      label = '⏳ 期限迫る';
       priority = 'medium';
     } else if (daysRemaining <= 30) {
-      label = '要対応';
+      label = '📄 要対応';
       priority = 'low';
     }
     tags.push({ type: 'consent', label, priority });

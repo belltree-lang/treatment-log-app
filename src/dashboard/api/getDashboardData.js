@@ -34,6 +34,10 @@ function getDashboardData(options) {
     logPerf(`[perf] step=${step} duration=${duration}ms`);
     return result;
   };
+  const logCachePerf = (status, key, details) => {
+    const suffix = details ? ` ${details}` : '';
+    logPerf(`[perf] ${status} key=${key}${suffix}`);
+  };
   if (opts.mock && typeof buildDashboardMockData_ === 'function') {
     const mockOptions = buildDashboardMockData_(opts) || {};
     const normalized = Object.assign({}, mockOptions);
@@ -69,9 +73,22 @@ function getDashboardData(options) {
       ? loadInvoices({ patientInfo, now: opts.now, cache: opts.cache, includePreviousMonth: true })
       : { invoices: {}, warnings: [] })));
     logContext('getDashboardData:loadInvoices', `invoices=${Object.keys(invoices && invoices.invoices ? invoices.invoices : {}).length} warnings=${(invoices && invoices.warnings ? invoices.warnings.length : 0)} setupIncomplete=${!!(invoices && invoices.setupIncomplete)}`);
-    const treatmentLogs = measureStep('loadTreatmentLogs', () => (opts.treatmentLogs || (typeof loadTreatmentLogs === 'function'
-      ? loadTreatmentLogs({ patientInfo, now: opts.now, cache: opts.cache, dashboardSpreadsheet })
-      : { logs: [], warnings: [] })));
+    const treatmentLogs = measureStep('loadTreatmentLogs', () => {
+      if (opts.treatmentLogs) return opts.treatmentLogs;
+      if (typeof loadTreatmentLogs !== 'function') return { logs: [], warnings: [] };
+
+      const now = dashboardCoerceDate_(opts.now) || new Date();
+      const rawMonthKey = dashboardFormatDate_(now, dashboardResolveTimeZone_(), 'yyyyMM');
+      const normalizedMonthKey = String(rawMonthKey || '').replace(/[^0-9]/g, '').slice(0, 6);
+      const monthKey = normalizedMonthKey || `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const cacheKey = `dashboard:treatmentLogs:${monthKey}`;
+      return dashboardGetTreatmentLogsFromCache_(cacheKey, monthKey, () => loadTreatmentLogs({
+        patientInfo,
+        now: opts.now,
+        cache: opts.cache,
+        dashboardSpreadsheet
+      }), logCachePerf);
+    });
     const totalTreatmentLogs = treatmentLogs && treatmentLogs.logs ? treatmentLogs.logs.length : 0;
     logContext('getDashboardData:loadTreatmentLogs', `logs=${totalTreatmentLogs} warnings=${(treatmentLogs && treatmentLogs.warnings ? treatmentLogs.warnings.length : 0)} setupIncomplete=${!!(treatmentLogs && treatmentLogs.setupIncomplete)}`);
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
@@ -290,6 +307,69 @@ function getDashboardData(options) {
     logPerf('  - 権限影響: ユーザー別フィルタを前段キャッシュへ寄せると、権限境界を跨いだデータ混入リスクが上がる。');
     logPerf(`[perf-check] spreadsheetOpenCount=${spreadsheetOpenCount}`);
   }
+}
+
+function dashboardGetTreatmentLogsFromCache_(cacheKey, monthKey, loader, logCachePerf) {
+  const shouldLog = typeof logCachePerf === 'function';
+  const emit = (status, details) => {
+    if (shouldLog) logCachePerf(status, cacheKey, details);
+  };
+  const canUseCacheService = typeof CacheService !== 'undefined'
+    && CacheService
+    && typeof CacheService.getScriptCache === 'function';
+  const cacheTtlSeconds = 300;
+
+  if (canUseCacheService) {
+    try {
+      const cache = CacheService.getScriptCache();
+      const cachedRaw = cache.get(cacheKey);
+      if (cachedRaw) {
+        const parsed = JSON.parse(cachedRaw);
+        if (parsed && parsed.monthKey === monthKey && parsed.payload) {
+          emit('cacheHit', 'source=CacheService');
+          return reviveTreatmentLogsCachePayload_(parsed.payload);
+        }
+      }
+      emit('cacheMiss', 'source=CacheService');
+      const loaded = loader();
+      const payload = JSON.stringify({
+        monthKey,
+        payload: sanitizeTreatmentLogsCachePayload_(loaded)
+      });
+      cache.put(cacheKey, payload, cacheTtlSeconds);
+      return loaded;
+    } catch (err) {
+      emit('cacheMiss', `reason=cacheError error=${err && err.message ? err.message : err}`);
+      return loader();
+    }
+  }
+
+  emit('cacheMiss', 'reason=cacheUnavailable');
+  return loader();
+}
+
+function sanitizeTreatmentLogsCachePayload_(result) {
+  const source = result || {};
+  return {
+    logs: Array.isArray(source.logs) ? source.logs : [],
+    warnings: Array.isArray(source.warnings) ? source.warnings : [],
+    lastStaffByPatient: source.lastStaffByPatient && typeof source.lastStaffByPatient === 'object' ? source.lastStaffByPatient : {},
+    setupIncomplete: !!source.setupIncomplete
+  };
+}
+
+function reviveTreatmentLogsCachePayload_(payload) {
+  const normalized = sanitizeTreatmentLogsCachePayload_(payload);
+  normalized.logs = normalized.logs.map(entry => {
+    if (!entry || typeof entry !== 'object') return entry;
+    const revived = Object.assign({}, entry);
+    const timestamp = dashboardCoerceDate_(revived.timestamp);
+    if (timestamp) {
+      revived.timestamp = timestamp;
+    }
+    return revived;
+  });
+  return normalized;
 }
 
 function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {

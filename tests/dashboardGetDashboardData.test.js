@@ -166,7 +166,9 @@ function testPatientStatusTagsGeneration() {
 
   assert.deepStrictEqual(patientsById['004'], [], '4. 同意取得確認ありは両タグを非表示にする');
 
-  assert.deepStrictEqual(patientsById['005'], [], '5. 同意期限30日超はタグを表示しない');
+  assert.deepStrictEqual(patientsById['005'], [
+    { type: 'report', label: '未作成' }
+  ], '5. 同意期限30日超はconsent非表示だがreportは表示する');
 
   assert.deepStrictEqual(patientsById['006'], [
     { type: 'consent', label: '📄 要対応', priority: 'low' },
@@ -222,6 +224,67 @@ function testConsentOverviewMatchesPatientStatusTags() {
   assert.deepStrictEqual((patientsById['003'] || []).filter(tag => tag.type === 'consent'), [], 'Case3: 同意取得確認済');
   assert.deepStrictEqual((patientsById['004'] || []).filter(tag => tag.type === 'consent'), [], 'Case4: 期限未登録');
   assert.deepStrictEqual((patientsById['005'] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '📄 要対応', priority: 'low' }], 'Case5: 期限内・未取得');
+}
+
+
+function testEvaluateConsentStatusBoundaries() {
+  const ctx = createContext();
+  const today = new Date('2025-02-01T00:00:00Z');
+
+  const expired = JSON.parse(JSON.stringify(ctx.evaluateConsentStatus_(new Date('2025-01-31T00:00:00Z'), today)));
+  assert.deepStrictEqual(expired, { type: 'expired', days: -1, priority: 'high' }, 'expired: 期限超過は high');
+
+  const warning = JSON.parse(JSON.stringify(ctx.evaluateConsentStatus_(new Date('2025-02-15T00:00:00Z'), today)));
+  assert.deepStrictEqual(warning, { type: 'warning', days: 14, priority: 'medium' }, 'warning: 14日以内は medium');
+
+  const normal = JSON.parse(JSON.stringify(ctx.evaluateConsentStatus_(new Date('2025-02-16T00:00:00Z'), today)));
+  assert.deepStrictEqual(normal, { type: 'normal', days: 15, priority: 'low' }, 'normal: 15〜30日は low');
+
+  const hiddenOver30 = ctx.evaluateConsentStatus_(new Date('2025-03-04T00:00:00Z'), today);
+  assert.strictEqual(hiddenOver30, null, '30日超は非表示');
+
+  const hiddenNoDate = ctx.evaluateConsentStatus_(null, today);
+  assert.strictEqual(hiddenNoDate, null, '同意年月日なしは非表示');
+}
+
+
+function testConsentOver30DaysStillShowsReportTag() {
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'user@example.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '同意期限30日超', raw: { '同意年月日': '2024-09-16' } }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  const tags = JSON.parse(JSON.stringify(result.patients[0].statusTags));
+  assert.deepStrictEqual(tags.filter(tag => tag.type === 'consent'), [], '30日超はconsentタグ非表示');
+  assert.deepStrictEqual(tags.filter(tag => tag.type === 'report'), [{ type: 'report', label: '未作成' }], '30日超でもreportタグは表示');
+}
+
+function testEvaluateConsentStatusIsTimeIndependentForSameDate() {
+  const ctx = createContext();
+
+  const onDeadline = JSON.parse(JSON.stringify(ctx.evaluateConsentStatus_(new Date('2025-02-01T00:00:00Z'), new Date('2025-02-01T12:34:56Z'))));
+  assert.deepStrictEqual(onDeadline, { type: 'warning', days: 0, priority: 'medium' }, '期限当日(diffDays=0)はwarning');
+
+  const dayBeforeLateNight = JSON.parse(JSON.stringify(ctx.evaluateConsentStatus_(new Date('2025-02-01T00:00:00Z'), new Date('2025-01-31T23:59:00Z'))));
+  assert.deepStrictEqual(dayBeforeLateNight, { type: 'warning', days: 1, priority: 'medium' }, '期限前日23:59はwarning');
+
+  const sameDayAfterMidnight = JSON.parse(JSON.stringify(ctx.evaluateConsentStatus_(new Date('2025-02-01T00:00:00Z'), new Date('2025-02-01T00:01:00Z'))));
+  assert.deepStrictEqual(sameDayAfterMidnight, { type: 'warning', days: 0, priority: 'medium' }, '期限当日00:01はwarning（時刻非依存）');
 }
 
 function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
@@ -926,6 +989,9 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testAggregatesDashboardData();
   testPatientStatusTagsGeneration();
   testConsentOverviewMatchesPatientStatusTags();
+  testEvaluateConsentStatusBoundaries();
+  testConsentOver30DaysStillShowsReportTag();
+  testEvaluateConsentStatusIsTimeIndependentForSameDate();
   testConsentAcquiredJudgmentHandlesFalseyStringsConsistently();
   testConsentDateParsingFormatsAndResolverPriority();
   testConsentDateParseFailureCanBeDebugLogged();

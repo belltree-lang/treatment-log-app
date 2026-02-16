@@ -1,14 +1,3 @@
-const PATIENT_RESPONSIBLE_COLUMN_CANDIDATES = ['担当者', '担当メール', '担当者メール', 'メール', 'email', 'mail', 'responsibleEmail'];
-
-function resolveResponsibleColumn_(patientRaw) {
-  const raw = patientRaw && typeof patientRaw === 'object' ? patientRaw : {};
-  for (let i = 0; i < PATIENT_RESPONSIBLE_COLUMN_CANDIDATES.length; i += 1) {
-    const columnName = PATIENT_RESPONSIBLE_COLUMN_CANDIDATES[i];
-    if (Object.prototype.hasOwnProperty.call(raw, columnName)) return columnName;
-  }
-  return '';
-}
-
 /**
  * ダッシュボードの主要データをまとめて取得し、JSON 形式で返す。
  * エラーが発生した場合は meta.error にメッセージを格納する。
@@ -119,34 +108,44 @@ function getDashboardData(options) {
       : { responsible: {}, warnings: [] })));
     logContext('getDashboardData:assignResponsible', `responsible=${Object.keys(responsible && responsible.responsible ? responsible.responsible : {}).length} warnings=${(responsible && responsible.warnings ? responsible.warnings.length : 0)} setupIncomplete=${!!(responsible && responsible.setupIncomplete)}`);
 
-    const responsiblePatientIds = new Set();
-    Object.keys(patientMaster || {}).forEach(pid => {
-      const patient = patientMaster[pid] || {};
-      const patientRaw = patient && patient.raw ? patient.raw : {};
-      const responsibleColumn = resolveResponsibleColumn_(patientRaw);
-      const normalizedResponsible = dashboardNormalizeEmail_(patientRaw[responsibleColumn]);
-
-      if (normalizedUser === normalizedResponsible) {
-        responsiblePatientIds.add(pid);
-      }
-    });
     const allPatientIds = Object.keys(patientMaster || {});
+    const now = dashboardCoerceDate_(opts.now) || new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const fiftyDaysAgoDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 50);
+    const fiftyDaysAgoKey = dashboardFormatDate_(fiftyDaysAgoDate, dashboardResolveTimeZone_(), 'yyyy-MM-dd') || '';
+    const responsiblePatientIds = new Set();
+    let matchedLogsCount = 0;
+    const logs = treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : [];
+    logs.forEach(entry => {
+      const pid = dashboardNormalizePatientId_(entry && entry.patientId);
+      if (!pid || !Object.prototype.hasOwnProperty.call(patientMaster, pid)) return;
+
+      const staffEmail = dashboardNormalizeEmail_(entry && entry.staffKeys ? entry.staffKeys.email : '');
+      if (!staffEmail || staffEmail !== normalizedUser) return;
+
+      const logDate = resolveTreatmentLogDate_(entry);
+      if (!logDate) return;
+      const logDay = new Date(logDate.getFullYear(), logDate.getMonth(), logDate.getDate());
+      if (logDay < fiftyDaysAgoDate) return;
+
+      matchedLogsCount += 1;
+      responsiblePatientIds.add(pid);
+    });
+
     let visiblePatientIds = null;
-    // 可視スコープはロール + 患者マスタ担当割当のみで決定する。
-    // 施術ログ・期間条件・直近○日条件は使用しない。
     if (role === 'admin') {
       visiblePatientIds = new Set(allPatientIds);
     } else {
       visiblePatientIds = responsiblePatientIds;
     }
-    const now = dashboardCoerceDate_(opts.now) || new Date();
     const applyScopeFilter = !isAdmin;
     logContext('getDashboardData:role', JSON.stringify({ role, applyScopeFilter }));
     logContext('getDashboardData:scopeSummary', JSON.stringify({
       role,
       applyScopeFilter,
       visiblePatientIdsSize: visiblePatientIds.size,
-      patientMapSize: allPatientIds.length
+      matchedLogsCount,
+      fiftyDaysAgo: fiftyDaysAgoKey
     }));
 
     if (!isAdmin) {
@@ -359,6 +358,16 @@ function getDashboardData(options) {
     logPerf('  - 権限影響: ユーザー別フィルタを前段キャッシュへ寄せると、権限境界を跨いだデータ混入リスクが上がる。');
     logPerf(`[perf-check] spreadsheetOpenCount=${spreadsheetOpenCount}`);
   }
+}
+
+function resolveTreatmentLogDate_(entry) {
+  if (!entry) return null;
+  const ts = dashboardCoerceDate_(entry.timestamp);
+  if (ts) return ts;
+  const dateKey = entry && entry.dateKey ? String(entry.dateKey).trim() : '';
+  if (!dateKey) return null;
+  const parsed = dashboardCoerceDate_(dateKey);
+  return parsed || null;
 }
 
 function dashboardGetTreatmentLogsFromCache_(cacheKey, monthKey, loader, logCachePerf) {

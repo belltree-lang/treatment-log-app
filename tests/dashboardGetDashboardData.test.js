@@ -878,7 +878,8 @@ function testVisibleScopeForAdminShowsAllPatients() {
     role: 'admin',
     applyScopeFilter: false,
     visiblePatientIdsSize: 2,
-    patientMapSize: 2
+    matchedLogsCount: 0,
+    fiftyDaysAgo: '2024-12-25'
   });
 }
 
@@ -934,7 +935,7 @@ function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
     responsible: { responsible: {}, warnings: [] }
   });
 
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは患者マスタの担当割当患者のみ表示する');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは施術ログ一致かつ直近50日患者のみ表示する');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), []);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
@@ -948,7 +949,8 @@ function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
     role: 'staff',
     applyScopeFilter: true,
     visiblePatientIdsSize: 1,
-    patientMapSize: 2
+    matchedLogsCount: 1,
+    fiftyDaysAgo: '2024-12-25'
   });
 }
 
@@ -975,7 +977,7 @@ function testVisibleScopeForStaffWithoutResponsibleAssignmentShowsNoPatients() {
     responsible: { responsible: {}, warnings: [] }
   });
 
-  assert.strictEqual(result.patients.length, 0, '担当割当がなければ患者表示0件');
+  assert.strictEqual(result.patients.length, 0, '直近50日内の施術ログ一致がなければ患者表示0件');
   assert.strictEqual(result.tasks.length, 0);
   assert.strictEqual(result.todayVisits.length, 0);
   assert.strictEqual(result.unpaidAlerts.length, 0);

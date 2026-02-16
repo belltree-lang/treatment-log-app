@@ -543,6 +543,54 @@ function testStaffConsentScopeMetricsAreLogged() {
   assert.ok(logEntries.some(entry => entry.label === 'buildOverviewFromConsent_:scope'), 'buildOverviewFromConsent_:scope ログが出力される');
 }
 
+function testStaffConsentEligibilityEvaluatesOnlyVisibleOrMatchedPatients() {
+  const logEntries = [];
+  const ctx = createContext();
+  ctx.dashboardLogContext_ = (label, details) => {
+    logEntries.push({ label, details: String(details || '') });
+  };
+
+  const result = ctx.getDashboardData({
+    user: 'staff@example.com',
+    now: new Date('2025-02-20T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16' } },
+        '002': { name: '患者B', raw: { '同意年月日': '2024-09-16' } },
+        '003': { name: '患者C', raw: { '同意年月日': '2024-09-16' } }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-02-10T09:00:00Z'), staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2024-12-01T09:00:00Z'), staffKeys: { email: 'staff@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.strictEqual(result.meta.error, undefined);
+
+  const eligibilityLogs = logEntries
+    .filter(entry => entry.label === 'getDashboardData:consentEligibilityPatient')
+    .map(entry => JSON.parse(entry.details).pid)
+    .sort();
+  assert.deepStrictEqual(eligibilityLogs, ['001', '002'], '可視範囲または一致患者のみ同意評価ログに含まれる');
+
+  const consentDebugLogs = logEntries
+    .filter(entry => entry.label === 'consent-eligible-debug')
+    .map(entry => JSON.parse(entry.details).pid)
+    .sort();
+  assert.deepStrictEqual(consentDebugLogs, ['001', '002'], '可視範囲外かつ一致しない患者は同意デバッグログを出力しない');
+}
+
 function testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount() {
   const ctx = createContext({
     Utilities: {
@@ -997,6 +1045,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testConsentDateParseFailureCanBeDebugLogged();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
   testStaffConsentScopeMetricsAreLogged();
+  testStaffConsentEligibilityEvaluatesOnlyVisibleOrMatchedPatients();
   testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount();
   testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth();
   testVisitSummaryWhenNoDataReturnsZeroCounts();

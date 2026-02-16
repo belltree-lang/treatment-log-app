@@ -190,10 +190,14 @@ function getDashboardData(options) {
 
       patientMasterIds.forEach(pid => {
         const info = patientMaster[pid] || {};
+        const inVisibleScope = visiblePatientIds.has(pid);
+        const shouldEvaluateConsent = inVisibleScope || matchedPatientIds.has(pid);
+
+        if (!shouldEvaluateConsent) return;
+
         const consentExpiryResolved = resolveConsentExpiry_(info);
         const consentExpiryDate = parseConsentDate_(consentExpiryResolved.value);
         const consentAcquired = dashboardIsConsentAcquired_(info.raw);
-        const inVisibleScope = visiblePatientIds.has(pid);
         const hasConsentExpiry = consentExpiryResolved.value != null && String(consentExpiryResolved.value).trim() !== '';
 
         if (hasConsentExpiry && !consentExpiryDate) parseFailedCount += 1;

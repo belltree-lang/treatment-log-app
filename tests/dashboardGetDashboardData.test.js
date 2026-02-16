@@ -64,8 +64,9 @@ function testAggregatesDashboardData() {
   const unpaidAlerts = { alerts: [{ patientId: '001', patientName: '山田太郎', consecutiveMonths: 3, totalAmount: 15000, months: [], followUp: { phone: false, visit: false } }], warnings: ['u1'] };
 
   const ctx = createContext();
+
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T12:00:00Z'),
     patientInfo,
     notes,
@@ -78,7 +79,7 @@ function testAggregatesDashboardData() {
     visitsResult
   });
 
-  assert.strictEqual(result.meta.user, 'user@example.com');
+  assert.strictEqual(result.meta.user, 'belltree@belltree1102.com');
   assert.ok(result.meta.generatedAt, 'generatedAt should be present');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks)), []);
   assert.deepStrictEqual(result.todayVisits, visitsResult.visits);
@@ -116,7 +117,7 @@ function testAggregatesDashboardData() {
 function testPatientStatusTagsGeneration() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -179,7 +180,7 @@ function testPatientStatusTagsGeneration() {
 function testConsentOverviewMatchesPatientStatusTags() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -251,7 +252,7 @@ function testEvaluateConsentStatusBoundaries() {
 function testConsentOver30DaysStillShowsReportTag() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -290,7 +291,7 @@ function testEvaluateConsentStatusIsTimeIndependentForSameDate() {
 function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -389,7 +390,7 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   }, '同意年月日がなければ null を返す');
 
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now,
     patientInfo: {
       patients: {
@@ -437,7 +438,7 @@ function testConsentDateParseFailureCanBeDebugLogged() {
   };
 
   ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -469,7 +470,7 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
 
   const resultByEmail = ctx.getDashboardData({
     user: 'belltree@belltree1102.com',
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -490,7 +491,7 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
 
   const resultByStaffId = ctx.getDashboardData({
     user: 'admin001',
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -532,7 +533,7 @@ function testStaffConsentScopeMetricsAreLogged() {
     now: new Date('2025-02-20T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16' } },
+        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16', '担当者': 'staff@example.com' } },
         '002': { name: '患者B', raw: { '同意年月日': '2024-09-16' } },
         '003': { name: '患者C', raw: { '同意年月日': '2024-09-16', '同意書取得確認': '済' } },
         '004': { name: '患者D', raw: {} }
@@ -564,9 +565,9 @@ function testStaffConsentScopeMetricsAreLogged() {
   assert.strictEqual(metrics.visiblePatientIdsSize, 1);
   assert.strictEqual(metrics.consentEligibleButOutOfScope, 1);
 
-  const missingByRecentLog = logEntries.find(entry => entry.label === 'getDashboardData:consentMissingByRecentLog');
-  assert.ok(missingByRecentLog, 'consentMissingByRecentLog ログが出力される');
-  assert.ok(missingByRecentLog.details.indexOf('=1') >= 0, '直近50日ログなし件数がログに含まれる');
+  const outOfScopeLog = logEntries.find(entry => entry.label === 'getDashboardData:consentOutOfScopeByResponsible');
+  assert.ok(outOfScopeLog, 'consentOutOfScopeByResponsible ログが出力される');
+  assert.ok(outOfScopeLog.details.indexOf('=1') >= 0, '担当割当スコープ外件数がログに含まれる');
 
   assert.ok(logEntries.some(entry => entry.label === 'getDashboardData:visibleScopeRoutes'), 'visibleScopeRoutes ログが出力される');
   assert.ok(logEntries.some(entry => entry.label === 'buildDashboardPatients_:scope'), 'buildDashboardPatients_:scope ログが出力される');
@@ -585,7 +586,7 @@ function testStaffConsentEligibilityEvaluatesOnlyVisibleOrMatchedPatients() {
     now: new Date('2025-02-20T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16' } },
+        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16', '担当者': 'staff@example.com' } },
         '002': { name: '患者B', raw: { '同意年月日': '2024-09-16' } },
         '003': { name: '患者C', raw: { '同意年月日': '2024-09-16' } }
       },
@@ -741,7 +742,7 @@ function testInvoiceUnconfirmedIgnoresDisplayTargetFilter() {
   const result = ctx.getDashboardData({
     user: 'user@example.com',
     now: new Date('2025-02-10T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'user@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -777,7 +778,7 @@ function testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment
   const result = ctx.getDashboardData({
     user: 'user@example.com',
     now: new Date('2025-02-10T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'user@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -821,7 +822,7 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
     now: new Date('2025-02-10T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '患者A', AS: true }
+        '001': { name: '患者A', AS: true, raw: { '担当者': 'user@example.com' } }
       },
       warnings: []
     },
@@ -852,6 +853,7 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
 
 
 function testVisibleScopeForAdminShowsAllPatients() {
+  const logEntries = [];
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -881,10 +883,14 @@ function testVisibleScopeForAdminShowsAllPatients() {
     })
   });
 
+  ctx.dashboardLogContext_ = (label, details) => {
+    logEntries.push({ label, details: String(details || '') });
+  };
+
   const result = ctx.getDashboardData({
-    user: { email: 'staff@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-13T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -903,9 +909,21 @@ function testVisibleScopeForAdminShowsAllPatients() {
   assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 2, '管理者は請求未確認を全患者分表示する');
+  const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
+  assert.ok(roleLog, 'role ログが出力される');
+  assert.deepStrictEqual(JSON.parse(roleLog.details), { role: 'admin', applyScopeFilter: false });
+  const scopeSummaryLog = logEntries.find(entry => entry.label === 'getDashboardData:scopeSummary');
+  assert.ok(scopeSummaryLog, 'scopeSummary ログが出力される');
+  assert.deepStrictEqual(JSON.parse(scopeSummaryLog.details), {
+    role: 'admin',
+    applyScopeFilter: false,
+    visiblePatientIdsSize: 2,
+    patientMapSize: 2
+  });
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
+  const logEntries = [];
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -935,10 +953,14 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
     })
   });
 
+  ctx.dashboardLogContext_ = (label, details) => {
+    logEntries.push({ label, details: String(details || '') });
+  };
+
   const result = ctx.getDashboardData({
     user: { email: 'staff@example.com', role: 'staff' },
     now: new Date('2025-02-13T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -952,11 +974,22 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
     responsible: { responsible: {}, warnings: [] }
   });
 
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは50日以内に記録した患者のみ表示する');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは患者マスタの担当割当患者のみ表示する');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), []);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
+  const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
+  assert.ok(roleLog, 'role ログが出力される');
+  assert.deepStrictEqual(JSON.parse(roleLog.details), { role: 'staff', applyScopeFilter: true });
+  const scopeSummaryLog = logEntries.find(entry => entry.label === 'getDashboardData:scopeSummary');
+  assert.ok(scopeSummaryLog, 'scopeSummary ログが出力される');
+  assert.deepStrictEqual(JSON.parse(scopeSummaryLog.details), {
+    role: 'staff',
+    applyScopeFilter: true,
+    visiblePatientIdsSize: 1,
+    patientMapSize: 2
+  });
 }
 
 function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {
@@ -982,7 +1015,7 @@ function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {
     responsible: { responsible: {}, warnings: [] }
   });
 
-  assert.strictEqual(result.patients.length, 0, '50日より前のみなら患者表示0件');
+  assert.strictEqual(result.patients.length, 0, '担当割当がなければ患者表示0件');
   assert.strictEqual(result.tasks.length, 0);
   assert.strictEqual(result.todayVisits.length, 0);
   assert.strictEqual(result.unpaidAlerts.length, 0);

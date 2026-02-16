@@ -210,6 +210,12 @@ function getDashboardData(options) {
     }
     const applyScopeFilter = !isAdmin;
     logContext('getDashboardData:role', JSON.stringify({ role, applyScopeFilter }));
+    logContext('getDashboardData:scopeSummary', JSON.stringify({
+      role,
+      applyScopeFilter,
+      visiblePatientIdsSize: visiblePatientIds.size,
+      patientMapSize: allPatientIds.length
+    }));
 
     if (!isAdmin) {
       const patientMasterIds = Object.keys(patientMaster || {});

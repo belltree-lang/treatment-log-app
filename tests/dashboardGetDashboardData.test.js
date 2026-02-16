@@ -912,6 +912,14 @@ function testVisibleScopeForAdminShowsAllPatients() {
   const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
   assert.ok(roleLog, 'role ログが出力される');
   assert.deepStrictEqual(JSON.parse(roleLog.details), { role: 'admin', applyScopeFilter: false });
+  const scopeSummaryLog = logEntries.find(entry => entry.label === 'getDashboardData:scopeSummary');
+  assert.ok(scopeSummaryLog, 'scopeSummary ログが出力される');
+  assert.deepStrictEqual(JSON.parse(scopeSummaryLog.details), {
+    role: 'admin',
+    applyScopeFilter: false,
+    visiblePatientIdsSize: 2,
+    patientMapSize: 2
+  });
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
@@ -974,6 +982,14 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
   assert.ok(roleLog, 'role ログが出力される');
   assert.deepStrictEqual(JSON.parse(roleLog.details), { role: 'staff', applyScopeFilter: true });
+  const scopeSummaryLog = logEntries.find(entry => entry.label === 'getDashboardData:scopeSummary');
+  assert.ok(scopeSummaryLog, 'scopeSummary ログが出力される');
+  assert.deepStrictEqual(JSON.parse(scopeSummaryLog.details), {
+    role: 'staff',
+    applyScopeFilter: true,
+    visiblePatientIdsSize: 1,
+    patientMapSize: 2
+  });
 }
 
 function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {

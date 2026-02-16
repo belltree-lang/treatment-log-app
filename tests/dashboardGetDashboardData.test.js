@@ -470,7 +470,7 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
 
   const resultByEmail = ctx.getDashboardData({
     user: 'belltree@belltree1102.com',
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -491,7 +491,7 @@ function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
 
   const resultByStaffId = ctx.getDashboardData({
     user: 'admin001',
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -533,7 +533,7 @@ function testStaffConsentScopeMetricsAreLogged() {
     now: new Date('2025-02-20T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16' } },
+        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16', '担当者': 'staff@example.com' } },
         '002': { name: '患者B', raw: { '同意年月日': '2024-09-16' } },
         '003': { name: '患者C', raw: { '同意年月日': '2024-09-16', '同意書取得確認': '済' } },
         '004': { name: '患者D', raw: {} }
@@ -565,9 +565,9 @@ function testStaffConsentScopeMetricsAreLogged() {
   assert.strictEqual(metrics.visiblePatientIdsSize, 1);
   assert.strictEqual(metrics.consentEligibleButOutOfScope, 1);
 
-  const missingByRecentLog = logEntries.find(entry => entry.label === 'getDashboardData:consentMissingByRecentLog');
-  assert.ok(missingByRecentLog, 'consentMissingByRecentLog ログが出力される');
-  assert.ok(missingByRecentLog.details.indexOf('=1') >= 0, '直近50日ログなし件数がログに含まれる');
+  const outOfScopeLog = logEntries.find(entry => entry.label === 'getDashboardData:consentOutOfScopeByResponsible');
+  assert.ok(outOfScopeLog, 'consentOutOfScopeByResponsible ログが出力される');
+  assert.ok(outOfScopeLog.details.indexOf('=1') >= 0, '担当割当スコープ外件数がログに含まれる');
 
   assert.ok(logEntries.some(entry => entry.label === 'getDashboardData:visibleScopeRoutes'), 'visibleScopeRoutes ログが出力される');
   assert.ok(logEntries.some(entry => entry.label === 'buildDashboardPatients_:scope'), 'buildDashboardPatients_:scope ログが出力される');
@@ -586,7 +586,7 @@ function testStaffConsentEligibilityEvaluatesOnlyVisibleOrMatchedPatients() {
     now: new Date('2025-02-20T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16' } },
+        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16', '担当者': 'staff@example.com' } },
         '002': { name: '患者B', raw: { '同意年月日': '2024-09-16' } },
         '003': { name: '患者C', raw: { '同意年月日': '2024-09-16' } }
       },
@@ -742,7 +742,7 @@ function testInvoiceUnconfirmedIgnoresDisplayTargetFilter() {
   const result = ctx.getDashboardData({
     user: 'user@example.com',
     now: new Date('2025-02-10T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'user@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -778,7 +778,7 @@ function testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment
   const result = ctx.getDashboardData({
     user: 'user@example.com',
     now: new Date('2025-02-10T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'user@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -822,7 +822,7 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
     now: new Date('2025-02-10T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '患者A', AS: true }
+        '001': { name: '患者A', AS: true, raw: { '担当者': 'user@example.com' } }
       },
       warnings: []
     },
@@ -890,7 +890,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
   const result = ctx.getDashboardData({
     user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-13T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -960,7 +960,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   const result = ctx.getDashboardData({
     user: { email: 'staff@example.com', role: 'staff' },
     now: new Date('2025-02-13T00:00:00Z'),
-    patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
+    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
     aiReports: { reports: {}, warnings: [] },
     invoices: { invoices: {}, warnings: [] },
@@ -974,7 +974,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
     responsible: { responsible: {}, warnings: [] }
   });
 
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは50日以内に記録した患者のみ表示する');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは患者マスタの担当割当患者のみ表示する');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), []);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
@@ -1015,7 +1015,7 @@ function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {
     responsible: { responsible: {}, warnings: [] }
   });
 
-  assert.strictEqual(result.patients.length, 0, '50日より前のみなら患者表示0件');
+  assert.strictEqual(result.patients.length, 0, '担当割当がなければ患者表示0件');
   assert.strictEqual(result.tasks.length, 0);
   assert.strictEqual(result.todayVisits.length, 0);
   assert.strictEqual(result.unpaidAlerts.length, 0);

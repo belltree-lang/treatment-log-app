@@ -9,6 +9,40 @@ const ADMIN_EMAILS = new Set([
   'belltree@belltree1102.com'
 ]);
 
+
+const PATIENT_RESPONSIBLE_COLUMN_CANDIDATES = [
+  '担当者',
+  '担当',
+  '担当者名',
+  '担当メール',
+  '担当者メール',
+  'メール',
+  'email',
+  'mail',
+  'responsible',
+  'responsibleName',
+  'responsibleEmail',
+  '施術者',
+  'スタッフ',
+  'スタッフ名',
+  '担当者ID',
+  'スタッフID',
+  'staffId',
+  'staffid'
+];
+
+function getPatientResponsibleKeys_(patientRaw) {
+  const raw = patientRaw && typeof patientRaw === 'object' ? patientRaw : {};
+  const keys = new Set();
+  PATIENT_RESPONSIBLE_COLUMN_CANDIDATES.forEach(columnName => {
+    if (!Object.prototype.hasOwnProperty.call(raw, columnName)) return;
+    const normalized = dashboardNormalizeStaffKey_(raw[columnName]);
+    if (!normalized) return;
+    keys.add(normalized);
+  });
+  return keys;
+}
+
 function getUserRole_(normalizedUser) {
   if (ADMIN_EMAILS.has(normalizedUser)) {
     return DASHBOARD_ROLES.ADMIN;
@@ -190,16 +224,15 @@ function getDashboardData(options) {
       : { responsible: {}, warnings: [] })));
     logContext('getDashboardData:assignResponsible', `responsible=${Object.keys(responsible && responsible.responsible ? responsible.responsible : {}).length} warnings=${(responsible && responsible.warnings ? responsible.warnings.length : 0)} setupIncomplete=${!!(responsible && responsible.setupIncomplete)}`);
 
-    const now = dashboardCoerceDate_(opts.now) || new Date();
-    const fiftyDaysAgo = new Date(now.getTime() - 50 * 24 * 60 * 60 * 1000);
     const responsiblePatientIds = new Set();
-    staffMatchedLogs.forEach(entry => {
-      if (!entry || !entry.timestamp) return;
-      const timestamp = dashboardCoerceDate_(entry.timestamp);
-      if (!timestamp || timestamp.getTime() < fiftyDaysAgo.getTime()) return;
-      const patientId = dashboardNormalizePatientId_(entry.patientId);
-      if (!patientId) return;
-      responsiblePatientIds.add(patientId);
+    Object.keys(patientMaster || {}).forEach(pid => {
+      const patient = patientMaster[pid] || {};
+      const responsibleKeys = getPatientResponsibleKeys_(patient.raw);
+      if (responsibleKeys.has(normalizedUser)
+        || responsibleKeys.has(normalizedUserName)
+        || responsibleKeys.has(normalizedUserId)) {
+        responsiblePatientIds.add(pid);
+      }
     });
     const allPatientIds = Object.keys(patientMaster || {});
     let visiblePatientIds = null;
@@ -208,6 +241,7 @@ function getDashboardData(options) {
     } else {
       visiblePatientIds = responsiblePatientIds;
     }
+    const now = dashboardCoerceDate_(opts.now) || new Date();
     const applyScopeFilter = !isAdmin;
     logContext('getDashboardData:role', JSON.stringify({ role, applyScopeFilter }));
     logContext('getDashboardData:scopeSummary', JSON.stringify({
@@ -330,8 +364,8 @@ function getDashboardData(options) {
         diff: visiblePatientIds.size - consentEligiblePatients
       }));
       logContext(
-        'getDashboardData:consentMissingByRecentLog',
-        `staffOnly consent期限あり&同意取得確認なし&直近50日ログなし=${consentEligibleButOutOfScope}`
+        'getDashboardData:consentOutOfScopeByResponsible',
+        `staffOnly consent期限あり&同意取得確認なし&担当割当スコープ外=${consentEligibleButOutOfScope}`
       );
       logContext(
         'getDashboardData:visibleScopeRoutes',

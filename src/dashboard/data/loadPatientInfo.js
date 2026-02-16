@@ -20,6 +20,14 @@ function loadPatientInfoUncached_(options) {
       dashboardWarn_(`[${label}]${payload}`);
     }
   };
+  const debugLogLimited = (counterKey, label, payload) => {
+    if (typeof dashboardLogContext_ !== 'function') return;
+    const counters = loadPatientInfoUncached_._debugCounters || (loadPatientInfoUncached_._debugCounters = {});
+    const nextCount = (counters[counterKey] || 0) + 1;
+    counters[counterKey] = nextCount;
+    if (nextCount > 3) return;
+    dashboardLogContext_(label, payload);
+  };
 
   const wb = opts.dashboardSpreadsheet || null;
   if (!wb) {
@@ -95,6 +103,11 @@ function loadPatientInfoUncached_(options) {
       const key = String(h || '').trim();
       if (!key) return;
       raw[key] = row[idx];
+    });
+
+    debugLogLimited('loadPatientInfo:raw-sample', '[loadPatientInfo:raw-sample]', {
+      pid: patientId,
+      consentRaw: raw['同意年月日']
     });
 
     if (consentExpiry) {

@@ -6929,6 +6929,17 @@ function parseDateFlexible_(v) {
 }
 
 function calculateConsentExpiry_(dateRaw) {
+  if (typeof dashboardLogContext_ === 'function') {
+    const counters = calculateConsentExpiry_._debugCounters || (calculateConsentExpiry_._debugCounters = { count: 0 });
+    counters.count += 1;
+    if (counters.count <= 3) {
+      dashboardLogContext_('[calculateConsentExpiry_:debug]', {
+        input: dateRaw,
+        inputType: typeof dateRaw
+      });
+    }
+  }
+  const inputDate = dateRaw;
   const d = parseDateFlexible_(dateRaw);
   if (!(d instanceof Date) || isNaN(d.getTime())) {
     const raw = dateRaw == null ? '' : String(dateRaw).trim();
@@ -6943,6 +6954,15 @@ function calculateConsentExpiry_(dateRaw) {
 
   const target = new Date(d);
   target.setMonth(target.getMonth() + monthsToAdd + 1, 0);
+
+  const expiryDate = target;
+  if (inputDate && inputDate.__debugPid === (typeof DEBUG_CONSENT_PID !== 'undefined' ? DEBUG_CONSENT_PID : '513')) {
+    console.log(JSON.stringify({
+      label: '[CONSENT_TRACE:calculate]',
+      input: inputDate,
+      expiry: expiryDate
+    }));
+  }
 
   return Utilities.formatDate(
     target,

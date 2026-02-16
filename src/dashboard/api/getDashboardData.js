@@ -204,13 +204,15 @@ function getDashboardData(options) {
         if (consentAcquired) consentAcquiredExcludedCount += 1;
         if (!inVisibleScope) scopeExcludedCount += 1;
 
-        logContext('getDashboardData:consentEligibilityPatient', JSON.stringify({
-          pid,
-          hasConsentExpiry,
-          parsedConsentExpiry: consentExpiryDate ? consentExpiryDate.toISOString() : null,
-          consentAcquired,
-          inVisibleScope
-        }));
+        if (inVisibleScope) {
+          logContext('getDashboardData:consentEligibilityPatient', JSON.stringify({
+            pid,
+            hasConsentExpiry,
+            parsedConsentExpiry: consentExpiryDate ? consentExpiryDate.toISOString() : null,
+            consentAcquired,
+            inVisibleScope
+          }));
+        }
 
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const parsedConsentExpiry = consentExpiryDate
@@ -220,19 +222,21 @@ function getDashboardData(options) {
         const diffDays = diffMs == null ? null : Math.floor(diffMs / (1000 * 60 * 60 * 24));
         const threshold = null;
         const finalCondition = Boolean(consentExpiryDate) && !consentAcquired;
-        logContext('consent-eligible-debug', JSON.stringify({
-          pid,
-          hasConsentExpiry,
-          parsedConsentExpiry: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
-          consentAcquired,
-          inVisibleScope,
-          todayISO: today.toISOString(),
-          expiryISO: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
-          diffMs,
-          diffDays,
-          threshold,
-          finalCondition
-        }));
+        if (inVisibleScope) {
+          logContext('consent-eligible-debug', JSON.stringify({
+            pid,
+            hasConsentExpiry,
+            parsedConsentExpiry: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
+            consentAcquired,
+            inVisibleScope,
+            todayISO: today.toISOString(),
+            expiryISO: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
+            diffMs,
+            diffDays,
+            threshold,
+            finalCondition
+          }));
+        }
 
         if (!consentExpiryDate) return;
         if (consentAcquired) return;

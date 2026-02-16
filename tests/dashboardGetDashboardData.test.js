@@ -582,13 +582,13 @@ function testStaffConsentEligibilityEvaluatesOnlyVisibleOrMatchedPatients() {
     .filter(entry => entry.label === 'getDashboardData:consentEligibilityPatient')
     .map(entry => JSON.parse(entry.details).pid)
     .sort();
-  assert.deepStrictEqual(eligibilityLogs, ['001', '002'], '可視範囲または一致患者のみ同意評価ログに含まれる');
+  assert.deepStrictEqual(eligibilityLogs, ['001'], '可視範囲内の患者のみ同意評価ログに含まれる');
 
   const consentDebugLogs = logEntries
     .filter(entry => entry.label === 'consent-eligible-debug')
     .map(entry => JSON.parse(entry.details).pid)
     .sort();
-  assert.deepStrictEqual(consentDebugLogs, ['001', '002'], '可視範囲外かつ一致しない患者は同意デバッグログを出力しない');
+  assert.deepStrictEqual(consentDebugLogs, ['001'], '可視範囲外の患者は一致していても同意デバッグログを出力しない');
 }
 
 function testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount() {

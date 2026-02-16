@@ -26,7 +26,9 @@ sandbox.Utilities = {
     { input: '2024-01-10', expected: '2024-06-30' },
     { input: '2024-01-20', expected: '2024-07-31' },
     { input: '2024-03-31', expected: '2024-09-30' },
-    { input: '2024-08-16', expected: '2025-02-28' }
+    { input: '2024-08-16', expected: '2025-02-28' },
+    { input: '令和7年6月26日', expected: '2025-12-31' },
+    { input: '令和7年1月10日', expected: '2025-06-30' }
   ];
 
   cases.forEach(({ input, expected }) => {

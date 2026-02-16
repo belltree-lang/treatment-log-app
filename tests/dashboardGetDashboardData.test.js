@@ -28,6 +28,14 @@ function createContext(overrides = {}) {
     Session: {
       getScriptTimeZone: () => 'Asia/Tokyo',
       getActiveUser: () => ({ getEmail: () => overrides.activeEmail || 'session@example.com' })
+    },
+    calculateConsentExpiry_: value => {
+      const base = new Date(value);
+      if (Number.isNaN(base.getTime())) return '';
+      const monthsToAdd = base.getDate() <= 15 ? 5 : 6;
+      const target = new Date(base);
+      target.setMonth(target.getMonth() + monthsToAdd + 1, 0);
+      return target.toISOString().slice(0, 10);
     }
   };
   Object.assign(context, overrides);
@@ -40,7 +48,7 @@ function createContext(overrides = {}) {
 
 function testAggregatesDashboardData() {
   const patientInfo = {
-    patients: { '001': { name: '山田太郎', consentExpiry: '2025-01-31' } },
+    patients: { '001': { name: '山田太郎', raw: { '同意年月日': '2024-07-16' } } },
     warnings: ['p1']
   };
   const notes = {
@@ -79,7 +87,7 @@ function testAggregatesDashboardData() {
   assert.deepStrictEqual(normalizedPatient, {
     patientId: '001',
     name: '山田太郎',
-    consentExpiry: '2025-01-31',
+    consentExpiry: '2025-01-31T00:00:00.000Z',
     responsible: 'staff@example.com',
     invoiceUrl: 'https://example.com/invoice.pdf',
     aiReportAt: '2025-01-15 10:00',
@@ -112,12 +120,12 @@ function testPatientStatusTagsGeneration() {
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '期限内未取得', consentExpiry: '2025-02-20', raw: {} },
-        '002': { name: '期限超過未取得', consentExpiry: '2025-01-20', raw: {} },
-        '003': { name: '報告書作成済', consentExpiry: '2025-02-20', raw: {} },
-        '004': { name: '同意取得確認済', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
-        '005': { name: '同意日更新後', consentExpiry: '2025-03-20', raw: {} },
-        '006': { name: '期限迫る未取得', consentExpiry: '2025-02-10', raw: {} }
+        '001': { name: '期限内未取得', raw: { '同意年月日': '2024-08-16' } },
+        '002': { name: '期限超過未取得', raw: { '同意年月日': '2024-07-16' } },
+        '003': { name: '報告書作成済', raw: { '同意年月日': '2024-08-16' } },
+        '004': { name: '同意取得確認済', raw: { '同意年月日': '2024-08-16', '同意書取得確認': '済' } },
+        '005': { name: '同意日更新後', raw: { '同意年月日': '2024-09-16' } },
+        '006': { name: '期限迫る未取得', raw: { '同意年月日': '2024-08-16' } }
       },
       warnings: []
     },
@@ -161,9 +169,9 @@ function testPatientStatusTagsGeneration() {
   assert.deepStrictEqual(patientsById['005'], [], '5. 同意期限30日超はタグを表示しない');
 
   assert.deepStrictEqual(patientsById['006'], [
-    { type: 'consent', label: '⏳ 期限迫る', priority: 'medium' },
+    { type: 'consent', label: '📄 要対応', priority: 'low' },
     { type: 'report', label: '未作成' }
-  ], '6. 14日以内は期限迫るを表示する');
+  ], '6. 同意年月日から算出した期限内は要対応を表示する');
 }
 
 function testConsentOverviewMatchesPatientStatusTags() {
@@ -173,11 +181,11 @@ function testConsentOverviewMatchesPatientStatusTags() {
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '期限内未取得', consentExpiry: '2025-02-20', raw: {} },
-        '002': { name: '期限超過未取得', consentExpiry: '2025-01-20', raw: {} },
-        '003': { name: '同意取得確認済', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
+        '001': { name: '期限内未取得', raw: { '同意年月日': '2024-08-16' } },
+        '002': { name: '期限超過未取得', raw: { '同意年月日': '2024-07-16' } },
+        '003': { name: '同意取得確認済', raw: { '同意年月日': '2024-08-16', '同意書取得確認': '済' } },
         '004': { name: '期限未登録', raw: {} },
-        '005': { name: '期限迫る未取得', consentExpiry: '2025-02-10', raw: {} }
+        '005': { name: '期限迫る未取得', raw: { '同意年月日': '2024-08-16' } }
       },
       warnings: []
     },
@@ -199,10 +207,10 @@ function testConsentOverviewMatchesPatientStatusTags() {
 
   const overviewItems = JSON.parse(JSON.stringify(result.overview.consentRelated.items));
   assert.deepStrictEqual(overviewItems, [
-    { patientId: '002', name: '期限超過未取得', subText: '⚠ 同意期限超過（12日超過）' },
-    { patientId: '001', name: '期限内未取得', subText: '同意期限（残19日）' },
-    { patientId: '005', name: '期限迫る未取得', subText: '⏳ 同意期限迫る（残9日）' }
-  ], '上段同意ブロックは consentExpiry + 同意書取得確認の判定だけで表示する');
+    { patientId: '002', name: '期限超過未取得', subText: '⚠ 同意期限超過（1日超過）' },
+    { patientId: '001', name: '期限内未取得', subText: '同意期限（残27日）' },
+    { patientId: '005', name: '期限迫る未取得', subText: '同意期限（残27日）' }
+  ], '上段同意ブロックは同意年月日から算出した期限と同意書取得確認で表示する');
 
   const patientsById = {};
   result.patients.forEach(entry => {
@@ -213,7 +221,7 @@ function testConsentOverviewMatchesPatientStatusTags() {
   assert.deepStrictEqual(patientsById['002'].filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '⚠ 期限超過', priority: 'high' }], 'Case2: 期限超過・未取得');
   assert.deepStrictEqual((patientsById['003'] || []).filter(tag => tag.type === 'consent'), [], 'Case3: 同意取得確認済');
   assert.deepStrictEqual((patientsById['004'] || []).filter(tag => tag.type === 'consent'), [], 'Case4: 期限未登録');
-  assert.deepStrictEqual((patientsById['005'] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '⏳ 期限迫る', priority: 'medium' }], 'Case5: 期限迫る・未取得');
+  assert.deepStrictEqual((patientsById['005'] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '📄 要対応', priority: 'low' }], 'Case5: 期限内・未取得');
 }
 
 function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
@@ -223,11 +231,11 @@ function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '未取得', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '未取得' } },
-        '002': { name: 'FALSE文字列', consentExpiry: '2025-02-20', raw: { '同意書取得確認': 'FALSE' } },
-        '003': { name: 'ゼロ文字列', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '0' } },
-        '004': { name: '取得済み', consentExpiry: '2025-02-20', raw: { '同意書取得確認': '済' } },
-        '005': { name: 'boolean true', consentExpiry: '2025-02-20', raw: { '同意書取得確認': true } }
+        '001': { name: '未取得', raw: { '同意年月日': '2024-08-16', '同意書取得確認': '未取得' } },
+        '002': { name: 'FALSE文字列', raw: { '同意年月日': '2024-08-16', '同意書取得確認': 'FALSE' } },
+        '003': { name: 'ゼロ文字列', raw: { '同意年月日': '2024-08-16', '同意書取得確認': '0' } },
+        '004': { name: '取得済み', raw: { '同意年月日': '2024-08-16', '同意書取得確認': '済' } },
+        '005': { name: 'boolean true', raw: { '同意年月日': '2024-08-16', '同意書取得確認': true } }
       },
       warnings: []
     },
@@ -273,45 +281,33 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   const now = new Date('2025-02-01T00:00:00Z');
 
   const resolved = ctx.resolveConsentExpiry_({
-    consentExpiry: '   ',
     raw: {
-      '同意期限': '2025-03-01',
-      '同意有効期限': '2025-03-02',
-      '同意期限日': '2025-03-03'
+      '同意年月日': '2024-08-16'
     }
   });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(resolved)), {
-    value: '2025-03-01',
-    source: "raw['同意期限']"
-  }, '空文字の consentExpiry は無視して raw[同意期限] を優先する');
+  const normalizedResolved = JSON.parse(JSON.stringify(resolved));
+  assert.strictEqual(normalizedResolved.source, "raw['同意年月日']");
+  assert.strictEqual(normalizedResolved.value, '2025-02-28T00:00:00.000Z', '同意年月日から同意期限を算出する');
 
-  const resolvedFromConsentDate = ctx.resolveConsentExpiry_({
-    consentExpiry: '',
-    raw: {
-      '同意年月日': '令和7年6月26日'
-    }
-  });
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(resolvedFromConsentDate)), {
+  const resolvedWithoutConsentDate = ctx.resolveConsentExpiry_({ raw: {} });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(resolvedWithoutConsentDate)), {
     value: null,
     source: ''
-  }, '同意年月日のみでは同意期限を再計算しない');
+  }, '同意年月日がなければ null を返す');
 
   const result = ctx.getDashboardData({
     user: { email: 'user@example.com', role: 'admin' },
     now,
     patientInfo: {
       patients: {
-        '001': { name: 'A-hyphen', consentExpiry: '2025-02-20', raw: {} },
-        '002': { name: 'B-slash', consentExpiry: '2025/02/21', raw: {} },
-        '003': { name: 'C-japanese', consentExpiry: '2025年2月22日', raw: {} },
-        '004': { name: 'D-iso', consentExpiry: '2025-02-23T00:00:00Z', raw: {} },
-        '005': { name: 'E-date', consentExpiry: new Date('2025-02-24T00:00:00Z'), raw: {} },
-        '006': { name: 'F-invalid', consentExpiry: '2025-99-99', raw: {} },
-        '007': { name: 'G-raw-consent', consentExpiry: '   ', raw: { '同意期限': '2025-02-25' } },
-        '008': { name: 'H-raw-valid', consentExpiry: '', raw: { '同意有効期限': '2025/02/26' } },
-        '009': { name: 'I-raw-date', raw: { '同意期限日': '2025年2月27日' } },
-        '010': { name: 'J-acquired', raw: { '同意期限': '2025-02-28', '同意書取得確認': '済' } },
-        '011': { name: 'K-consent-date-only', raw: { '同意年月日': '令和7年1月15日' } }
+        '001': { name: 'A-hyphen', raw: { '同意年月日': '2024-08-16' } },
+        '002': { name: 'B-slash', raw: { '同意年月日': '2024/08/16' } },
+        '003': { name: 'C-japanese', raw: { '同意年月日': '2024年8月16日' } },
+        '004': { name: 'D-iso', raw: { '同意年月日': '2024-08-16T00:00:00Z' } },
+        '005': { name: 'E-date', raw: { '同意年月日': new Date('2024-08-16T00:00:00Z') } },
+        '006': { name: 'F-invalid', raw: { '同意年月日': 'invalid-date' } },
+        '007': { name: 'G-acquired', raw: { '同意年月日': '2024-08-16', '同意書取得確認': '済' } },
+        '008': { name: 'H-no-consent-date', raw: {} }
       },
       warnings: []
     },
@@ -326,18 +322,19 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   });
 
   const overviewIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
-  assert.deepStrictEqual(overviewIds, ['001', '002', '003', '004', '005', '007', '008', '009'], '同意期限がある患者のみ表示され、同意年月日のみでは表示しない');
+  assert.deepStrictEqual(overviewIds, ['001', '002', '004', '005'], 'calculateConsentExpiry_ で解釈可能な同意年月日の患者のみ表示される');
 
   const patientsById = {};
   result.patients.forEach(entry => {
     patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
   });
-  ['001', '002', '003', '004', '005', '007', '008', '009'].forEach(patientId => {
+  ['001', '002', '004', '005'].forEach(patientId => {
     assert.deepStrictEqual((patientsById[patientId] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '📄 要対応', priority: 'low' }], `同意タグが表示される: ${patientId}`);
   });
+  assert.deepStrictEqual((patientsById['003'] || []).filter(tag => tag.type === 'consent'), [], 'calculateConsentExpiry_ で解釈できない形式は同意タグを表示しない');
   assert.deepStrictEqual((patientsById['006'] || []).filter(tag => tag.type === 'consent'), [], '不正文字列は同意タグの表示対象外');
-  assert.deepStrictEqual((patientsById['010'] || []).filter(tag => tag.type === 'consent'), [], '取得済み判定は従来通り同意タグ非表示');
-  assert.deepStrictEqual((patientsById['011'] || []).filter(tag => tag.type === 'consent'), [], '同意年月日のみでは同意タグを表示しない');
+  assert.deepStrictEqual((patientsById['007'] || []).filter(tag => tag.type === 'consent'), [], '取得済み判定は従来通り同意タグ非表示');
+  assert.deepStrictEqual((patientsById['008'] || []).filter(tag => tag.type === 'consent'), [], '同意年月日なしでは同意タグを表示しない');
 }
 
 function testConsentDateParseFailureCanBeDebugLogged() {
@@ -352,7 +349,7 @@ function testConsentDateParseFailureCanBeDebugLogged() {
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: 'invalid-overview', consentExpiry: 'invalid-date', raw: {} }
+        '001': { name: 'invalid-overview', raw: { '同意年月日': 'invalid-date' } }
       },
       warnings: []
     },
@@ -367,8 +364,7 @@ function testConsentDateParseFailureCanBeDebugLogged() {
   });
 
   const parseFailureLogs = logs.filter(entry => entry.label === 'consent-date-parse-failed');
-  assert.ok(parseFailureLogs.length >= 1, 'debug flag 有効時に parse 失敗ログを出力する');
-  assert.ok(parseFailureLogs.some(entry => entry.details.indexOf('invalid-date') >= 0), '失敗した元値をログに含む');
+  assert.deepStrictEqual(parseFailureLogs, [], '同意年月日が不正でも同意期限未解決扱いとして parse 失敗ログは出さない');
 }
 
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
@@ -443,9 +439,9 @@ function testStaffConsentScopeMetricsAreLogged() {
     now: new Date('2025-02-20T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '患者A', consentExpiry: '2025-03-01', raw: {} },
-        '002': { name: '患者B', consentExpiry: '2025-03-05', raw: {} },
-        '003': { name: '患者C', consentExpiry: '2025-03-08', raw: { '同意書取得確認': '済' } },
+        '001': { name: '患者A', raw: { '同意年月日': '2024-09-16' } },
+        '002': { name: '患者B', raw: { '同意年月日': '2024-09-16' } },
+        '003': { name: '患者C', raw: { '同意年月日': '2024-09-16', '同意書取得確認': '済' } },
         '004': { name: '患者D', raw: {} }
       },
       warnings: []

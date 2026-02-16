@@ -6636,7 +6636,7 @@ function checkConsentExpiration_(){
     const pidNormalized = normId_(pidRaw);
     if (!pidNormalized) continue;
     const consent = row[cConsent - 1];
-    const expiryStr = calcConsentExpiry_(consent);
+    const expiryStr = calculateConsentExpiry_(consent);
     if (!expiryStr) continue;
     const expiryDate = parseIsoLocal(expiryStr);
     if (!expiryDate) continue;
@@ -6919,7 +6919,7 @@ function parseDateFlexible_(v) {
 
 function calculateConsentExpiry_(dateRaw) {
   const d = new Date(dateRaw);
-  if (isNaN(d)) return '';
+  if (isNaN(d.getTime())) return '';
 
   const day = d.getDate();
   const monthsToAdd = day <= 15 ? 5 : 6;
@@ -6927,7 +6927,11 @@ function calculateConsentExpiry_(dateRaw) {
   const target = new Date(d);
   target.setMonth(target.getMonth() + monthsToAdd + 1, 0);
 
-  return Utilities.formatDate(target, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return Utilities.formatDate(
+    target,
+    Session.getScriptTimeZone() || 'Asia/Tokyo',
+    'yyyy-MM-dd'
+  );
 }
 
 function rebuildAllConsentExpiry_() {
@@ -6953,18 +6957,6 @@ function rebuildAllConsentExpiry_() {
   }
 
   Logger.log('[consent-rebuild] updatedCount=' + updatedCount);
-}
-
-function calcConsentExpiry_(consentVal) {
-  const d = parseDateFlexible_(consentVal);
-  if (!d) return '';
-  const day = d.getDate();
-  const base = new Date(d);
-  // 1〜15日 → +5か月の月末 / 16日〜 → +6か月の月末
-  if (day <= 15) base.setMonth(base.getMonth() + 5, 1);
-  else           base.setMonth(base.getMonth() + 6, 1);
-  const end = new Date(base.getFullYear(), base.getMonth() + 1, 0);
-  return Utilities.formatDate(end, Session.getScriptTimeZone() || 'Asia/Tokyo', 'yyyy-MM-dd');
 }
 
 /***** 月次・直近 *****/
@@ -7066,7 +7058,7 @@ function getPatientHeader(pid){
     // 同意期限
     const consent = rowV[cCons-1]||'';
     const consentHandout = rowV[cConsHandout-1]||'';
-    const expiry  = calcConsentExpiry_(consent) || '—';
+    const expiry  = calculateConsentExpiry_(consent) || '—';
 
     // 負担割合
     const shareRaw  = rowV[cShare-1]||'';
@@ -10432,7 +10424,7 @@ function DashboardIndex_refreshAll(){
     if (!pid) return null;
     const name  = r[cName-1] || '';
     const cons  = r[cCons-1] || '';
-    const next  = calcConsentExpiry_(cons) || '';
+    const next  = calculateConsentExpiry_(cons) || '';
     // 期限ステ
     let due = 'ok';
     if (next){

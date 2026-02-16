@@ -815,24 +815,19 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
 function resolveConsentExpiry_(patient) {
   const info = patient && typeof patient === 'object' ? patient : {};
   const raw = info.raw && typeof info.raw === 'object' ? info.raw : null;
-  const candidates = [
-    { source: 'info.consentExpiry', value: info.consentExpiry },
-    { source: "raw['同意期限']", value: raw ? raw['同意期限'] : null },
-    { source: "raw['同意有効期限']", value: raw ? raw['同意有効期限'] : null },
-    { source: "raw['同意期限日']", value: raw ? raw['同意期限日'] : null }
-  ];
+  const consentDateRaw = raw ? raw['同意年月日'] : null;
 
-  for (let i = 0; i < candidates.length; i++) {
-    const entry = candidates[i];
-    if (entry.value == null) continue;
-    if (typeof entry.value === 'string' && !entry.value.trim()) continue;
-    if (typeof dashboardLogContext_ === 'function') {
-      dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
-        source: entry.source,
-        resolvedValue: entry.value
-      }));
+  if (consentDateRaw != null && String(consentDateRaw).trim()) {
+    const expiryDate = calculateConsentExpiryDateFromConsentDate_(consentDateRaw);
+    if (expiryDate) {
+      if (typeof dashboardLogContext_ === 'function') {
+        dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
+          source: "raw['同意年月日']",
+          resolvedValue: expiryDate
+        }));
+      }
+      return { value: expiryDate, source: "raw['同意年月日']" };
     }
-    return { value: entry.value, source: entry.source };
   }
 
   if (typeof dashboardLogContext_ === 'function') {
@@ -843,6 +838,12 @@ function resolveConsentExpiry_(patient) {
   }
 
   return { value: null, source: '' };
+}
+
+function calculateConsentExpiryDateFromConsentDate_(consentDateRaw) {
+  if (typeof calculateConsentExpiry_ !== 'function') return null;
+  const calculated = calculateConsentExpiry_(consentDateRaw);
+  return parseConsentDate_(calculated);
 }
 
 function parseConsentDate_(value) {

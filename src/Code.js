@@ -6893,9 +6893,9 @@ function parseDateFlexible_(v) {
   if (!raw) return null;
 
   // 和暦（正式）
-  const era = raw.match(/(令和|平成|昭和)\s*(\d+)[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
+  const era = raw.match(/(令和|平成|昭和)\s*(元|\d+)[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
   if (era) {
-    const eraName = era[1], y = Number(era[2]), m = Number(era[3]), d = Number(era[4]);
+    const eraName = era[1], y = era[2] === '元' ? 1 : Number(era[2]), m = Number(era[3]), d = Number(era[4]);
     const base = eraName === '令和' ? 2018 : eraName === '平成' ? 1988 : 1925; // R1=2019, H1=1989, S1=1926
     return new Date(base + y, m - 1, d);
   }
@@ -6918,8 +6918,8 @@ function parseDateFlexible_(v) {
 }
 
 function calculateConsentExpiry_(dateRaw) {
-  const d = new Date(dateRaw);
-  if (isNaN(d.getTime())) return '';
+  const d = parseDateFlexible_(dateRaw);
+  if (!(d instanceof Date) || isNaN(d.getTime())) return '';
 
   const day = d.getDate();
   const monthsToAdd = day <= 15 ? 5 : 6;

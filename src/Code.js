@@ -6892,26 +6892,37 @@ function parseDateFlexible_(v) {
   const raw = String(v).trim();
   if (!raw) return null;
 
+  const createValidDate = function(year, month, day) {
+    const y = Number(year);
+    const m = Number(month);
+    const d = Number(day);
+    if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
+    const dt = new Date(y, m - 1, d);
+    if (isNaN(dt.getTime())) return null;
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
+    return dt;
+  };
+
   // 和暦（正式）
   const era = raw.match(/(令和|平成|昭和)\s*(元|\d+)[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
   if (era) {
     const eraName = era[1], y = era[2] === '元' ? 1 : Number(era[2]), m = Number(era[3]), d = Number(era[4]);
     const base = eraName === '令和' ? 2018 : eraName === '平成' ? 1988 : 1925; // R1=2019, H1=1989, S1=1926
-    return new Date(base + y, m - 1, d);
+    return createValidDate(base + y, m, d);
   }
   // 和暦（略号 R/H/S）
   const eraShort = raw.match(/([RrHhSs])\s*(\d+)[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
   if (eraShort) {
     const ch = eraShort[1].toUpperCase(), y = Number(eraShort[2]), m = Number(eraShort[3]), d = Number(eraShort[4]);
     const base = ch === 'R' ? 2018 : ch === 'H' ? 1988 : 1925;
-    return new Date(base + y, m - 1, d);
+    return createValidDate(base + y, m, d);
   }
   // 西暦
   const m1 = raw.match(/(\d{4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})/);
-  if (m1) return new Date(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]));
+  if (m1) return createValidDate(m1[1], m1[2], m1[3]);
   // yyyymmdd
   const n = raw.replace(/\D/g,'');
-  if (n.length === 8) return new Date(Number(n.slice(0,4)), Number(n.slice(4,6))-1, Number(n.slice(6,8)));
+  if (n.length === 8) return createValidDate(n.slice(0,4), n.slice(4,6), n.slice(6,8));
 
   const d = new Date(raw);
   return isNaN(d.getTime()) ? null : d;
@@ -6919,7 +6930,13 @@ function parseDateFlexible_(v) {
 
 function calculateConsentExpiry_(dateRaw) {
   const d = parseDateFlexible_(dateRaw);
-  if (!(d instanceof Date) || isNaN(d.getTime())) return '';
+  if (!(d instanceof Date) || isNaN(d.getTime())) {
+    const raw = dateRaw == null ? '' : String(dateRaw).trim();
+    if (raw && typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[consent-date-parse-failed] ' + JSON.stringify({ raw: raw }));
+    }
+    return '';
+  }
 
   const day = d.getDate();
   const monthsToAdd = day <= 15 ? 5 : 6;

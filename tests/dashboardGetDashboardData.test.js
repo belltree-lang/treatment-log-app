@@ -353,6 +353,11 @@ function testParseJapaneseEraDateAndResolveConsentExpiry() {
   })));
   assert.strictEqual(reiwaResolved.value, '2025-12-31T00:00:00.000Z', '令和7年6月26日は月末期限を算出できる');
 
+  const reiwaSlashResolved = JSON.parse(JSON.stringify(ctx.resolveConsentExpiry_({
+    raw: { '同意年月日': '令和7/6/26' }
+  })));
+  assert.strictEqual(reiwaSlashResolved.value, '2025-12-31T00:00:00.000Z', '令和7/6/26 も月末期限を算出できる');
+
   const heiseiResolved = JSON.parse(JSON.stringify(ctx.resolveConsentExpiry_({
     raw: { '同意年月日': '平成30年4月10日' }
   })));
@@ -410,17 +415,16 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   });
 
   const overviewIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
-  assert.deepStrictEqual(overviewIds, ['001', '002', '004', '005'], 'calculateConsentExpiry_ で解釈可能な同意年月日の患者のみ表示される');
+  assert.deepStrictEqual(overviewIds, ['001', '002', '003', '004', '005'], '和暦を含む解釈可能な同意年月日の患者のみ表示される');
 
   const patientsById = {};
   result.patients.forEach(entry => {
     patientsById[entry.patientId] = JSON.parse(JSON.stringify(entry.statusTags));
   });
-  ['001', '002', '004', '005'].forEach(patientId => {
+  ['001', '002', '003', '004', '005'].forEach(patientId => {
     assert.deepStrictEqual((patientsById[patientId] || []).filter(tag => tag.type === 'consent'), [{ type: 'consent', label: '📄 要対応', priority: 'low' }], `同意タグが表示される: ${patientId}`);
   });
-  assert.deepStrictEqual((patientsById['003'] || []).filter(tag => tag.type === 'consent'), [], 'calculateConsentExpiry_ で解釈できない形式は同意タグを表示しない');
-  assert.deepStrictEqual((patientsById['006'] || []).filter(tag => tag.type === 'consent'), [], '不正文字列は同意タグの表示対象外');
+    assert.deepStrictEqual((patientsById['006'] || []).filter(tag => tag.type === 'consent'), [], '不正文字列は同意タグの表示対象外');
   assert.deepStrictEqual((patientsById['007'] || []).filter(tag => tag.type === 'consent'), [], '取得済み判定は従来通り同意タグ非表示');
   assert.deepStrictEqual((patientsById['008'] || []).filter(tag => tag.type === 'consent'), [], '同意年月日なしでは同意タグを表示しない');
 }
@@ -452,7 +456,8 @@ function testConsentDateParseFailureCanBeDebugLogged() {
   });
 
   const parseFailureLogs = logs.filter(entry => entry.label === 'consent-date-parse-failed');
-  assert.deepStrictEqual(parseFailureLogs, [], '同意年月日が不正でも同意期限未解決扱いとして parse 失敗ログは出さない');
+  assert.ok(parseFailureLogs.length >= 1, '同意年月日の形式不正時は parse 失敗ログを出す');
+  assert.ok(parseFailureLogs.some(entry => entry.details.includes('\"raw\":\"invalid-date\"')), 'parse 失敗ログに入力値を含める');
 }
 
 function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {

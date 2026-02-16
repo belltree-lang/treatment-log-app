@@ -831,8 +831,7 @@ function resolveConsentExpiry_(patient) {
   const consentDateRaw = raw ? raw['同意年月日'] : null;
 
   if (consentDateRaw != null && String(consentDateRaw).trim()) {
-    const normalizedConsentDate = parseJapaneseEraDate_(consentDateRaw) || consentDateRaw;
-    const expiryDate = calculateConsentExpiryDateFromConsentDate_(normalizedConsentDate);
+    const expiryDate = calculateConsentExpiryDateFromConsentDate_(consentDateRaw);
     if (expiryDate) {
       if (typeof dashboardLogContext_ === 'function') {
         dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
@@ -855,9 +854,82 @@ function resolveConsentExpiry_(patient) {
 }
 
 function calculateConsentExpiryDateFromConsentDate_(consentDateRaw) {
-  if (typeof calculateConsentExpiry_ !== 'function') return null;
-  const calculated = calculateConsentExpiry_(consentDateRaw);
-  return parseConsentDate_(calculated);
+  const parsedConsentDate = parseDateFlexible_(consentDateRaw);
+  if (!parsedConsentDate) return null;
+
+  if (typeof calculateConsentExpiry_ === 'function') {
+    const calculated = calculateConsentExpiry_(parsedConsentDate);
+    return parseConsentDate_(calculated);
+  }
+
+  const monthsToAdd = parsedConsentDate.getDate() <= 15 ? 5 : 6;
+  const target = new Date(parsedConsentDate);
+  target.setMonth(target.getMonth() + monthsToAdd + 1, 0);
+  return target;
+}
+
+function parseDateFlexible_(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (value == null) return null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const japaneseEra = raw.match(/^(令和|平成|昭和)\s*(元|\d{1,2})(?:年|\/)\s*(\d{1,2})(?:月|\/)\s*(\d{1,2})(?:日)?$/);
+  if (japaneseEra) {
+    const era = japaneseEra[1];
+    const eraYear = japaneseEra[2] === '元' ? 1 : Number(japaneseEra[2]);
+    const yearBase = era === '令和' ? 2018 : era === '平成' ? 1988 : 1925;
+    const parsed = createDateFromYmd_(yearBase + eraYear, japaneseEra[3], japaneseEra[4]);
+    if (parsed) return parsed;
+    logConsentDateParseFailed_(raw);
+    return null;
+  }
+
+  const ymdHyphen = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (ymdHyphen) {
+    const parsed = createDateFromYmd_(ymdHyphen[1], ymdHyphen[2], ymdHyphen[3]);
+    if (parsed) return parsed;
+    logConsentDateParseFailed_(raw);
+    return null;
+  }
+
+  const ymdSlash = raw.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (ymdSlash) {
+    const parsed = createDateFromYmd_(ymdSlash[1], ymdSlash[2], ymdSlash[3]);
+    if (parsed) return parsed;
+    logConsentDateParseFailed_(raw);
+    return null;
+  }
+
+  const ymdJapanese = raw.match(/^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日$/);
+  if (ymdJapanese) {
+    const parsed = createDateFromYmd_(ymdJapanese[1], ymdJapanese[2], ymdJapanese[3]);
+    if (parsed) return parsed;
+    logConsentDateParseFailed_(raw);
+    return null;
+  }
+
+  const iso = Date.parse(raw);
+  if (Number.isFinite(iso)) {
+    return new Date(iso);
+  }
+
+  logConsentDateParseFailed_(raw);
+  return null;
+}
+
+function logConsentDateParseFailed_(raw) {
+  const message = `[consent-date-parse-failed] ${JSON.stringify({ raw: String(raw) })}`;
+  if (typeof dashboardLogContext_ === 'function') {
+    dashboardLogContext_('consent-date-parse-failed', message);
+    return;
+  }
+  if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log(message);
+  }
 }
 
 function parseJapaneseEraDate_(value) {

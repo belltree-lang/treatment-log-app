@@ -1,57 +1,14 @@
 const DEBUG_CONSENT_PID = '513';
 
-const DASHBOARD_ROLES = {
-  ADMIN: 'admin',
-  STAFF: 'staff'
-};
+const PATIENT_RESPONSIBLE_COLUMN_CANDIDATES = ['担当者', '担当メール', '担当者メール', 'メール', 'email', 'mail', 'responsibleEmail'];
 
-const ADMIN_EMAILS = new Set([
-  'belltree@belltree1102.com'
-]);
-
-
-const PATIENT_RESPONSIBLE_COLUMN_CANDIDATES = [
-  '担当者',
-  '担当',
-  '担当者名',
-  '担当メール',
-  '担当者メール',
-  'メール',
-  'email',
-  'mail',
-  'responsible',
-  'responsibleName',
-  'responsibleEmail',
-  '施術者',
-  'スタッフ',
-  'スタッフ名',
-  '担当者ID',
-  'スタッフID',
-  'staffId',
-  'staffid'
-];
-
-function getPatientResponsibleKeys_(patientRaw) {
+function resolveResponsibleColumn_(patientRaw) {
   const raw = patientRaw && typeof patientRaw === 'object' ? patientRaw : {};
-  const keys = new Set();
-  PATIENT_RESPONSIBLE_COLUMN_CANDIDATES.forEach(columnName => {
-    if (!Object.prototype.hasOwnProperty.call(raw, columnName)) return;
-    const normalized = dashboardNormalizeStaffKey_(raw[columnName]);
-    if (!normalized) return;
-    keys.add(normalized);
-  });
-  return keys;
-}
-
-function getUserRole_(normalizedUser) {
-  if (ADMIN_EMAILS.has(normalizedUser)) {
-    return DASHBOARD_ROLES.ADMIN;
+  for (let i = 0; i < PATIENT_RESPONSIBLE_COLUMN_CANDIDATES.length; i += 1) {
+    const columnName = PATIENT_RESPONSIBLE_COLUMN_CANDIDATES[i];
+    if (Object.prototype.hasOwnProperty.call(raw, columnName)) return columnName;
   }
-  return DASHBOARD_ROLES.STAFF;
-}
-
-function isAdminUser_(normalizedUser) {
-  return getUserRole_(normalizedUser) === DASHBOARD_ROLES.ADMIN;
+  return '';
 }
 
 /**
@@ -108,9 +65,10 @@ function getDashboardData(options) {
   const user = opts.user && typeof opts.user === 'object' ? opts.user : null;
   const userIdentity = user && user.email ? user.email : meta.user;
   meta.user = userIdentity || '';
-  const normalizedUser = dashboardNormalizeEmail_(userIdentity || '');
-  const role = getUserRole_(normalizedUser);
-  const isAdmin = isAdminUser_(normalizedUser);
+  const userEmail = userIdentity || '';
+  const normalizedUser = dashboardNormalizeEmail_(userEmail);
+  const role = getUserRole_(userEmail);
+  const isAdmin = role === 'admin';
   logContext('getDashboardData:start', `user=${userIdentity || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} isAdmin=${isAdmin ? 'true' : 'false'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
@@ -157,68 +115,7 @@ function getDashboardData(options) {
         treatmentLogCount: totalTreatmentLogs
       }));
     }
-    const normalizedUserName = dashboardNormalizeStaffKey_(userIdentity || '');
-    const normalizedUserId = dashboardNormalizeStaffKey_(userIdentity || '');
-    const staffMatchResult = measureStep('staffMatch処理', () => {
-      const staffMatchedLogs = [];
-      const matchStats = { email: 0, name: 0, staffId: 0, none: 0 };
-      const matchSamples = [];
-      (treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : []).forEach(entry => {
-        const staffKeys = entry && entry.staffKeys ? entry.staffKeys : {};
-        const emailKey = dashboardNormalizeStaffKey_(staffKeys.email || (entry && entry.createdByEmail ? entry.createdByEmail : ''));
-        const nameKey = dashboardNormalizeStaffKey_(staffKeys.name || (entry && entry.staffName ? entry.staffName : ''));
-        const staffIdKey = dashboardNormalizeStaffKey_(staffKeys.staffId || (entry && entry.staffId ? entry.staffId : ''));
-
-        let strategy = 'none';
-        if (normalizedUser && emailKey && emailKey === normalizedUser) {
-          strategy = 'email';
-        } else if (normalizedUserName && nameKey && nameKey === normalizedUserName) {
-          strategy = 'name';
-        } else if (normalizedUserId && staffIdKey && staffIdKey === normalizedUserId) {
-          strategy = 'staffId';
-        }
-
-        if (strategy !== 'none') {
-          const matchedEntry = Object.assign({}, entry, { staffMatchStrategy: strategy });
-          staffMatchedLogs.push(matchedEntry);
-        }
-        matchStats[strategy] += 1;
-        if (matchSamples.length < 20 && strategy !== 'none') {
-          matchSamples.push({
-            row: entry && entry.row ? entry.row : null,
-            staffMatchStrategy: strategy,
-            emailKey,
-            nameKey,
-            staffIdKey
-          });
-        }
-      });
-      const matchedPatientIds = new Set();
-      staffMatchedLogs.forEach(entry => {
-        const pid = dashboardNormalizePatientId_(entry && entry.patientId);
-        if (pid) matchedPatientIds.add(pid);
-      });
-      return { staffMatchedLogs, matchStats, matchSamples, matchedPatientIds };
-    });
-    const staffMatchedLogs = staffMatchResult.staffMatchedLogs;
-    const matchStats = staffMatchResult.matchStats;
-    const matchSamples = staffMatchResult.matchSamples;
-    const matchedPatientIds = staffMatchResult.matchedPatientIds;
     const patientMaster = patientInfo && patientInfo.patients ? patientInfo.patients : {};
-    const matchedPatientIdsInMaster = Array.from(matchedPatientIds).filter(pid => Object.prototype.hasOwnProperty.call(patientMaster, pid));
-    logContext('getDashboardData:staffMatchStrategy', JSON.stringify({
-      normalizedUser: normalizedUser || 'unknown',
-      normalizedUserName: normalizedUserName || 'unknown',
-      normalizedUserId: normalizedUserId || 'unknown',
-      matchStats,
-      samples: matchSamples
-    }));
-    logContext('getDashboardData:staffMatchedLogs', String(staffMatchedLogs.length));
-    logContext('getDashboardData:matchedPatientIds', JSON.stringify(Array.from(matchedPatientIds)));
-    logContext(
-      'getDashboardData:staffMatchSummary',
-      `normalizedUser=${normalizedUser || 'unknown'} totalLogs=${totalTreatmentLogs} staffMatchedLogs=${staffMatchedLogs.length} matchedPatientIds=${matchedPatientIds.size} matchedPatientIdsInMaster=${matchedPatientIdsInMaster.length}`
-    );
     const responsible = measureStep('assignResponsible', () => (opts.responsible || (typeof assignResponsibleStaff === 'function'
       ? assignResponsibleStaff({ patientInfo, treatmentLogs, now: opts.now, cache: opts.cache, dashboardSpreadsheet })
       : { responsible: {}, warnings: [] })));
@@ -227,16 +124,19 @@ function getDashboardData(options) {
     const responsiblePatientIds = new Set();
     Object.keys(patientMaster || {}).forEach(pid => {
       const patient = patientMaster[pid] || {};
-      const responsibleKeys = getPatientResponsibleKeys_(patient.raw);
-      if (responsibleKeys.has(normalizedUser)
-        || responsibleKeys.has(normalizedUserName)
-        || responsibleKeys.has(normalizedUserId)) {
+      const patientRaw = patient && patient.raw ? patient.raw : {};
+      const responsibleColumn = resolveResponsibleColumn_(patientRaw);
+      const normalizedResponsible = dashboardNormalizeEmail_(patientRaw[responsibleColumn]);
+
+      if (normalizedUser === normalizedResponsible) {
         responsiblePatientIds.add(pid);
       }
     });
     const allPatientIds = Object.keys(patientMaster || {});
     let visiblePatientIds = null;
-    if (isAdmin) {
+    // 可視スコープはロール + 患者マスタ担当割当のみで決定する。
+    // 施術ログ・期間条件・直近○日条件は使用しない。
+    if (role === 'admin') {
       visiblePatientIds = new Set(allPatientIds);
     } else {
       visiblePatientIds = responsiblePatientIds;
@@ -267,7 +167,7 @@ function getDashboardData(options) {
           raw: info && info.raw
         };
         const inVisibleScope = visiblePatientIds.has(pid);
-        const shouldEvaluateConsent = inVisibleScope || matchedPatientIds.has(pid);
+        const shouldEvaluateConsent = inVisibleScope;
 
         if (!shouldEvaluateConsent) return;
 
@@ -449,7 +349,6 @@ function getDashboardData(options) {
       'loadAIReports',
       'loadInvoices',
       'loadTreatmentLogs',
-      'staffMatch処理',
       'assignResponsible',
       'loadUnpaidAlerts',
       'getTodayVisits',
@@ -480,7 +379,6 @@ function getDashboardData(options) {
     logPerf('■ 5秒以内にするための削減候補');
     logPerf('  - 何を: loadTreatmentLogs の対象行数と列数 / どう削るか: 直近期間で先に絞り込み、必要列のみを読み込んで全件走査を削減する。');
     logPerf('  - 何を: loadAIReports・loadInvoices の逐次読み込み / どう削るか: キャッシュ（更新時刻付き）を導入して差分時のみ再計算する。');
-    logPerf('  - 何を: staffMatch処理の全ログループ照合 / どう削るか: 正規化済みキーでインデックスを構築して比較回数を減らす。');
 
     logPerf('■ 副作用リスク');
     logPerf('  - データ欠損: 期間・列の絞り込みを誤ると過去必要データが取り込まれず、患者情報や請求情報が欠ける。');

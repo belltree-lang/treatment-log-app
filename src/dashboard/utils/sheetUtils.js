@@ -238,26 +238,15 @@ function dashboardNormalizeEmail_(email) {
   const normalized = String(raw).normalize('NFKC').trim().toLowerCase();
   return normalized || '';
 }
-
 function dashboardNormalizeStaffKey_(value) {
   const raw = dashboardTrimText_(value);
   if (!raw) return '';
 
   const email = dashboardExtractEmail_(raw);
-  if (email) {
-    const normalizedEmail = dashboardNormalizeEmail_(email)
-      .replace(/\+[^@]+(?=@)/, '');
-    if (normalizedEmail) return normalizedEmail;
-  }
+  if (!email) return '';
 
-  return String(raw)
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[\s\u3000・･]/g, '')
-    .replace(/[ー－ｰ−]/g, '')
-    .replace(/[._]/g, '')
-    .replace(/[^0-9a-z\u3040-\u30ff\u3400-\u9FFF]/g, '')
-    .replace(/-/g, '');
+  return dashboardNormalizeEmail_(email)
+    .replace(/\+[^@]+(?=@)/, '');
 }
 
 function dashboardExtractEmail_(value) {

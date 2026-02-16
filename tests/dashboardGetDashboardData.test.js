@@ -11,6 +11,10 @@ const configCode = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'dashboard', 'config.gs'),
   'utf8'
 );
+const roleCode = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'dashboard', 'auth', 'role.js'),
+  'utf8'
+);
 const dashboardCode = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'dashboard', 'api', 'getDashboardData.js'),
   'utf8'
@@ -40,8 +44,10 @@ function createContext(overrides = {}) {
   };
   Object.assign(context, overrides);
   vm.createContext(context);
+  context.module = { exports: {} };
   vm.runInContext(configCode, context);
   vm.runInContext(sheetUtilsCode, context);
+  vm.runInContext(roleCode, context);
   vm.runInContext(dashboardCode, context);
   return context;
 }
@@ -461,62 +467,13 @@ function testConsentDateParseFailureCanBeDebugLogged() {
   assert.ok(parseFailureLogs.some(entry => entry.details.includes('\"raw\":\"invalid-date\"')), 'parse 失敗ログに入力値を含める');
 }
 
-function testStaffMatchingUsesEmailNameAndStaffIdWithLogs() {
-  const logEntries = [];
+function testRoleResolutionIsEmailBasedOnly() {
   const ctx = createContext();
-  ctx.dashboardLogContext_ = (label, details) => {
-    logEntries.push({ label, details: String(details || '') });
-  };
 
-  const resultByEmail = ctx.getDashboardData({
-    user: 'belltree@belltree1102.com',
-    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
-    notes: { notes: {}, warnings: [] },
-    aiReports: { reports: {}, warnings: [] },
-    invoices: { invoices: {}, warnings: [] },
-    treatmentLogs: {
-      logs: [
-        { row: 2, patientId: '001', createdByEmail: 'belltree+billing@belltree1102.com', staffName: '別名', staffId: '', staffKeys: { email: 'belltree+billing@belltree1102.com', name: '別名', staffId: '' } },
-        { row: 3, patientId: '002', createdByEmail: '', staffName: '管理者ID', staffId: 'admin001', staffKeys: { email: '', name: '管理者ID', staffId: 'admin001' } }
-      ],
-      warnings: []
-    },
-    responsible: { responsible: {}, warnings: [] },
-    unpaidAlerts: { alerts: [], warnings: [] },
-    tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
-  });
-
-  assert.strictEqual(resultByEmail.meta.error, undefined);
-
-  const resultByStaffId = ctx.getDashboardData({
-    user: 'admin001',
-    patientInfo: { patients: { '001': { name: '患者A', raw: { '担当者': 'staff@example.com' } }, '002': { name: '患者B', raw: { '担当者': 'other@example.com' } } }, warnings: [] },
-    notes: { notes: {}, warnings: [] },
-    aiReports: { reports: {}, warnings: [] },
-    invoices: { invoices: {}, warnings: [] },
-    treatmentLogs: {
-      logs: [
-        { row: 2, patientId: '001', createdByEmail: 'other@example.com', staffName: '別名', staffId: '', staffKeys: { email: 'other@example.com', name: '別名', staffId: '' } },
-        { row: 3, patientId: '002', createdByEmail: '', staffName: '管理者ID', staffId: 'admin001', staffKeys: { email: '', name: '管理者ID', staffId: 'admin001' } }
-      ],
-      warnings: []
-    },
-    responsible: { responsible: {}, warnings: [] },
-    unpaidAlerts: { alerts: [], warnings: [] },
-    tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
-  });
-
-  assert.strictEqual(resultByStaffId.meta.error, undefined);
-
-  const strategyLog = logEntries.find(entry => entry.label === 'getDashboardData:staffMatchStrategy');
-  const matchedCountLog = logEntries.find(entry => entry.label === 'getDashboardData:staffMatchedLogs');
-  const matchedIdsLog = logEntries.find(entry => entry.label === 'getDashboardData:matchedPatientIds');
-  assert.ok(strategyLog, 'staffMatchStrategy ログが出力される');
-  assert.ok(matchedCountLog, 'staffMatchedLogs ログが出力される');
-  assert.ok(matchedIdsLog, 'matchedPatientIds ログが出力される');
-  assert.ok(Number(matchedCountLog.details) >= 1, '少なくとも1件の一致ログがある');
+  assert.strictEqual(ctx.getUserRole_('belltree@belltree1102.com'), 'admin');
+  assert.strictEqual(ctx.getUserRole_('BELLTREE@belltree1102.com'), 'admin', '大文字混在メールも管理者判定される');
+  assert.strictEqual(ctx.getUserRole_('admin001'), 'staff', 'メール以外は管理者判定しない');
+  assert.strictEqual(ctx.isAdminUser_('admin001'), false);
 }
 
 
@@ -561,20 +518,20 @@ function testStaffConsentScopeMetricsAreLogged() {
   assert.ok(scopeMetricsLog, 'consentScopeMetrics ログが出力される');
   const metrics = JSON.parse(scopeMetricsLog.details);
   assert.strictEqual(metrics.totalPatients, 4);
-  assert.strictEqual(metrics.consentEligiblePatients, 2);
+  assert.strictEqual(metrics.consentEligiblePatients, 1);
   assert.strictEqual(metrics.visiblePatientIdsSize, 1);
-  assert.strictEqual(metrics.consentEligibleButOutOfScope, 1);
+  assert.strictEqual(metrics.consentEligibleButOutOfScope, 0);
 
   const outOfScopeLog = logEntries.find(entry => entry.label === 'getDashboardData:consentOutOfScopeByResponsible');
   assert.ok(outOfScopeLog, 'consentOutOfScopeByResponsible ログが出力される');
-  assert.ok(outOfScopeLog.details.indexOf('=1') >= 0, '担当割当スコープ外件数がログに含まれる');
+  assert.ok(outOfScopeLog.details.indexOf('=0') >= 0, '担当割当スコープ外件数がログに含まれる');
 
   assert.ok(logEntries.some(entry => entry.label === 'getDashboardData:visibleScopeRoutes'), 'visibleScopeRoutes ログが出力される');
   assert.ok(logEntries.some(entry => entry.label === 'buildDashboardPatients_:scope'), 'buildDashboardPatients_:scope ログが出力される');
   assert.ok(logEntries.some(entry => entry.label === 'buildOverviewFromConsent_:scope'), 'buildOverviewFromConsent_:scope ログが出力される');
 }
 
-function testStaffConsentEligibilityEvaluatesOnlyVisibleOrMatchedPatients() {
+function testStaffConsentEligibilityEvaluatesOnlyVisiblePatients() {
   const logEntries = [];
   const ctx = createContext();
   ctx.dashboardLogContext_ = (label, details) => {
@@ -922,7 +879,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
   });
 }
 
-function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
+function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
   const logEntries = [];
   const ctx = createContext({
     Utilities: {
@@ -992,7 +949,7 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   });
 }
 
-function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {
+function testVisibleScopeForStaffWithoutResponsibleAssignmentShowsNoPatients() {
   const ctx = createContext({
     getTasks: opts => ({ tasks: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001' }] : [], warnings: [] }),
     getTodayVisits: opts => ({ visits: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001', dateKey: '2025-02-10', time: '09:00' }] : [], warnings: [] }),
@@ -1107,9 +1064,9 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testConsentDateParsingFormatsAndResolverPriority();
   testParseJapaneseEraDateAndResolveConsentExpiry();
   testConsentDateParseFailureCanBeDebugLogged();
-  testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
+  testRoleResolutionIsEmailBasedOnly();
   testStaffConsentScopeMetricsAreLogged();
-  testStaffConsentEligibilityEvaluatesOnlyVisibleOrMatchedPatients();
+  testStaffConsentEligibilityEvaluatesOnlyVisiblePatients();
   testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount();
   testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth();
   testVisitSummaryWhenNoDataReturnsZeroCounts();
@@ -1118,8 +1075,8 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();
   testInvoiceUnconfirmedExcludesMedicalAssistancePatient();
   testVisibleScopeForAdminShowsAllPatients();
-  testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly();
-  testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients();
+  testVisibleScopeForStaffShowsResponsiblePatientsOnly();
+  testVisibleScopeForStaffWithoutResponsibleAssignmentShowsNoPatients();
   testErrorIsCapturedInMeta();
   testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged();
   testWarningsAreDedupedAndSetupFlagged();

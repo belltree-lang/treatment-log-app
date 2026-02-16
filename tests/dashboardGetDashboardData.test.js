@@ -436,19 +436,23 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   assert.deepStrictEqual((patientsById['008'] || []).filter(tag => tag.type === 'consent'), [], '同意年月日なしでは同意タグを表示しない');
 }
 
-function testConsentDateParseFailureCanBeDebugLogged() {
-  const logs = [];
-  const ctx = createContext({ DASHBOARD_DEBUG_CONSENT: true });
-  ctx.dashboardLogContext_ = (label, details) => {
-    logs.push({ label, details: String(details || '') });
+function testConsentExpiryResolutionRunsOncePerPatient() {
+  const ctx = createContext();
+  const originalResolve = ctx.resolveConsentExpiry_;
+  let resolveCount = 0;
+  ctx.resolveConsentExpiry_ = patient => {
+    resolveCount += 1;
+    return originalResolve(patient);
   };
 
-  ctx.getDashboardData({
+  const result = ctx.getDashboardData({
     user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: 'invalid-overview', raw: { '同意年月日': 'invalid-date' } }
+        '001': { name: 'A', raw: { '同意年月日': '2024-08-16' } },
+        '002': { name: 'B', raw: { '同意年月日': '2024-08-20' } },
+        '003': { name: 'C', raw: {} }
       },
       warnings: []
     },
@@ -462,9 +466,8 @@ function testConsentDateParseFailureCanBeDebugLogged() {
     visitsResult: { visits: [], warnings: [] }
   });
 
-  const parseFailureLogs = logs.filter(entry => entry.label === 'consent-date-parse-failed');
-  assert.ok(parseFailureLogs.length >= 1, '同意年月日の形式不正時は parse 失敗ログを出す');
-  assert.ok(parseFailureLogs.some(entry => entry.details.includes('\"raw\":\"invalid-date\"')), 'parse 失敗ログに入力値を含める');
+  assert.strictEqual(result.patients.length, 3);
+  assert.strictEqual(resolveCount, 3, 'resolveConsentExpiry_ は患者整形時に1回/患者だけ実行する');
 }
 
 function testRoleResolutionIsEmailBasedOnly() {
@@ -1063,7 +1066,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testConsentAcquiredJudgmentHandlesFalseyStringsConsistently();
   testConsentDateParsingFormatsAndResolverPriority();
   testParseJapaneseEraDateAndResolveConsentExpiry();
-  testConsentDateParseFailureCanBeDebugLogged();
+  testConsentExpiryResolutionRunsOncePerPatient();
   testRoleResolutionIsEmailBasedOnly();
   testStaffConsentScopeMetricsAreLogged();
   testStaffConsentEligibilityEvaluatesOnlyVisiblePatients();

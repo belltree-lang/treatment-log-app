@@ -1,3 +1,5 @@
+const DEBUG_CONSENT_PID = '513';
+
 /**
  * ダッシュボードの主要データをまとめて取得し、JSON 形式で返す。
  * エラーが発生した場合は meta.error にメッセージを格納する。
@@ -190,12 +192,31 @@ function getDashboardData(options) {
 
       patientMasterIds.forEach(pid => {
         const info = patientMaster[pid] || {};
+        const patient = {
+          pid,
+          patientId: info && info.patientId,
+          raw: info && info.raw
+        };
         const inVisibleScope = visiblePatientIds.has(pid);
         const shouldEvaluateConsent = inVisibleScope || matchedPatientIds.has(pid);
 
         if (!shouldEvaluateConsent) return;
 
-        const consentExpiryResolved = resolveConsentExpiry_(info);
+        if (patient.pid === DEBUG_CONSENT_PID) {
+          console.log(JSON.stringify({
+            label: '[CONSENT_TRACE]',
+            pid: patient.pid,
+            rawConsent: patient.raw && patient.raw['同意年月日'],
+            rawConsentType: typeof (patient.raw && patient.raw['同意年月日']),
+            resolved: resolveConsentExpiry_(patient),
+            parsed: parseConsentDate_(resolveConsentExpiry_(patient).value),
+            consentAcquired: dashboardIsConsentAcquired_(patient.raw),
+            visibleScope: visiblePatientIds && typeof visiblePatientIds.has === 'function' ? visiblePatientIds.has(patient.pid) : null,
+            today: new Date().toISOString()
+          }));
+        }
+
+        const consentExpiryResolved = resolveConsentExpiry_(patient);
         const consentExpiryDate = parseConsentDate_(consentExpiryResolved.value);
         const consentAcquired = dashboardIsConsentAcquired_(info.raw);
         const hasConsentExpiry = consentExpiryResolved.value != null && String(consentExpiryResolved.value).trim() !== '';
@@ -222,6 +243,17 @@ function getDashboardData(options) {
         const diffDays = diffMs == null ? null : Math.floor(diffMs / (1000 * 60 * 60 * 24));
         const threshold = null;
         const finalCondition = Boolean(consentExpiryDate) && !consentAcquired;
+        if (patient.pid === DEBUG_CONSENT_PID) {
+          console.log(JSON.stringify({
+            label: '[CONSENT_TRACE:diff]',
+            expiryISO: parsedConsentExpiry && typeof parsedConsentExpiry.toISOString === 'function' ? parsedConsentExpiry.toISOString() : null,
+            todayISO: today.toISOString(),
+            diffMs,
+            diffDays,
+            threshold: 30,
+            finalCondition: finalCondition
+          }));
+        }
         if (inVisibleScope) {
           logContext('consent-eligible-debug', JSON.stringify({
             pid,
@@ -825,13 +857,39 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
   return { items };
 }
 
+function dashboardDebugLogLimited_(counterKey, label, payload) {
+  if (typeof dashboardLogContext_ !== 'function') return;
+  const counters = dashboardDebugLogLimited_._counters || (dashboardDebugLogLimited_._counters = {});
+  const nextCount = (counters[counterKey] || 0) + 1;
+  counters[counterKey] = nextCount;
+  if (nextCount > 3) return;
+  dashboardLogContext_(label, payload);
+}
+
 function resolveConsentExpiry_(patient) {
+  if (patient && patient.pid === DEBUG_CONSENT_PID) {
+    console.log(JSON.stringify({
+      label: '[CONSENT_TRACE:resolve]',
+      pid: patient.pid,
+      rawConsent: patient.raw && patient.raw['同意年月日'],
+      rawKeys: Object.keys((patient && patient.raw) || {})
+    }));
+  }
+
+  dashboardDebugLogLimited_('resolveConsentExpiry_:debug', '[resolveConsentExpiry_:debug]', {
+    pid: patient && patient.patientId,
+    hasRaw: Boolean(patient && patient.raw),
+    rawKeys: patient && patient.raw ? Object.keys(patient.raw) : [],
+    rawConsent: patient && patient.raw ? patient.raw['同意年月日'] : undefined,
+    rawConsentType: typeof (patient && patient.raw ? patient.raw['同意年月日'] : undefined)
+  });
+
   const info = patient && typeof patient === 'object' ? patient : {};
   const raw = info.raw && typeof info.raw === 'object' ? info.raw : null;
   const consentDateRaw = raw ? raw['同意年月日'] : null;
 
   if (consentDateRaw != null && String(consentDateRaw).trim()) {
-    const expiryDate = calculateConsentExpiryDateFromConsentDate_(consentDateRaw);
+    const expiryDate = calculateConsentExpiryDateFromConsentDate_(consentDateRaw, patient && patient.pid);
     if (expiryDate) {
       if (typeof dashboardLogContext_ === 'function') {
         dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
@@ -853,9 +911,13 @@ function resolveConsentExpiry_(patient) {
   return { value: null, source: '' };
 }
 
-function calculateConsentExpiryDateFromConsentDate_(consentDateRaw) {
+function calculateConsentExpiryDateFromConsentDate_(consentDateRaw, debugPid) {
   const parsedConsentDate = parseDateFlexible_(consentDateRaw);
   if (!parsedConsentDate) return null;
+
+  if (debugPid && typeof parsedConsentDate === 'object') {
+    parsedConsentDate.__debugPid = debugPid;
+  }
 
   if (typeof calculateConsentExpiry_ === 'function') {
     const calculated = calculateConsentExpiry_(parsedConsentDate);
@@ -869,6 +931,11 @@ function calculateConsentExpiryDateFromConsentDate_(consentDateRaw) {
 }
 
 function parseDateFlexible_(value) {
+  dashboardDebugLogLimited_('parseDateFlexible_:debug', '[parseDateFlexible_:debug]', {
+    input: value,
+    inputType: typeof value
+  });
+
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
   }

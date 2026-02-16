@@ -21,14 +21,17 @@ sandbox.Utilities = {
   }
 };
 
-(function testConsentDateDay1To15AddsFiveMonthsAndRoundsToMonthEnd() {
-  const result = sandbox.calculateConsentExpiry_('2025-01-15');
-  assert.strictEqual(result, '2025-06-30');
-})();
+(function testMonthEndCrossingCases() {
+  const cases = [
+    { input: '2024-01-10', expected: '2024-06-30' },
+    { input: '2024-01-20', expected: '2024-07-31' },
+    { input: '2024-03-31', expected: '2024-09-30' },
+    { input: '2024-08-16', expected: '2025-02-28' }
+  ];
 
-(function testConsentDateDay16OrLaterAddsSixMonthsAndRoundsToMonthEnd() {
-  const result = sandbox.calculateConsentExpiry_('2025-01-16');
-  assert.strictEqual(result, '2025-07-31');
+  cases.forEach(({ input, expected }) => {
+    assert.strictEqual(sandbox.calculateConsentExpiry_(input), expected, `input=${input}`);
+  });
 })();
 
 (function testInvalidDateReturnsEmptyString() {

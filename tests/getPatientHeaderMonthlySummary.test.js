@@ -29,7 +29,7 @@ sandbox.PATIENT_COLS_FIXED = {
   consent: 7, consentHandout: 8, share: 9, phone: 10, consentContent: 11
 };
 sandbox.parseDateFlexible_ = () => null;
-sandbox.calcConsentExpiry_ = () => '';
+sandbox.calculateConsentExpiry_ = () => '';
 sandbox.normalizeBurdenRatio_ = value => value;
 sandbox.toBurdenDisp_ = value => value;
 sandbox.getRecentActivity_ = () => ({ lastTreat: '', lastConsent: '', lastStaff: '' });

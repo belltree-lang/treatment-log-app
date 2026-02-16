@@ -5,6 +5,7 @@ const assert = require('assert');
 
 const configCode = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'config.gs'), 'utf8');
 const sheetUtilsCode = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'utils', 'sheetUtils.js'), 'utf8');
+const roleCode = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'auth', 'role.js'), 'utf8');
 const dashboardCode = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'api', 'getDashboardData.js'), 'utf8');
 
 function createContext(overrides = {}) {
@@ -51,8 +52,10 @@ function createContext(overrides = {}) {
     ...overrides
   };
   vm.createContext(ctx);
+  ctx.module = { exports: {} };
   vm.runInContext(configCode, ctx);
   vm.runInContext(sheetUtilsCode, ctx);
+  vm.runInContext(roleCode, ctx);
   vm.runInContext(dashboardCode, ctx);
   return ctx;
 }

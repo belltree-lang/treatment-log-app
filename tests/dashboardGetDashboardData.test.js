@@ -64,8 +64,9 @@ function testAggregatesDashboardData() {
   const unpaidAlerts = { alerts: [{ patientId: '001', patientName: '山田太郎', consecutiveMonths: 3, totalAmount: 15000, months: [], followUp: { phone: false, visit: false } }], warnings: ['u1'] };
 
   const ctx = createContext();
+
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T12:00:00Z'),
     patientInfo,
     notes,
@@ -78,7 +79,7 @@ function testAggregatesDashboardData() {
     visitsResult
   });
 
-  assert.strictEqual(result.meta.user, 'user@example.com');
+  assert.strictEqual(result.meta.user, 'belltree@belltree1102.com');
   assert.ok(result.meta.generatedAt, 'generatedAt should be present');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks)), []);
   assert.deepStrictEqual(result.todayVisits, visitsResult.visits);
@@ -116,7 +117,7 @@ function testAggregatesDashboardData() {
 function testPatientStatusTagsGeneration() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -179,7 +180,7 @@ function testPatientStatusTagsGeneration() {
 function testConsentOverviewMatchesPatientStatusTags() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -251,7 +252,7 @@ function testEvaluateConsentStatusBoundaries() {
 function testConsentOver30DaysStillShowsReportTag() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -290,7 +291,7 @@ function testEvaluateConsentStatusIsTimeIndependentForSameDate() {
 function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -389,7 +390,7 @@ function testConsentDateParsingFormatsAndResolverPriority() {
   }, '同意年月日がなければ null を返す');
 
   const result = ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now,
     patientInfo: {
       patients: {
@@ -437,7 +438,7 @@ function testConsentDateParseFailureCanBeDebugLogged() {
   };
 
   ctx.getDashboardData({
-    user: { email: 'user@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
@@ -852,6 +853,7 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
 
 
 function testVisibleScopeForAdminShowsAllPatients() {
+  const logEntries = [];
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -881,8 +883,12 @@ function testVisibleScopeForAdminShowsAllPatients() {
     })
   });
 
+  ctx.dashboardLogContext_ = (label, details) => {
+    logEntries.push({ label, details: String(details || '') });
+  };
+
   const result = ctx.getDashboardData({
-    user: { email: 'staff@example.com', role: 'admin' },
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-13T00:00:00Z'),
     patientInfo: { patients: { '001': { name: '患者A' }, '002': { name: '患者B' } }, warnings: [] },
     notes: { notes: {}, warnings: [] },
@@ -903,9 +909,13 @@ function testVisibleScopeForAdminShowsAllPatients() {
   assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 2, '管理者は請求未確認を全患者分表示する');
+  const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
+  assert.ok(roleLog, 'role ログが出力される');
+  assert.deepStrictEqual(JSON.parse(roleLog.details), { role: 'admin', applyScopeFilter: false });
 }
 
 function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
+  const logEntries = [];
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -934,6 +944,10 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
       warnings: []
     })
   });
+
+  ctx.dashboardLogContext_ = (label, details) => {
+    logEntries.push({ label, details: String(details || '') });
+  };
 
   const result = ctx.getDashboardData({
     user: { email: 'staff@example.com', role: 'staff' },
@@ -957,6 +971,9 @@ function testVisibleScopeForStaffWithin50DaysShowsMatchedPatientsOnly() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
+  const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
+  assert.ok(roleLog, 'role ログが出力される');
+  assert.deepStrictEqual(JSON.parse(roleLog.details), { role: 'staff', applyScopeFilter: true });
 }
 
 function testVisibleScopeForStaffOnlyOlderThan50DaysShowsNoPatients() {

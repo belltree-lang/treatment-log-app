@@ -1,5 +1,25 @@
 const DEBUG_CONSENT_PID = '513';
 
+const DASHBOARD_ROLES = {
+  ADMIN: 'admin',
+  STAFF: 'staff'
+};
+
+const ADMIN_EMAILS = new Set([
+  'belltree@belltree1102.com'
+]);
+
+function getUserRole_(normalizedUser) {
+  if (ADMIN_EMAILS.has(normalizedUser)) {
+    return DASHBOARD_ROLES.ADMIN;
+  }
+  return DASHBOARD_ROLES.STAFF;
+}
+
+function isAdminUser_(normalizedUser) {
+  return getUserRole_(normalizedUser) === DASHBOARD_ROLES.ADMIN;
+}
+
 /**
  * ダッシュボードの主要データをまとめて取得し、JSON 形式で返す。
  * エラーが発生した場合は meta.error にメッセージを格納する。
@@ -55,7 +75,8 @@ function getDashboardData(options) {
   const userIdentity = user && user.email ? user.email : meta.user;
   meta.user = userIdentity || '';
   const normalizedUser = dashboardNormalizeEmail_(userIdentity || '');
-  const isAdmin = Boolean(user && user.role === 'admin');
+  const role = getUserRole_(normalizedUser);
+  const isAdmin = isAdminUser_(normalizedUser);
   logContext('getDashboardData:start', `user=${userIdentity || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} isAdmin=${isAdmin ? 'true' : 'false'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
@@ -180,7 +201,15 @@ function getDashboardData(options) {
       if (!patientId) return;
       responsiblePatientIds.add(patientId);
     });
-    const visiblePatientIds = isAdmin ? null : responsiblePatientIds;
+    const allPatientIds = Object.keys(patientMaster || {});
+    let visiblePatientIds = null;
+    if (isAdmin) {
+      visiblePatientIds = new Set(allPatientIds);
+    } else {
+      visiblePatientIds = responsiblePatientIds;
+    }
+    const applyScopeFilter = !isAdmin;
+    logContext('getDashboardData:role', JSON.stringify({ role, applyScopeFilter }));
 
     if (!isAdmin) {
       const patientMasterIds = Object.keys(patientMaster || {});

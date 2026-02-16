@@ -241,8 +241,11 @@ function getDashboardData(options) {
           : null;
         const diffMs = parsedConsentExpiry ? parsedConsentExpiry.getTime() - today.getTime() : null;
         const diffDays = diffMs == null ? null : Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        const threshold = null;
-        const finalCondition = Boolean(consentExpiryDate) && !consentAcquired;
+        const threshold = 30;
+        const finalCondition = Boolean(consentExpiryDate) && !consentAcquired
+          && diffDays != null
+          && diffDays >= 0
+          && diffDays <= threshold;
         if (patient.pid === DEBUG_CONSENT_PID) {
           console.log(JSON.stringify({
             label: '[CONSENT_TRACE:diff]',
@@ -250,7 +253,7 @@ function getDashboardData(options) {
             todayISO: today.toISOString(),
             diffMs,
             diffDays,
-            threshold: 30,
+            threshold,
             finalCondition: finalCondition
           }));
         }
@@ -571,7 +574,7 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
   }
 
   const consentStatus = !consentAcquired
-    ? evaluateConsentStatus_(consentExpiryDate, targetNow)
+    ? evaluateConsentStatus_(consentExpiryDate, targetNow, patient && patient.patientId ? patient.patientId : '')
     : null;
 
   if (consentStatus) {
@@ -601,13 +604,24 @@ function dashboardDaysBetween_(from, to, futurePositive) {
   return futurePositive ? days : Math.abs(days);
 }
 
-function evaluateConsentStatus_(consentExpiryDate, today) {
+function evaluateConsentStatus_(consentExpiryDate, today, pid) {
   const expiry = parseConsentDate_(consentExpiryDate);
   if (!expiry) return null;
+  const threshold = 30;
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const expiryStart = new Date(expiry.getFullYear(), expiry.getMonth(), expiry.getDate());
   const diffDays = dashboardDaysBetween_(todayStart, expiryStart, true);
-  if (diffDays > 30) return null;
+  if (shouldDebugConsent_()) {
+    console.log(JSON.stringify({
+      label: '[CONSENT_THRESHOLD_CHECK]',
+      pid: pid || '',
+      diffDays,
+      threshold,
+      thresholdType: typeof threshold,
+      comparison: threshold != null ? diffDays <= threshold : 'threshold-null'
+    }));
+  }
+  if (diffDays > threshold) return null;
   if (diffDays < 0) {
     return { type: 'expired', days: diffDays, priority: 'high' };
   }
@@ -829,7 +843,7 @@ function buildOverviewFromConsent_(patientInfo, scope, patientNameMap, now) {
     }
     if (consentAcquired || !consentExpiryDate) return;
 
-    const consentStatus = evaluateConsentStatus_(consentExpiryDate, targetNow);
+    const consentStatus = evaluateConsentStatus_(consentExpiryDate, targetNow, pid);
     if (!consentStatus) return;
     let label = `同意期限（残${consentStatus.days}日）`;
     if (consentStatus.type === 'expired') {

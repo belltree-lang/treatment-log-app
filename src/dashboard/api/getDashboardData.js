@@ -831,7 +831,8 @@ function resolveConsentExpiry_(patient) {
   const consentDateRaw = raw ? raw['同意年月日'] : null;
 
   if (consentDateRaw != null && String(consentDateRaw).trim()) {
-    const expiryDate = calculateConsentExpiryDateFromConsentDate_(consentDateRaw);
+    const normalizedConsentDate = parseJapaneseEraDate_(consentDateRaw) || consentDateRaw;
+    const expiryDate = calculateConsentExpiryDateFromConsentDate_(normalizedConsentDate);
     if (expiryDate) {
       if (typeof dashboardLogContext_ === 'function') {
         dashboardLogContext_('resolveConsentExpiry_:result', JSON.stringify({
@@ -857,6 +858,37 @@ function calculateConsentExpiryDateFromConsentDate_(consentDateRaw) {
   if (typeof calculateConsentExpiry_ !== 'function') return null;
   const calculated = calculateConsentExpiry_(consentDateRaw);
   return parseConsentDate_(calculated);
+}
+
+function parseJapaneseEraDate_(value) {
+  if (value == null) return null;
+
+  const str = String(value).trim();
+  if (!str) return null;
+
+  const matched = str.match(/^(令和|平成)\s*(元|\d{1,2})年\s*(\d{1,2})月\s*(\d{1,2})日$/);
+  if (!matched) return null;
+
+  const era = matched[1];
+  const eraYearRaw = matched[2];
+  const month = Number(matched[3]);
+  const day = Number(matched[4]);
+  const eraYear = eraYearRaw === '元' ? 1 : Number(eraYearRaw);
+
+  if (!Number.isInteger(eraYear) || eraYear < 1) return null;
+
+  const westernYear = era === '令和'
+    ? 2018 + eraYear
+    : 1988 + eraYear;
+
+  const parsed = createDateFromYmd_(westernYear, month, day);
+  if (!parsed) return null;
+
+  return [
+    String(westernYear).padStart(4, '0'),
+    String(month).padStart(2, '0'),
+    String(day).padStart(2, '0')
+  ].join('-');
 }
 
 function parseConsentDate_(value) {

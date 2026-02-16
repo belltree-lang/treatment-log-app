@@ -339,6 +339,31 @@ function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
 }
 
 
+
+function testParseJapaneseEraDateAndResolveConsentExpiry() {
+  const ctx = createContext();
+
+  assert.strictEqual(ctx.parseJapaneseEraDate_('令和7年6月26日'), '2025-06-26', '令和を西暦に変換する');
+  assert.strictEqual(ctx.parseJapaneseEraDate_('令和元年5月1日'), '2019-05-01', '令和元年を1年として扱う');
+  assert.strictEqual(ctx.parseJapaneseEraDate_('平成30年4月10日'), '2018-04-10', '平成年号を西暦に変換する');
+  assert.strictEqual(ctx.parseJapaneseEraDate_('不正文字列'), null, '不正文字列は null を返す');
+
+  const reiwaResolved = JSON.parse(JSON.stringify(ctx.resolveConsentExpiry_({
+    raw: { '同意年月日': '令和7年6月26日' }
+  })));
+  assert.strictEqual(reiwaResolved.value, '2025-12-31T00:00:00.000Z', '令和7年6月26日は月末期限を算出できる');
+
+  const heiseiResolved = JSON.parse(JSON.stringify(ctx.resolveConsentExpiry_({
+    raw: { '同意年月日': '平成30年4月10日' }
+  })));
+  assert.strictEqual(heiseiResolved.value, '2018-09-30T00:00:00.000Z', '平成30年4月10日を変換して期限算出できる');
+
+  const invalidResolved = JSON.parse(JSON.stringify(ctx.resolveConsentExpiry_({
+    raw: { '同意年月日': '不正文字列' }
+  })));
+  assert.strictEqual(invalidResolved.value, null, '不正文字列は同意期限を解決しない');
+}
+
 function testConsentDateParsingFormatsAndResolverPriority() {
   const ctx = createContext();
   const now = new Date('2025-02-01T00:00:00Z');
@@ -1042,6 +1067,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testEvaluateConsentStatusIsTimeIndependentForSameDate();
   testConsentAcquiredJudgmentHandlesFalseyStringsConsistently();
   testConsentDateParsingFormatsAndResolverPriority();
+  testParseJapaneseEraDateAndResolveConsentExpiry();
   testConsentDateParseFailureCanBeDebugLogged();
   testStaffMatchingUsesEmailNameAndStaffIdWithLogs();
   testStaffConsentScopeMetricsAreLogged();

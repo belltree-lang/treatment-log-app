@@ -172,6 +172,19 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function fetchDashboardData() {
+  // --- OAuth iframe guard ---
+  try {
+    if (window.top !== window) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('createOAuthDialog') === 'true') {
+        console.log('[OAUTH GUARD] skip fetchDashboardData in OAuth dialog');
+        return;
+      }
+    }
+  } catch (e) {
+    console.log('[OAUTH GUARD] param parse error', e);
+  }
+  // --- end guard ---
   console.log('[ENV CHECK] location.href =', location.href);
   console.log('[ENV CHECK] window.top === window =', window.top === window);
   console.log('[DUP CHECK] fetchDashboardData invoked');

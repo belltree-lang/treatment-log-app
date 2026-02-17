@@ -87,8 +87,9 @@ function getDashboardData(options) {
   meta.user = userIdentity || '';
   const userEmail = userIdentity || '';
   const normalizedUser = dashboardNormalizeEmail_(userEmail);
-  const role = getUserRole_(userEmail);
-  const isAdmin = role === 'admin';
+  const currentUserRole = getUserRole_(userEmail);
+  const role = currentUserRole;
+  const isAdmin = currentUserRole === 'admin';
   logContext('getDashboardData:start', `user=${userIdentity || 'unknown'} normalizedUser=${normalizedUser || 'unknown'} isAdmin=${isAdmin ? 'true' : 'false'} mock=${opts.mock ? 'true' : 'false'}`);
 
   try {
@@ -331,6 +332,7 @@ function getDashboardData(options) {
       notes,
       user: userIdentity,
       now: opts.now,
+      currentUserRole,
       allowedPatientIds: visiblePatientIds
     });
     const invoiceUnconfirmed = overview && overview.invoiceUnconfirmed ? overview.invoiceUnconfirmed : { items: [] };
@@ -747,6 +749,7 @@ function buildDashboardOverview_(params) {
   const now = dashboardCoerceDate_(payload.now) || new Date();
   const tz = dashboardResolveTimeZone_();
   const user = payload.user || '';
+  const currentUserRole = payload.currentUserRole || 'staff';
   const allowedPatientIds = payload.allowedPatientIds && typeof payload.allowedPatientIds.has === 'function' ? payload.allowedPatientIds : null;
   const scope = { patientIds: allowedPatientIds, applyFilter: !!allowedPatientIds };
   const invoiceScope = scope;
@@ -773,7 +776,7 @@ function buildDashboardOverview_(params) {
     tz,
     patientInfo
   );
-  const consentRelated = buildOverviewFromConsent_(patients, scope, patientNameMap, now);
+  const consentRelated = buildOverviewFromConsent_(patients, scope, patientNameMap, now, currentUserRole);
   const visitSummary = buildOverviewFromTreatmentProgress_(payload.visits, now, tz);
   return {
     invoiceUnconfirmed,
@@ -908,8 +911,8 @@ function buildDashboardInvoiceSearchText_(entry) {
     .join('\n');
 }
 
-function buildOverviewFromConsent_(patients, scope, patientNameMap, now) {
-  const items = [];
+function buildOverviewFromConsent_(patients, scope, patientNameMap, now, currentUserRole) {
+  const alerts = [];
   const allowedPatientIds = scope ? scope.patientIds : null;
   const applyFilter = scope ? scope.applyFilter : false;
   const targetNow = dashboardCoerceDate_(now) || new Date();
@@ -930,6 +933,8 @@ function buildOverviewFromConsent_(patients, scope, patientNameMap, now) {
 
     const consentStatus = evaluateConsentStatus_(consentExpiryDate, targetNow, pid);
     if (!consentStatus) return;
+    const expiredDays = consentStatus.type === 'expired' ? Math.abs(consentStatus.days) : 0;
+    if (consentStatus.type === 'expired' && expiredDays > 30 && currentUserRole !== 'admin') return;
     let label = `同意期限（残${consentStatus.days}日）`;
     if (consentStatus.type === 'expired') {
       label = `⚠ 同意期限超過（${Math.abs(consentStatus.days)}日超過）`;
@@ -937,20 +942,28 @@ function buildOverviewFromConsent_(patients, scope, patientNameMap, now) {
       label = `⏳ 同意期限迫る（残${consentStatus.days}日）`;
     }
     const name = (patient && patient.name) || patientNameMap[pid] || '';
-    items.push({
+    const alert = {
+      type: consentStatus.type === 'expired' ? 'consent_expired' : 'consent_warning',
       patientId: pid,
       name,
       subText: label
-    });
+    };
+    if (consentStatus.type === 'expired') {
+      alert.expiredDays = expiredDays;
+    }
+    alerts.push(alert);
   });
 
-  items.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  alerts.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  const items = alerts.map(alert => ({ patientId: alert.patientId, name: alert.name, subText: alert.subText }));
   if (typeof dashboardLogContext_ === 'function') {
     dashboardLogContext_('buildOverviewFromConsent_:scope', JSON.stringify({
       applyFilter,
       totalPatients: Array.isArray(patients) ? patients.length : 0,
       filteredByScope,
-      resultItems: items.length
+      resultItems: items.length,
+      currentUserRole,
+      alertsSample: alerts.slice(0, 10)
     }));
   }
   return { items };

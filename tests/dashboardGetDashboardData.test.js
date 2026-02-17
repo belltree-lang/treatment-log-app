@@ -145,7 +145,13 @@ function testPatientStatusTagsGeneration() {
       warnings: []
     },
     invoices: { invoices: {}, warnings: [] },
-    treatmentLogs: { logs: [], warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-01-25T09:00:00Z'), staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-01-25T09:00:00Z'), staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
@@ -583,80 +589,151 @@ function testStaffConsentEligibilityEvaluatesOnlyVisiblePatients() {
   assert.deepStrictEqual(consentDebugLogs, ['001'], '可視範囲外の患者は一致していても同意デバッグログを出力しない');
 }
 
-function testVisitSummaryWhenTodayIsZeroUsesPreviousDayCount() {
-  const ctx = createContext({
+function createVisitSummaryTestContext() {
+  return createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
         if (fmt === 'yyyy-MM-dd') return new Date(date).toISOString().slice(0, 10);
         return new Date(date).toISOString();
       }
     }
-  });
-
-  const result = ctx.buildOverviewFromTreatmentProgress_(
-    [
-      { patientId: '001', dateKey: '2025-01-31', time: '09:00' }
-    ],
-    new Date('2025-02-01T00:00:00Z'),
-    'Asia/Tokyo'
-  );
-
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
-    todayCount: 0,
-    previousDayCount: 1,
-    previousDayDate: '2025-01-31'
   });
 }
 
-function testVisitSummaryWhenTodayHasTwoStillUsesPreviousDayAsPastDate() {
-  const ctx = createContext({
-    Utilities: {
-      formatDate: (date, _tz, fmt) => {
-        if (fmt === 'yyyy-MM-dd') return new Date(date).toISOString().slice(0, 10);
-        return new Date(date).toISOString();
-      }
-    }
-  });
+function testVisitSummaryWithTodayVisits() {
+  const ctx = createVisitSummaryTestContext();
 
   const result = ctx.buildOverviewFromTreatmentProgress_(
     [
       { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
       { patientId: '002', dateKey: '2025-02-01', time: '10:00' },
-      { patientId: '003', dateKey: '2025-01-31', time: '11:00' }
+      { patientId: '003', dateKey: '2025-01-31', time: '11:00' },
+      { patientId: '004', dateKey: '2025-01-25', time: '12:00' }
     ],
     new Date('2025-02-01T00:00:00Z'),
     'Asia/Tokyo'
   );
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
-    todayCount: 2,
-    previousDayCount: 1,
-    previousDayDate: '2025-01-31'
+    today: { date: '2025-02-01', count: 2 },
+    previous: { date: '2025-01-31', count: 1 },
+    previous2: { date: '2025-01-25', count: 1 }
   });
-  assert.notStrictEqual(result.previousDayDate, '2025-02-01', 'today に施術があっても previousDayDate は今日より前を指す');
 }
 
-function testVisitSummaryWhenNoDataReturnsZeroCounts() {
-  const ctx = createContext({
+function testVisitSummaryWithoutTodayVisits() {
+  const ctx = createVisitSummaryTestContext();
+
+  const result = ctx.buildOverviewFromTreatmentProgress_(
+    [
+      { patientId: '001', dateKey: '2025-01-31', time: '09:00' },
+      { patientId: '002', dateKey: '2025-01-31', time: '10:00' },
+      { patientId: '003', dateKey: '2025-01-20', time: '11:00' }
+    ],
+    new Date('2025-02-01T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
+    today: { date: '2025-02-01', count: 0 },
+    previous: { date: '2025-01-31', count: 2 },
+    previous2: { date: '2025-01-20', count: 1 }
+  });
+}
+
+function testVisitSummaryWithOnlyOneTreatmentDay() {
+  const ctx = createVisitSummaryTestContext();
+
+  const result = ctx.buildOverviewFromTreatmentProgress_(
+    [
+      { patientId: '001', dateKey: '2025-02-01', time: '09:00' }
+    ],
+    new Date('2025-02-01T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
+    today: { date: '2025-02-01', count: 1 },
+    previous: null,
+    previous2: null
+  });
+}
+
+function testVisitSummaryRespectsStaffAdminScopeDifference() {
+  const summaryCtxOptions = {
     Utilities: {
       formatDate: (date, _tz, fmt) => {
         if (fmt === 'yyyy-MM-dd') return new Date(date).toISOString().slice(0, 10);
         return new Date(date).toISOString();
       }
     }
-  });
+  };
 
+  const baseOptions = {
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '患者1', raw: {} },
+        '002': { name: '患者2', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-01-25T09:00:00Z'), staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-01-25T09:00:00Z'), staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: { '001': 'staff@example.com' }, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: {
+      visits: [
+        { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
+        { patientId: '001', dateKey: '2025-01-31', time: '09:00' },
+        { patientId: '002', dateKey: '2025-01-30', time: '09:00' }
+      ],
+      warnings: []
+    }
+  };
+
+  const adminCtx = createContext(summaryCtxOptions);
+  const adminResult = adminCtx.getDashboardData(Object.assign({}, baseOptions, { user: { email: 'belltree@belltree1102.com', role: 'admin' } }));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(adminResult.overview.visitSummary)), {
+    today: { date: '2025-02-01', count: 1 },
+    previous: { date: '2025-01-31', count: 1 },
+    previous2: { date: '2025-01-30', count: 1 }
+  }, 'admin は全可視患者の visitSummary になる');
+
+  const staffCtx = createContext(summaryCtxOptions);
+  const staffResult = staffCtx.getDashboardData(Object.assign({}, baseOptions, { user: { email: 'staff@example.com', role: 'staff' } }));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(staffResult.overview.visitSummary)), {
+    today: { date: '2025-02-01', count: 1 },
+    previous: { date: '2025-01-31', count: 1 },
+    previous2: null
+  }, 'staff は visiblePatientIds 適用後の visitSummary になる');
+}
+
+function testVisitSummaryHasOnlyThreeKeysAndPastSlotsAreBeforeToday() {
+  const ctx = createVisitSummaryTestContext();
   const result = ctx.buildOverviewFromTreatmentProgress_(
-    [],
+    [
+      { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
+      { patientId: '001', dateKey: '2025-01-31', time: '09:00' },
+      { patientId: '002', dateKey: '2025-01-30', time: '09:00' }
+    ],
     new Date('2025-02-01T00:00:00Z'),
     'Asia/Tokyo'
   );
 
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
-    todayCount: 0,
-    previousDayCount: 0,
-    previousDayDate: null
-  });
+  const keys = Object.keys(JSON.parse(JSON.stringify(result))).sort();
+  assert.deepStrictEqual(keys, ['previous', 'previous2', 'today']);
+  assert.ok(!result.previous || result.previous.date < result.today.date, 'previous は today より前のみ');
+  assert.ok(!result.previous2 || result.previous2.date < result.today.date, 'previous2 は today より前のみ');
 }
 
 
@@ -1137,9 +1214,11 @@ function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
   testRoleResolutionIsEmailBasedOnly();
   testStaffConsentScopeMetricsAreLogged();
   testStaffConsentEligibilityEvaluatesOnlyVisiblePatients();
-  testVisitSummaryWhenTodayIsZeroUsesPreviousDayCount();
-  testVisitSummaryWhenTodayHasTwoStillUsesPreviousDayAsPastDate();
-  testVisitSummaryWhenNoDataReturnsZeroCounts();
+  testVisitSummaryWithTodayVisits();
+  testVisitSummaryWithoutTodayVisits();
+  testVisitSummaryWithOnlyOneTreatmentDay();
+  testVisitSummaryRespectsStaffAdminScopeDifference();
+  testVisitSummaryHasOnlyThreeKeysAndPastSlotsAreBeforeToday();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();

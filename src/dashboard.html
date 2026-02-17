@@ -332,11 +332,11 @@ function renderVisitSummary() {
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
   const data = overview && overview.visitSummary
     ? overview.visitSummary
-    : { todayCount: 0, previousDayCount: 0, previousDayDate: null };
-  const todayCount = Number(data.todayCount || 0);
-  const previousDayCount = Number(data.previousDayCount || 0);
-  const previousDayDate = data.previousDayDate ? String(data.previousDayDate).trim() : '';
-  const previousDayLabel = `前回施術（${formatPreviousVisitDate_(previousDayDate)}）`;
+    : { today: { date: '-', count: 0 }, previous: null, previous2: null };
+
+  const today = data.today || { date: '-', count: 0 };
+  const previous = data.previous || null;
+  const previous2 = data.previous2 || null;
 
   container.innerHTML = '';
 
@@ -350,13 +350,20 @@ function renderVisitSummary() {
   const metrics = document.createElement('div');
   metrics.className = 'overview-metrics';
 
-  metrics.appendChild(renderOverviewMetric_('今日', `${todayCount}件`));
-  metrics.appendChild(renderOverviewMetric_(previousDayLabel, `${previousDayCount}件`));
+  metrics.appendChild(renderOverviewMetric_(`今日（${formatVisitDateForOverview_(today && today.date)}）`, `${Number(today && today.count || 0)}件`));
+  metrics.appendChild(renderOverviewMetric_(
+    `前回施術（${formatVisitDateForOverview_(previous && previous.date)}）`,
+    `${Number(previous && previous.count || 0)}件`
+  ));
+  metrics.appendChild(renderOverviewMetric_(
+    `前々回施術（${formatVisitDateForOverview_(previous2 && previous2.date)}）`,
+    `${Number(previous2 && previous2.count || 0)}件`
+  ));
 
   container.appendChild(metrics);
 }
 
-function formatPreviousVisitDate_(dateKey) {
+function formatVisitDateForOverview_(dateKey) {
   if (!dateKey) return '-';
   const matched = String(dateKey).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!matched) return '-';

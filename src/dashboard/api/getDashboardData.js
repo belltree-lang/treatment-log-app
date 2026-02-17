@@ -44,6 +44,24 @@ function getDashboardData(options) {
     const suffix = details ? ` ${details}` : '';
     logPerf(`[perf] ${status} key=${key}${suffix}`);
   };
+  const logSerializationDiagnostics = result => {
+    if (typeof Logger === 'undefined' || !Logger || typeof Logger.log !== 'function') return;
+    Logger.log('[SER] keys=' + JSON.stringify(Object.keys(result || {})));
+    try {
+      const s = JSON.stringify(result);
+      Logger.log('[SER] ok len=' + s.length);
+    } catch (e) {
+      Logger.log('[SER] FAIL ' + e + ' ' + (e && e.stack ? e.stack : ''));
+    }
+    Object.keys(result || {}).forEach(k => {
+      try {
+        JSON.stringify(result[k]);
+        Logger.log('[SER:key] ok ' + k);
+      } catch (e) {
+        Logger.log('[SER:key] FAIL ' + k + ' ' + e);
+      }
+    });
+  };
   if (opts.mock && typeof buildDashboardMockData_ === 'function') {
     const mockOptions = buildDashboardMockData_(opts) || {};
     const normalized = Object.assign({}, mockOptions);
@@ -335,11 +353,14 @@ function getDashboardData(options) {
       overview,
       meta
     };
+    logSerializationDiagnostics(result);
+    const sanitizedResult = sanitizeDashboardResponse_(result);
+    logSerializationDiagnostics(sanitizedResult);
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      Logger.log('[CALL END] returning patients=' + (result?.patients?.length || 'N/A'));
-      Logger.log('[EXIT CHECK] returning patients=' + (result?.patients?.length || 'N/A'));
+      Logger.log('[CALL END] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
+      Logger.log('[EXIT CHECK] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
     }
-    return result;
+    return sanitizedResult;
   } catch (err) {
     meta.error = err && err.message ? err.message : String(err);
     logContext('getDashboardData:error', meta.error);
@@ -354,11 +375,14 @@ function getDashboardData(options) {
       });
     }
     const result = { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
+    logSerializationDiagnostics(result);
+    const sanitizedResult = sanitizeDashboardResponse_(result);
+    logSerializationDiagnostics(sanitizedResult);
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-      Logger.log('[CALL END] returning patients=' + (result?.patients?.length || 'N/A'));
-      Logger.log('[EXIT CHECK] returning patients=' + (result?.patients?.length || 'N/A'));
+      Logger.log('[CALL END] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
+      Logger.log('[EXIT CHECK] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
     }
-    return result;
+    return sanitizedResult;
   } finally {
     const totalDuration = Date.now() - perfStartedAt;
     logPerf(`[perf] total=${totalDuration}ms`);
@@ -407,6 +431,78 @@ function getDashboardData(options) {
     logPerf('  - 権限影響: ユーザー別フィルタを前段キャッシュへ寄せると、権限境界を跨いだデータ混入リスクが上がる。');
     logPerf(`[perf-check] spreadsheetOpenCount=${spreadsheetOpenCount}`);
   }
+}
+
+function sanitizeDashboardResponse_(result) {
+  const normalized = result && typeof result === 'object' ? result : {};
+  sanitizeDashboardValue_(normalized, new WeakSet(), '$');
+  if (!Array.isArray(normalized.tasks)) normalized.tasks = [];
+  if (!Array.isArray(normalized.todayVisits)) normalized.todayVisits = [];
+  if (!Array.isArray(normalized.patients)) normalized.patients = [];
+  if (!Array.isArray(normalized.unpaidAlerts)) normalized.unpaidAlerts = [];
+  if (!Array.isArray(normalized.warnings)) normalized.warnings = [];
+  if (!Object.prototype.hasOwnProperty.call(normalized, 'overview')) normalized.overview = null;
+  if (!normalized.meta || typeof normalized.meta !== 'object' || Array.isArray(normalized.meta)) normalized.meta = {};
+  return normalized;
+}
+
+function sanitizeDashboardValue_(value, seen, path) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  if (typeof value === 'number' && !Number.isFinite(value)) return null;
+  if (typeof value === 'function') return null;
+
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      value[i] = sanitizeDashboardValue_(value[i], seen, `${path}[${i}]`);
+    }
+    return value;
+  }
+
+  if (typeof Map !== 'undefined' && value instanceof Map) {
+    const mapped = {};
+    value.forEach((entryValue, entryKey) => {
+      mapped[String(entryKey)] = sanitizeDashboardValue_(entryValue, seen, `${path}.<map:${String(entryKey)}>`);
+    });
+    return mapped;
+  }
+
+  if (typeof Set !== 'undefined' && value instanceof Set) {
+    return Array.from(value).map((item, index) => sanitizeDashboardValue_(item, seen, `${path}.<set:${index}>`));
+  }
+
+  if (value && typeof value === 'object') {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+
+    const tag = Object.prototype.toString.call(value);
+    if (tag !== '[object Object]') {
+      if (typeof value.toISOString === 'function') {
+        try {
+          return value.toISOString();
+        } catch (e) {
+          return `[NonSerializable:${tag}]`;
+        }
+      }
+      if (typeof value.getA1Notation === 'function' || typeof value.getSheet === 'function' || typeof value.getId === 'function') {
+        return `[AppsScriptObject:${tag}]`;
+      }
+      if (typeof value.toJSON === 'function') {
+        try {
+          return sanitizeDashboardValue_(value.toJSON(), seen, `${path}.toJSON`);
+        } catch (e) {
+          return `[NonSerializable:${tag}]`;
+        }
+      }
+      return `[NonSerializable:${tag}]`;
+    }
+
+    Object.keys(value).forEach(key => {
+      value[key] = sanitizeDashboardValue_(value[key], seen, `${path}.${key}`);
+    });
+  }
+
+  return value;
 }
 
 function resolveTreatmentLogDate_(entry) {

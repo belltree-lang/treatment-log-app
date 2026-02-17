@@ -302,6 +302,12 @@ function getDashboardData(options) {
       })
       : rawVisits;
 
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[VISIT CALLER] about to call buildOverviewFromTreatmentProgress_');
+      Logger.log('[VISIT CALLER] scopedVisits length=' + scopedVisits.length);
+      Logger.log('[VISIT CALLER] matchedLogsCount=' + matchedLogsCount);
+    }
+
     logContext('getDashboardData:getTodayVisits', `visits=${rawVisits.length} scopedVisits=${scopedVisits.length} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
     const patients = measureStep('buildPatients', () => buildDashboardPatients_(patientInfo, {
       notes,
@@ -1190,6 +1196,12 @@ function dashboardIsConsentAcquired_(raw) {
 }
 
 function buildOverviewFromTreatmentProgress_(visits, now, tz) {
+  if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log('[VISIT ENTRY] called buildOverviewFromTreatmentProgress_');
+    Logger.log('[VISIT ENTRY] visits typeof=' + typeof visits);
+    Logger.log('[VISIT ENTRY] visits length=' + (visits ? visits.length : 'null'));
+    Logger.log('[VISIT ENTRY] sample=' + JSON.stringify((visits || []).slice(0, 3)));
+  }
   const targetNow = dashboardCoerceDate_(now) || new Date();
   const todayKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM-dd');
   const normalizedVisits = Array.isArray(visits) ? visits : [];

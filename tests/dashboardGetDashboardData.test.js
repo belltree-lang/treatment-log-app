@@ -27,7 +27,8 @@ function createContext(overrides = {}) {
     Date,
     Set,
     Utilities: {
-      formatDate: (date, _tz, _fmt) => date.toISOString()
+      formatDate: (date, _tz, _fmt) => date.toISOString(),
+      getUuid: () => 'test-uuid'
     },
     Session: {
       getScriptTimeZone: () => 'Asia/Tokyo',
@@ -1058,6 +1059,66 @@ function testWarningsAreDedupedAndSetupFlagged() {
   assert.strictEqual(result.meta.setupIncomplete, true, 'セットアップ未完了フラグが伝搬する');
 }
 
+
+function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
+  const baseOptions = {
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '超過29日', raw: { '同意年月日': '2024-01-01' } },
+        '002': { name: '超過30日', raw: { '同意年月日': '2024-01-02' } },
+        '003': { name: '超過31日', raw: { '同意年月日': '2024-01-03' } }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-01-20T00:00:00Z'), staffKeys: { email: 'staff@example.com' } },
+        { patientId: '002', timestamp: new Date('2025-01-20T00:00:00Z'), staffKeys: { email: 'staff@example.com' } },
+        { patientId: '003', timestamp: new Date('2025-01-20T00:00:00Z'), staffKeys: { email: 'staff@example.com' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  };
+
+  const calcExpiry = value => {
+    const key = value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
+    if (key === '2024-01-01') return '2025-01-03';
+    if (key === '2024-01-02') return '2025-01-02';
+    if (key === '2024-01-03') return '2025-01-01';
+    return '';
+  };
+
+  const adminCtx = createContext({ calculateConsentExpiry_: calcExpiry });
+  const adminResult = adminCtx.getDashboardData(Object.assign({}, baseOptions, { user: { email: 'belltree@belltree1102.com' } }));
+  const adminItems = JSON.parse(JSON.stringify(adminResult.overview.consentRelated.items || []));
+  const adminIds = adminItems.map(item => item.patientId);
+  assert.strictEqual(adminItems.length, 3, 'admin では 29/30/31 日超過をすべて表示する');
+  assert.deepStrictEqual(adminIds.sort(), ['001', '002', '003']);
+  const adminExpiredDays = Object.fromEntries(adminItems.map(item => [item.patientId, Number((item.subText.match(/（(\d+)日超過）/) || [])[1]) ]));
+  assert.strictEqual(adminExpiredDays['001'], 29);
+  assert.strictEqual(adminExpiredDays['002'], 30);
+  assert.strictEqual(adminExpiredDays['003'], 31);
+
+  const staffCtx = createContext({ calculateConsentExpiry_: calcExpiry });
+  const staffResult = staffCtx.getDashboardData(Object.assign({}, baseOptions, { user: { email: 'staff@example.com' } }));
+  const staffItems = JSON.parse(JSON.stringify(staffResult.overview.consentRelated.items || []));
+  const staffIds = staffItems.map(item => item.patientId);
+  assert.strictEqual(staffItems.length, 2, 'staff では 31 日超過を除外する');
+  assert.deepStrictEqual(staffIds.sort(), ['001', '002']);
+  assert.ok(!staffItems.some(item => item.patientId === '003'), 'staff では 31 日超過は完全非表示');
+  const staffExpiredDays = Object.fromEntries(staffItems.map(item => [item.patientId, Number((item.subText.match(/（(\d+)日超過）/) || [])[1]) ]));
+  assert.strictEqual(staffExpiredDays['001'], 29);
+  assert.strictEqual(staffExpiredDays['002'], 30);
+}
+
+
 (function run() {
   testAggregatesDashboardData();
   testPatientStatusTagsGeneration();
@@ -1085,5 +1146,6 @@ function testWarningsAreDedupedAndSetupFlagged() {
   testErrorIsCapturedInMeta();
   testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged();
   testWarningsAreDedupedAndSetupFlagged();
+  testConsentExpiredOver30DaysAlertsAreRoleFiltered();
   console.log('dashboardGetDashboardData tests passed');
 })();

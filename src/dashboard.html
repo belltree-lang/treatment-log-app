@@ -146,6 +146,7 @@ const DASHBOARD_TREATMENT_APP_EXEC_URL = <?!= JSON.stringify(typeof dashboardTre
 // 一時対応: Issue #1449
 // 将来的に再有効化できるよう、データ生成ロジックは維持したままUI表示のみ抑止する。
 const DASHBOARD_SUPPRESS_HANDOVER_REMINDER_UI = true;
+let requestCounter = 0;
 const dashboardState = {
   loading: true,
   data: null,
@@ -171,28 +172,31 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function fetchDashboardData() {
-  const requestId = createDashboardRequestId_();
+  const requestId = ++requestCounter;
   dashboardState.requestId = requestId;
   setLoading(true);
   dashboardState.error = '';
+  console.log('[dashboard-ui] requestId:start', requestId);
   console.log('[dashboard requestId] fetchDashboardData', requestId);
   logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
-  const onSuccess = (payload) => {
+  const onSuccess = (data) => {
     console.log('[dashboard requestId] fetchDashboardData:onSuccess', requestId);
-    console.log('[dashboard debug] patients.length (api response)', Array.isArray(payload && payload.patients) ? payload.patients.length : 0);
-    dashboardState.data = payload || {};
+    console.log('[dashboard-ui] requestId:success', requestId, 'patients=', data?.patients?.length);
+    console.log('[dashboard debug] patients.length (api response)', Array.isArray(data && data.patients) ? data.patients.length : 0);
+    dashboardState.data = data || {};
     console.log('[dashboard debug] patients.length (after dashboardState.data assignment)', Array.isArray(dashboardState.data && dashboardState.data.patients) ? dashboardState.data.patients.length : 0);
     setLoading(false);
     const summary = {
-      tasks: Array.isArray(payload && payload.tasks) ? payload.tasks.length : 0,
-      visits: Array.isArray(payload && payload.todayVisits) ? payload.todayVisits.length : 0,
-      patients: Array.isArray(payload && payload.patients) ? payload.patients.length : 0,
-      unpaidAlerts: Array.isArray(payload && payload.unpaidAlerts) ? payload.unpaidAlerts.length : 0,
-      warnings: Array.isArray(payload && payload.warnings) ? payload.warnings.length : 0,
-      metaError: payload && payload.meta && payload.meta.error ? payload.meta.error : ''
+      tasks: Array.isArray(data && data.tasks) ? data.tasks.length : 0,
+      visits: Array.isArray(data && data.todayVisits) ? data.todayVisits.length : 0,
+      patients: Array.isArray(data && data.patients) ? data.patients.length : 0,
+      unpaidAlerts: Array.isArray(data && data.unpaidAlerts) ? data.unpaidAlerts.length : 0,
+      warnings: Array.isArray(data && data.warnings) ? data.warnings.length : 0,
+      metaError: data && data.meta && data.meta.error ? data.meta.error : ''
     };
     logDashboardUi_('fetchDashboardData:success', summary);
+    console.log('[dashboard-ui] requestId:beforeRender', requestId, 'patients=', dashboardState.data?.patients?.length);
     renderAll();
   };
   const onFailure = (err) => {

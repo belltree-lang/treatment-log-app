@@ -171,7 +171,9 @@ function fetchDashboardData() {
   logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
   const onSuccess = (payload) => {
+    console.log('[dashboard debug] patients.length (api response)', Array.isArray(payload && payload.patients) ? payload.patients.length : 0);
     dashboardState.data = payload || {};
+    console.log('[dashboard debug] patients.length (after dashboardState.data assignment)', Array.isArray(dashboardState.data && dashboardState.data.patients) ? dashboardState.data.patients.length : 0);
     setLoading(false);
     const summary = {
       tasks: Array.isArray(payload && payload.tasks) ? payload.tasks.length : 0,
@@ -449,6 +451,8 @@ function renderPatients() {
   const count = document.getElementById('patientCount');
   if (!list) return;
   list.innerHTML = '';
+
+  console.log('[dashboard debug] patients.length (before render)', Array.isArray(dashboardState.data && dashboardState.data.patients) ? dashboardState.data.patients.length : 0);
 
   const patients = dashboardState.data && Array.isArray(dashboardState.data.patients)
     ? dashboardState.data.patients.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))

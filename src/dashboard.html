@@ -184,8 +184,16 @@ function fetchDashboardData() {
     console.log('[dashboard requestId] fetchDashboardData:onSuccess', requestId);
     console.log('[dashboard-ui] requestId:success', requestId, 'patients=', data?.patients?.length);
     console.log('[dashboard debug] patients.length (api response)', Array.isArray(data && data.patients) ? data.patients.length : 0);
+    console.log('[STRUCTURE] typeof data =', typeof data);
+    console.log('[STRUCTURE] keys =', Object.keys(data || {}));
+    console.log('[STRUCTURE] raw data =', data);
+    console.log('[STRUCTURE] data.patients typeof =', typeof data?.patients);
+    console.log('[STRUCTURE] data.patients isArray =', Array.isArray(data?.patients));
     dashboardState.data = data || {};
     console.log('[dashboard debug] patients.length (after dashboardState.data assignment)', Array.isArray(dashboardState.data && dashboardState.data.patients) ? dashboardState.data.patients.length : 0);
+    console.log('[STRUCTURE] dashboardState.data keys =', Object.keys(dashboardState.data || {}));
+    console.log('[STRUCTURE] dashboardState.data.patients typeof =', typeof dashboardState.data?.patients);
+    console.log('[STRUCTURE] dashboardState.data.patients isArray =', Array.isArray(dashboardState.data?.patients));
     setLoading(false);
     const summary = {
       tasks: Array.isArray(data && data.tasks) ? data.tasks.length : 0,
@@ -197,6 +205,8 @@ function fetchDashboardData() {
     };
     logDashboardUi_('fetchDashboardData:success', summary);
     console.log('[dashboard-ui] requestId:beforeRender', requestId, 'patients=', dashboardState.data?.patients?.length);
+    console.log('[STRUCTURE] before render patients typeof =', typeof dashboardState.data?.patients);
+    console.log('[STRUCTURE] before render isArray =', Array.isArray(dashboardState.data?.patients));
     renderAll();
   };
   const onFailure = (err) => {

@@ -150,8 +150,13 @@ const dashboardState = {
   loading: true,
   data: null,
   error: '',
-  marking: new Set()
+  marking: new Set(),
+  requestId: ''
 };
+
+function createDashboardRequestId_() {
+  return `dashboard-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+}
 
 function logDashboardUi_(label, details) {
   if (typeof console === 'undefined') return;
@@ -166,11 +171,15 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function fetchDashboardData() {
+  const requestId = createDashboardRequestId_();
+  dashboardState.requestId = requestId;
   setLoading(true);
   dashboardState.error = '';
+  console.log('[dashboard requestId] fetchDashboardData', requestId);
   logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
   const onSuccess = (payload) => {
+    console.log('[dashboard requestId] fetchDashboardData:onSuccess', requestId);
     console.log('[dashboard debug] patients.length (api response)', Array.isArray(payload && payload.patients) ? payload.patients.length : 0);
     dashboardState.data = payload || {};
     console.log('[dashboard debug] patients.length (after dashboardState.data assignment)', Array.isArray(dashboardState.data && dashboardState.data.patients) ? dashboardState.data.patients.length : 0);
@@ -187,6 +196,7 @@ function fetchDashboardData() {
     renderAll();
   };
   const onFailure = (err) => {
+    console.log('[dashboard requestId] fetchDashboardData:onFailure', requestId);
     dashboardState.error = err && err.message ? err.message : String(err || '不明なエラー');
     setLoading(false);
     logDashboardUi_('fetchDashboardData:failure', dashboardState.error);
@@ -222,6 +232,7 @@ function setLoading(flag) {
 }
 
 function renderAll() {
+  console.log('[dashboard requestId] renderAll', dashboardState.requestId || '');
   renderMeta();
   renderOverview();
   renderUnpaidAlerts();

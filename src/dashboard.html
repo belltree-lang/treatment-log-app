@@ -172,6 +172,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function fetchDashboardData() {
+  console.log('[ENV CHECK] location.href =', location.href);
+  console.log('[ENV CHECK] window.top === window =', window.top === window);
   console.log('[DUP CHECK] fetchDashboardData invoked');
   console.log('[DUP CHECK] stack =', new Error().stack);
   const requestId = ++requestCounter;

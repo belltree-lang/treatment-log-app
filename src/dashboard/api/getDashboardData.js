@@ -293,7 +293,16 @@ function getDashboardData(options) {
       visiblePatientIds,
       now: opts.now
     }) : { visits: [], warnings: [] })));
-    logContext('getDashboardData:getTodayVisits', `visits=${(visitsResult && visitsResult.visits ? visitsResult.visits.length : 0)} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
+
+    const rawVisits = visitsResult && Array.isArray(visitsResult.visits) ? visitsResult.visits : [];
+    const scopedVisits = visiblePatientIds
+      ? rawVisits.filter(visit => {
+        const patientId = dashboardNormalizePatientId_(visit && visit.patientId);
+        return !!patientId && visiblePatientIds.has(patientId);
+      })
+      : rawVisits;
+
+    logContext('getDashboardData:getTodayVisits', `visits=${rawVisits.length} scopedVisits=${scopedVisits.length} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
     const patients = measureStep('buildPatients', () => buildDashboardPatients_(patientInfo, {
       notes,
       aiReports,
@@ -324,7 +333,7 @@ function getDashboardData(options) {
     logContext('getDashboardData:setupIncomplete', `result=${meta.setupIncomplete} warnings=${warningState.warnings.length}`);
 
     const overview = buildDashboardOverview_({
-      visits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
+      visits: scopedVisits,
       patients,
       patientInfo,
       treatmentLogs,
@@ -348,7 +357,7 @@ function getDashboardData(options) {
     }
     const result = {
       tasks: [],
-      todayVisits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
+      todayVisits: scopedVisits,
       patients,
       unpaidAlerts: unpaidAlertsResult && unpaidAlertsResult.alerts ? unpaidAlertsResult.alerts : [],
       warnings: warningState.warnings,
@@ -1187,23 +1196,36 @@ function buildOverviewFromTreatmentProgress_(visits, now, tz) {
   const countByDate = {};
 
   normalizedVisits.forEach(visit => {
-    const dateKey = visit && visit.dateKey ? String(visit.dateKey).trim() : '';
-    if (!dateKey) return;
+    const rawDateKey = visit && visit.dateKey ? String(visit.dateKey).trim() : '';
+    let dateKey = rawDateKey;
+    if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+      const ts = dashboardCoerceDate_(visit && visit.timestamp ? visit.timestamp : null);
+      dateKey = ts ? dashboardFormatDate_(ts, tz, 'yyyy-MM-dd') : '';
+    }
+    if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
     countByDate[dateKey] = (countByDate[dateKey] || 0) + 1;
   });
 
-  const todayCount = countByDate[todayKey] || 0;
-  const previousDayDate = Object.keys(countByDate)
+  const sortedPastDates = Object.keys(countByDate)
     .filter(dateKey => dateKey < todayKey)
-    .sort((a, b) => b.localeCompare(a))[0] || null;
-  const previousDayCount = previousDayDate ? countByDate[previousDayDate] || 0 : 0;
+    .sort((a, b) => b.localeCompare(a));
+  const previousDate = sortedPastDates[0] || null;
+  const previous2Date = sortedPastDates[1] || null;
 
   return {
-    todayCount,
-    previousDayCount,
-    previousDayDate
+    today: {
+      date: todayKey,
+      count: countByDate[todayKey] || 0
+    },
+    previous: previousDate
+      ? { date: previousDate, count: countByDate[previousDate] || 0 }
+      : null,
+    previous2: previous2Date
+      ? { date: previous2Date, count: countByDate[previous2Date] || 0 }
+      : null
   };
 }
+
 
 function collectDashboardWarnings_(results) {
   const warnings = [];

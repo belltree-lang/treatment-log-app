@@ -42,6 +42,15 @@ function getDashboardData(options) {
     const mockOptions = buildDashboardMockData_(opts) || {};
     const normalized = Object.assign({}, mockOptions);
     normalized.mock = '';
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[RETURN PATH]', {
+        tag: 'mock-recursion',
+        patients: typeof patients !== 'undefined' ? patients?.length : undefined,
+        tasks: typeof tasks !== 'undefined' ? tasks?.length : undefined,
+        setupIncomplete: typeof setupIncomplete !== 'undefined' ? setupIncomplete : undefined,
+        metaError: typeof metaError !== 'undefined' ? metaError : undefined
+      });
+    }
     return getDashboardData(normalized);
   }
   const meta = {
@@ -268,6 +277,11 @@ function getDashboardData(options) {
       treatmentLogs,
       now: opts.now
     }, visiblePatientIds));
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[AFTER buildPatients]', {
+        patients: patients?.length
+      });
+    }
     logContext('getDashboardData:buildPatients', `patients=${patients.length}`);
 
     const warningState = collectDashboardWarnings_([
@@ -297,6 +311,15 @@ function getDashboardData(options) {
     });
     const invoiceUnconfirmed = overview && overview.invoiceUnconfirmed ? overview.invoiceUnconfirmed : { items: [] };
     logContext('getDashboardData:overviewInvoiceUnconfirmed', `items.length=${Array.isArray(invoiceUnconfirmed.items) ? invoiceUnconfirmed.items.length : 0}`);
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[RETURN PATH]', {
+        tag: 'success-main',
+        patients: patients?.length,
+        tasks: tasksResult?.tasks?.length,
+        setupIncomplete: meta.setupIncomplete,
+        metaError: meta.error
+      });
+    }
     return {
       tasks: [],
       todayVisits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
@@ -309,6 +332,16 @@ function getDashboardData(options) {
   } catch (err) {
     meta.error = err && err.message ? err.message : String(err);
     logContext('getDashboardData:error', meta.error);
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[CATCH RETURN]', err);
+      Logger.log('[RETURN PATH]', {
+        tag: 'catch-error',
+        patients: typeof patients !== 'undefined' ? patients?.length : undefined,
+        tasks: typeof tasks !== 'undefined' ? tasks?.length : undefined,
+        setupIncomplete: meta.setupIncomplete,
+        metaError: meta.error
+      });
+    }
     return { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
   } finally {
     const totalDuration = Date.now() - perfStartedAt;

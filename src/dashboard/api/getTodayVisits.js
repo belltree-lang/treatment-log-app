@@ -21,6 +21,11 @@ function getTodayVisits(options) {
   const notesResult = opts.notes || (typeof loadNotes === 'function' ? loadNotes() : null);
   const notes = notesResult && notesResult.notes ? notesResult.notes : {};
 
+  if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log('[TODAY VISITS ENTRY] logs length=' + (logs ? logs.length : 'null'));
+    Logger.log('[TODAY VISITS ENTRY] visiblePatientIds size=' + (visiblePatientIds ? visiblePatientIds.size : 'null'));
+  }
+
   const warnings = [];
   if (treatment && Array.isArray(treatment.warnings)) warnings.push.apply(warnings, treatment.warnings);
   if (notesResult && Array.isArray(notesResult.warnings)) warnings.push.apply(warnings, notesResult.warnings);
@@ -65,7 +70,12 @@ function getTodayVisits(options) {
     return a.dateKey.localeCompare(b.dateKey);
   });
 
-  return { visits, warnings, setupIncomplete };
+  const result = visits;
+  if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log('[TODAY VISITS RETURN] result length=' + result.length);
+  }
+
+  return { visits: result, warnings, setupIncomplete };
 }
 
 

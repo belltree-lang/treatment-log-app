@@ -1193,6 +1193,7 @@ function buildOverviewFromTreatmentProgress_(visits, now, tz) {
   const targetNow = dashboardCoerceDate_(now) || new Date();
   const todayKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM-dd');
   const normalizedVisits = Array.isArray(visits) ? visits : [];
+  const scopedVisits = normalizedVisits;
   const countByDate = {};
 
   normalizedVisits.forEach(visit => {
@@ -1205,6 +1206,28 @@ function buildOverviewFromTreatmentProgress_(visits, now, tz) {
     if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
     countByDate[dateKey] = (countByDate[dateKey] || 0) + 1;
   });
+
+  console.log('===== VISIT DEBUG START =====');
+
+  console.log('[VISIT DEBUG] todayKey =', todayKey);
+  console.log('[VISIT DEBUG] scopedVisits length =', scopedVisits.length);
+
+  const rawDates = scopedVisits.map(v => v.dateKey);
+  console.log('[VISIT DEBUG] raw dateKeys =', rawDates);
+
+  const uniqueSorted = [...new Set(rawDates)].sort();
+  console.log('[VISIT DEBUG] uniqueSorted dateKeys =', uniqueSorted);
+
+  const pastDateKeys = uniqueSorted.filter(d => d < todayKey);
+  console.log('[VISIT DEBUG] pastDateKeys (< todayKey) =', pastDateKeys);
+
+  const sortedDesc = [...pastDateKeys].sort().reverse();
+  console.log('[VISIT DEBUG] sortedDesc =', sortedDesc);
+
+  console.log('[VISIT DEBUG] previous =', sortedDesc[0] || null);
+  console.log('[VISIT DEBUG] previous2 =', sortedDesc[1] || null);
+
+  console.log('===== VISIT DEBUG END =====');
 
   const sortedPastDates = Object.keys(countByDate)
     .filter(dateKey => dateKey < todayKey)

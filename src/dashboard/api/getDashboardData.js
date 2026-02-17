@@ -5,7 +5,10 @@
  * @return {{tasks: Object[], todayVisits: Object[], patients: Object[], warnings: string[], meta: Object}}
  */
 function getDashboardData(options) {
+  const mock = options && options.mock;
   if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log('[CALL ID] ' + Utilities.getUuid());
+    Logger.log('[CALL PARAM mock] ' + mock);
     Logger.log('[ENTRY CHECK] getDashboardData called');
   }
   const opts = options || {};
@@ -333,6 +336,7 @@ function getDashboardData(options) {
       meta
     };
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[CALL END] returning patients=' + (result?.patients?.length || 'N/A'));
       Logger.log('[EXIT CHECK] returning patients=' + (result?.patients?.length || 'N/A'));
     }
     return result;
@@ -351,6 +355,7 @@ function getDashboardData(options) {
     }
     const result = { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[CALL END] returning patients=' + (result?.patients?.length || 'N/A'));
       Logger.log('[EXIT CHECK] returning patients=' + (result?.patients?.length || 'N/A'));
     }
     return result;

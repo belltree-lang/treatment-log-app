@@ -183,6 +183,7 @@ function fetchDashboardData() {
   logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
   const onSuccess = (data) => {
+    console.log('[SUCCESS DATA RAW]', data);
     console.log('[DUP CHECK] success handler entered');
     console.log('[CALL CHECK] success handler triggered');
     console.log('[dashboard requestId] fetchDashboardData:onSuccess', requestId);

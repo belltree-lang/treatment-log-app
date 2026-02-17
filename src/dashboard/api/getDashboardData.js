@@ -5,6 +5,9 @@
  * @return {{tasks: Object[], todayVisits: Object[], patients: Object[], warnings: string[], meta: Object}}
  */
 function getDashboardData(options) {
+  if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+    Logger.log('[ENTRY CHECK] getDashboardData called');
+  }
   const opts = options || {};
   let spreadsheetOpenCount = 0;
   const perfStartedAt = Date.now();
@@ -320,7 +323,7 @@ function getDashboardData(options) {
         metaError: meta.error
       });
     }
-    return {
+    const result = {
       tasks: [],
       todayVisits: visitsResult && visitsResult.visits ? visitsResult.visits : [],
       patients,
@@ -329,6 +332,10 @@ function getDashboardData(options) {
       overview,
       meta
     };
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[EXIT CHECK] returning patients=' + (result?.patients?.length || 'N/A'));
+    }
+    return result;
   } catch (err) {
     meta.error = err && err.message ? err.message : String(err);
     logContext('getDashboardData:error', meta.error);
@@ -342,7 +349,11 @@ function getDashboardData(options) {
         metaError: meta.error
       });
     }
-    return { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
+    const result = { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
+    if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
+      Logger.log('[EXIT CHECK] returning patients=' + (result?.patients?.length || 'N/A'));
+    }
+    return result;
   } finally {
     const totalDuration = Date.now() - perfStartedAt;
     logPerf(`[perf] total=${totalDuration}ms`);

@@ -181,6 +181,7 @@ function fetchDashboardData() {
   logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
   const onSuccess = (data) => {
+    console.log('[CALL CHECK] success handler triggered');
     console.log('[dashboard requestId] fetchDashboardData:onSuccess', requestId);
     console.log('[dashboard-ui] requestId:success', requestId, 'patients=', data?.patients?.length);
     console.log('[dashboard debug] patients.length (api response)', Array.isArray(data && data.patients) ? data.patients.length : 0);
@@ -222,6 +223,7 @@ function fetchDashboardData() {
     const mockFlag = resolveDashboardMockParam_();
     const args = mockFlag ? { mock: mockFlag } : {};
     logDashboardUi_('fetchDashboardData:appsScript', { mock: mockFlag || null });
+    console.log('[CALL CHECK] invoking getDashboardData');
     runner.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getDashboardData(args);
     return;
   }

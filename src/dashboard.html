@@ -172,6 +172,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function fetchDashboardData() {
+  console.log('[DUP CHECK] fetchDashboardData invoked');
+  console.log('[DUP CHECK] stack =', new Error().stack);
   const requestId = ++requestCounter;
   dashboardState.requestId = requestId;
   setLoading(true);
@@ -181,6 +183,7 @@ function fetchDashboardData() {
   logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
   const onSuccess = (data) => {
+    console.log('[DUP CHECK] success handler entered');
     console.log('[CALL CHECK] success handler triggered');
     console.log('[dashboard requestId] fetchDashboardData:onSuccess', requestId);
     console.log('[dashboard-ui] requestId:success', requestId, 'patients=', data?.patients?.length);
@@ -223,6 +226,7 @@ function fetchDashboardData() {
     const mockFlag = resolveDashboardMockParam_();
     const args = mockFlag ? { mock: mockFlag } : {};
     logDashboardUi_('fetchDashboardData:appsScript', { mock: mockFlag || null });
+    console.log('[DUP CHECK] about to call getDashboardData');
     console.log('[CALL CHECK] invoking getDashboardData');
     runner.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getDashboardData(args);
     return;

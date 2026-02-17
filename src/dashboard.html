@@ -75,6 +75,8 @@
   .summary-header h3{ margin:0; font-size:1rem; }
   .summary-count{ font-weight:700; font-size:1.1rem; color:#fff; }
   .overview-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .overview-section{ display:flex; flex-direction:column; gap:8px; }
+  .overview-section-title{ margin:2px 0 0; font-size:0.86rem; color:var(--muted); font-weight:700; }
   .overview-row{ display:flex; flex-direction:column; gap:4px; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:rgba(255,255,255,0.02); cursor:pointer; transition:background .15s ease, border-color .15s ease, transform .15s ease; }
   .overview-row:hover{ background:rgba(56,189,248,0.12); border-color:rgba(56,189,248,0.4); }
   .overview-row:active{ transform:translateY(1px); }
@@ -319,11 +321,69 @@ function renderConsentSummary() {
   if (!container) return;
   const overview = dashboardState.data && dashboardState.data.overview ? dashboardState.data.overview : {};
   const data = overview && overview.consentRelated ? overview.consentRelated : { count: 0, items: [] };
-  renderOverviewCard_(container, {
-    title: '②同意',
-    items: data.items || [],
-    emptyText: '対象者なし'
+  container.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'summary-header';
+  const title = document.createElement('h3');
+  title.textContent = '②同意';
+  header.appendChild(title);
+  container.appendChild(header);
+
+  const items = Array.isArray(data.items) ? data.items : [];
+  const sections = classifyConsentSummaryItems_(items);
+  const hasItems = sections.expired.length > 0 || sections.warning.length > 0;
+  if (!hasItems) {
+    const empty = document.createElement('div');
+    empty.className = 'overview-empty';
+    empty.textContent = '対象者なし';
+    container.appendChild(empty);
+    return;
+  }
+
+  if (sections.expired.length > 0) {
+    container.appendChild(renderConsentSummarySection_('期限超過', sections.expired));
+  }
+  if (sections.warning.length > 0) {
+    container.appendChild(renderConsentSummarySection_('期限間近', sections.warning));
+  }
+}
+
+function classifyConsentSummaryItems_(items) {
+  const result = { expired: [], warning: [] };
+  (items || []).forEach(item => {
+    if (!item || !item.patientId) return;
+    const subText = String(item.subText || '').trim();
+    const expiredMatch = subText.match(/(\d+)日超過/);
+    if (expiredMatch && Number(expiredMatch[1]) > 0) {
+      result.expired.push({
+        patientId: item.patientId,
+        name: item.name,
+        subText: `◢ 同意期限超過（${Number(expiredMatch[1])}日超過）`
+      });
+      return;
+    }
+    const remainMatch = subText.match(/残\s*(-?\d+)\s*日/);
+    if (remainMatch && Number(remainMatch[1]) <= 30) {
+      result.warning.push({
+        patientId: item.patientId,
+        name: item.name,
+        subText: `⌛ 同意期限迫る（残${Number(remainMatch[1])}日）`
+      });
+    }
   });
+  return result;
+}
+
+function renderConsentSummarySection_(sectionTitle, items) {
+  const section = document.createElement('div');
+  section.className = 'overview-section';
+  const title = document.createElement('div');
+  title.className = 'overview-section-title';
+  title.textContent = sectionTitle;
+  section.appendChild(title);
+  section.appendChild(renderOverviewList_(items, '', { keepOrder: true }));
+  return section;
 }
 
 function renderVisitSummary() {
@@ -701,7 +761,8 @@ function renderOverviewMetric_(label, value) {
   return row;
 }
 
-function renderOverviewList_(items, emptyText) {
+function renderOverviewList_(items, emptyText, options) {
+  const opts = options || {};
   const filteredItems = (items || []).filter(item => item && item.patientId);
   if (!filteredItems.length) {
     const empty = document.createElement('div');
@@ -712,10 +773,10 @@ function renderOverviewList_(items, emptyText) {
 
   const list = document.createElement('div');
   list.className = 'overview-list';
-  filteredItems
-    .slice()
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'))
-    .forEach(item => {
+  const orderedItems = opts.keepOrder
+    ? filteredItems.slice()
+    : filteredItems.slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  orderedItems.forEach(item => {
       const row = document.createElement('div');
       row.className = 'overview-row';
       const title = document.createElement('div');

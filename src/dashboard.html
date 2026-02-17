@@ -168,25 +168,12 @@ function logDashboardUi_(label, details) {
 document.addEventListener('DOMContentLoaded', () => {
   const refreshBtn = document.getElementById('refreshBtn');
   refreshBtn.addEventListener('click', fetchDashboardData);
+  console.log('[ENV CHECK] href =', location.href);
+  console.log('[ENV CHECK] top === window =', window.top === window);
   fetchDashboardData();
 });
 
 function fetchDashboardData() {
-  // --- OAuth iframe guard ---
-  try {
-    if (window.top !== window) {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('createOAuthDialog') === 'true') {
-        console.log('[OAUTH GUARD] skip fetchDashboardData in OAuth dialog');
-        return;
-      }
-    }
-  } catch (e) {
-    console.log('[OAUTH GUARD] param parse error', e);
-  }
-  // --- end guard ---
-  console.log('[ENV CHECK] location.href =', location.href);
-  console.log('[ENV CHECK] window.top === window =', window.top === window);
   console.log('[DUP CHECK] fetchDashboardData invoked');
   console.log('[DUP CHECK] stack =', new Error().stack);
   const requestId = ++requestCounter;
@@ -198,6 +185,7 @@ function fetchDashboardData() {
   logDashboardUi_('fetchDashboardData:start', { mock: resolveDashboardMockParam_() || null });
 
   const onSuccess = (data) => {
+    console.log('[RUN OK typeof]', typeof data, data);
     console.log('[SUCCESS DATA RAW]', data);
     console.log('[DUP CHECK] success handler entered');
     console.log('[CALL CHECK] success handler triggered');
@@ -230,6 +218,7 @@ function fetchDashboardData() {
     renderAll();
   };
   const onFailure = (err) => {
+    console.error('[RUN FAIL]', err, JSON.stringify(err || {}));
     console.log('[dashboard requestId] fetchDashboardData:onFailure', requestId);
     dashboardState.error = err && err.message ? err.message : String(err || '不明なエラー');
     setLoading(false);
@@ -242,6 +231,7 @@ function fetchDashboardData() {
     const mockFlag = resolveDashboardMockParam_();
     const args = mockFlag ? { mock: mockFlag } : {};
     logDashboardUi_('fetchDashboardData:appsScript', { mock: mockFlag || null });
+    console.log('[ENV CHECK] calling getDashboardData from', location.href);
     console.log('[DUP CHECK] about to call getDashboardData');
     console.log('[CALL CHECK] invoking getDashboardData');
     runner.withSuccessHandler(onSuccess).withFailureHandler(onFailure).getDashboardData(args);

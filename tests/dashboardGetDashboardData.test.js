@@ -583,7 +583,7 @@ function testStaffConsentEligibilityEvaluatesOnlyVisiblePatients() {
   assert.deepStrictEqual(consentDebugLogs, ['001'], '可視範囲外の患者は一致していても同意デバッグログを出力しない');
 }
 
-function testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount() {
+function testVisitSummaryWhenTodayIsZeroUsesPreviousDayCount() {
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -603,11 +603,12 @@ function testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount() {
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
     todayCount: 0,
-    latestDayCount: 1
+    previousDayCount: 1,
+    previousDayDate: '2025-01-31'
   });
 }
 
-function testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth() {
+function testVisitSummaryWhenTodayHasTwoStillUsesPreviousDayAsPastDate() {
   const ctx = createContext({
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -629,8 +630,10 @@ function testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth() {
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
     todayCount: 2,
-    latestDayCount: 2
+    previousDayCount: 1,
+    previousDayDate: '2025-01-31'
   });
+  assert.notStrictEqual(result.previousDayDate, '2025-02-01', 'today に施術があっても previousDayDate は今日より前を指す');
 }
 
 function testVisitSummaryWhenNoDataReturnsZeroCounts() {
@@ -651,7 +654,8 @@ function testVisitSummaryWhenNoDataReturnsZeroCounts() {
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), {
     todayCount: 0,
-    latestDayCount: 0
+    previousDayCount: 0,
+    previousDayDate: null
   });
 }
 
@@ -1133,8 +1137,8 @@ function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
   testRoleResolutionIsEmailBasedOnly();
   testStaffConsentScopeMetricsAreLogged();
   testStaffConsentEligibilityEvaluatesOnlyVisiblePatients();
-  testVisitSummaryWhenTodayIsZeroUsesLatestPastDayCount();
-  testVisitSummaryWhenTodayHasTwoUsesTodayCountForBoth();
+  testVisitSummaryWhenTodayIsZeroUsesPreviousDayCount();
+  testVisitSummaryWhenTodayHasTwoStillUsesPreviousDayAsPastDate();
   testVisitSummaryWhenNoDataReturnsZeroCounts();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();

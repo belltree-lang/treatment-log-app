@@ -1192,16 +1192,16 @@ function buildOverviewFromTreatmentProgress_(visits, now, tz) {
     countByDate[dateKey] = (countByDate[dateKey] || 0) + 1;
   });
 
-
   const todayCount = countByDate[todayKey] || 0;
-  const latestPastDate = Object.keys(countByDate)
+  const previousDayDate = Object.keys(countByDate)
     .filter(dateKey => dateKey < todayKey)
-    .sort((a, b) => b.localeCompare(a))[0] || '';
-  const latestDayCount = todayCount > 0 ? todayCount : (latestPastDate ? countByDate[latestPastDate] || 0 : 0);
+    .sort((a, b) => b.localeCompare(a))[0] || null;
+  const previousDayCount = previousDayDate ? countByDate[previousDayDate] || 0 : 0;
 
   return {
     todayCount,
-    latestDayCount
+    previousDayCount,
+    previousDayDate
   };
 }
 

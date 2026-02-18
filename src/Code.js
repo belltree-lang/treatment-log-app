@@ -9846,6 +9846,7 @@ function doGet(e) {
 
   // ここでURLを渡す
   t.baseUrl = ScriptApp.getService().getUrl();
+  t.dashboardExecUrl = (typeof DASHBOARD_EXEC_URL !== 'undefined') ? DASHBOARD_EXEC_URL : '';
 
   // 患者ID（?patientId=XXXX / ?id=XXXX）をテンプレートに渡す
   t.initialRecordPatientId = (e.parameter && (e.parameter.id || e.parameter.patientId))

@@ -3312,17 +3312,14 @@ function loadPatientInfoWithRetry(patientId, options){
   const jobs = [
     loadTreatments(targetPatientId, { requestToken }),
     loadHeader(targetPatientId, { requestToken }),
-    loadReports(targetPatientId, { requestToken })
+    loadReports(targetPatientId, { requestToken }),
+    loadNews(targetPatientId, { requestToken })
   ];
 
   return Promise.allSettled(jobs).finally(() => {
-    if (!isActivePatientInfoRequest(requestToken)) {
-      return;
+    if (isActivePatientInfoRequest(requestToken)) {
+      hideGlobalLoading();
     }
-    hideGlobalLoading();
-    setTimeout(() => {
-      loadNews(targetPatientId, { requestToken });
-    }, 0);
   });
 }
 

@@ -102,7 +102,7 @@ function testAggregatesDashboardData() {
   assert.deepStrictEqual(normalizedPatient, {
     patientId: '001',
     name: '山田太郎',
-    consentExpiry: '2025-01-31T00:00:00.000Z',
+    consentExpiry: '2025/01/31',
     responsible: 'staff@example.com',
     invoiceUrl: 'https://example.com/invoice.pdf',
     aiReportAt: '2025-01-15 10:00',
@@ -124,6 +124,37 @@ function testAggregatesDashboardData() {
   assert.strictEqual(result.unpaidAlerts[0].patientId, '001');
   const warnings = JSON.parse(JSON.stringify(result.warnings)).sort();
   assert.deepStrictEqual(warnings, ['a1', 'i1', 'n1', 'p1', 'r1', 't1', 'u1', 'visit'].sort());
+}
+
+function testPatientConsentExpiryUsesSlashDateWithoutIso() {
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: 'ISO形式患者', consentExpiry: '2026-05-30T15:00:00.000Z', raw: {} },
+        '002': { name: '同意日患者', raw: { '同意年月日': '2024-08-16' } }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
+  });
+
+  const expiries = (result.patients || []).map(patient => String(patient && patient.consentExpiry || ''));
+  assert.ok(expiries.length >= 2, '患者一覧に複数患者が含まれる');
+  expiries.forEach(expiry => {
+    if (!expiry) return;
+    assert.ok(/^\d{4}\/\d{2}\/\d{2}$/.test(expiry), `consentExpiry は YYYY/MM/DD 形式: ${expiry}`);
+    assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(expiry), `consentExpiry に ISO 形式を含めない: ${expiry}`);
+  });
 }
 
 
@@ -1422,6 +1453,7 @@ function testConsentOverviewSubTextUsesSlashDateWithoutIso() {
 
 (function run() {
   testAggregatesDashboardData();
+  testPatientConsentExpiryUsesSlashDateWithoutIso();
   testPatientStatusTagsGeneration();
   testConsentOverviewMatchesPatientStatusTags();
   testEvaluateConsentStatusBoundaries();

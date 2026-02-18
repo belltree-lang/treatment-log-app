@@ -203,13 +203,13 @@ function testPatientStatusTagsGeneration() {
 
   assert.deepStrictEqual(patientsById['001'], [
     { type: 'consent', label: '📄 要対応', priority: 'low' },
-    { type: 'report', label: '未作成' }
-  ], '1. 期限内未取得は要対応＋未作成を表示する');
+    { type: 'report', label: '医師報告書 未作成' }
+  ], '1. 期限内未取得は要対応＋医師報告書 未作成を表示する');
 
   assert.deepStrictEqual(patientsById['002'], [
     { type: 'consent', label: '⚠ 期限超過', priority: 'high' },
-    { type: 'report', label: '未作成' }
-  ], '2. 期限超過未取得は期限超過＋未作成を表示する');
+    { type: 'report', label: '医師報告書 未作成' }
+  ], '2. 期限超過未取得は期限超過＋医師報告書 未作成を表示する');
 
   assert.deepStrictEqual(patientsById['003'], [
     { type: 'consent', label: '📄 要対応', priority: 'low' },
@@ -218,14 +218,12 @@ function testPatientStatusTagsGeneration() {
 
   assert.deepStrictEqual(patientsById['004'], [], '4. 同意取得確認ありは両タグを非表示にする');
 
-  assert.deepStrictEqual(patientsById['005'], [
-    { type: 'report', label: '未作成' }
-  ], '5. 同意期限30日超はconsent非表示だがreportは表示する');
+  assert.deepStrictEqual(patientsById['005'], [], '5. 同意期限50日超はconsent/reportともに非表示にする');
 
   assert.deepStrictEqual(patientsById['006'], [
     { type: 'consent', label: '📄 要対応', priority: 'low' },
-    { type: 'report', label: '未作成' }
-  ], '6. 同意年月日から算出した期限内は要対応を表示する');
+    { type: 'report', label: '医師報告書 未作成' }
+  ], '6. 同意年月日から算出した期限内は要対応＋医師報告書 未作成を表示する');
 }
 
 function testConsentOverviewMatchesPatientStatusTags() {
@@ -300,14 +298,14 @@ function testEvaluateConsentStatusBoundaries() {
 }
 
 
-function testConsentOver30DaysStillShowsReportTag() {
+function testConsentOver50DaysHidesMissingReportTag() {
   const ctx = createContext();
   const result = ctx.getDashboardData({
     user: { email: 'belltree@belltree1102.com', role: 'admin' },
     now: new Date('2025-02-01T00:00:00Z'),
     patientInfo: {
       patients: {
-        '001': { name: '同意期限30日超', raw: { '同意年月日': '2024-09-16' } }
+        '001': { name: '同意期限50日超', raw: { '同意年月日': '2024-10-20' } }
       },
       warnings: []
     },
@@ -323,7 +321,7 @@ function testConsentOver30DaysStillShowsReportTag() {
 
   const tags = JSON.parse(JSON.stringify(result.patients[0].statusTags));
   assert.deepStrictEqual(tags.filter(tag => tag.type === 'consent'), [], '30日超はconsentタグ非表示');
-  assert.deepStrictEqual(tags.filter(tag => tag.type === 'report'), [{ type: 'report', label: '未作成' }], '30日超でもreportタグは表示');
+  assert.deepStrictEqual(tags.filter(tag => tag.type === 'report'), [], '同意期限50日超では医師報告書 未作成タグを表示しない');
 }
 
 function testEvaluateConsentStatusIsTimeIndependentForSameDate() {
@@ -1538,7 +1536,7 @@ function testConsentOverviewSubTextUsesSlashDateWithoutIso() {
   testPatientStatusTagsGeneration();
   testConsentOverviewMatchesPatientStatusTags();
   testEvaluateConsentStatusBoundaries();
-  testConsentOver30DaysStillShowsReportTag();
+  testConsentOver50DaysHidesMissingReportTag();
   testEvaluateConsentStatusIsTimeIndependentForSameDate();
   testConsentAcquiredJudgmentHandlesFalseyStringsConsistently();
   testConsentDateParsingFormatsAndResolverPriority();

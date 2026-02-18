@@ -111,7 +111,7 @@ function createContext() {
   const { context, patientList } = createContext();
   vm.runInContext(`dashboardState.data = {
     patients: [
-      { patientId: '1', name: '未作成', statusTags: [{ type: 'report', label: '未作成' }] },
+      { patientId: '1', name: '未作成', statusTags: [{ type: 'report', label: '医師報告書 未作成' }] },
       { patientId: '2', name: '作成済', statusTags: [{ type: 'report', label: '作成済' }] }
     ]
   };`, context);
@@ -122,10 +122,10 @@ function createContext() {
     const header = row.children[0].children[0];
     return header.children.find((child) => child.className === 'status-tags').children[0];
   });
-  const pendingTag = allTags.find((tag) => tag.textContent === '未作成');
+  const pendingTag = allTags.find((tag) => tag.textContent === '医師報告書 未作成');
   const doneTag = allTags.find((tag) => tag.textContent === '作成済');
 
-  assert.ok(pendingTag.className.includes('tag-report-pending'), '未作成 should use pending class');
+  assert.ok(pendingTag.className.includes('tag-report-pending'), '医師報告書 未作成 should use pending class');
   assert.ok(doneTag.className.includes('tag-report-done'), '作成済 should use done class');
 })();
 

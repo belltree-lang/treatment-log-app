@@ -728,7 +728,18 @@ function buildDashboardPatientStatusTags_(patient, params, maybeNow) {
 
   const reportDate = dashboardParseTimestamp_(aiReportAt);
   if (!consentAcquired) {
-    tags.push({ type: 'report', label: reportDate ? '作成済' : '未作成' });
+    if (reportDate) {
+      tags.push({ type: 'report', label: '作成済' });
+    } else {
+      const todayStart = new Date(targetNow.getFullYear(), targetNow.getMonth(), targetNow.getDate());
+      const expiryStart = consentExpiryDate
+        ? new Date(consentExpiryDate.getFullYear(), consentExpiryDate.getMonth(), consentExpiryDate.getDate())
+        : null;
+      const daysUntilConsentExpiry = expiryStart ? dashboardDaysBetween_(todayStart, expiryStart, true) : null;
+      if (daysUntilConsentExpiry != null && daysUntilConsentExpiry <= 50) {
+        tags.push({ type: 'report', label: '医師報告書 未作成' });
+      }
+    }
   }
 
   return tags;

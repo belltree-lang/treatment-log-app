@@ -742,9 +742,77 @@ function testVisitSummaryUsesStaffFilteredLogsNotScopedVisits() {
     },
     previous: {
       date: '2025-01-31',
-      visits: [{ patientId: '001', dateKey: '2025-01-31', time: '09:00' }]
+      visits: [
+        { patientId: '001', dateKey: '2025-01-31', time: '09:00' },
+        { patientId: '002', dateKey: '2025-01-31', time: '10:00' }
+      ]
     }
-  }, 'todayVisits は従来どおり visiblePatientIds スコープを使う');
+  }, 'todayVisits は getTodayVisits の戻りをそのまま保持する');
+}
+
+
+function testTodayVisitsAndSummaryUseSameLogsByRole() {
+  const capture = [];
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        if (fmt === 'yyyy-MM-dd') return new Date(date).toISOString().slice(0, 10);
+        return new Date(date).toISOString();
+      }
+    },
+    getTodayVisits: options => {
+      const logs = options && options.treatmentLogs && Array.isArray(options.treatmentLogs.logs)
+        ? options.treatmentLogs.logs
+        : [];
+      capture.push(logs.map(entry => entry.patientId));
+      const todayVisits = logs
+        .filter(entry => entry.dateKey === '2025-02-01')
+        .map(entry => ({ patientId: entry.patientId, dateKey: entry.dateKey, time: '09:00' }));
+      const previousVisits = logs
+        .filter(entry => entry.dateKey === '2025-01-31')
+        .map(entry => ({ patientId: entry.patientId, dateKey: entry.dateKey, time: '09:00' }));
+      return {
+        today: { date: '2025-02-01', visits: todayVisits },
+        previous: { date: '2025-01-31', visits: previousVisits },
+        warnings: []
+      };
+    }
+  });
+
+  const request = {
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '患者1', raw: {} },
+        '002': { name: '患者2', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-02-01T09:00:00Z'), dateKey: '2025-02-01', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '001', timestamp: new Date('2025-01-31T09:00:00Z'), dateKey: '2025-01-31', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-02-01T10:00:00Z'), dateKey: '2025-02-01', staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: { '001': 'staff@example.com', '002': 'other@example.com' }, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] }
+  };
+
+  const staffResult = ctx.getDashboardData(Object.assign({}, request, { user: { email: 'staff@example.com', role: 'staff' } }));
+  const adminResult = ctx.getDashboardData(Object.assign({}, request, { user: { email: 'belltree@belltree1102.com', role: 'admin' } }));
+
+  assert.deepStrictEqual(Array.from(capture[0] || []), ['001', '001'], 'staff は staffFilteredLogs だけを getTodayVisits に渡す');
+  assert.deepStrictEqual(Array.from(capture[1] || []), ['001', '001', '002'], 'admin は全 treatmentLogs を getTodayVisits に渡す');
+
+  assert.strictEqual(staffResult.overview.visitSummary.today.count, staffResult.todayVisits.today.visits.length, 'staff の当日件数は visitSummary と todayVisits で一致する');
+  assert.strictEqual(adminResult.overview.visitSummary.today.count, adminResult.todayVisits.today.visits.length, 'admin の当日件数は visitSummary と todayVisits で一致する');
+  assert.ok(staffResult.todayVisits.today.visits.every(visit => visit.patientId === '001'), 'staff タイムラインに他スタッフ施術ログが混入しない');
 }
 
 function testVisitSummaryWorksWhenVisiblePatientIdsBecomesEmpty() {
@@ -779,7 +847,7 @@ function testVisitSummaryWorksWhenVisiblePatientIdsBecomesEmpty() {
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits)), {
     today: { date: null, visits: [] },
     previous: { date: null, visits: [] }
-  }, 'visiblePatientIds が空なら todayVisits は空のまま');
+  }, 'todayVisits が空の入力をそのまま返す');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.visitSummary)), {
     today: { date: '2025-02-01', count: 0 },
     previous: null,
@@ -1018,9 +1086,8 @@ function testVisibleScopeForAdminShowsAllPatients() {
       warnings: []
     }),
     getTodayVisits: opts => {
-      const scoped = ['001', '002']
-        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
-        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' }));
+      const scoped = (opts.treatmentLogs && Array.isArray(opts.treatmentLogs.logs) ? opts.treatmentLogs.logs : [])
+        .map(entry => ({ patientId: entry.patientId, dateKey: '2025-02-10', time: '09:00' }));
       return {
         today: { date: '2025-02-10', visits: scoped },
         previous: { date: null, visits: [] },
@@ -1094,9 +1161,8 @@ function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
       warnings: []
     }),
     getTodayVisits: opts => {
-      const scoped = ['001', '002']
-        .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
-        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' }));
+      const scoped = (opts.treatmentLogs && Array.isArray(opts.treatmentLogs.logs) ? opts.treatmentLogs.logs : [])
+        .map(entry => ({ patientId: entry.patientId, dateKey: '2025-02-10', time: '09:00' }));
       return {
         today: { date: '2025-02-10', visits: scoped },
         previous: { date: null, visits: [] },
@@ -1159,7 +1225,8 @@ function testVisibleScopeForStaffWithoutResponsibleAssignmentShowsNoPatients() {
     getTodayVisits: opts => ({
       today: {
         date: '2025-02-10',
-        visits: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001', dateKey: '2025-02-10', time: '09:00' }] : []
+        visits: (opts.treatmentLogs && Array.isArray(opts.treatmentLogs.logs) ? opts.treatmentLogs.logs : [])
+          .map(entry => ({ patientId: entry.patientId, dateKey: '2025-02-10', time: '09:00' }))
       },
       previous: { date: null, visits: [] },
       warnings: []
@@ -1342,6 +1409,7 @@ function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
   testVisitSummaryWithoutTodayVisits();
   testVisitSummaryWithOnlyOneTreatmentDay();
   testVisitSummaryUsesStaffFilteredLogsNotScopedVisits();
+  testTodayVisitsAndSummaryUseSameLogsByRole();
   testVisitSummaryWorksWhenVisiblePatientIdsBecomesEmpty();
   testVisitSummaryStaffScopeLookbackIsFixedTo50Days();
   testVisitSummaryHasOnlyThreeKeysAndPastSlotsAreBeforeToday();

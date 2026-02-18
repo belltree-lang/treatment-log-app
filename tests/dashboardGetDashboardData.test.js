@@ -230,9 +230,9 @@ function testConsentOverviewMatchesPatientStatusTags() {
 
   const overviewItems = JSON.parse(JSON.stringify(result.overview.consentRelated.items));
   assert.deepStrictEqual(overviewItems, [
-    { patientId: '002', name: '期限超過未取得', subText: '⚠ 同意期限超過（1日超過）' },
-    { patientId: '001', name: '期限内未取得', subText: '同意期限（残27日）' },
-    { patientId: '005', name: '期限迫る未取得', subText: '同意期限（残27日）' }
+    { patientId: '002', name: '期限超過未取得', subText: '⚠ 同意期限超過（1日超過） 2025/01/31' },
+    { patientId: '001', name: '期限内未取得', subText: '同意期限（残27日） 2025/02/28' },
+    { patientId: '005', name: '期限迫る未取得', subText: '同意期限（残27日） 2025/02/28' }
   ], '上段同意ブロックは同意年月日から算出した期限と同意書取得確認で表示する');
 
   const patientsById = {};
@@ -1391,6 +1391,35 @@ function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
 }
 
 
+
+function testConsentOverviewSubTextUsesSlashDateWithoutIso() {
+  const ctx = createContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'belltree@belltree1102.com', role: 'admin' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: 'ISO入力患者', raw: { '同意年月日': '2024-08-16' } }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: { logs: [{ patientId: '001', timestamp: new Date('2025-01-20T00:00:00Z'), staffKeys: { email: 'staff@example.com' } }], warnings: [] },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
+  });
+
+  const item = JSON.parse(JSON.stringify((result.overview.consentRelated.items || [])[0] || null));
+  assert.ok(item, '同意 overview アイテムが1件作成される');
+  assert.ok(/\d{4}\/\d{2}\/\d{2}$/.test(item.subText), 'subText 末尾は YYYY/MM/DD 形式');
+  assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(item.subText), 'subText に ISO 文字列を含めない');
+}
+
+
 (function run() {
   testAggregatesDashboardData();
   testPatientStatusTagsGeneration();
@@ -1424,5 +1453,6 @@ function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
   testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged();
   testWarningsAreDedupedAndSetupFlagged();
   testConsentExpiredOver30DaysAlertsAreRoleFiltered();
+  testConsentOverviewSubTextUsesSlashDateWithoutIso();
   console.log('dashboardGetDashboardData tests passed');
 })();

@@ -6,7 +6,7 @@
  * @param {Object} [options.notes] - loadNotes() の戻り値を差し替える際に利用。
  * @param {Date} [options.now] - テスト用に現在日時を差し替え。
  * @param {Set<string>} [options.visiblePatientIds] - 表示対象患者ID。null の場合は全件。
- * @return {{visits: Object[], warnings: string[]}}
+ * @return {{today: {date: string, visits: Object[]}, previous: {date: (string|null), visits: Object[]}, warnings: string[]}}
  */
 function getTodayVisits(options) {
   const opts = options || {};
@@ -37,7 +37,8 @@ function getTodayVisits(options) {
     dashboardWarn_(`[getTodayVisits:setupIncomplete] treatmentLogs=${!!(treatment && treatment.setupIncomplete)} notes=${!!(notesResult && notesResult.setupIncomplete)}`);
   }
 
-  const normalizedVisits = [];
+  const visitsByDate = {};
+  let previousKey = '';
   logs.forEach(entry => {
     if (!entry || !entry.timestamp) return;
     const ts = dashboardCoerceDate_(entry.timestamp);
@@ -55,27 +56,42 @@ function getTodayVisits(options) {
     if (!patientId) return;
     if (visiblePatientIds && !visiblePatientIds.has(patientId)) return;
 
-    normalizedVisits.push({ patientId, patientName, time, dateKey, noteStatus });
+    if (!Object.prototype.hasOwnProperty.call(visitsByDate, dateKey)) visitsByDate[dateKey] = [];
+    visitsByDate[dateKey].push({ patientId, patientName, time, dateKey, noteStatus });
+
+    if (dateKey < todayKey && (!previousKey || dateKey > previousKey)) previousKey = dateKey;
   });
 
-  const latestPastDayKey = normalizedVisits
-    .filter(visit => visit.dateKey < todayKey)
-    .map(visit => visit.dateKey)
-    .sort((a, b) => b.localeCompare(a))[0] || '';
+  const todayVisits = Object.prototype.hasOwnProperty.call(visitsByDate, todayKey)
+    ? visitsByDate[todayKey]
+    : [];
+  const previousVisits = previousKey && Object.prototype.hasOwnProperty.call(visitsByDate, previousKey)
+    ? visitsByDate[previousKey]
+    : [];
+  const sortByTime = (a, b) => a.time.localeCompare(b.time);
+  todayVisits.sort(sortByTime);
+  previousVisits.sort(sortByTime);
 
-  const visits = normalizedVisits.filter(visit => visit.dateKey === todayKey || (latestPastDayKey && visit.dateKey === latestPastDayKey));
-
-  visits.sort((a, b) => {
-    if (a.dateKey === b.dateKey) return a.time.localeCompare(b.time);
-    return a.dateKey.localeCompare(b.dateKey);
-  });
-
-  const result = visits;
+  const result = {
+    today: {
+      date: todayKey,
+      visits: todayVisits
+    },
+    previous: {
+      date: previousKey || null,
+      visits: previousVisits
+    }
+  };
   if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
-    Logger.log('[TODAY VISITS RETURN] result length=' + result.length);
+    Logger.log('[TODAY VISITS RETURN] today=' + result.today.visits.length + ' previous=' + result.previous.visits.length);
   }
 
-  return { visits: result, warnings, setupIncomplete };
+  return {
+    today: result.today,
+    previous: result.previous,
+    warnings,
+    setupIncomplete
+  };
 }
 
 

@@ -39,6 +39,9 @@
   .section-header{ display:flex; align-items:center; gap:10px; }
   .small{ font-size:0.82rem; color:var(--muted); }
   .timeline{ display:flex; flex-direction:column; gap:10px; }
+  .timeline-section{ display:flex; flex-direction:column; gap:8px; }
+  .timeline-section-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .timeline-section-title{ font-size:0.92rem; font-weight:700; color:#fff; }
   .visit{ display:grid; grid-template-columns:70px 1fr; gap:10px; align-items:center; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel); }
   .visit-time{ font-variant-numeric:tabular-nums; color:#fff; font-weight:700; }
   .visit-body{ display:flex; flex-direction:column; gap:4px; }
@@ -207,7 +210,7 @@ function fetchDashboardData() {
     setLoading(false);
     const summary = {
       tasks: Array.isArray(data && data.tasks) ? data.tasks.length : 0,
-      visits: Array.isArray(data && data.todayVisits) ? data.todayVisits.length : 0,
+      visits: countTimelineVisits_(data && data.todayVisits),
       patients: Array.isArray(data && data.patients) ? data.patients.length : 0,
       unpaidAlerts: Array.isArray(data && data.unpaidAlerts) ? data.unpaidAlerts.length : 0,
       warnings: Array.isArray(data && data.warnings) ? data.warnings.length : 0,
@@ -500,15 +503,36 @@ function renderVisits() {
   if (!list) return;
   list.innerHTML = '';
 
-  const visits = dashboardState.data && Array.isArray(dashboardState.data.todayVisits)
-    ? dashboardState.data.todayVisits
-    : [];
+  const timeline = normalizeTimelineVisits_(dashboardState.data && dashboardState.data.todayVisits);
+  renderTimelineSection(list, '当日', timeline.today);
+  renderTimelineSection(list, '前日', timeline.previous);
+}
+
+function renderTimelineSection(container, label, sectionData) {
+  const section = document.createElement('section');
+  section.className = 'timeline-section';
+
+  const header = document.createElement('div');
+  header.className = 'timeline-section-header';
+  const title = document.createElement('div');
+  title.className = 'timeline-section-title';
+  title.textContent = `${label}（${formatTimelineDateLabel_(sectionData && sectionData.date)}）`;
+  header.appendChild(title);
+
+  const visits = sectionData && Array.isArray(sectionData.visits) ? sectionData.visits : [];
+  const count = document.createElement('span');
+  count.className = 'small';
+  count.textContent = `${visits.length}件`;
+  header.appendChild(count);
+
+  section.appendChild(header);
 
   if (!visits.length) {
     const empty = document.createElement('div');
     empty.className = 'muted';
-    empty.textContent = '訪問データはありません';
-    list.appendChild(empty);
+    empty.textContent = '0件';
+    section.appendChild(empty);
+    container.appendChild(section);
     return;
   }
 
@@ -549,10 +573,44 @@ function renderVisits() {
     body.appendChild(meta);
     row.appendChild(body);
 
-    list.appendChild(row);
+    section.appendChild(row);
   });
+
+  container.appendChild(section);
 }
 
+function normalizeTimelineVisits_(timeline) {
+  if (!timeline || typeof timeline !== 'object') {
+    return {
+      today: { date: null, visits: [] },
+      previous: { date: null, visits: [] }
+    };
+  }
+  const today = timeline.today && typeof timeline.today === 'object' ? timeline.today : { date: null, visits: [] };
+  const previous = timeline.previous && typeof timeline.previous === 'object' ? timeline.previous : { date: null, visits: [] };
+  return {
+    today: {
+      date: today.date || null,
+      visits: Array.isArray(today.visits) ? today.visits : []
+    },
+    previous: {
+      date: previous.date || null,
+      visits: Array.isArray(previous.visits) ? previous.visits : []
+    }
+  };
+}
+
+function countTimelineVisits_(timeline) {
+  const normalized = normalizeTimelineVisits_(timeline);
+  return normalized.today.visits.length + normalized.previous.visits.length;
+}
+
+function formatTimelineDateLabel_(dateKey) {
+  const key = String(dateKey || '').trim();
+  const match = key.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '-';
+  return `${match[2]}/${match[3]}`;
+}
 
 function formatVisitPatientLabel_(visit) {
   const patientName = String(visit && visit.patientName ? visit.patientName : '').trim();

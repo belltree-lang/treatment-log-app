@@ -67,7 +67,11 @@ function testAggregatesDashboardData() {
   const treatmentLogs = { logs: [{ patientId: '001', timestamp: new Date('2025-02-01T09:00:00Z'), dateKey: '2025-02-01', createdByEmail: 'user@example.com', staffKeys: { email: 'user@example.com', name: '', staffId: '' } }], warnings: ['t1'] };
   const responsible = { responsible: { '001': 'staff@example.com' }, warnings: ['r1'] };
   const tasksResult = { tasks: [{ type: 'consentWarning', patientId: '001' }], warnings: ['task'] };
-  const visitsResult = { visits: [{ patientId: '001', dateKey: '2025-02-01', time: '10:00' }], warnings: ['visit'] };
+  const visitsResult = {
+    today: { date: '2025-02-01', visits: [{ patientId: '001', dateKey: '2025-02-01', time: '10:00' }] },
+    previous: { date: null, visits: [] },
+    warnings: ['visit']
+  };
   const unpaidAlerts = { alerts: [{ patientId: '001', patientName: '山田太郎', consecutiveMonths: 3, totalAmount: 15000, months: [], followUp: { phone: false, visit: false } }], warnings: ['u1'] };
 
   const ctx = createContext();
@@ -89,7 +93,10 @@ function testAggregatesDashboardData() {
   assert.strictEqual(result.meta.user, 'belltree@belltree1102.com');
   assert.ok(result.meta.generatedAt, 'generatedAt should be present');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks)), []);
-  assert.deepStrictEqual(result.todayVisits, visitsResult.visits);
+  const timeline = JSON.parse(JSON.stringify(result.todayVisits));
+  assert.strictEqual(String(timeline.today.date).slice(0, 10), '2025-02-01');
+  assert.deepStrictEqual(timeline.today.visits, [{ patientId: '001', dateKey: '2025-02-01', time: '10:00' }]);
+  assert.deepStrictEqual(timeline.previous, { date: null, visits: [] });
   assert.strictEqual(result.patients.length, 1);
   const normalizedPatient = JSON.parse(JSON.stringify(result.patients[0]));
   assert.deepStrictEqual(normalizedPatient, {
@@ -155,7 +162,7 @@ function testPatientStatusTagsGeneration() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   const patientsById = {};
@@ -218,7 +225,7 @@ function testConsentOverviewMatchesPatientStatusTags() {
       ],
       warnings: []
     },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   const overviewItems = JSON.parse(JSON.stringify(result.overview.consentRelated.items));
@@ -280,7 +287,7 @@ function testConsentOver30DaysStillShowsReportTag() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   const tags = JSON.parse(JSON.stringify(result.patients[0].statusTags));
@@ -323,7 +330,7 @@ function testConsentAcquiredJudgmentHandlesFalseyStringsConsistently() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   const overviewPatientIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
@@ -425,7 +432,7 @@ function testConsentDateParsingFormatsAndResolverPriority() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   const overviewIds = JSON.parse(JSON.stringify(result.overview.consentRelated.items)).map(item => item.patientId);
@@ -470,7 +477,7 @@ function testConsentExpiryResolutionRunsOncePerPatient() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.strictEqual(result.patients.length, 3);
@@ -519,7 +526,7 @@ function testStaffConsentScopeMetricsAreLogged() {
     },
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.strictEqual(result.meta.error, undefined);
@@ -571,7 +578,7 @@ function testStaffConsentEligibilityEvaluatesOnlyVisiblePatients() {
     },
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.strictEqual(result.meta.error, undefined);
@@ -695,11 +702,19 @@ function testVisitSummaryUsesStaffFilteredLogsNotScopedVisits() {
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
     visitsResult: {
-      visits: [
-        { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
-        { patientId: '001', dateKey: '2025-01-31', time: '09:00' },
-        { patientId: '002', dateKey: '2025-01-29', time: '09:00' }
-      ],
+      today: {
+        date: '2025-02-01',
+        visits: [
+          { patientId: '001', dateKey: '2025-02-01', time: '09:00' }
+        ]
+      },
+      previous: {
+        date: '2025-01-31',
+        visits: [
+          { patientId: '001', dateKey: '2025-01-31', time: '09:00' },
+          { patientId: '002', dateKey: '2025-01-31', time: '10:00' }
+        ]
+      },
       warnings: []
     }
   };
@@ -720,10 +735,16 @@ function testVisitSummaryUsesStaffFilteredLogsNotScopedVisits() {
     previous2: { date: '2025-01-30', count: 1 }
   }, 'staff の visitSummary は scopedVisits ではなく staff-filtered treatmentLogs を使う');
 
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(staffResult.todayVisits)), [
-    { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
-    { patientId: '001', dateKey: '2025-01-31', time: '09:00' }
-  ], 'todayVisits は従来どおり visiblePatientIds スコープを使う');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(staffResult.todayVisits)), {
+    today: {
+      date: '2025-02-01',
+      visits: [{ patientId: '001', dateKey: '2025-02-01', time: '09:00' }]
+    },
+    previous: {
+      date: '2025-01-31',
+      visits: [{ patientId: '001', dateKey: '2025-01-31', time: '09:00' }]
+    }
+  }, 'todayVisits は従来どおり visiblePatientIds スコープを使う');
 }
 
 function testVisitSummaryWorksWhenVisiblePatientIdsBecomesEmpty() {
@@ -752,10 +773,13 @@ function testVisitSummaryWorksWhenVisiblePatientIdsBecomesEmpty() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits)), [], 'visiblePatientIds が空なら todayVisits は空のまま');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits)), {
+    today: { date: null, visits: [] },
+    previous: { date: null, visits: [] }
+  }, 'visiblePatientIds が空なら todayVisits は空のまま');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.visitSummary)), {
     today: { date: '2025-02-01', count: 0 },
     previous: null,
@@ -790,7 +814,7 @@ function testVisitSummaryStaffScopeLookbackIsFixedTo50Days() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.visitSummary)), {
@@ -879,7 +903,7 @@ function testInvoiceUnconfirmedIgnoresDisplayTargetFilter() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 1, 'displayTarget が空でも①請求の対象を保持する');
@@ -922,7 +946,7 @@ function testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 1, '前月のみ施術ログがある患者を未確認として検出する');
@@ -969,7 +993,7 @@ function testInvoiceUnconfirmedExcludesMedicalAssistancePatient() {
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 0, '医療助成患者は請求未確認対象から除外する');
@@ -993,12 +1017,16 @@ function testVisibleScopeForAdminShowsAllPatients() {
         .map(pid => ({ patientId: pid, type: 'consentWarning' })),
       warnings: []
     }),
-    getTodayVisits: opts => ({
-      visits: ['001', '002']
+    getTodayVisits: opts => {
+      const scoped = ['001', '002']
         .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
-        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' })),
-      warnings: []
-    }),
+        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' }));
+      return {
+        today: { date: '2025-02-10', visits: scoped },
+        previous: { date: null, visits: [] },
+        warnings: []
+      };
+    },
     loadUnpaidAlerts: opts => ({
       alerts: ['001', '002']
         .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
@@ -1030,7 +1058,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
 
   assert.strictEqual(result.patients.length, 2, '管理者は全患者表示する');
   assert.strictEqual(result.tasks.length, 0, '上段3ブロックは tasks 非依存とする');
-  assert.strictEqual(result.todayVisits.length, 2, '管理者は訪問全件表示する');
+  assert.strictEqual(result.todayVisits.today.visits.length + result.todayVisits.previous.visits.length, 2, '管理者は訪問全件表示する');
   assert.strictEqual(result.unpaidAlerts.length, 2, '管理者は未回収アラート全件表示する');
   assert.strictEqual(result.overview.invoiceUnconfirmed.items.length, 2, '管理者は請求未確認を全患者分表示する');
   const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
@@ -1065,12 +1093,16 @@ function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
         .map(pid => ({ patientId: pid, type: 'consentWarning' })),
       warnings: []
     }),
-    getTodayVisits: opts => ({
-      visits: ['001', '002']
+    getTodayVisits: opts => {
+      const scoped = ['001', '002']
         .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
-        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' })),
-      warnings: []
-    }),
+        .map(pid => ({ patientId: pid, dateKey: '2025-02-10', time: '09:00' }));
+      return {
+        today: { date: '2025-02-10', visits: scoped },
+        previous: { date: null, visits: [] },
+        warnings: []
+      };
+    },
     loadUnpaidAlerts: opts => ({
       alerts: ['001', '002']
         .filter(pid => !opts.visiblePatientIds || opts.visiblePatientIds.has(pid))
@@ -1102,7 +1134,8 @@ function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
 
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.patients.map(p => p.patientId))), ['001'], 'スタッフは施術ログ一致かつ直近50日患者のみ表示する');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.tasks.map(t => t.patientId))), []);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits.map(v => v.patientId))), ['001']);
+  const timelinePatientIds = result.todayVisits.today.visits.concat(result.todayVisits.previous.visits).map(v => v.patientId);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(timelinePatientIds)), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.unpaidAlerts.map(a => a.patientId))), ['001']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.invoiceUnconfirmed.items.map(item => item.patientId))), ['001'], 'スタッフは請求未確認も担当患者のみ表示する');
   const roleLog = logEntries.find(entry => entry.label === 'getDashboardData:role');
@@ -1123,7 +1156,14 @@ function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
 function testVisibleScopeForStaffWithoutResponsibleAssignmentShowsNoPatients() {
   const ctx = createContext({
     getTasks: opts => ({ tasks: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001' }] : [], warnings: [] }),
-    getTodayVisits: opts => ({ visits: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001', dateKey: '2025-02-10', time: '09:00' }] : [], warnings: [] }),
+    getTodayVisits: opts => ({
+      today: {
+        date: '2025-02-10',
+        visits: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001', dateKey: '2025-02-10', time: '09:00' }] : []
+      },
+      previous: { date: null, visits: [] },
+      warnings: []
+    }),
     loadUnpaidAlerts: opts => ({ alerts: opts.visiblePatientIds && opts.visiblePatientIds.size ? [{ patientId: '001', patientName: '患者A' }] : [], warnings: [] })
   });
 
@@ -1145,7 +1185,7 @@ function testVisibleScopeForStaffWithoutResponsibleAssignmentShowsNoPatients() {
 
   assert.strictEqual(result.patients.length, 0, '直近50日内の施術ログ一致がなければ患者表示0件');
   assert.strictEqual(result.tasks.length, 0);
-  assert.strictEqual(result.todayVisits.length, 0);
+  assert.strictEqual(result.todayVisits.today.visits.length + result.todayVisits.previous.visits.length, 0);
   assert.strictEqual(result.unpaidAlerts.length, 0);
 }
 
@@ -1156,7 +1196,7 @@ function testErrorIsCapturedInMeta() {
 
   const result = ctx.getDashboardData();
   assert.strictEqual(result.tasks.length, 0);
-  assert.strictEqual(result.todayVisits.length, 0);
+  assert.strictEqual(result.todayVisits.today.visits.length + result.todayVisits.previous.visits.length, 0);
   assert.strictEqual(result.patients.length, 0);
   assert.ok(result.meta.error && result.meta.error.indexOf('boom') >= 0);
 }
@@ -1194,7 +1234,7 @@ function testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged() {
       return { alerts: [], warnings: [] };
     },
     getTasks: () => ({ tasks: [], warnings: [] }),
-    getTodayVisits: () => ({ visits: [], warnings: [] })
+    getTodayVisits: () => ({ today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] })
   });
 
   ctx.dashboardGetSpreadsheet_ = () => { openCount += 1; return workbook; };
@@ -1216,7 +1256,7 @@ function testWarningsAreDedupedAndSetupFlagged() {
     treatmentLogs: { logs: [], warnings: [] },
     responsible: { responsible: {}, warnings: [] },
     tasksResult: { tasks: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   });
 
   assert.strictEqual(result.warnings.length, 1, '同一警告は一意になる');
@@ -1249,7 +1289,7 @@ function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
     },
     responsible: { responsible: {}, warnings: [] },
     unpaidAlerts: { alerts: [], warnings: [] },
-    visitsResult: { visits: [], warnings: [] }
+    visitsResult: { today: { date: null, visits: [] }, previous: { date: null, visits: [] }, warnings: [] }
   };
 
   const calcExpiry = value => {

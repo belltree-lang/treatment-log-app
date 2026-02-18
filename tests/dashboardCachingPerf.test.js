@@ -64,6 +64,7 @@ function createContext(overrides = {}) {
 function testTreatmentLogsCacheByMonthKey() {
   let loadCount = 0;
   const ctx = createContext({
+    DASHBOARD_DEBUG_OVERRIDE: true,
     dashboardGetSpreadsheet_: () => ({ getSheetByName: () => null }),
     loadPatientInfo: () => ({ patients: {}, warnings: [] }),
     loadNotes: () => ({ notes: {}, warnings: [] }),

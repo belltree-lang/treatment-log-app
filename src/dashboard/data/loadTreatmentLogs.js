@@ -73,6 +73,7 @@ function loadTreatmentLogsUncached_(options) {
   const colStaffName = dashboardResolveColumn_(headers, ['施術者', '担当者', '担当', 'スタッフ名', 'staffName', 'staff'], 0);
   const colStaffEmail = dashboardResolveColumn_(headers, ['メール', '担当メール', 'email', 'mail', 'createdbyemail'], 0);
   const colStaffId = dashboardResolveColumn_(headers, ['担当者ID', 'スタッフID', 'staffId', 'staffid'], 0);
+  const colObservation = dashboardResolveColumn_(headers, ['所見', '観察', 'observation'], 0);
   const searchableColumns = [
     dashboardResolveColumn_(headers, ['施術内容', '内容', '記録', 'メモ', 'ノート', '備考', 'コメント', '対応内容', '申し送り', '自由記述', 'text', 'note', 'memo', 'comment', 'body', 'content'], 0),
     dashboardResolveColumn_(headers, ['SOAP', 'S', 'O', 'A', 'P'], 0)
@@ -202,7 +203,8 @@ function loadTreatmentLogsUncached_(options) {
     colCreatedBy,
     colStaffName,
     colStaffEmail,
-    colStaffId
+    colStaffId,
+    colObservation
   ].concat(searchableColumns)
     .filter(function(col, index, arr) { return !!col && arr.indexOf(col) === index; });
 
@@ -279,6 +281,7 @@ function loadTreatmentLogsUncached_(options) {
     const staffEmailRaw = colStaffEmail ? String(readDisplay(colStaffEmail) || readValue(colStaffEmail) || '').trim() : '';
     const staffIdRaw = colStaffId ? String(readDisplay(colStaffId) || readValue(colStaffId) || '').trim() : '';
     const dateKey = dashboardFormatDate_(timestamp, tz, 'yyyy-MM-dd');
+    const observation = colObservation ? String(readDisplay(colObservation) || readValue(colObservation) || '').trim() : '';
     const searchText = searchableColumns
       .map(function(col) {
         return String(readDisplay(col) || readValue(col) || '').trim();
@@ -310,6 +313,7 @@ function loadTreatmentLogsUncached_(options) {
       },
       timestamp,
       dateKey,
+      observation,
       searchText
     };
 

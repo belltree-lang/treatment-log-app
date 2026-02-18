@@ -959,6 +959,7 @@ function buildDashboardInvoiceSearchText_(entry) {
     entry.body,
     entry.content,
     entry.summary,
+    entry.observation,
     entry.searchText
   ];
   return candidates

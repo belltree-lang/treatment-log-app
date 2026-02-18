@@ -996,6 +996,64 @@ function testInvoiceUnconfirmedAcceptsConfirmationWithPeriod() {
   assert.strictEqual(result.items.length, 0, '句点あり文言は確認済み扱いになる');
 }
 
+
+function testInvoiceUnconfirmedAcceptsConfirmationFromObservationField() {
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        const iso = new Date(date).toISOString();
+        if (fmt === 'yyyy-MM') return iso.slice(0, 7);
+        if (fmt === 'yyyy-MM-dd') return iso.slice(0, 10);
+        return iso;
+      }
+    }
+  });
+
+  const result = ctx.buildOverviewFromInvoiceUnconfirmed_(
+    {},
+    [
+      { patientId: '001', dateKey: '2025-01-10', searchText: '前月施術あり' },
+      { patientId: '001', dateKey: '2025-02-05', observation: '請求書・領収書を受け渡し済み。' }
+    ],
+    { notes: {} },
+    { patientIds: new Set(['001']), applyFilter: true },
+    { '001': '患者A' },
+    new Date('2025-02-10T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+
+  assert.strictEqual(result.items.length, 0, '所見の請求書受渡記録は確認済み扱いになる');
+}
+
+function testInvoiceUnconfirmedIgnoresConsentHandoutRecordInObservationField() {
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        const iso = new Date(date).toISOString();
+        if (fmt === 'yyyy-MM') return iso.slice(0, 7);
+        if (fmt === 'yyyy-MM-dd') return iso.slice(0, 10);
+        return iso;
+      }
+    }
+  });
+
+  const result = ctx.buildOverviewFromInvoiceUnconfirmed_(
+    {},
+    [
+      { patientId: '001', dateKey: '2025-01-10', searchText: '前月施術あり' },
+      { patientId: '001', dateKey: '2025-02-05', observation: '同意書を受け渡し済み。' }
+    ],
+    { notes: {} },
+    { patientIds: new Set(['001']), applyFilter: true },
+    { '001': '患者A' },
+    new Date('2025-02-10T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+
+  assert.strictEqual(result.items.length, 1, '所見が同意書受渡のみの場合は請求書確認済み扱いにしない');
+  assert.strictEqual(result.items[0].patientId, '001');
+}
+
 function testInvoiceUnconfirmedIgnoresConsentHandoutRecord() {
   const ctx = createContext({
     Utilities: {
@@ -1555,7 +1613,9 @@ function testConsentOverviewSubTextUsesSlashDateWithoutIso() {
   testVisitSummaryHasOnlyThreeKeysAndPastSlotsAreBeforeToday();
   testInvoiceUnconfirmedAcceptsConfirmationWithoutPeriod();
   testInvoiceUnconfirmedAcceptsConfirmationWithPeriod();
+  testInvoiceUnconfirmedAcceptsConfirmationFromObservationField();
   testInvoiceUnconfirmedIgnoresConsentHandoutRecord();
+  testInvoiceUnconfirmedIgnoresConsentHandoutRecordInObservationField();
   testInvoiceUnconfirmedTreatsConfirmationAfter21stAsInWindow();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();

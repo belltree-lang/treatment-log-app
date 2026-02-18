@@ -73,9 +73,7 @@ function createUiContext() {
   const dashboardScript = scriptMatch[1]
     .replace(/const DASHBOARD_TREATMENT_APP_EXEC_URL =[^\n]*\n/, 'var DASHBOARD_TREATMENT_APP_EXEC_URL = "";\n');
 
-  const elements = {
-    visitList: createElement('div')
-  };
+  const elements = { visitList: createElement('div') };
   elements.visitList.innerHTML = '';
 
   const documentStub = {
@@ -103,175 +101,113 @@ function runVisits(context, now, logs, patientInfo, extraOptions) {
     treatmentLogs: { logs, warnings: [] },
     notes: { notes: {}, warnings: [] },
     visiblePatientIds: options.visiblePatientIds || null
-  }).visits;
+  });
 }
 
-(function testVisiblePatientIdsNullShowsAllVisits() {
+(function testTodayAndPreviousBothExist() {
   const context = createApiContext();
-  const visits = runVisits(
+  const result = runVisits(
     context,
     '2025-02-13T10:00:00Z',
     [
       { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
-      { timestamp: new Date('2025-02-10T12:00:00Z'), dateKey: '2025-02-10', patientId: 'P002' }
+      { timestamp: new Date('2025-02-12T12:00:00Z'), dateKey: '2025-02-12', patientId: 'P002' },
+      { timestamp: new Date('2025-02-11T12:00:00Z'), dateKey: '2025-02-11', patientId: 'P003' }
+    ],
+    { P001: { name: '患者A' }, P002: { name: '患者B' }, P003: { name: '患者C' } }
+  );
+
+  assert.strictEqual(result.today.date, '2025-02-13');
+  assert.strictEqual(result.today.visits.length, 1);
+  assert.strictEqual(result.previous.date, '2025-02-12');
+  assert.strictEqual(result.previous.visits.length, 1);
+})();
+
+(function testNoTodayButPreviousExists() {
+  const context = createApiContext();
+  const result = runVisits(
+    context,
+    '2025-02-13T10:00:00Z',
+    [
+      { timestamp: new Date('2025-02-12T09:00:00Z'), dateKey: '2025-02-12', patientId: 'P001' },
+      { timestamp: new Date('2025-02-10T09:00:00Z'), dateKey: '2025-02-10', patientId: 'P002' }
     ],
     { P001: { name: '患者A' }, P002: { name: '患者B' } }
   );
 
-  assert.strictEqual(visits.length, 2, 'visiblePatientIds=null では全件表示する');
+  assert.strictEqual(result.today.visits.length, 0);
+  assert.strictEqual(result.previous.date, '2025-02-12');
+  assert.strictEqual(result.previous.visits.length, 1);
 })();
 
-(function testVisiblePatientIdsShowsOnlyTargetPatients() {
+(function testTodayExistsButNoPrevious() {
   const context = createApiContext();
-  const visits = runVisits(
+  const result = runVisits(
+    context,
+    '2025-02-13T10:00:00Z',
+    [{ timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' }],
+    { P001: { name: '患者A' } }
+  );
+
+  assert.strictEqual(result.today.visits.length, 1);
+  assert.strictEqual(result.previous.date, null);
+  assert.strictEqual(result.previous.visits.length, 0);
+})();
+
+(function testBothTodayAndPreviousAreEmpty() {
+  const context = createApiContext();
+  const result = runVisits(context, '2025-02-13T10:00:00Z', [], {});
+
+  assert.strictEqual(result.today.date, '2025-02-13');
+  assert.strictEqual(result.today.visits.length, 0);
+  assert.strictEqual(result.previous.date, null);
+  assert.strictEqual(result.previous.visits.length, 0);
+})();
+
+(function testStaffScopeDifferenceViaVisiblePatientIds() {
+  const context = createApiContext();
+  const adminLike = runVisits(
     context,
     '2025-02-13T10:00:00Z',
     [
       { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
       { timestamp: new Date('2025-02-13T10:00:00Z'), dateKey: '2025-02-13', patientId: 'P002' },
-      { timestamp: new Date('2025-02-10T12:00:00Z'), dateKey: '2025-02-10', patientId: 'P003' }
+      { timestamp: new Date('2025-02-12T09:00:00Z'), dateKey: '2025-02-12', patientId: 'P003' }
+    ],
+    { P001: { name: '患者A' }, P002: { name: '患者B' }, P003: { name: '患者C' } },
+    { visiblePatientIds: null }
+  );
+  const staffLike = runVisits(
+    context,
+    '2025-02-13T10:00:00Z',
+    [
+      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
+      { timestamp: new Date('2025-02-13T10:00:00Z'), dateKey: '2025-02-13', patientId: 'P002' },
+      { timestamp: new Date('2025-02-12T09:00:00Z'), dateKey: '2025-02-12', patientId: 'P003' }
     ],
     { P001: { name: '患者A' }, P002: { name: '患者B' }, P003: { name: '患者C' } },
     { visiblePatientIds: new Set(['P001']) }
   );
 
-  assert.strictEqual(visits.length, 1, '可視患者のみ表示する');
-  assert.strictEqual(visits[0].patientId, 'P001');
+  assert.strictEqual(adminLike.today.visits.length, 2);
+  assert.strictEqual(staffLike.today.visits.length, 1);
+  assert.strictEqual(staffLike.today.visits[0].patientId, 'P001');
 })();
 
-(function testVisiblePatientIdsCanResultInZeroVisits() {
-  const context = createApiContext();
-  const visits = runVisits(
-    context,
-    '2025-02-13T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
-      { timestamp: new Date('2024-12-20T09:00:00Z'), dateKey: '2024-12-20', patientId: 'P001' }
-    ],
-    { P001: { name: '患者A' } },
-    { visiblePatientIds: new Set() }
-  );
-
-  assert.strictEqual(visits.length, 0, '可視患者が空なら表示0件になる');
-})();
-
-(function testVisiblePatientFilterKeepsTodayAndLatestPastDayLogic() {
-  const context = createApiContext();
-  const visits = runVisits(
-    context,
-    '2025-02-13T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
-      { timestamp: new Date('2025-02-10T12:00:00Z'), dateKey: '2025-02-10', patientId: 'P001' },
-      { timestamp: new Date('2025-02-07T12:00:00Z'), dateKey: '2025-02-07', patientId: 'P001' }
-    ],
-    { P001: { name: '患者A' } },
-    { visiblePatientIds: new Set(['P001']) }
-  );
-
-  const keys = JSON.parse(JSON.stringify(visits.map(v => v.dateKey)));
-  assert.deepStrictEqual(keys, ['2025-02-10', '2025-02-13'], '可視患者フィルタ適用後も今日+最新過去1日のロジックを維持する');
-})();
-
-(function testWeekendGapShowsFridayOnMonday() {
-  const context = createApiContext();
-  const visits = runVisits(
-    context,
-    '2025-02-10T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-10T09:00:00Z'), dateKey: '2025-02-10', patientId: 'P001' },
-      { timestamp: new Date('2025-02-07T16:00:00Z'), dateKey: '2025-02-07', patientId: 'P002' },
-      { timestamp: new Date('2025-02-06T11:00:00Z'), dateKey: '2025-02-06', patientId: 'P003' }
-    ],
-    { P001: { name: '患者A' }, P002: { name: '患者B' } }
-  );
-
-  assert.strictEqual(visits.length, 2, '月曜表示では今日+直近営業日(金曜)のみ表示する');
-  const keys = JSON.parse(JSON.stringify(visits.map(v => v.dateKey)));
-  assert.deepStrictEqual(keys, ['2025-02-07', '2025-02-10']);
-})();
-
-(function testAfterLeavePicksLatestPastDayOnly() {
-  const context = createApiContext();
-  const visits = runVisits(
-    context,
-    '2025-02-13T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
-      { timestamp: new Date('2025-02-10T12:00:00Z'), dateKey: '2025-02-10', patientId: 'P002' },
-      { timestamp: new Date('2025-02-07T12:00:00Z'), dateKey: '2025-02-07', patientId: 'P003' }
-    ],
-    { P001: { name: '患者A' }, P002: { name: '患者B' }, P003: { name: '患者C' } }
-  );
-
-  const keys = JSON.parse(JSON.stringify(visits.map(v => v.dateKey)));
-  assert.deepStrictEqual(keys, ['2025-02-10', '2025-02-13'], '有給明けでも過去は最新1日だけ');
-})();
-
-
-(function testMissingDateKeyIsDerivedFromTimestamp() {
-  const context = createApiContext();
-  const visits = runVisits(
-    context,
-    '2025-02-01T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-01T09:30:00Z'), patientId: 'P001' },
-      { timestamp: new Date('2025-01-31T23:00:00Z'), patientId: 'P002' }
-    ],
-    { P001: { name: '田中 花子' }, P002: { name: '山田 太郎' } }
-  );
-
-  assert.strictEqual(visits.length, 2, 'dateKey未設定でもtimestampから補完して2日分を返す');
-  const keys = JSON.parse(JSON.stringify(visits.map(v => v.dateKey)));
-  assert.deepStrictEqual(keys, ['2025-01-31', '2025-02-01']);
-})();
-
-(function testTodayOnly() {
-  const context = createApiContext();
-  const visits = runVisits(
-    context,
-    '2025-02-01T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-01T09:30:00Z'), dateKey: '2025-02-01', patientId: 'P001' }
-    ],
-    { P001: { name: '田中 花子' } }
-  );
-
-  assert.strictEqual(visits.length, 1, '今日のみの場合は今日の訪問のみ返す');
-  assert.strictEqual(visits[0].dateKey, '2025-02-01');
-  assert.strictEqual(visits[0].patientName, '田中 花子', 'patientInfoのnameを引き当てる');
-})();
-
-(function testTodayAndPreviousDay() {
-  const context = createApiContext();
-  const visits = runVisits(
-    context,
-    '2025-02-01T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-01T09:30:00Z'), dateKey: '2025-02-01', patientId: 'P001' },
-      { timestamp: new Date('2025-01-31T23:00:00Z'), dateKey: '2025-01-31', patientId: 'P002' },
-      { timestamp: new Date('2025-01-30T23:00:00Z'), dateKey: '2025-01-30', patientId: 'P003' }
-    ],
-    { P001: { name: '田中 花子' }, P002: { name: '山田 太郎' } }
-  );
-
-  assert.strictEqual(visits.length, 2, '今日＋前日が存在する場合はその2日を返す');
-  const keys = JSON.parse(JSON.stringify(visits.map(v => v.dateKey)));
-  assert.deepStrictEqual(keys, ['2025-01-31', '2025-02-01']);
-  assert.strictEqual(visits[0].patientName, '山田 太郎', '患者名を表示できる');
-})();
-
-(function testRenderVisitsUsesPatientNameWithPatientId() {
+(function testRenderVisitsAsTodayAndPreviousSections() {
   const { context, elements } = createUiContext();
   vm.runInContext(
-    `dashboardState.data = { todayVisits: [{ time: '09:30', patientId: 'P001', patientName: '田中 花子', noteStatus: '◎' }] };`,
+    `dashboardState.data = { todayVisits: { today: { date: '2025-02-13', visits: [{ time: '09:30', patientId: 'P001', patientName: '田中 花子', noteStatus: '◎' }] }, previous: { date: null, visits: [] } } };`,
     context
   );
 
   context.renderVisits();
 
   const renderedText = flattenText(elements.visitList);
+  assert.ok(renderedText.includes('当日（02/13）'), '当日見出しは MM/DD 形式で描画する');
+  assert.ok(renderedText.includes('前日（-）'), '前日の日付 null は - で描画する');
   assert.ok(renderedText.includes('田中 花子（P001）'), '患者名（患者ID）形式で描画する');
+  assert.ok(renderedText.includes('0件'), '前日0件を表示する');
 })();
 
 console.log('dashboard today visits tests passed');

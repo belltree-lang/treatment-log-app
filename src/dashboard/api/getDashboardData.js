@@ -2,7 +2,7 @@
  * ダッシュボードの主要データをまとめて取得し、JSON 形式で返す。
  * エラーが発生した場合は meta.error にメッセージを格納する。
  * @param {Object} [options]
- * @return {{tasks: Object[], todayVisits: Object[], patients: Object[], warnings: string[], meta: Object}}
+ * @return {{tasks: Object[], todayVisits: {today: {date: string, visits: Object[]}, previous: {date: (string|null), visits: Object[]}}, patients: Object[], warnings: string[], meta: Object}}
  */
 function getDashboardData(options) {
   const mock = options && options.mock;
@@ -298,23 +298,46 @@ function getDashboardData(options) {
       notes,
       visiblePatientIds,
       now: opts.now
-    }) : { visits: [], warnings: [] })));
+    }) : {
+      today: { date: dashboardFormatDate_(dashboardCoerceDate_(opts.now) || new Date(), dashboardResolveTimeZone_(), 'yyyy-MM-dd'), visits: [] },
+      previous: { date: null, visits: [] },
+      warnings: []
+    })));
 
-    const rawVisits = visitsResult && Array.isArray(visitsResult.visits) ? visitsResult.visits : [];
-    const scopedVisits = visiblePatientIds
-      ? rawVisits.filter(visit => {
+    const timelineTodayKeyRaw = dashboardFormatDate_(dashboardCoerceDate_(opts.now) || new Date(), dashboardResolveTimeZone_(), 'yyyy-MM-dd');
+    const timelineTodayKey = String(timelineTodayKeyRaw || '').slice(0, 10);
+    const rawTodayVisits = visitsResult && visitsResult.today && Array.isArray(visitsResult.today.visits)
+      ? visitsResult.today.visits
+      : [];
+    const rawPreviousVisits = visitsResult && visitsResult.previous && Array.isArray(visitsResult.previous.visits)
+      ? visitsResult.previous.visits
+      : [];
+    const scopeVisits = visits => (visiblePatientIds
+      ? visits.filter(visit => {
         const patientId = dashboardNormalizePatientId_(visit && visit.patientId);
         return !!patientId && visiblePatientIds.has(patientId);
       })
-      : rawVisits;
+      : visits);
+    const scopedVisits = {
+      today: {
+        date: visitsResult && visitsResult.today
+          ? visitsResult.today.date
+          : timelineTodayKey,
+        visits: scopeVisits(rawTodayVisits)
+      },
+      previous: {
+        date: visitsResult && visitsResult.previous ? visitsResult.previous.date : null,
+        visits: scopeVisits(rawPreviousVisits)
+      }
+    };
 
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
       Logger.log('[VISIT CALLER] about to call buildOverviewFromTreatmentProgress_');
-      Logger.log('[VISIT CALLER] scopedVisits length=' + scopedVisits.length);
+      Logger.log('[VISIT CALLER] scopedVisits today=' + scopedVisits.today.visits.length + ' previous=' + scopedVisits.previous.visits.length);
       Logger.log('[VISIT CALLER] matchedLogsCount=' + matchedLogsCount);
     }
 
-    logContext('getDashboardData:getTodayVisits', `visits=${rawVisits.length} scopedVisits=${scopedVisits.length} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
+    logContext('getDashboardData:getTodayVisits', `todayVisits=${rawTodayVisits.length} previousVisits=${rawPreviousVisits.length} scopedToday=${scopedVisits.today.visits.length} scopedPrevious=${scopedVisits.previous.visits.length} warnings=${(visitsResult && visitsResult.warnings ? visitsResult.warnings.length : 0)} setupIncomplete=${!!(visitsResult && visitsResult.setupIncomplete)}`);
     const patients = measureStep('buildPatients', () => buildDashboardPatients_(patientInfo, {
       notes,
       aiReports,
@@ -398,7 +421,7 @@ function getDashboardData(options) {
         metaError: meta.error
       });
     }
-    const result = { tasks: [], todayVisits: [], patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
+    const result = { tasks: [], todayVisits: { today: { date: null, visits: [] }, previous: { date: null, visits: [] } }, patients: [], unpaidAlerts: [], warnings: [], overview: null, meta };
     logSerializationDiagnostics(result);
     const sanitizedResult = sanitizeDashboardResponse_(result);
     logSerializationDiagnostics(sanitizedResult);
@@ -461,7 +484,13 @@ function sanitizeDashboardResponse_(result) {
   const normalized = result && typeof result === 'object' ? result : {};
   sanitizeDashboardValue_(normalized, new WeakSet(), '$');
   if (!Array.isArray(normalized.tasks)) normalized.tasks = [];
-  if (!Array.isArray(normalized.todayVisits)) normalized.todayVisits = [];
+  if (!normalized.todayVisits || typeof normalized.todayVisits !== 'object' || Array.isArray(normalized.todayVisits)) {
+    normalized.todayVisits = { today: { date: null, visits: [] }, previous: { date: null, visits: [] } };
+  }
+  if (!normalized.todayVisits.today || typeof normalized.todayVisits.today !== 'object') normalized.todayVisits.today = { date: null, visits: [] };
+  if (!normalized.todayVisits.previous || typeof normalized.todayVisits.previous !== 'object') normalized.todayVisits.previous = { date: null, visits: [] };
+  if (!Array.isArray(normalized.todayVisits.today.visits)) normalized.todayVisits.today.visits = [];
+  if (!Array.isArray(normalized.todayVisits.previous.visits)) normalized.todayVisits.previous.visits = [];
   if (!Array.isArray(normalized.patients)) normalized.patients = [];
   if (!Array.isArray(normalized.unpaidAlerts)) normalized.unpaidAlerts = [];
   if (!Array.isArray(normalized.warnings)) normalized.warnings = [];

@@ -37,10 +37,13 @@ function getDashboardData(options) {
     const result = runner();
     const duration = Date.now() - start;
     perfSteps.push({ step, duration });
-    logPerf(`[perf] step=${step} duration=${duration}ms`);
+    if (dashboardIsDebugEnabled_()) {
+      logPerf(`[perf] step=${step} duration=${duration}ms`);
+    }
     return result;
   };
   const logCachePerf = (status, key, details) => {
+    if (!dashboardIsDebugEnabled_()) return;
     const suffix = details ? ` ${details}` : '';
     logPerf(`[perf] ${status} key=${key}${suffix}`);
   };
@@ -239,19 +242,21 @@ function getDashboardData(options) {
           && diffDays >= 0
           && diffDays <= threshold;
         if (inVisibleScope) {
-          logContext('consent-eligible-debug', JSON.stringify({
-            pid,
-            hasConsentExpiry,
-            parsedConsentExpiry: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
-            consentAcquired,
-            inVisibleScope,
-            todayISO: today.toISOString(),
-            expiryISO: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
-            diffMs,
-            diffDays,
-            threshold,
-            finalCondition
-          }));
+          if (dashboardIsDebugEnabled_()) {
+            logContext('consent-eligible-debug', JSON.stringify({
+              pid,
+              hasConsentExpiry,
+              parsedConsentExpiry: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
+              consentAcquired,
+              inVisibleScope,
+              todayISO: today.toISOString(),
+              expiryISO: parsedConsentExpiry ? parsedConsentExpiry.toISOString() : null,
+              diffMs,
+              diffDays,
+              threshold,
+              finalCondition
+            }));
+          }
         }
 
         if (!consentExpiryDate) return;
@@ -398,6 +403,7 @@ function getDashboardData(options) {
     logSerializationDiagnostics(result);
     const sanitizedResult = sanitizeDashboardResponse_(result);
     logSerializationDiagnostics(sanitizedResult);
+    logContext('getDashboardData:end', `patients=${Array.isArray(sanitizedResult.patients) ? sanitizedResult.patients.length : 0}`);
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
       Logger.log('[CALL END] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
       Logger.log('[EXIT CHECK] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
@@ -420,6 +426,7 @@ function getDashboardData(options) {
     logSerializationDiagnostics(result);
     const sanitizedResult = sanitizeDashboardResponse_(result);
     logSerializationDiagnostics(sanitizedResult);
+    logContext('getDashboardData:end', 'patients=0 (error)');
     if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
       Logger.log('[CALL END] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
       Logger.log('[EXIT CHECK] returning patients=' + (sanitizedResult?.patients?.length || 'N/A'));
@@ -427,7 +434,7 @@ function getDashboardData(options) {
     return sanitizedResult;
   } finally {
     const totalDuration = Date.now() - perfStartedAt;
-    logPerf(`[perf] total=${totalDuration}ms`);
+    logPerf(`total processing time=${totalDuration}ms`);
 
     const plannedSteps = [
       'dashboardGetSpreadsheet',
@@ -456,22 +463,24 @@ function getDashboardData(options) {
       .map((entry, index) => `  - ${index + 1}. ${entry.step}: ${entry.duration}ms`);
     const top3Lines = top3.length ? top3 : ['  - 計測データなし'];
 
-    logPerf('■ 処理時間サマリー');
-    summaryLines.forEach(line => logPerf(line));
-    logPerf(`  - 合計処理時間: ${totalDuration}ms`);
+    if (dashboardIsDebugEnabled_()) {
+      logPerf('■ 処理時間サマリー');
+      summaryLines.forEach(line => logPerf(line));
+      logPerf(`  - 合計処理時間: ${totalDuration}ms`);
 
-    logPerf('■ 最重処理トップ3');
-    top3Lines.forEach(line => logPerf(line));
+      logPerf('■ 最重処理トップ3');
+      top3Lines.forEach(line => logPerf(line));
 
-    logPerf('■ 5秒以内にするための削減候補');
-    logPerf('  - 何を: loadTreatmentLogs の対象行数と列数 / どう削るか: 直近期間で先に絞り込み、必要列のみを読み込んで全件走査を削減する。');
-    logPerf('  - 何を: loadAIReports・loadInvoices の逐次読み込み / どう削るか: キャッシュ（更新時刻付き）を導入して差分時のみ再計算する。');
+      logPerf('■ 5秒以内にするための削減候補');
+      logPerf('  - 何を: loadTreatmentLogs の対象行数と列数 / どう削るか: 直近期間で先に絞り込み、必要列のみを読み込んで全件走査を削減する。');
+      logPerf('  - 何を: loadAIReports・loadInvoices の逐次読み込み / どう削るか: キャッシュ（更新時刻付き）を導入して差分時のみ再計算する。');
 
-    logPerf('■ 副作用リスク');
-    logPerf('  - データ欠損: 期間・列の絞り込みを誤ると過去必要データが取り込まれず、患者情報や請求情報が欠ける。');
-    logPerf('  - 表示整合性: キャッシュや差分更新が古いと、タスク件数や未払いアラート件数が画面と実データで乖離する。');
-    logPerf('  - 権限影響: ユーザー別フィルタを前段キャッシュへ寄せると、権限境界を跨いだデータ混入リスクが上がる。');
-    logPerf(`[perf-check] spreadsheetOpenCount=${spreadsheetOpenCount}`);
+      logPerf('■ 副作用リスク');
+      logPerf('  - データ欠損: 期間・列の絞り込みを誤ると過去必要データが取り込まれず、患者情報や請求情報が欠ける。');
+      logPerf('  - 表示整合性: キャッシュや差分更新が古いと、タスク件数や未払いアラート件数が画面と実データで乖離する。');
+      logPerf('  - 権限影響: ユーザー別フィルタを前段キャッシュへ寄せると、権限境界を跨いだデータ混入リスクが上がる。');
+      logPerf(`[perf-check] spreadsheetOpenCount=${spreadsheetOpenCount}`);
+    }
   }
 }
 
@@ -851,6 +860,7 @@ function buildOverviewFromInvoiceUnconfirmed_(invoices, treatmentLogs, notes, sc
   const currentMonthKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM');
   const confirmationPhrases = ['請求書・領収書を受け渡し済み', '請求書・領収書を受け渡し済み。'];
   const logBillingDebug = (message, details) => {
+    if (!dashboardIsDebugEnabled_()) return;
     const payload = details ? ` ${details}` : '';
     const line = `[billing-debug] ${message}${payload}`;
     if (typeof dashboardLogContext_ === 'function') {
@@ -1041,6 +1051,7 @@ function formatDateOnlyInternal_(value) {
 }
 
 function dashboardDebugLogLimited_(counterKey, label, payload) {
+  if (!dashboardIsDebugEnabled_()) return;
   if (typeof dashboardLogContext_ !== 'function') return;
   const counters = dashboardDebugLogLimited_._counters || (dashboardDebugLogLimited_._counters = {});
   const nextCount = (counters[counterKey] || 0) + 1;
@@ -1220,6 +1231,13 @@ function shouldDebugConsent_() {
   return false;
 }
 
+function dashboardIsDebugEnabled_() {
+  if (typeof DASHBOARD_DEBUG_OVERRIDE !== 'undefined') return !!DASHBOARD_DEBUG_OVERRIDE;
+  if (typeof DASHBOARD_DEBUG !== 'undefined') return !!DASHBOARD_DEBUG;
+  if (typeof DEBUG_MODE !== 'undefined') return !!DEBUG_MODE;
+  return false;
+}
+
 function resolvePatientRawValue_(raw, candidates) {
   if (!raw) return '';
   const keys = Array.isArray(candidates) ? candidates : [];
@@ -1275,27 +1293,29 @@ function buildOverviewFromTreatmentProgress_(visits, now, tz) {
     countByDate[dateKey] = (countByDate[dateKey] || 0) + 1;
   });
 
-  console.log('===== VISIT DEBUG START =====');
+  if (dashboardIsDebugEnabled_()) {
+    console.log('===== VISIT DEBUG START =====');
 
-  console.log('[VISIT DEBUG] todayKey =', todayKey);
-  console.log('[VISIT DEBUG] scopedVisits length =', scopedVisits.length);
+    console.log('[VISIT DEBUG] todayKey =', todayKey);
+    console.log('[VISIT DEBUG] scopedVisits length =', scopedVisits.length);
 
-  const rawDates = scopedVisits.map(v => v.dateKey);
-  console.log('[VISIT DEBUG] raw dateKeys =', rawDates);
+    const rawDates = scopedVisits.map(v => v.dateKey);
+    console.log('[VISIT DEBUG] raw dateKeys =', rawDates);
 
-  const uniqueSorted = [...new Set(rawDates)].sort();
-  console.log('[VISIT DEBUG] uniqueSorted dateKeys =', uniqueSorted);
+    const uniqueSorted = [...new Set(rawDates)].sort();
+    console.log('[VISIT DEBUG] uniqueSorted dateKeys =', uniqueSorted);
 
-  const pastDateKeys = uniqueSorted.filter(d => d < todayKey);
-  console.log('[VISIT DEBUG] pastDateKeys (< todayKey) =', pastDateKeys);
+    const pastDateKeys = uniqueSorted.filter(d => d < todayKey);
+    console.log('[VISIT DEBUG] pastDateKeys (< todayKey) =', pastDateKeys);
 
-  const sortedDesc = [...pastDateKeys].sort().reverse();
-  console.log('[VISIT DEBUG] sortedDesc =', sortedDesc);
+    const sortedDesc = [...pastDateKeys].sort().reverse();
+    console.log('[VISIT DEBUG] sortedDesc =', sortedDesc);
 
-  console.log('[VISIT DEBUG] previous =', sortedDesc[0] || null);
-  console.log('[VISIT DEBUG] previous2 =', sortedDesc[1] || null);
+    console.log('[VISIT DEBUG] previous =', sortedDesc[0] || null);
+    console.log('[VISIT DEBUG] previous2 =', sortedDesc[1] || null);
 
-  console.log('===== VISIT DEBUG END =====');
+    console.log('===== VISIT DEBUG END =====');
+  }
 
   const sortedPastDates = Object.keys(countByDate)
     .filter(dateKey => dateKey < todayKey)

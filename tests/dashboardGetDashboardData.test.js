@@ -580,6 +580,7 @@ function testStaffConsentScopeMetricsAreLogged() {
 function testStaffConsentEligibilityEvaluatesOnlyVisiblePatients() {
   const logEntries = [];
   const ctx = createContext();
+  ctx.DASHBOARD_DEBUG_OVERRIDE = true;
   ctx.dashboardLogContext_ = (label, details) => {
     logEntries.push({ label, details: String(details || '') });
   };
@@ -1442,6 +1443,7 @@ function testSpreadsheetIsOpenedOnceAndPerfCheckIsLogged() {
   let openCount = 0;
   const workbook = { getSheetByName: () => null };
   const ctx = createContext({
+    DASHBOARD_DEBUG_OVERRIDE: true,
     Logger: { log: message => logs.push(String(message)) },
     loadPatientInfo: opts => {
       assert.strictEqual(opts.dashboardSpreadsheet, workbook, 'loadPatientInfo に spreadsheet が伝搬する');

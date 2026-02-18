@@ -34,6 +34,9 @@ function loadTreatmentLogsUncached_(options) {
       logContext('perf', message);
     }
   };
+  const debugEnabled = typeof DASHBOARD_DEBUG_OVERRIDE !== 'undefined'
+    ? !!DASHBOARD_DEBUG_OVERRIDE
+    : (typeof DASHBOARD_DEBUG !== 'undefined' ? !!DASHBOARD_DEBUG : false);
   const perfBeforeStartedAt = Date.now();
 
   const wb = opts.dashboardSpreadsheet || null;
@@ -97,12 +100,16 @@ function loadTreatmentLogsUncached_(options) {
     staffEmail: colStaffEmail ? headers[colStaffEmail - 1] : '',
     staffId: colStaffId ? headers[colStaffId - 1] : ''
   };
-  logContext('loadTreatmentLogs:staffColumns', JSON.stringify(headerSnapshot));
+  if (debugEnabled) {
+    logContext('loadTreatmentLogs:staffColumns', JSON.stringify(headerSnapshot));
+  }
 
   if (allowedPatientIds && allowedPatientIds.size === 0) {
-    logPerf('[perf] loadTreatmentLogsBefore=' + (Date.now() - perfBeforeStartedAt) + 'ms');
-    logPerf('[perf] loadTreatmentLogsAfter=0ms');
-    logPerf('[perf] rowsProcessed=0');
+    if (debugEnabled) {
+      logPerf('[perf] loadTreatmentLogsBefore=' + (Date.now() - perfBeforeStartedAt) + 'ms');
+      logPerf('[perf] loadTreatmentLogsAfter=0ms');
+      logPerf('[perf] rowsProcessed=0');
+    }
     logContext('loadTreatmentLogs:done', `logs=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
     return { logs, warnings, lastStaffByPatient, setupIncomplete };
   }
@@ -184,12 +191,16 @@ function loadTreatmentLogsUncached_(options) {
   const rangeSearchDuration = Date.now() - rangeSearchStartedAt;
 
   const perfBeforeDuration = Date.now() - perfBeforeStartedAt;
-  logPerf('[perf] loadTreatmentLogsBefore=' + perfBeforeDuration + 'ms');
-  logPerf('[perf] loadTreatmentLogsFilterScan=' + rangeSearchDuration + 'ms rows=' + scannedRowsForRange + '/' + totalDataRows);
+  if (debugEnabled) {
+    logPerf('[perf] loadTreatmentLogsBefore=' + perfBeforeDuration + 'ms');
+    logPerf('[perf] loadTreatmentLogsFilterScan=' + rangeSearchDuration + 'ms rows=' + scannedRowsForRange + '/' + totalDataRows);
+  }
 
   if (startDataIndex < 0 || endDataIndex < startDataIndex) {
-    logPerf('[perf] loadTreatmentLogsAfter=0ms');
-    logPerf('[perf] rowsProcessed=0');
+    if (debugEnabled) {
+      logPerf('[perf] loadTreatmentLogsAfter=0ms');
+      logPerf('[perf] rowsProcessed=0');
+    }
     logContext('loadTreatmentLogs:done', `logs=0 warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
     return { logs, warnings, lastStaffByPatient, setupIncomplete };
   }
@@ -208,7 +219,9 @@ function loadTreatmentLogsUncached_(options) {
   ].concat(searchableColumns)
     .filter(function(col, index, arr) { return !!col && arr.indexOf(col) === index; });
 
-  logPerf('[perf] loadTreatmentLogsFilterRows=' + dataRowCount);
+  if (debugEnabled) {
+    logPerf('[perf] loadTreatmentLogsFilterRows=' + dataRowCount);
+  }
 
   const rowDataByColumn = {};
   for (let ci = 0; ci < requiredColumns.length; ci++) {
@@ -253,7 +266,9 @@ function loadTreatmentLogsUncached_(options) {
 
     const normalizedPatientId = mappedPatientId ? dashboardNormalizePatientId_(mappedPatientId) : '';
     if (!normalizedPatientId) {
-      logContext('loadTreatmentLogs:skipMissingPatientId', `row=${rowNumber}`);
+      if (debugEnabled) {
+        logContext('loadTreatmentLogs:skipMissingPatientId', `row=${rowNumber}`);
+      }
       continue;
     }
     if (allowedPatientIds && !allowedPatientIds.has(normalizedPatientId)) {
@@ -263,7 +278,8 @@ function loadTreatmentLogsUncached_(options) {
       const samplePatientIds = Object.keys(patients).slice(0, 10);
       const rawType = patientIdCell === null ? 'null' : typeof patientIdCell;
       const rawValue = String(patientIdCell === undefined ? '' : patientIdCell);
-      logContext('loadTreatmentLogs:unknownPatientDebug', JSON.stringify({
+      if (debugEnabled) {
+        logContext('loadTreatmentLogs:unknownPatientDebug', JSON.stringify({
         row: rowNumber,
         patientMapSampleKeys: samplePatientIds,
         rawPatientId: {
@@ -272,7 +288,8 @@ function loadTreatmentLogsUncached_(options) {
         },
         normalizedPatientId
       }));
-      logContext('loadTreatmentLogs:skipUnknownPatientId', `row=${rowNumber} patientId=${normalizedPatientId}`);
+        logContext('loadTreatmentLogs:skipUnknownPatientId', `row=${rowNumber} patientId=${normalizedPatientId}`);
+      }
       continue;
     }
 
@@ -289,7 +306,7 @@ function loadTreatmentLogsUncached_(options) {
       .filter(function(text) { return !!text; })
       .join('\n');
 
-    if (i < 20) {
+    if (debugEnabled && i < 20) {
       logContext('loadTreatmentLogs:staffValueSample', JSON.stringify({
         row: rowNumber,
         createdByRaw,
@@ -333,8 +350,10 @@ function loadTreatmentLogsUncached_(options) {
   });
 
   const perfAfterDuration = Date.now() - perfAfterStartedAt;
-  logPerf('[perf] loadTreatmentLogsAfter=' + perfAfterDuration + 'ms');
-  logPerf('[perf] rowsProcessed=' + rowsProcessed);
+  if (debugEnabled) {
+    logPerf('[perf] loadTreatmentLogsAfter=' + perfAfterDuration + 'ms');
+    logPerf('[perf] rowsProcessed=' + rowsProcessed);
+  }
 
   logContext('loadTreatmentLogs:done', `logs=${logs.length} warnings=${warnings.length} setupIncomplete=${setupIncomplete}`);
   return { logs, warnings, lastStaffByPatient, setupIncomplete };

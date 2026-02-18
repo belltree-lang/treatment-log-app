@@ -65,6 +65,7 @@ function createSheet(headers, dataRows) {
 
 (function testLargeSheetTimestampScanStopsEarly() {
   const ctx = createContext();
+  ctx.DASHBOARD_DEBUG_OVERRIDE = true;
   const headers = ['日時', '患者ID', '施術者', 'メール', '内容'];
   const rows = [];
 

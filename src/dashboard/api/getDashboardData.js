@@ -981,11 +981,15 @@ function buildOverviewFromConsent_(patients, scope, patientNameMap, now, current
     if (!consentStatus) return;
     const expiredDays = consentStatus.type === 'expired' ? Math.abs(consentStatus.days) : 0;
     if (consentStatus.type === 'expired' && expiredDays > 30 && currentUserRole !== 'admin') return;
+    const formattedConsentExpiry = formatDateOnlyInternal_(consentExpiryDate);
     let label = `同意期限（残${consentStatus.days}日）`;
     if (consentStatus.type === 'expired') {
       label = `⚠ 同意期限超過（${Math.abs(consentStatus.days)}日超過）`;
     } else if (consentStatus.type === 'warning') {
       label = `⏳ 同意期限迫る（残${consentStatus.days}日）`;
+    }
+    if (formattedConsentExpiry) {
+      label = `${label} ${formattedConsentExpiry}`;
     }
     const name = (patient && patient.name) || patientNameMap[pid] || '';
     const alert = {
@@ -1013,6 +1017,16 @@ function buildOverviewFromConsent_(patients, scope, patientNameMap, now, current
     }));
   }
   return { items };
+}
+
+function formatDateOnlyInternal_(value) {
+  const parsed = parseConsentDateInternal_(value);
+  if (!parsed) return '';
+  return [
+    String(parsed.getFullYear()).padStart(4, '0'),
+    String(parsed.getMonth() + 1).padStart(2, '0'),
+    String(parsed.getDate()).padStart(2, '0')
+  ].join('/');
 }
 
 function dashboardDebugLogLimited_(counterKey, label, payload) {

@@ -936,8 +936,7 @@ function isDashboardInvoiceConfirmationInWindow_(entry, currentMonthKey, tz) {
     dayKey = dashboardFormatDate_(ts, tz, 'yyyy-MM-dd');
   }
   if (dayKey.slice(0, 7) !== currentMonthKey) return false;
-  const day = Number(dayKey.slice(8, 10));
-  return day >= 1 && day <= 20;
+  return true;
 }
 
 function buildDashboardInvoiceSearchText_(entry) {

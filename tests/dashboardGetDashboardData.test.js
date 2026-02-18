@@ -960,7 +960,6 @@ function testInvoiceUnconfirmedUsesPositiveConfirmationEvidence() {
       { patientId: '001', dateKey: '2025-01-10', searchText: '前月施術あり' },
       { patientId: '001', dateKey: '2025-02-05', searchText: '請求書・領収書を受け渡し済み（家族へ）' },
       { patientId: '002', dateKey: '2025-01-08', searchText: '前月施術あり' },
-      { patientId: '002', dateKey: '2025-02-22', searchText: '請求書・領収書を受け渡し済み' },
       { patientId: '003', dateKey: '2025-02-01', searchText: '当月のみ' }
     ],
     { notes: {} },
@@ -970,8 +969,36 @@ function testInvoiceUnconfirmedUsesPositiveConfirmationEvidence() {
     'Asia/Tokyo'
   );
 
-  assert.strictEqual(result.items.length, 1, '前月施術があり証跡がない患者のみ未対応になる');
+  assert.strictEqual(result.items.length, 1, '20日以前の証跡は従来どおり確認済み扱いになる');
   assert.strictEqual(result.items[0].patientId, '002');
+}
+
+function testInvoiceUnconfirmedTreatsConfirmationAfter21stAsInWindow() {
+  const ctx = createContext({
+    Utilities: {
+      formatDate: (date, _tz, fmt) => {
+        const iso = new Date(date).toISOString();
+        if (fmt === 'yyyy-MM') return iso.slice(0, 7);
+        if (fmt === 'yyyy-MM-dd') return iso.slice(0, 10);
+        return iso;
+      }
+    }
+  });
+
+  const result = ctx.buildOverviewFromInvoiceUnconfirmed_(
+    {},
+    [
+      { patientId: '001', dateKey: '2025-01-10', searchText: '前月施術あり' },
+      { patientId: '001', dateKey: '2025-02-22', searchText: '請求書・領収書を受け渡し済み' }
+    ],
+    { notes: {} },
+    { patientIds: new Set(['001']), applyFilter: true },
+    { '001': '患者A' },
+    new Date('2025-02-10T00:00:00Z'),
+    'Asia/Tokyo'
+  );
+
+  assert.strictEqual(result.items.length, 0, '21日以降の受渡記録も当月であれば確認済み扱いにする');
 }
 
 function testInvoiceUnconfirmedIgnoresDisplayTargetFilter() {
@@ -1475,6 +1502,7 @@ function testConsentOverviewSubTextUsesSlashDateWithoutIso() {
   testVisitSummaryStaffScopeLookbackIsFixedTo50Days();
   testVisitSummaryHasOnlyThreeKeysAndPastSlotsAreBeforeToday();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
+  testInvoiceUnconfirmedTreatsConfirmationAfter21stAsInWindow();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();
   testInvoiceUnconfirmedShouldDetectPatientWithOnlyPreviousMonthTreatment();
   testInvoiceUnconfirmedExcludesMedicalAssistancePatient();

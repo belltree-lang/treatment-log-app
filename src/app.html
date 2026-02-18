@@ -120,6 +120,9 @@
   @keyframes loading-spin{ to { transform:rotate(360deg); } }
   textarea.highlight{ box-shadow:0 0 0 3px rgba(37,99,235,0.35); outline:none; transition:box-shadow .2s ease; }
   .highlight-block{ box-shadow:0 0 0 3px rgba(37,99,235,0.35); outline:none; transition:box-shadow .2s ease; }
+  .back-link-row{ margin:0 0 12px; }
+  .back-link{ color:#1d4ed8; font-weight:600; text-decoration:none; }
+  .back-link:hover{ text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -154,6 +157,10 @@
       </div>
     </div>
     <div id="hdr" style="margin-top:8px"></div>
+  </div>
+
+  <div class="back-link-row">
+    <a href="#" id="backToDashboardLink" class="back-link">← ダッシュボードへ戻る</a>
   </div>
 
   <!-- ==== 2カラム（左：施術録関連／右：報告書作成ヒント） ==== -->
@@ -567,6 +574,7 @@ let _patientIdInitialRenderWaiters = [];
 let _patientIdInitialRenderNoticeShown = false;
 let _confirmedPatientId = '';
 const INITIAL_RECORD_PATIENT_ID = "<?= initialRecordPatientId ?>";
+const DASHBOARD_EXEC_URL = "<?= dashboardExecUrl ?>";
 let _initialPatientIdRequested = '';
 let _initialPatientIdResolved = false;
 let _initialPatientIdResolveFailureNotified = false;
@@ -4448,6 +4456,14 @@ function saveHandoverUI(){
 }
 /* 起動時 */
 (function init(){
+  const backLink = q('backToDashboardLink');
+  if (backLink) {
+    backLink.addEventListener('click', event => {
+      event.preventDefault();
+      if (!DASHBOARD_EXEC_URL) return;
+      window.location.href = DASHBOARD_EXEC_URL;
+    });
+  }
   _initialPatientIdRequested = resolveInitialPatientIdRequest();
   tracePatientIdState_('init', '_initialPatientIdRequested', _initialPatientIdRequested, 'init');
   loadPidList();

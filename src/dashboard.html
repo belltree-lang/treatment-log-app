@@ -564,12 +564,6 @@ function renderTimelineSection(container, label, sectionData) {
       badge.textContent = hasNote ? '報告書作成ヒントあり' : '報告書作成ヒント未入力';
       meta.appendChild(badge);
     }
-    if (v.patientId) {
-      const idBadge = document.createElement('span');
-      idBadge.className = 'badge';
-      idBadge.textContent = v.patientId;
-      meta.appendChild(idBadge);
-    }
     body.appendChild(meta);
     row.appendChild(body);
 

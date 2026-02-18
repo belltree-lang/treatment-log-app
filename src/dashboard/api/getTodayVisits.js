@@ -5,14 +5,12 @@
  * @param {Object} [options.patientInfo] - loadPatientInfo() の戻り値を差し替える際に利用。
  * @param {Object} [options.notes] - loadNotes() の戻り値を差し替える際に利用。
  * @param {Date} [options.now] - テスト用に現在日時を差し替え。
- * @param {Set<string>} [options.visiblePatientIds] - 表示対象患者ID。null の場合は全件。
  * @return {{today: {date: string, visits: Object[]}, previous: {date: (string|null), visits: Object[]}, warnings: string[]}}
  */
 function getTodayVisits(options) {
   const opts = options || {};
   const tz = dashboardResolveTimeZone_();
   const now = dashboardCoerceDate_(opts.now) || new Date();
-  const visiblePatientIds = opts.visiblePatientIds && typeof opts.visiblePatientIds.has === 'function' ? opts.visiblePatientIds : null;
   const todayKey = dashboardFormatDate_(now, tz, 'yyyy-MM-dd');
 
   const treatment = opts.treatmentLogs || (typeof loadTreatmentLogs === 'function' ? loadTreatmentLogs() : null);
@@ -23,7 +21,6 @@ function getTodayVisits(options) {
 
   if (typeof Logger !== 'undefined' && Logger && typeof Logger.log === 'function') {
     Logger.log('[TODAY VISITS ENTRY] logs length=' + (logs ? logs.length : 'null'));
-    Logger.log('[TODAY VISITS ENTRY] visiblePatientIds size=' + (visiblePatientIds ? visiblePatientIds.size : 'null'));
   }
 
   const warnings = [];
@@ -54,8 +51,6 @@ function getTodayVisits(options) {
     const noteStatus = resolveHandoverStatus_(dateKey, patientId, notes, tz);
 
     if (!patientId) return;
-    if (visiblePatientIds && !visiblePatientIds.has(patientId)) return;
-
     if (!Object.prototype.hasOwnProperty.call(visitsByDate, dateKey)) visitsByDate[dateKey] = [];
     visitsByDate[dateKey].push({ patientId, patientName, time, dateKey, noteStatus });
 

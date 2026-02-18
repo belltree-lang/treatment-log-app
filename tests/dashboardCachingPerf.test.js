@@ -35,7 +35,8 @@ function createContext(overrides = {}) {
           return d.toISOString().slice(0, 10);
         }
         return d.toISOString();
-      }
+      },
+      getUuid: () => 'mock-uuid'
     },
     Session: {
       getScriptTimeZone: () => 'Asia/Tokyo',

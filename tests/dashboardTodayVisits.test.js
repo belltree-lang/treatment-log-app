@@ -93,14 +93,12 @@ function createUiContext() {
   return { context, elements };
 }
 
-function runVisits(context, now, logs, patientInfo, extraOptions) {
-  const options = extraOptions || {};
+function runVisits(context, now, logs, patientInfo) {
   return context.getTodayVisits({
     now: new Date(now),
     patientInfo: { patients: patientInfo || {} },
     treatmentLogs: { logs, warnings: [] },
-    notes: { notes: {}, warnings: [] },
-    visiblePatientIds: options.visiblePatientIds || null
+    notes: { notes: {}, warnings: [] }
   });
 }
 
@@ -164,34 +162,22 @@ function runVisits(context, now, logs, patientInfo, extraOptions) {
   assert.strictEqual(result.previous.visits.length, 0);
 })();
 
-(function testStaffScopeDifferenceViaVisiblePatientIds() {
+(function testTodayVisitsFollowsProvidedLogsOnly() {
   const context = createApiContext();
-  const adminLike = runVisits(
-    context,
-    '2025-02-13T10:00:00Z',
-    [
-      { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
-      { timestamp: new Date('2025-02-13T10:00:00Z'), dateKey: '2025-02-13', patientId: 'P002' },
-      { timestamp: new Date('2025-02-12T09:00:00Z'), dateKey: '2025-02-12', patientId: 'P003' }
-    ],
-    { P001: { name: '患者A' }, P002: { name: '患者B' }, P003: { name: '患者C' } },
-    { visiblePatientIds: null }
-  );
   const staffLike = runVisits(
     context,
     '2025-02-13T10:00:00Z',
     [
       { timestamp: new Date('2025-02-13T09:00:00Z'), dateKey: '2025-02-13', patientId: 'P001' },
-      { timestamp: new Date('2025-02-13T10:00:00Z'), dateKey: '2025-02-13', patientId: 'P002' },
       { timestamp: new Date('2025-02-12T09:00:00Z'), dateKey: '2025-02-12', patientId: 'P003' }
     ],
-    { P001: { name: '患者A' }, P002: { name: '患者B' }, P003: { name: '患者C' } },
-    { visiblePatientIds: new Set(['P001']) }
+    { P001: { name: '患者A' }, P003: { name: '患者C' } }
   );
 
-  assert.strictEqual(adminLike.today.visits.length, 2);
   assert.strictEqual(staffLike.today.visits.length, 1);
   assert.strictEqual(staffLike.today.visits[0].patientId, 'P001');
+  assert.strictEqual(staffLike.previous.visits.length, 1);
+  assert.strictEqual(staffLike.previous.visits[0].patientId, 'P003');
 })();
 
 (function testRenderVisitsAsTodayAndPreviousSections() {

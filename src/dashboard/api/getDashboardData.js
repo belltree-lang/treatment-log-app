@@ -292,11 +292,12 @@ function getDashboardData(options) {
 
     const tasksResult = { tasks: [], warnings: [] };
 
+    const timelineSourceLogs = isAdmin ? logs : staffFilteredLogs;
+    const timelineTreatmentLogs = Object.assign({}, treatmentLogs, { logs: timelineSourceLogs });
     const visitsResult = measureStep('getTodayVisits', () => (opts.visitsResult || (typeof getTodayVisits === 'function' ? getTodayVisits({
-      treatmentLogs,
+      treatmentLogs: timelineTreatmentLogs,
       patientInfo,
       notes,
-      visiblePatientIds,
       now: opts.now
     }) : {
       today: { date: dashboardFormatDate_(dashboardCoerceDate_(opts.now) || new Date(), dashboardResolveTimeZone_(), 'yyyy-MM-dd'), visits: [] },
@@ -312,22 +313,16 @@ function getDashboardData(options) {
     const rawPreviousVisits = visitsResult && visitsResult.previous && Array.isArray(visitsResult.previous.visits)
       ? visitsResult.previous.visits
       : [];
-    const scopeVisits = visits => (visiblePatientIds
-      ? visits.filter(visit => {
-        const patientId = dashboardNormalizePatientId_(visit && visit.patientId);
-        return !!patientId && visiblePatientIds.has(patientId);
-      })
-      : visits);
     const scopedVisits = {
       today: {
         date: visitsResult && visitsResult.today
           ? visitsResult.today.date
           : timelineTodayKey,
-        visits: scopeVisits(rawTodayVisits)
+        visits: rawTodayVisits
       },
       previous: {
         date: visitsResult && visitsResult.previous ? visitsResult.previous.date : null,
-        visits: scopeVisits(rawPreviousVisits)
+        visits: rawPreviousVisits
       }
     };
 
@@ -367,7 +362,7 @@ function getDashboardData(options) {
     meta.setupIncomplete = warningState.setupIncomplete;
     logContext('getDashboardData:setupIncomplete', `result=${meta.setupIncomplete} warnings=${warningState.warnings.length}`);
 
-    const visitSummaryLogs = isAdmin ? logs : staffFilteredLogs;
+    const visitSummaryLogs = timelineSourceLogs;
     const overview = buildDashboardOverview_({
       visits: visitSummaryLogs,
       patients,

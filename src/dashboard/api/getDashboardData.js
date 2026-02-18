@@ -838,7 +838,7 @@ function buildOverviewFromInvoiceUnconfirmed_(invoices, treatmentLogs, notes, sc
   const targetNow = dashboardCoerceDate_(now) || new Date();
   const previousMonthKey = dashboardFormatDate_(new Date(targetNow.getFullYear(), targetNow.getMonth() - 1, 1), tz, 'yyyy-MM');
   const currentMonthKey = dashboardFormatDate_(targetNow, tz, 'yyyy-MM');
-  const confirmationPhrase = '請求書・領収書を受け渡し済み';
+  const confirmationPhrases = ['請求書・領収書を受け渡し済み', '請求書・領収書を受け渡し済み。'];
   const logBillingDebug = (message, details) => {
     const payload = details ? ` ${details}` : '';
     const line = `[billing-debug] ${message}${payload}`;
@@ -875,7 +875,7 @@ function buildOverviewFromInvoiceUnconfirmed_(invoices, treatmentLogs, notes, sc
     if (!isDashboardInvoiceConfirmationInWindow_(entry, currentMonthKey, tz)) return;
     inBillingWindowPatients.add(pid);
     const searchable = buildDashboardInvoiceSearchText_(entry);
-    if (searchable.indexOf(confirmationPhrase) >= 0) confirmedPatients.add(pid);
+    if (confirmationPhrases.some(phrase => searchable.indexOf(phrase) >= 0)) confirmedPatients.add(pid);
   });
 
   const noteEntries = notes && notes.notes ? notes.notes : {};
@@ -886,7 +886,7 @@ function buildOverviewFromInvoiceUnconfirmed_(invoices, treatmentLogs, notes, sc
     if (!isDashboardInvoiceConfirmationInWindow_(note, currentMonthKey, tz)) return;
     inBillingWindowPatients.add(pid);
     const searchable = buildDashboardInvoiceSearchText_(note);
-    if (searchable.indexOf(confirmationPhrase) >= 0) confirmedPatients.add(pid);
+    if (confirmationPhrases.some(phrase => searchable.indexOf(phrase) >= 0)) confirmedPatients.add(pid);
   });
 
   logBillingDebug(`inBillingWindow count=${inBillingWindowPatients.size}`);

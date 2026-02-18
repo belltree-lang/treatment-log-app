@@ -668,7 +668,7 @@ function buildDashboardPatients_(patientInfo, sources, allowedPatientIds) {
     const entry = {
       patientId,
       name: base.name || base.patientName || '',
-      consentExpiry: consentExpiryResolved.value == null ? '' : consentExpiryResolved.value,
+      consentExpiry: formatDateOnlyInternal_(consentExpiryDate),
       responsible: Object.prototype.hasOwnProperty.call(responsible, patientId) ? responsible[patientId] : null,
       invoiceUrl: Object.prototype.hasOwnProperty.call(invoices, patientId) ? invoices[patientId] : null,
       aiReportAt: Object.prototype.hasOwnProperty.call(aiReports, patientId) ? aiReports[patientId] : null,

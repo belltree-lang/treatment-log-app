@@ -145,9 +145,13 @@ function getDashboardData(options) {
     const allPatientIds = Object.keys(patientMaster || {});
     const now = dashboardCoerceDate_(opts.now) || new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const fiftyDaysAgoDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 50);
+    // staff スコープは「直近 50 日以内に当該スタッフが施術した患者」を定義として統一する。
+    // visitSummary も同じスコープ定義を使うため、この閾値は visiblePatientIds と共通化する。
+    const STAFF_SCOPE_LOOKBACK_DAYS = 50;
+    const fiftyDaysAgoDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - STAFF_SCOPE_LOOKBACK_DAYS);
     const fiftyDaysAgoKey = dashboardFormatDate_(fiftyDaysAgoDate, dashboardResolveTimeZone_(), 'yyyy-MM-dd') || '';
     const responsiblePatientIds = new Set();
+    const staffFilteredLogs = [];
     let matchedLogsCount = 0;
     const logs = treatmentLogs && Array.isArray(treatmentLogs.logs) ? treatmentLogs.logs : [];
     logs.forEach(entry => {
@@ -162,6 +166,7 @@ function getDashboardData(options) {
       const logDay = new Date(logDate.getFullYear(), logDate.getMonth(), logDate.getDate());
       if (logDay < fiftyDaysAgoDate) return;
 
+      staffFilteredLogs.push(entry);
       matchedLogsCount += 1;
       responsiblePatientIds.add(pid);
     });
@@ -179,6 +184,7 @@ function getDashboardData(options) {
       applyScopeFilter,
       visiblePatientIdsSize: visiblePatientIds.size,
       matchedLogsCount,
+      staffScopeLookbackDays: STAFF_SCOPE_LOOKBACK_DAYS,
       fiftyDaysAgo: fiftyDaysAgoKey
     }));
 
@@ -338,8 +344,9 @@ function getDashboardData(options) {
     meta.setupIncomplete = warningState.setupIncomplete;
     logContext('getDashboardData:setupIncomplete', `result=${meta.setupIncomplete} warnings=${warningState.warnings.length}`);
 
+    const visitSummaryLogs = isAdmin ? logs : staffFilteredLogs;
     const overview = buildDashboardOverview_({
-      visits: scopedVisits,
+      visits: visitSummaryLogs,
       patients,
       patientInfo,
       treatmentLogs,

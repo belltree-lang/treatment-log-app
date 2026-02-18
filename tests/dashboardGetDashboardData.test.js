@@ -659,7 +659,7 @@ function testVisitSummaryWithOnlyOneTreatmentDay() {
   });
 }
 
-function testVisitSummaryRespectsStaffAdminScopeDifference() {
+function testVisitSummaryUsesStaffFilteredLogsNotScopedVisits() {
   const summaryCtxOptions = {
     Utilities: {
       formatDate: (date, _tz, fmt) => {
@@ -674,7 +674,8 @@ function testVisitSummaryRespectsStaffAdminScopeDifference() {
     patientInfo: {
       patients: {
         '001': { name: '患者1', raw: {} },
-        '002': { name: '患者2', raw: {} }
+        '002': { name: '患者2', raw: {} },
+        '003': { name: '患者3', raw: {} }
       },
       warnings: []
     },
@@ -683,8 +684,10 @@ function testVisitSummaryRespectsStaffAdminScopeDifference() {
     invoices: { invoices: {}, warnings: [] },
     treatmentLogs: {
       logs: [
-        { patientId: '001', timestamp: new Date('2025-01-25T09:00:00Z'), staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
-        { patientId: '002', timestamp: new Date('2025-01-25T09:00:00Z'), staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
+        { patientId: '001', timestamp: new Date('2025-02-01T09:00:00Z'), dateKey: '2025-02-01', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '001', timestamp: new Date('2025-01-31T09:00:00Z'), dateKey: '2025-01-31', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '003', timestamp: new Date('2025-01-30T09:00:00Z'), dateKey: '2025-01-30', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-01-29T09:00:00Z'), dateKey: '2025-01-29', staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
       ],
       warnings: []
     },
@@ -695,7 +698,7 @@ function testVisitSummaryRespectsStaffAdminScopeDifference() {
       visits: [
         { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
         { patientId: '001', dateKey: '2025-01-31', time: '09:00' },
-        { patientId: '002', dateKey: '2025-01-30', time: '09:00' }
+        { patientId: '002', dateKey: '2025-01-29', time: '09:00' }
       ],
       warnings: []
     }
@@ -707,15 +710,94 @@ function testVisitSummaryRespectsStaffAdminScopeDifference() {
     today: { date: '2025-02-01', count: 1 },
     previous: { date: '2025-01-31', count: 1 },
     previous2: { date: '2025-01-30', count: 1 }
-  }, 'admin は全可視患者の visitSummary になる');
+  }, 'admin の visitSummary も treatmentLogs ベースで集計する');
 
   const staffCtx = createContext(summaryCtxOptions);
   const staffResult = staffCtx.getDashboardData(Object.assign({}, baseOptions, { user: { email: 'staff@example.com', role: 'staff' } }));
   assert.deepStrictEqual(JSON.parse(JSON.stringify(staffResult.overview.visitSummary)), {
     today: { date: '2025-02-01', count: 1 },
     previous: { date: '2025-01-31', count: 1 },
+    previous2: { date: '2025-01-30', count: 1 }
+  }, 'staff の visitSummary は scopedVisits ではなく staff-filtered treatmentLogs を使う');
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(staffResult.todayVisits)), [
+    { patientId: '001', dateKey: '2025-02-01', time: '09:00' },
+    { patientId: '001', dateKey: '2025-01-31', time: '09:00' }
+  ], 'todayVisits は従来どおり visiblePatientIds スコープを使う');
+}
+
+function testVisitSummaryWorksWhenVisiblePatientIdsBecomesEmpty() {
+  const ctx = createVisitSummaryTestContext();
+  const now = new Date('2025-02-01T00:00:00Z');
+  const result = ctx.getDashboardData({
+    user: { email: 'staff@example.com', role: 'staff' },
+    now,
+    patientInfo: {
+      patients: {
+        '001': { name: '患者1', raw: {} },
+        '002': { name: '患者2', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-01-31T09:00:00Z'), dateKey: '2025-01-31', staffKeys: { email: 'other@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2025-01-30T09:00:00Z'), dateKey: '2025-01-30', staffKeys: { email: 'other@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.todayVisits)), [], 'visiblePatientIds が空なら todayVisits は空のまま');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.visitSummary)), {
+    today: { date: '2025-02-01', count: 0 },
+    previous: null,
     previous2: null
-  }, 'staff は visiblePatientIds 適用後の visitSummary になる');
+  }, 'visiblePatientIds が空でも visitSummary 集計が壊れず null を返す');
+}
+
+function testVisitSummaryStaffScopeLookbackIsFixedTo50Days() {
+  const ctx = createVisitSummaryTestContext();
+  const result = ctx.getDashboardData({
+    user: { email: 'staff@example.com', role: 'staff' },
+    now: new Date('2025-02-01T00:00:00Z'),
+    patientInfo: {
+      patients: {
+        '001': { name: '患者1', raw: {} },
+        '002': { name: '患者2', raw: {} },
+        '003': { name: '患者3', raw: {} }
+      },
+      warnings: []
+    },
+    notes: { notes: {}, warnings: [] },
+    aiReports: { reports: {}, warnings: [] },
+    invoices: { invoices: {}, warnings: [] },
+    treatmentLogs: {
+      logs: [
+        { patientId: '001', timestamp: new Date('2025-01-31T09:00:00Z'), dateKey: '2025-01-31', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '002', timestamp: new Date('2024-12-13T09:00:00Z'), dateKey: '2024-12-13', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } },
+        { patientId: '003', timestamp: new Date('2024-12-12T09:00:00Z'), dateKey: '2024-12-12', staffKeys: { email: 'staff@example.com', name: '', staffId: '' } }
+      ],
+      warnings: []
+    },
+    responsible: { responsible: {}, warnings: [] },
+    unpaidAlerts: { alerts: [], warnings: [] },
+    tasksResult: { tasks: [], warnings: [] },
+    visitsResult: { visits: [], warnings: [] }
+  });
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.overview.visitSummary)), {
+    today: { date: '2025-02-01', count: 0 },
+    previous: { date: '2025-01-31', count: 1 },
+    previous2: { date: '2024-12-13', count: 1 }
+  }, '50日以内の履歴のみ previous/previous2 の候補に使う');
 }
 
 function testVisitSummaryHasOnlyThreeKeysAndPastSlotsAreBeforeToday() {
@@ -961,6 +1043,7 @@ function testVisibleScopeForAdminShowsAllPatients() {
     applyScopeFilter: false,
     visiblePatientIdsSize: 2,
     matchedLogsCount: 0,
+    staffScopeLookbackDays: 50,
     fiftyDaysAgo: '2024-12-25'
   });
 }
@@ -1032,6 +1115,7 @@ function testVisibleScopeForStaffShowsResponsiblePatientsOnly() {
     applyScopeFilter: true,
     visiblePatientIdsSize: 1,
     matchedLogsCount: 1,
+    staffScopeLookbackDays: 50,
     fiftyDaysAgo: '2024-12-25'
   });
 }
@@ -1217,7 +1301,9 @@ function testConsentExpiredOver30DaysAlertsAreRoleFiltered() {
   testVisitSummaryWithTodayVisits();
   testVisitSummaryWithoutTodayVisits();
   testVisitSummaryWithOnlyOneTreatmentDay();
-  testVisitSummaryRespectsStaffAdminScopeDifference();
+  testVisitSummaryUsesStaffFilteredLogsNotScopedVisits();
+  testVisitSummaryWorksWhenVisiblePatientIdsBecomesEmpty();
+  testVisitSummaryStaffScopeLookbackIsFixedTo50Days();
   testVisitSummaryHasOnlyThreeKeysAndPastSlotsAreBeforeToday();
   testInvoiceUnconfirmedUsesPositiveConfirmationEvidence();
   testInvoiceUnconfirmedIgnoresDisplayTargetFilter();

@@ -47,6 +47,7 @@
     }
     .wrapper { position: relative; z-index: 1; }
     .charge-period-label { display: block; margin-top: 4px; color: #475569; font-weight: 400; font-size: 12px; }
+    .receipt-amount { font-size: 20px; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -174,7 +175,7 @@
           <div class="label">領収日</div>
           <div><?= receiptDate || '―' ?></div>
           <div class="label">金額</div>
-          <div><?= formatBillingCurrency_(receiptAmount || 0) ?> 円</div>
+          <div class="receipt-amount"><?= formatBillingCurrency_(receiptAmount || 0) ?> 円</div>
           <div class="label">但し書き</div>
           <div><?= receiptNote || '―' ?></div>
           <div class="label">発行者</div>
